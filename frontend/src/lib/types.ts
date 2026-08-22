@@ -1,0 +1,244 @@
+export interface Lab {
+  id: string;
+  name: string;
+  status: "creating" | "running" | "stopped" | "error" | "expired";
+  image: string;
+  network_alias: string | null;
+  cpu_limit: number;
+  mem_limit_mb: number;
+  allow_network: boolean;
+  ttl_hours: number;
+  expires_at: string | null;
+  repos: { name: string; url: string; source: string; authenticated: boolean }[];
+  ports: number[];
+  data_guard: boolean;
+  llm_guard: boolean;
+  allowed_mcp: string[];
+  allowed_tools: string[];
+  allowed_skills: string[];
+  azure_profile_id: number | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+  port_map?: Record<string, number>;
+}
+
+export interface ImagePreset {
+  key: string;
+  label: string;
+  image: string;
+  description: string;
+}
+
+export interface DockerStatus {
+  cli_present: boolean;
+  daemon_up: boolean;
+  in_container: boolean;
+  socket_mounted: boolean;
+  docker_host: string;
+  network: string;
+  hint: string | null;
+}
+
+export interface GuardModelStatus {
+  model: string;
+  url: string;
+  local: boolean;
+  reachable: boolean;
+  ready: boolean;
+  state: "ready" | "pulling" | "unreachable" | "non_local" | "disabled";
+  hint?: string | null;
+  in_docker?: boolean;
+}
+
+export interface Thread {
+  id: string;
+  title: string;
+  lab_id: string;
+  model: string | null;
+  effort: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Message {
+  id: string;
+  thread_id: string;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  steps: ChatEvent[];
+  created_at: string;
+}
+
+export type ChatEvent =
+  | { kind: "session"; id: string }
+  | { kind: "thinking"; text: string }
+  | { kind: "tool"; name: string; input: any }
+  | { kind: "delta"; text: string }
+  | { kind: "answer"; text: string }
+  | { kind: "run_status"; status: string }
+  | { kind: "run"; id: string }
+  | { kind: "usage"; input_tokens: number; output_tokens: number; cost_usd: number | null; duration_ms: number | null; num_turns?: number };
+
+export interface BackgroundRunDto {
+  id: string;
+  thread_id: string;
+  prompt: string;
+  model: string | null;
+  effort: string | null;
+  status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  mode: "background" | "foreground";
+  steps: ChatEvent[];
+  answer: string | null;
+  error: string | null;
+  message_id: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface AutoHook {
+  tool_name: string;
+  query_template: string | null;
+  instruction: string | null;
+  enabled: boolean;
+}
+
+export interface AppSettingsDto {
+  cli_path: string;
+  oauth_token_configured: boolean;
+  default_model: string;
+  max_turns: number;
+  timeout_seconds: number | null;
+  extra_args: string[];
+  enable_tool_search: boolean;
+  data_guard_default: boolean;
+  llm_guard_default: boolean;
+  guard_llm_url: string;
+  guard_llm_model: string;
+  default_image: string;
+  default_ttl_hours: number;
+  auto_recall_enabled: boolean;
+  auto_recall_tool_name: string | null;
+  auto_recall_query_template: string | null;
+  auto_recall_instruction: string | null;
+  auto_hooks: AutoHook[];
+  default_effort: string | null;
+  fallback_model: string | null;
+  max_budget_usd: number | null;
+  autocompact: string | null;
+  custom_agents_json: string | null;
+  default_agent: string | null;
+}
+
+export interface MCPServerDto {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  server_type: "http" | "sse" | "stdio" | "builtin";
+  location: "host" | "lab";
+  base_url: string | null;
+  stdio_command: string | null;
+  is_enabled: boolean;
+  always_allowed: boolean;
+  usage_scope: "session" | "lab" | "both";
+  azure_profile_id: number | null;
+  has_auth: boolean;
+  last_synced_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+}
+
+export interface ToolDto {
+  id: number;
+  name: string;
+  remote_name: string;
+  description: string | null;
+  argument: Record<string, any>;
+  output_schema: Record<string, any> | null;
+  annotations: Record<string, any>;
+  is_enabled: boolean;
+  mcp_server_id: number | null;
+  mcp_server: { id: number; name: string; slug: string; location: string } | null;
+}
+
+export interface SkillToolLink {
+  link_id: number;
+  tool_id: number;
+  tool_name: string;
+  tool_description: string | null;
+  argument: Record<string, any>;
+  mcp_server: { id: number; name: string; location: string } | null;
+  is_enabled: boolean;
+  instructions: string | null;
+}
+
+export interface SkillDto {
+  id: number;
+  name: string;
+  display_name: string | null;
+  description: string;
+  instructions: string;
+  input_schema: Record<string, any> | null;
+  output_schema: Record<string, any> | null;
+  is_system: boolean;
+  is_enabled: boolean;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+  tools: SkillToolLink[];
+}
+
+export interface WorkflowStep {
+  index: number;
+  title: string;
+  instruction: string;
+}
+
+export interface WorkflowDto {
+  id: number;
+  name: string;
+  description: string | null;
+  markdown: string;
+  steps: WorkflowStep[];
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleDto {
+  id: number;
+  name: string;
+  cron_expression: string;
+  lab_id: string;
+  prompt: string | null;
+  workflow_id: number | null;
+  json_schema: string | null;
+  is_enabled: boolean;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleRunDto {
+  id: string;
+  scheduled_for: string;
+  status: string;
+  output: string | null;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface AzureProfileDto {
+  id: number;
+  name: string;
+  kind: "msal_bundle" | "service_principal" | "bearer";
+  description: string | null;
+  has_secret: boolean;
+  identity: Record<string, any> | null;
+  created_at: string;
+  updated_at: string;
+}

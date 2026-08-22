@@ -1,0 +1,91 @@
+networks:
+  # Shared bridge for the backend AND every lab sibling container, so the
+  # backend can reach a published lab port by container DNS name
+  # (`http://<lab.network_alias>:<port>`) instead of the host loopback that
+  # `-p 127.0.0.1:0:<port>` binds — see docs/DOCKER-SIBLING.md.
+  labx-labs:
+    name: labx-labs
+    driver: bridge
+
+volumes:
+  labx_data:
+  labx_claude_home:
+
+services:
+  api:
+    build:
+      context: ./backend
+    image: labx-backend:local
+    container_name: labx-api
+    restart: unless-stopped
+    networks:
+      - labx-labs
+    ports:
+      - "8090:8090"
+    # host.docker.internal resolves automatically on Docker Desktop (Mac/
+    # Windows) but NOT on native Linux (the eventual server target) unless
+    # mapped explicitly — needed for the guard's local Ollama check to reach
+    # a host-run Ollama from inside this container.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - labx_data:/data
+      # The sibling-container fix for "Docker niet beschikbaar": mount the
+      # host's docker.sock so the api container can start labs as SIBLINGS
+      # next to itself, on the SAME daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Claude Code CLI session state (~/.claude/projects/*.jsonl). Without
+      # this, EVERY backend restart wipes it while Thread.cli_session_id
+      # (in the durable /data db) still points at a session id the CLI no
+      # longer knows — every existing chat then fails immediately with
+      # "No conversation found with session ID: ..." on its next turn.
+      - labx_claude_home:/root/.claude
+    environment:
+      LABX_HOME: /data
+      LABX_ADMIN_USERNAME: ${LABX_ADMIN_USERNAME:-admin}
+      # Optional bootstrap/fallback: leave empty for the first-time account
+      # setup screen in the UI (the user then picks their own username +
+      # password, stored hashed in the database — DB credentials always win
+      # over these env vars once set).
+      LABX_ADMIN_PASSWORD: ${LABX_ADMIN_PASSWORD:-}
+      LABX_JWT_SECRET: ${LABX_JWT_SECRET:?set LABX_JWT_SECRET in .env}
+      LABX_FERNET_KEY: ${LABX_FERNET_KEY:?set LABX_FERNET_KEY in .env}
+      LABX_INTERNAL_TOKEN: ${LABX_INTERNAL_TOKEN:-}
+      LABX_DOCKER_HOST: ${LABX_DOCKER_HOST:-unix:///var/run/docker.sock}
+      LABX_LAB_NETWORK: labx-labs
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      LABX_CLI_PATH: ${LABX_CLI_PATH:-claude}
+      LABX_CLI_DEFAULT_MODEL: ${LABX_CLI_DEFAULT_MODEL:-claude-sonnet-5}
+      DATA_GUARD_LLM_ENABLED: ${DATA_GUARD_LLM_ENABLED:-1}
+      DATA_GUARD_LLM_MODEL: ${DATA_GUARD_LLM_MODEL:-qwen2.5:1.5b}
+      DATA_GUARD_LLM_URL: ${DATA_GUARD_LLM_URL:-}
+      LABX_CORS_ORIGINS: ${LABX_CORS_ORIGINS:-*}
+
+  web:
+    build:
+      context: ./frontend
+    image: labx-frontend:local
+    container_name: labx-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      - labx-labs
+    ports:
+      - "8080:80"
+    environment:
+      LABX_API_URL: ${LABX_API_URL:-http://localhost:8090}
+
+  # Optional local-model sidecar for the data-guard's "spoor B" second opinion
+  # and/or the Claude-Code-alternative local model. Not required — set
+  # DATA_GUARD_LLM_URL to point at an existing host/LAN Ollama instead and
+  # remove this service.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: labx-ollama
+    restart: unless-stopped
+    networks:
+      - labx-labs
+    volumes:
+      - labx_data:/root/.ollama:rw
+    profiles: ["with-ollama"]

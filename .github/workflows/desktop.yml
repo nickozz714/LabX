@@ -1,0 +1,53 @@
+# Desktop builds — Tauri shell voor macOS en Windows (Linux bewust niet).
+# Draait op elke versietag (v*) en handmatig via workflow_dispatch; de
+# installers verschijnen als workflow-artifacts (unsigned — signing/notarisatie
+# is een aparte, latere stap met certificaten als secrets).
+name: desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: labx-desktop-macos
+            bundle_paths: |
+              desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          - os: windows-latest
+            artifact: labx-desktop-windows
+            bundle_paths: |
+              desktop/src-tauri/target/release/bundle/msi/*.msi
+              desktop/src-tauri/target/release/bundle/nsis/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build installers
+        working-directory: desktop
+        run: npm run tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bundle_paths }}
+          if-no-files-found: error

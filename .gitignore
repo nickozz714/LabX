@@ -1,0 +1,23 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.venv-test/
+*.egg-info/
+
+# node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# data
+backend/data/
+*.db
+*.db-journal
+*.db-wal
+
+# os
+.DS_Store
