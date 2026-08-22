@@ -132,3 +132,61 @@ body {
   font-size: 12.5px;
   margin-top: 26px;
 }
+
+/* ── Foutkaart: eeuwig draaien doen we niet ─────────────────────────────── */
+.error-card {
+  border: 1px solid hsl(0, 72%, 85%);
+  border-radius: 14px;
+  background: hsl(0, 86%, 97%);
+  box-shadow: 0 10px 30px hsla(0, 60%, 30%, 0.08);
+  padding: 22px 26px 24px;
+  text-align: left;
+}
+
+.error-title {
+  font-weight: 700;
+  font-size: 16px;
+  color: hsl(0, 72%, 42%);
+  margin-bottom: 6px;
+}
+
+.error-msg {
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+}
+
+.error-detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  background: hsl(0, 0%, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 0 0 14px;
+}
+
+.error-actions { display: flex; gap: 10px; }
+
+.error-actions button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  color: white;
+  background: linear-gradient(100deg, var(--primary), var(--accent));
+}
+
+.error-actions button.secondary {
+  background: white;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+.error-actions button:hover { filter: brightness(1.06); }

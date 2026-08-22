@@ -138,12 +138,33 @@ fn deployment_root(app: &AppHandle) -> PathBuf {
     }
 }
 
-fn docker_available() -> bool {
-    Command::new("docker")
-        .arg("info")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+fn docker_available() -> Result<(), String> {
+    match Command::new("docker").arg("info").output() {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).chars().take(400).collect()),
+        Err(e) => Err(format!("docker-commando niet gevonden: {e}")),
+    }
+}
+
+/// Push a JS call into the splash page. All UI feedback from the startup
+/// thread flows through here — a failure must NEVER leave the user staring
+/// at an eternal progress bar with the real error hidden in stderr.
+fn splash_eval(app: &AppHandle, js: String) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.eval(&js);
+    }
+}
+
+fn splash_status(app: &AppHandle, text: &str) {
+    splash_eval(app, format!("window.setStatus && window.setStatus({})",
+                             serde_json::to_string(text).unwrap_or_default()));
+}
+
+fn splash_error(app: &AppHandle, kind: &str, detail: &str) {
+    splash_eval(app, format!(
+        "window.showError && window.showError({}, {})",
+        serde_json::to_string(kind).unwrap_or_default(),
+        serde_json::to_string(detail).unwrap_or_default()));
 }
 
 fn compose_command(env_path: &Path, compose_path: &Path) -> Command {
@@ -156,13 +177,21 @@ fn compose_command(env_path: &Path, compose_path: &Path) -> Command {
     cmd
 }
 
-fn compose_up(env_path: &Path, compose_path: &Path, build: bool) -> std::io::Result<bool> {
+fn compose_up(env_path: &Path, compose_path: &Path, build: bool) -> Result<(), String> {
     let mut cmd = compose_command(env_path, compose_path);
     cmd.arg("up").arg("-d");
     if build {
         cmd.arg("--build");
     }
-    Ok(cmd.status()?.success())
+    match cmd.output() {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            Err(err.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev()
+                .collect::<Vec<_>>().join("\n"))
+        }
+        Err(e) => Err(format!("docker compose up mislukt: {e}")),
+    }
 }
 
 fn compose_down(env_path: &Path, compose_path: &Path) {
@@ -182,64 +211,88 @@ fn wait_for_health(max_wait: Duration) -> bool {
     false
 }
 
+static STARTUP_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The full startup sequence, with every phase and every failure reported
+/// INTO the splash page — an eternal spinner without explanation is not an
+/// acceptable failure mode. Re-runnable via the `startup_retry` command.
+fn spawn_startup(handle: AppHandle) {
+    use std::sync::atomic::Ordering;
+    if STARTUP_RUNNING.swap(true, Ordering::SeqCst) {
+        return; // already running — the retry button can't stack attempts
+    }
+    std::thread::spawn(move || {
+        let done = || STARTUP_RUNNING.store(false, Ordering::SeqCst);
+        let app_data_dir = handle.path().app_data_dir().expect("app data dir must resolve");
+        let root = deployment_root(&handle);
+        let compose_path = root.join("docker-compose.yml");
+
+        splash_status(&handle, "Docker wordt gecontroleerd…");
+        if let Err(detail) = docker_available() {
+            splash_error(&handle, "docker", &detail);
+            done();
+            return;
+        }
+        let env_path = resolve_env_path(&root, &app_data_dir);
+        if let Err(e) = ensure_env_file(&env_path) {
+            splash_error(&handle, "config", &format!(".env aanmaken mislukt: {e}"));
+            done();
+            return;
+        }
+        let built_marker = app_data_dir.join(".built");
+        let need_build = !built_marker.exists();
+        splash_status(&handle, if need_build {
+            "Images worden gebouwd — dit duurt de eerste keer een paar minuten…"
+        } else {
+            "Containers worden gestart…"
+        });
+        match compose_up(&env_path, &compose_path, need_build) {
+            Ok(()) => {
+                if need_build {
+                    let _ = fs::write(&built_marker, b"1");
+                }
+            }
+            Err(detail) => {
+                splash_error(&handle, "compose", &detail);
+                done();
+                return;
+            }
+        }
+        splash_status(&handle, "Wachten tot LabX gezond is…");
+        if wait_for_health(HEALTH_TIMEOUT) {
+            if let Some(win) = handle.get_webview_window("main") {
+                if let Ok(url) = APP_URL.parse() {
+                    let _ = win.navigate(url);
+                }
+            }
+        } else {
+            splash_error(&handle, "health",
+                         &format!("Geen reactie van {HEALTH_URL} binnen {}s.",
+                                  HEALTH_TIMEOUT.as_secs()));
+        }
+        done();
+    });
+}
+
+#[tauri::command]
+fn startup_retry(app: AppHandle) {
+    spawn_startup(app);
+}
+
+#[tauri::command]
+fn open_docker_download() {
+    let _ = tauri_plugin_opener::open_url(
+        "https://www.docker.com/products/docker-desktop/", None::<String>);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![startup_retry, open_docker_download])
         .setup(|app| {
             let handle = app.handle().clone();
-
-            // The splash page (src/index.html) is the initial window content
-            // declared in tauri.conf.json — we navigate it to the real app
-            // once Docker Compose reports healthy, or leave a plain message
-            // on screen if Docker itself isn't available at all.
-            let app_data_dir = handle
-                .path()
-                .app_data_dir()
-                .expect("app data dir must resolve");
-            let root = deployment_root(&handle);
-            let compose_path = root.join("docker-compose.yml");
-
-            std::thread::spawn(move || {
-                if !docker_available() {
-                    eprintln!(
-                        "Docker is niet beschikbaar. Installeer Docker Desktop: \
-                         https://www.docker.com/products/docker-desktop/"
-                    );
-                    return;
-                }
-                let env_path = resolve_env_path(&root, &app_data_dir);
-                if let Err(e) = ensure_env_file(&env_path) {
-                    eprintln!(".env aanmaken mislukt: {e}");
-                    return;
-                }
-                let built_marker = app_data_dir.join(".built");
-                let need_build = !built_marker.exists();
-                match compose_up(&env_path, &compose_path, need_build) {
-                    Ok(true) => {
-                        if need_build {
-                            let _ = fs::write(&built_marker, b"1");
-                        }
-                    }
-                    Ok(false) => {
-                        eprintln!("docker compose up gaf een foutcode terug");
-                        return;
-                    }
-                    Err(e) => {
-                        eprintln!("docker compose up mislukt: {e}");
-                        return;
-                    }
-                }
-                if wait_for_health(HEALTH_TIMEOUT) {
-                    if let Some(win) = handle.get_webview_window("main") {
-                        if let Ok(url) = APP_URL.parse() {
-                            let _ = win.navigate(url);
-                        }
-                    }
-                } else {
-                    eprintln!("LabX werd niet op tijd gezond (timeout na {HEALTH_TIMEOUT:?})");
-                }
-            });
+            spawn_startup(handle);
 
             // System tray: closing the window hides it instead of quitting —
             // a lab may have a long job in flight, same convention as Docker

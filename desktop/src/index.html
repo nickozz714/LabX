@@ -14,11 +14,21 @@
         <h1>LabX</h1>
       </div>
 
-      <p class="status" id="status">Docker Compose wordt opgestart…</p>
+      <p class="status" id="status">LabX wordt gestart…</p>
 
-      <div class="progress"><div class="progress-bar"></div></div>
+      <div class="progress" id="progress"><div class="progress-bar"></div></div>
 
-      <div class="tip-card">
+      <div class="error-card" id="error-card" hidden>
+        <div class="error-title" id="error-title">Er ging iets mis</div>
+        <p class="error-msg" id="error-msg"></p>
+        <pre class="error-detail" id="error-detail" hidden></pre>
+        <div class="error-actions">
+          <button id="btn-retry">Opnieuw proberen</button>
+          <button id="btn-docker" class="secondary" hidden>Docker Desktop downloaden</button>
+        </div>
+      </div>
+
+      <div class="tip-card" id="tip-card">
         <div class="tip-label" id="tip-label">Wist je dat?</div>
         <p class="tip" id="tip">LabX geeft elke opdracht zijn eigen Docker-sandbox — experimenteer er vrolijk op los, je systeem blijft schoon.</p>
       </div>
@@ -63,16 +73,58 @@
         }, 400);
       }, 6000);
 
-      const STATUSES = [
-        "Docker Compose wordt opgestart…",
-        "Containers worden gebouwd en gestart…",
-        "Nog heel even — LabX wordt wakker…",
-      ];
-      let s = 0;
-      setInterval(() => {
-        s = (s + 1) % STATUSES.length;
-        statusEl.textContent = STATUSES[s];
-      }, 12000);
+      // ── API voor de Rust-shell (echte fase-updates & fouten) ─────────────
+      const ERRORS = {
+        docker: {
+          title: "Docker is niet beschikbaar",
+          msg: "LabX draait bovenop Docker. Installeer Docker Desktop, start het, en probeer het dan opnieuw. Zonder Docker kan LabX niet gebruikt worden.",
+          showDocker: true,
+        },
+        compose: {
+          title: "Opstarten van de containers mislukte",
+          msg: "Docker draait, maar het bouwen/starten van LabX gaf een fout. Details hieronder — vaak helpt opnieuw proberen (netwerkhaperingen tijdens het bouwen zijn de meest voorkomende oorzaak).",
+          showDocker: false,
+        },
+        health: {
+          title: "LabX reageert niet",
+          msg: "De containers zijn gestart, maar de LabX-backend werd niet op tijd gezond. Probeer het opnieuw; blijft dit gebeuren, kijk dan in Docker Desktop naar de logs van de 'labx-api'-container.",
+          showDocker: false,
+        },
+        config: {
+          title: "Configuratie aanmaken mislukte",
+          msg: "LabX kon zijn instellingenbestand niet wegschrijven. Details hieronder.",
+          showDocker: false,
+        },
+      };
+
+      window.setStatus = (text) => {
+        statusEl.textContent = text;
+      };
+
+      window.showError = (kind, detail) => {
+        const e = ERRORS[kind] || { title: "Er ging iets mis", msg: detail || "", showDocker: false };
+        document.getElementById("error-title").textContent = e.title;
+        document.getElementById("error-msg").textContent = e.msg;
+        const det = document.getElementById("error-detail");
+        if (detail && ERRORS[kind]) { det.textContent = detail; det.hidden = false; } else { det.hidden = true; }
+        document.getElementById("btn-docker").hidden = !e.showDocker;
+        document.getElementById("error-card").hidden = false;
+        document.getElementById("progress").hidden = true;
+        document.getElementById("tip-card").hidden = true;
+        statusEl.textContent = "LabX kan zo niet starten.";
+      };
+
+      const invoke = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core.invoke : null;
+      document.getElementById("btn-retry").addEventListener("click", () => {
+        document.getElementById("error-card").hidden = true;
+        document.getElementById("progress").hidden = false;
+        document.getElementById("tip-card").hidden = false;
+        statusEl.textContent = "Opnieuw proberen…";
+        if (invoke) invoke("startup_retry");
+      });
+      document.getElementById("btn-docker").addEventListener("click", () => {
+        if (invoke) invoke("open_docker_download");
+      });
     </script>
   </body>
 </html>
