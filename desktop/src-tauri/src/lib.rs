@@ -203,11 +203,10 @@ fn compose_command(env_path: &Path, compose_path: &Path) -> Command {
     cmd
 }
 
-fn compose_up(env_path: &Path, compose_path: &Path, build: bool) -> Result<(), String> {
+fn run_compose(env_path: &Path, compose_path: &Path, args: &[&str]) -> Result<(), String> {
     let mut cmd = compose_command(env_path, compose_path);
-    cmd.arg("up").arg("-d");
-    if build {
-        cmd.arg("--build");
+    for a in args {
+        cmd.arg(a);
     }
     match cmd.output() {
         Ok(o) if o.status.success() => Ok(()),
@@ -216,7 +215,7 @@ fn compose_up(env_path: &Path, compose_path: &Path, build: bool) -> Result<(), S
             Err(err.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev()
                 .collect::<Vec<_>>().join("\n"))
         }
-        Err(e) => Err(format!("docker compose up mislukt: {e}")),
+        Err(e) => Err(format!("docker compose {} mislukt: {e}", args.first().unwrap_or(&""))),
     }
 }
 
@@ -266,19 +265,32 @@ fn spawn_startup(handle: AppHandle) {
             return;
         }
         let built_marker = app_data_dir.join(".built");
-        let need_build = !built_marker.exists();
-        splash_status(&handle, if need_build {
-            "Images worden gebouwd — dit duurt de eerste keer een paar minuten…"
-        } else {
-            "Containers worden gestart…"
-        });
-        match compose_up(&env_path, &compose_path, need_build) {
-            Ok(()) => {
-                if need_build {
-                    let _ = fs::write(&built_marker, b"1");
+        let first_run = !built_marker.exists();
+        if first_run {
+            // Pull-first: kant-en-klare images van GHCR (~1 min) in plaats
+            // van minutenlang lokaal bouwen. Lokaal bouwen blijft de
+            // fallback voor als GHCR onbereikbaar is.
+            splash_status(&handle, "Images worden gedownload van GitHub — dit duurt de eerste keer ongeveer een minuut…");
+            let pulled = run_compose(&env_path, &compose_path, &["pull"]).is_ok();
+            if pulled {
+                splash_status(&handle, "Containers worden gestart…");
+                if let Err(detail) = run_compose(&env_path, &compose_path, &["up", "-d"]) {
+                    splash_error(&handle, "compose", &detail);
+                    done();
+                    return;
+                }
+            } else {
+                splash_status(&handle, "Downloaden lukte niet — images worden lokaal gebouwd (dit kan een paar minuten duren)…");
+                if let Err(detail) = run_compose(&env_path, &compose_path, &["up", "-d", "--build"]) {
+                    splash_error(&handle, "compose", &detail);
+                    done();
+                    return;
                 }
             }
-            Err(detail) => {
+            let _ = fs::write(&built_marker, b"1");
+        } else {
+            splash_status(&handle, "Containers worden gestart…");
+            if let Err(detail) = run_compose(&env_path, &compose_path, &["up", "-d"]) {
                 splash_error(&handle, "compose", &detail);
                 done();
                 return;

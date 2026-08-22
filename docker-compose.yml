@@ -13,9 +13,11 @@ volumes:
 
 services:
   api:
+    # Voorgebakken image van GHCR (docker compose pull) met lokale build als
+    # fallback (docker compose up --build) — zie .github/workflows/images.yml.
     build:
       context: ./backend
-    image: labx-backend:local
+    image: ${LABX_BACKEND_IMAGE:-ghcr.io/nickozz714/labx-backend:latest}
     container_name: labx-api
     restart: unless-stopped
     networks:
@@ -64,7 +66,7 @@ services:
   web:
     build:
       context: ./frontend
-    image: labx-frontend:local
+    image: ${LABX_FRONTEND_IMAGE:-ghcr.io/nickozz714/labx-frontend:latest}
     container_name: labx-web
     restart: unless-stopped
     depends_on:

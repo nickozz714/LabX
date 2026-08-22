@@ -1,0 +1,87 @@
+# Voorgebakken backend/frontend-images naar GHCR, zodat de desktop-app (en
+# elke server-deploy) ze PULLT in plaats van minutenlang lokaal te bouwen.
+# Native runners per architectuur (amd64 + arm64 — GitHub's gratis
+# arm-runners voor publieke repos) en daarna één multi-arch manifest;
+# QEMU-emulatie is vermeden omdat de azure-cli-installatie in het
+# backend-image daaronder tergend traag is.
+name: images
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: nickozz714
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push backend (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/labx-backend:${{ github.sha }}-${{ matrix.arch }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=backend-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=backend-${{ matrix.arch }}
+
+      - name: Build & push frontend (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/labx-frontend:${{ github.sha }}-${{ matrix.arch }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=frontend-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=frontend-${{ matrix.arch }}
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Multi-arch manifesten publiceren (versie + latest)
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="edge"
+          fi
+          for img in labx-backend labx-frontend; do
+            base="${REGISTRY}/${OWNER}/${img}"
+            docker buildx imagetools create \
+              -t "${base}:${VERSION}" -t "${base}:latest" \
+              "${base}:${GITHUB_SHA}-amd64" "${base}:${GITHUB_SHA}-arm64"
+          done
