@@ -102,6 +102,7 @@
       };
 
       window.showError = (kind, detail) => {
+        errorShown = true;
         const e = ERRORS[kind] || { title: "Er ging iets mis", msg: detail || "", showDocker: false };
         document.getElementById("error-title").textContent = e.title;
         document.getElementById("error-msg").textContent = e.msg;
@@ -115,7 +116,27 @@
       };
 
       const invoke = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core.invoke : null;
+
+      // POLL de shell voor de actuele opstartstatus. Een gepushte fout kan
+      // de paginalaad-race verliezen (docker-check faalt sneller dan de
+      // pagina laadt) — pollen kan niets missen, dus geen eeuwige spinner.
+      let errorShown = false;
+      if (invoke) {
+        setInterval(async () => {
+          try {
+            const s = await invoke("startup_state");
+            if (s.error_kind && !errorShown) {
+              errorShown = true;
+              window.showError(s.error_kind, s.error_detail || "");
+            } else if (!s.error_kind && s.status && !errorShown) {
+              statusEl.textContent = s.status;
+            }
+          } catch { /* shell nog niet klaar — volgende tick */ }
+        }, 1000);
+      }
+
       document.getElementById("btn-retry").addEventListener("click", () => {
+        errorShown = false;
         document.getElementById("error-card").hidden = true;
         document.getElementById("progress").hidden = false;
         document.getElementById("tip-card").hidden = false;

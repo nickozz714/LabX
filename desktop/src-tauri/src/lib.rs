@@ -146,25 +146,51 @@ fn docker_available() -> Result<(), String> {
     }
 }
 
-/// Push a JS call into the splash page. All UI feedback from the startup
-/// thread flows through here — a failure must NEVER leave the user staring
-/// at an eternal progress bar with the real error hidden in stderr.
-fn splash_eval(app: &AppHandle, js: String) {
+/// Startup-state shared with the splash page. The page POLLS this via the
+/// `startup_state` command instead of relying on pushed JS evals: a push
+/// races the page load (the docker check can fail before `window.showError`
+/// even exists, silently losing the error — observed as an "eternal
+/// spinner" on a Docker-less Windows VM). Polling can't lose anything.
+#[derive(Default, Clone, serde::Serialize)]
+struct StartupState {
+    status: String,
+    error_kind: Option<String>,
+    error_detail: Option<String>,
+}
+
+static STARTUP_STATE: std::sync::Mutex<Option<StartupState>> = std::sync::Mutex::new(None);
+
+fn splash_status(app: &AppHandle, text: &str) {
+    if let Ok(mut s) = STARTUP_STATE.lock() {
+        let st = s.get_or_insert_with(Default::default);
+        st.status = text.to_string();
+        st.error_kind = None;
+        st.error_detail = None;
+    }
+    // Push too, for snappiness when the page IS already loaded.
     if let Some(win) = app.get_webview_window("main") {
-        let _ = win.eval(&js);
+        let _ = win.eval(&format!("window.setStatus && window.setStatus({})",
+                                  serde_json::to_string(text).unwrap_or_default()));
     }
 }
 
-fn splash_status(app: &AppHandle, text: &str) {
-    splash_eval(app, format!("window.setStatus && window.setStatus({})",
-                             serde_json::to_string(text).unwrap_or_default()));
+fn splash_error(app: &AppHandle, kind: &str, detail: &str) {
+    if let Ok(mut s) = STARTUP_STATE.lock() {
+        let st = s.get_or_insert_with(Default::default);
+        st.error_kind = Some(kind.to_string());
+        st.error_detail = Some(detail.to_string());
+    }
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.eval(&format!(
+            "window.showError && window.showError({}, {})",
+            serde_json::to_string(kind).unwrap_or_default(),
+            serde_json::to_string(detail).unwrap_or_default()));
+    }
 }
 
-fn splash_error(app: &AppHandle, kind: &str, detail: &str) {
-    splash_eval(app, format!(
-        "window.showError && window.showError({}, {})",
-        serde_json::to_string(kind).unwrap_or_default(),
-        serde_json::to_string(detail).unwrap_or_default()));
+#[tauri::command]
+fn startup_state() -> StartupState {
+    STARTUP_STATE.lock().ok().and_then(|s| s.clone()).unwrap_or_default()
 }
 
 fn compose_command(env_path: &Path, compose_path: &Path) -> Command {
@@ -276,6 +302,9 @@ fn spawn_startup(handle: AppHandle) {
 
 #[tauri::command]
 fn startup_retry(app: AppHandle) {
+    if let Ok(mut s) = STARTUP_STATE.lock() {
+        *s = Some(StartupState { status: "Opnieuw proberen…".into(), ..Default::default() });
+    }
     spawn_startup(app);
 }
 
@@ -289,7 +318,7 @@ fn open_docker_download() {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![startup_retry, open_docker_download])
+        .invoke_handler(tauri::generate_handler![startup_retry, open_docker_download, startup_state])
         .setup(|app| {
             let handle = app.handle().clone();
             spawn_startup(handle);
