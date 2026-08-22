@@ -42,6 +42,15 @@ jobs:
         with:
           workspaces: desktop/src-tauri
 
+      - name: Stem de app-versie af op de tag (installernaam = release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        working-directory: desktop/src-tauri
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          node -e "const fs=require('fs');const f='tauri.conf.json';const j=JSON.parse(fs.readFileSync(f));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n')" "$V"
+          echo "app-versie gezet op $V"
+
       - name: Install desktop deps
         working-directory: desktop
         run: npm ci
