@@ -8,10 +8,71 @@
   </head>
 
   <body>
-    <main class="container">
-      <h1>LabX wordt gestart…</h1>
-      <p>Docker Compose wordt opgestart — dit venster schakelt automatisch door zodra LabX klaar is.</p>
-      <p class="hint">Eerste keer? Dit kan een paar minuten duren terwijl de images gebouwd worden.</p>
+    <main class="splash">
+      <div class="logo">
+        <span class="logo-dot"></span>
+        <h1>LabX</h1>
+      </div>
+
+      <p class="status" id="status">Docker Compose wordt opgestart…</p>
+
+      <div class="progress"><div class="progress-bar"></div></div>
+
+      <div class="tip-card">
+        <div class="tip-label" id="tip-label">Wist je dat?</div>
+        <p class="tip" id="tip">LabX geeft elke opdracht zijn eigen Docker-sandbox — experimenteer er vrolijk op los, je systeem blijft schoon.</p>
+      </div>
+
+      <p class="hint">Eerste keer? De images worden nu gebouwd — dat kan een paar minuten duren. Daarna start LabX in seconden.</p>
     </main>
+
+    <script>
+      const TIPS = [
+        ["Wist je dat?", "LabX geeft elke opdracht zijn eigen Docker-sandbox — experimenteer er vrolijk op los, je systeem blijft schoon."],
+        ["Tip", "Typ /model sonnet of /model opus in de chat om per gesprek van model te wisselen — of gebruik de dropdown bovenin."],
+        ["Nectar 🐝", "Koppel Nectar als MCP-server en je agent kent ineens het hele organisatiegeheugen: beslissingen, conventies, skills en workflows."],
+        ["Wist je dat?", "De data-egress-guard controleert alles wat een lab verlaat — klantdata blijft binnen, ook als de agent enthousiast wordt."],
+        ["Tip", "Langlopend werk? De agent zet het zelf als achtergrondtaak weg. Jij chat gewoon door; het resultaat verschijnt vanzelf in het gesprek."],
+        ["Nectar 🐝", "Met de automatische hook doet LabX vóór elke chatbeurt een hive_recall bij Nectar — relevante organisatiekennis, zonder erom te vragen."],
+        ["Wist je dat?", "Een lab overleeft een herstart: /workspace staat op een volume, dus je werk blijft staan tot de TTL verloopt."],
+        ["Tip", "Wijs een Azure-profiel toe aan je lab en de agent kan met az-tokens rechtstreeks Fabric- en Azure-API's aanroepen — vanuit de sandbox."],
+        ["Nectar 🐝", "Skills uit Nectar zijn geen documentatie maar gereedschap: de agent installeert de bijbehorende scripts in het lab en gebruikt ze écht."],
+        ["Wist je dat?", "De agent mag in zijn lab alles installeren wat hij nodig heeft — apt, pip, npm. Dat is precies waar de sandbox voor is."],
+        ["Tip", "Shift+Enter voor een nieuwe regel, gewoon Enter om te versturen — en berichten ondersteunen volledige Markdown."],
+        ["Wist je dat?", "Wegnavigeren tijdens een antwoord? Geen probleem — de beurt draait server-side door en de chat haakt weer aan zodra je terugkomt."],
+        ["Tip", "In het zijpaneel van de chat zie je live je tokenverbruik en de kosten per gesprek — plus alle achtergrondtaken."],
+        ["Nectar 🐝", "Nectar is de gedeelde organisatie-brein voor ál je Claude-sessies: wat één agent leert, weet de volgende ook. Eén keer uitleggen is genoeg."],
+        ["Wist je dat?", "Schedules draaien prompts of workflows op een cron-schema tegen een lab — je eigen nachtelijke agent-batchjobs."],
+        ["Tip", "De Skill Wizard laat je per tool instructies meegeven én toont het input-schema — zo weet de agent precies hoe jouw tools werken."],
+      ];
+
+      const tipEl = document.getElementById("tip");
+      const labelEl = document.getElementById("tip-label");
+      const statusEl = document.getElementById("status");
+      let i = Math.floor(Math.random() * TIPS.length);
+
+      setInterval(() => {
+        i = (i + 1) % TIPS.length;
+        tipEl.classList.add("fade-out");
+        labelEl.classList.add("fade-out");
+        setTimeout(() => {
+          labelEl.textContent = TIPS[i][0];
+          tipEl.textContent = TIPS[i][1];
+          tipEl.classList.remove("fade-out");
+          labelEl.classList.remove("fade-out");
+        }, 400);
+      }, 6000);
+
+      const STATUSES = [
+        "Docker Compose wordt opgestart…",
+        "Containers worden gebouwd en gestart…",
+        "Nog heel even — LabX wordt wakker…",
+      ];
+      let s = 0;
+      setInterval(() => {
+        s = (s + 1) % STATUSES.length;
+        statusEl.textContent = STATUSES[s];
+      }, 12000);
+    </script>
   </body>
 </html>
