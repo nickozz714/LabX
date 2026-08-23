@@ -1,129 +1,105 @@
 # LabX
 
-Een losstaande "Lab" app — een POC die de ND3X Lab-functionaliteit (Docker-werkruimte
-+ Claude Code CLI-agent + data-egress-guard) kopieert als zelfstandig product, zonder
-ND3X-afhankelijkheid. Zie `docs/PLAN.md`-achtergrond in de sessie die dit gebouwd heeft
-voor de volledige context; kort samengevat lost LabX drie pijnpunten uit ND3X op:
+**LabX is een veilige AI-werkplaats: je geeft een AI-agent een eigen, afgeschermde
+Docker-sandbox ("lab") waarin hij écht werk doet — code draaien, data verwerken,
+repositories bouwen, tools en API's gebruiken — terwijl jij bepaalt wat er in en uit
+mag.**
 
-1. **Docker "niet beschikbaar"** — LabX draait zelf in een container maar mount
-   `/var/run/docker.sock`, heeft de docker-CLI in het image, en start labs als
-   **sibling-containers** naast zichzelf op dezelfde daemon (`GET /api/system/docker`
-   geeft een concrete diagnose i.p.v. een blinde 503).
-2. **Tool-keuze kost tokens** — de chat draait altijd als Claude Code CLI-agent met
-   tool-search aan: alleen naam+beschrijving van elke toegestane tool staat in context,
-   schema's laden on demand. Skills zijn how-to, geen poortwachter.
-3. **Skill Wizard zonder tools** — de wizard laat je tools (gegroepeerd per MCP-server,
-   host of in-lab) kiezen, toont per tool het input-schema als leidraad, en laat je per
-   tool een instructie opgeven.
+Waarom LabX:
+
+- **Echt werk, geen chat-theater** — de agent (Claude Code CLI) heeft een volledige
+  shell, bestandssysteem en netwerk *binnen het lab*. Hij installeert wat hij mist,
+  test wat hij bouwt en levert resultaat op (inclusief publiceren naar git).
+- **Afgeschermd by design** — alles draait in een wegwerpbare container. De
+  data-egress-guard controleert wat het lab verlaat (regelset + optioneel een lokaal
+  guard-model via Ollama). Sluit een lab en het is weg.
+- **Token-zuinig toolgebruik** — de agent ziet alleen naam + beschrijving van elke
+  toegestane tool; schema's laden on demand. Skills zijn how-to-kennis, geen
+  poortwachter.
+- **Uitbreidbaar** — koppel MCP-servers (extern op de host óf als proces ín het lab),
+  bundel kennis in skills met per-tool instructies, automatiseer met workflows en
+  cron-schedules.
+- **Volledig zicht** — live stappen en redenatie van de agent, tokenteller +
+  context-indicator, achtergrondtaken die doorlopen terwijl jij weg navigeert.
+
+## Installeren
+
+**Desktop-app (aanbevolen)** — download de installer van de
+[Releases-pagina](https://github.com/nickozz714/LabX/releases): macOS `.dmg` of
+Windows `.exe`. Vereist [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+en een Claude-abonnement (`claude setup-token`). De app haalt voorgebakken images van
+GHCR (met lokale build als fallback), genereert zelf secrets en leidt je bij de eerste
+start door de setup: accountnaam + wachtwoord kiezen, Docker-check, setup-token plakken.
+
+**Docker Compose (server of lokaal):**
+
+```bash
+git clone https://github.com/nickozz714/LabX.git && cd LabX
+cp .env.example .env   # vul LABX_ADMIN_PASSWORD, LABX_JWT_SECRET, LABX_FERNET_KEY in
+docker compose up -d --build
+```
+
+- Web-UI: http://localhost:8080 — API: http://localhost:8090 (Swagger op `/docs`)
+- Optioneel lokaal guard-model meestarten: `docker compose --profile with-ollama up -d`
+
+Meer detail (server-hardening, reverse proxy, docker-socket-proxy, GHCR-images):
+zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
+
+## Wat zit erin
+
+| Onderdeel | Kort |
+| --- | --- |
+| **Labs** | Docker-sandboxes (sibling containers), bestandsbrowser, exec, interactieve terminal (xterm.js), egress-guard, publish-naar-git, az-login |
+| **Chat** | Claude Code CLI als volwaardige agent, gekoppeld aan een draaiend lab; Markdown, live stappen, tokenteller, per-chat model/effort (dropdown + `/model`, `/effort`) |
+| **Achtergrondtaken** | Handmatig of door het model zelf gestart; turns draaien server-side door, ook als je wegnavigeert — Taken-tab in het rechterpaneel |
+| **MCP-servers** | Host- (extern) of lab-servers (stdio in de container), scope per sessie/lab/beide, Azure-profielkoppeling, bulk-acties |
+| **Skills** | Wizard met tool-picker (gegroepeerd per MCP-server), per tool instructies + input-schema-preview; installeerbaar in een lab (incl. bestanden) |
+| **Workflows & schedules** | Markdown-stappen met visuele editor; cron-schedules draaien een prompt of workflow tegen een lab |
+| **Azure-profielen** | Meerdere versleutelde identiteiten, syncbaar naar host of lab |
+| **Hooks** | Meerdere automatische hooks per gebeurtenis, zichtbaar als ⚙️-stappen in de chat |
 
 ## Architectuur
 
 ```
 LabX/
-  backend/    FastAPI + SQLite, src/{models,schemas,routers,services}
+  backend/    FastAPI + SQLite — src/{models,schemas,routers,services}
   frontend/   Vite + React + TypeScript + Tailwind
+  desktop/    Tauri-shell (macOS/Windows) rond dezelfde compose-stack
   docker-compose.yml
 ```
 
-- **Labs**: Docker-werkruimtes (sibling containers via de gemounte socket), met
-  data-egress-guard (regels + optioneel lokaal LLM als tweede mening), bestandsbrowser,
-  exec, interactieve terminal (xterm.js), publish-naar-git, az-login.
-- **Chat**: vereist een gekoppeld, draaiend lab — zonder lab werkt de invoer niet. Draait
-  de Claude Code CLI als volwaardige agent, uitgekleed tot alleen `mcp__labx`-tools.
-- **MCP**: servers zijn **host** (extern, naast LabX) of **lab** (stdio-proces via
-  `docker exec -i` in de lab-container) — beide tegelijk bruikbaar in één chat (eerst
-  extern ophalen, dan in de sandbox verwerken).
-- **Skills/Tools/Workflows**: skills koppelen tools met een schema-preview + per-tool
-  instructie; workflows zijn Markdown-stappen met een visuele stap-editor (geen DAG).
-- **Scheduling**: cron-expressies (croniter) draaien een prompt of workflow tegen een lab.
-- **Azure-profielen**: meerdere Fernet-versleutelde identiteiten, syncbaar naar de LabX-
-  host of naar een lab.
+De backend mount `/var/run/docker.sock` en start labs als **sibling-containers** op
+dezelfde Docker-daemon, verbonden via een eigen bridge-netwerk. `GET /api/system/docker`
+geeft altijd een concrete diagnose (CLI aanwezig? daemon bereikbaar? socket gemount?).
 
-## Lokaal draaien
+## Ontwikkelen
 
 ```bash
-cd LabX
-cp .env.example .env   # vul LABX_ADMIN_PASSWORD, LABX_JWT_SECRET, LABX_FERNET_KEY in
-docker compose up --build
-```
-
-- API: http://localhost:8090 (docs op `/docs`)
-- Web: http://localhost:8080
-- Inloggen met `LABX_ADMIN_USERNAME` / `LABX_ADMIN_PASSWORD`.
-
-Zonder een `CLAUDE_CODE_OAUTH_TOKEN` (of later via Instellingen ingesteld) kan de chat
-geen Claude Code CLI starten — labs aanmaken/beheren werkt al wel.
-
-Optioneel lokaal guard-model (Ollama) als sidecar meestarten:
-
-```bash
-docker compose --profile with-ollama up --build
-```
-
-## Draaien als desktop-app (Windows/macOS, via Tauri)
-
-`desktop/` is een dunne Tauri-shell rond precies dezelfde `docker-compose.yml` hierboven —
-géén andere backend/frontend, alleen een ander opstartpad: bij eerste start genereert de
-shell zelf een `.env` (admin-wachtwoord, JWT/Fernet-secrets, intern token) in de
-OS-app-datamap, draait `docker compose up -d --build`, wacht op `/api/system/health`, en
-toont de bestaande web-UI dan in een native venster. Sluiten minimaliseert naar het
-systeemvak (een lab kan nog bezig zijn) — écht afsluiten via het vak-menu draait ook
-`docker compose down`. **Vereist Docker Desktop** — de eerste-keer-wizard in de app zelf
-controleert dit en laat je ook meteen je `claude setup-token` plakken.
-
-```bash
-cd LabX/desktop
-npm install
-npm run tauri dev     # macOS/Linux/Windows dev-run tegen de lokale checkout
-npm run tauri build   # installer (.app/.dmg, .msi/.exe, .deb/.AppImage) voor dit platform
-```
-
-Een Windows-installer bouwen/testen kan alleen op Windows zelf of via een
-`windows-latest` CI-runner — dit is niet cross-compileerbaar vanaf macOS/Linux.
-
-## Draaien op de eigen server
-
-1. Kopieer de repo naar de server, of clone 'm daar.
-2. `cp .env.example .env` en vul in (gebruik een sterk wachtwoord/secret op een
-   internetbereikbare server).
-3. `docker compose up -d --build`.
-4. Zet een reverse proxy (nginx-proxy, Traefik, …) voor `:8080`/`:8090` als de server ook
-   andere sites host — zie de `flux`-aanpak die Nectar/ND3X al gebruiken voor het patroon.
-
-### Verharden: docker-socket-proxy
-
-De directe `docker.sock`-mount geeft de api-container praktisch root op de host. Voor een
-server met meerdere projecten is een socket-proxy (bv. `tecnativa/docker-socket-proxy`)
-tussen de api-container en de socket de eenvoudigste verbetering: alleen de proxy mount de
-echte socket, en `LABX_DOCKER_HOST=tcp://socket-proxy:2375` in `.env` is de enige wijziging
-— de runtime-laag (`services/lab/docker_runtime.py`) leest `DOCKER_HOST` al uit settings.
-Test `docker exec -it` vroeg tegen de proxy: dat is het commando dat een te beperkte proxy-
-policy het eerst breekt (hijacked streams moeten worden doorgelaten).
-
-## Testen
-
-```bash
-cd backend
-python3 -m venv .venv && source .venv/bin/activate
+# backend
+cd backend && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 LABX_HOME=/tmp/labx LABX_ADMIN_PASSWORD=test LABX_JWT_SECRET=test-secret-min-32-chars \
 LABX_FERNET_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())") \
 python3 -m uvicorn server:app --app-dir src --port 8090
-```
 
-```bash
-cd frontend
-npm install
+# frontend
+cd frontend && npm install
+npm run dev     # proxied naar localhost:8090
 npm run build   # tsc -b && vite build
-npm run dev     # proxied naar localhost:8090, zie vite.config.ts
+
+# desktop
+cd desktop && npm install
+npm run tauri dev
+npm run tauri build   # installer voor het huidige platform
 ```
 
-`scripts/smoke.sh` loopt het hoofdpad af tegen een draaiende `docker compose up`-stack:
-inloggen, Docker-diagnose, lab aanmaken, exec, opruimen.
+`scripts/smoke.sh` loopt het hoofdpad af tegen een draaiende stack: inloggen,
+Docker-diagnose, lab aanmaken, exec, opruimen. Windows-installers bouwt de CI
+(`windows-latest`); cross-compilen vanaf macOS/Linux kan niet.
 
-## Wat bewust dun blijft
+## Status
 
-Geen multi-tenant/rollen, geen publish-sidecar-hardening, geen uitgebreide testsuite,
-geen provider-registry (één CLI-runtime), geen Docker-Hub-image-cache, geen mobiele
-variant. Zie de sessie die dit gebouwd heeft voor het volledige fase-plan en de bewuste
-vereenvoudigingen t.o.v. ND3X.
+LabX is een jong project met een bewust dunne kern: geen multi-tenant/rollen, één
+agent-runtime, geen mobiele variant. Zie de
+[wiki](https://github.com/nickozz714/LabX/wiki) voor de volledige documentatie en de
+[Releases](https://github.com/nickozz714/LabX/releases) voor installers.
