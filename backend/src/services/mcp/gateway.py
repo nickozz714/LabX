@@ -305,6 +305,94 @@ def build_server():
             meta={"labx_builtin": "lab__shell_exec"},
         ))
 
+    # Board-tools — alleen als er een agent board aan dit lab hangt. Dit is
+    # wat "het ticket aanvullen" mogelijk maakt: de agent leest en schrijft het
+    # bord zelf, tijdens de run, in plaats van dat LabX achteraf een antwoord
+    # ergens neerplakt. Ze staan óók in een achtergrondrun aan (een
+    # ticket-run IS een achtergrondrun).
+    board = None
+    if lab_id:
+        with SessionLocal() as db:
+            from services.boards.board_service import BoardService
+            board = BoardService(db).board_for_lab(lab_id)
+            board_name = board.name if board else None
+            board_columns = [f"{c.get('key')} ({c.get('name')})"
+                             for c in (board.columns or [])] if board else []
+    if board is not None:
+        def _board_tool(tool_name: str):
+            async def _handler(**kwargs: Any) -> Any:
+                url = os.environ.get("LABX_INTERNAL_URL")
+                token = os.environ.get("LABX_INTERNAL_TOKEN")
+                return await _delegate_execute(url, token, tool_name=tool_name,
+                                               args=kwargs or {}, lab_id=lab_id)
+            return _handler
+
+        columns_hint = ", ".join(board_columns) or "geen kolommen"
+        board_specs = [
+            ("board__list_tickets",
+             f"Toon de tickets op het board '{board_name}' dat aan dit lab hangt. "
+             f"Kolommen: {columns_hint}.\nArgs: status (string, kolom-key), limit (integer)",
+             {"type": "object", "properties": {
+                 "status": {"type": "string", "description": "Filter op kolom-key"},
+                 "limit": {"type": "integer", "description": "Maximum aantal (standaard 50)"},
+             }}),
+            ("board__get_ticket",
+             "Haal één ticket op met alle opmerkingen. Werkt met de LabX-sleutel "
+             "(bv. LAB-12) of de externe sleutel (bv. een Jira-key).\nArgs: key* (string)",
+             {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}),
+            ("board__create_ticket",
+             "Maak een nieuw ticket op het board — bv. vervolgwerk dat je tijdens "
+             "een run tegenkomt. `description` is de OPDRACHT (wat er moet gebeuren), "
+             "`acceptance_criteria` is wanneer het klaar is.\n"
+             "Args: title* (string), description (string), acceptance_criteria (string), "
+             "status (string), priority (string: low|normal|high|urgent), labels (array)",
+             {"type": "object", "properties": {
+                 "title": {"type": "string"},
+                 "description": {"type": "string",
+                                 "description": "De opdracht in Markdown — niet een verslag"},
+                 "acceptance_criteria": {"type": "string",
+                                         "description": "Toetsbare criteria in Markdown, meestal een lijstje"},
+                 "status": {"type": "string", "description": f"Kolom-key. Kolommen: {columns_hint}"},
+                 "priority": {"type": "string"},
+                 "labels": {"type": "array", "items": {"type": "string"}},
+             }, "required": ["title"]}),
+            ("board__update_ticket",
+             "Wijzig de OPDRACHT van een ticket: titel, omschrijving, acceptatiecriteria, "
+             "labels, prioriteit, of verplaats het naar een andere kolom. "
+             "LET OP: `description` is de opdracht, GEEN verslag — zet je bevindingen, "
+             "voortgang of resultaten nooit hier neer maar in `board__comment_ticket`. "
+             "Werk de omschrijving alleen bij als de opdracht zelf onduidelijk of "
+             "onvolledig blijkt.\n"
+             "Args: key* (string), title (string), description (string), "
+             "acceptance_criteria (string), status (string), priority (string), "
+             "assignee (string), labels (array)",
+             {"type": "object", "properties": {
+                 "key": {"type": "string"},
+                 "title": {"type": "string"},
+                 "description": {"type": "string",
+                                 "description": "De opdracht in Markdown. Vervangt de bestaande tekst — geen verslag hier"},
+                 "acceptance_criteria": {"type": "string",
+                                         "description": "Toetsbare criteria in Markdown, meestal een lijstje"},
+                 "status": {"type": "string", "description": f"Kolom-key. Kolommen: {columns_hint}"},
+                 "priority": {"type": "string"},
+                 "assignee": {"type": "string"},
+                 "labels": {"type": "array", "items": {"type": "string"}},
+             }, "required": ["key"]}),
+            ("board__comment_ticket",
+             "Plaats een opmerking op een ticket. DIT is de plek voor je bevindingen, "
+             "voortgang, resultaten, vragen en waarom je vastliep — het werklogboek. "
+             "Markdown mag. Gebruik hiervoor nooit de omschrijving.\n"
+             "Args: key* (string), body* (string)",
+             {"type": "object", "properties": {
+                 "key": {"type": "string"}, "body": {"type": "string"},
+             }, "required": ["key", "body"]}),
+        ]
+        for tool_name, description, schema in board_specs:
+            mcp.add_tool(FunctionTool(
+                name=tool_name, description=description, parameters=schema,
+                fn=_board_tool(tool_name), meta={"labx_builtin": tool_name},
+            ))
+
     # Background-task tools — ONLY for a foreground, thread-bound chat turn.
     # A background run gets no thread env and carries LABX_GATEWAY_IS_BG, so
     # these tools simply don't exist there: a background task cannot spawn
@@ -356,7 +444,8 @@ def build_server():
             meta={"labx_builtin": "task__check_background"},
         ))
     log.infox("MCP gateway (stdio) gebouwd", lab_bound=bool(lab_id),
-              thread_bound=bool(thread_id), background=is_bg)
+              thread_bound=bool(thread_id), background=is_bg,
+              board_bound=board is not None)
     return mcp
 
 

@@ -208,13 +208,19 @@ export interface WorkflowDto {
   updated_at: string;
 }
 
+export type ScheduleKind = "prompt" | "workflow" | "board";
+
 export interface ScheduleDto {
   id: number;
   name: string;
   cron_expression: string;
   lab_id: string;
+  kind: ScheduleKind;
   prompt: string | null;
   workflow_id: number | null;
+  board_id: number | null;
+  board_column: string | null;
+  board_max_tickets: number;
   json_schema: string | null;
   is_enabled: boolean;
   last_run_at: string | null;
@@ -241,4 +247,126 @@ export interface AzureProfileDto {
   identity: Record<string, any> | null;
   created_at: string;
   updated_at: string;
+}
+
+
+// ── Agent board ─────────────────────────────────────────────────────────────
+
+export interface BoardColumnDto {
+  key: string;
+  name: string;
+  is_done?: boolean;
+  wip_limit?: number;
+}
+
+export type BoardProvider = "local" | "azure_devops" | "jira";
+export type SyncDirection = "pull" | "two_way";
+
+export interface BoardDto {
+  id: number;
+  name: string;
+  description: string | null;
+  key_prefix: string;
+  lab_id: string | null;
+  lab_name?: string | null;
+  lab_status?: string | null;
+  columns: BoardColumnDto[];
+  agent_column: string | null;
+  agent_done_column: string | null;
+  agent_instruction: string | null;
+  provider: BoardProvider;
+  provider_config: Record<string, any>;
+  has_secret: boolean;
+  sync_direction: SyncDirection;
+  auto_sync_minutes: number;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+  ticket_counts?: Record<string, number>;
+  ticket_total?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type TicketAgentState = "idle" | "queued" | "running" | "done" | "failed";
+export type TicketPriority = "low" | "normal" | "high" | "urgent";
+
+export interface TicketDto {
+  id: number;
+  board_id: number;
+  key: string;
+  title: string;
+  /** De opdracht, in Markdown. Geen werklogboek — dat zijn de comments. */
+  description: string | null;
+  /** Wanneer is het klaar? Markdown, meestal een lijstje. */
+  acceptance_criteria: string | null;
+  status: string;
+  priority: TicketPriority;
+  assignee: string | null;
+  labels: string[];
+  position: number;
+  agent_state: TicketAgentState;
+  agent_run_id: string | null;
+  agent_thread_id: string | null;
+  agent_last_error: string | null;
+  external_provider: string | null;
+  external_id: string | null;
+  external_key: string | null;
+  external_url: string | null;
+  external_synced_at: string | null;
+  dirty: boolean;
+  created_at: string;
+  updated_at: string;
+  comments?: TicketCommentDto[];
+}
+
+export interface TicketCommentDto {
+  id: number;
+  ticket_id: number;
+  kind: "comment" | "activity";
+  author: string;
+  body: string;
+  external_id: string | null;
+  pushed: boolean;
+  created_at: string;
+}
+
+export interface ProviderFieldSpec {
+  key: string;
+  label: string;
+  required: boolean;
+  placeholder?: string;
+  multiline?: boolean;
+}
+
+export interface ProviderSpec {
+  key: BoardProvider;
+  name: string;
+  description: string;
+  fields: ProviderFieldSpec[];
+  secret_label: string | null;
+  state_hint?: string;
+  write_note?: string;
+}
+
+export interface BoardSyncStats {
+  board_id: number;
+  provider: string;
+  direction: SyncDirection;
+  pushed: number;
+  created_external: number;
+  comments_pushed: number;
+  pulled: number;
+  created_local: number;
+  updated_local: number;
+  comments_pulled: number;
+  skipped_dirty: number;
+  errors: string[];
+}
+
+export interface AgentRunStart {
+  run_id: string;
+  thread_id: string;
+  ticket_id: number;
+  ticket_key: string;
+  status: string;
 }

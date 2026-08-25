@@ -16,6 +16,10 @@ Waarom LabX:
 - **Token-zuinig toolgebruik** — de agent ziet alleen naam + beschrijving van elke
   toegestane tool; schema's laden on demand. Skills zijn how-to-kennis, geen
   poortwachter.
+- **Werk dat zichzelf oppakt** — hang een **agent board** aan een lab: tickets in
+  kolommen, en de agent pakt ze op, doet het werk in het lab en vult het ticket zelf
+  aan. Handmatig, of op een cron-schedule. Boards synchroniseren met **Azure DevOps**
+  of **Jira**.
 - **Uitbreidbaar** — koppel MCP-servers (extern op de host óf als proces ín het lab),
   bundel kennis in skills met per-tool instructies, automatiseer met workflows en
   cron-schedules.
@@ -54,15 +58,60 @@ zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
 | **Achtergrondtaken** | Handmatig of door het model zelf gestart; turns draaien server-side door, ook als je wegnavigeert — Taken-tab in het rechterpaneel |
 | **MCP-servers** | Host- (extern) of lab-servers (stdio in de container), scope per sessie/lab/beide, Azure-profielkoppeling, bulk-acties |
 | **Skills** | Wizard met tool-picker (gegroepeerd per MCP-server), per tool instructies + input-schema-preview; installeerbaar in een lab (incl. bestanden) |
-| **Workflows & schedules** | Markdown-stappen met visuele editor; cron-schedules draaien een prompt of workflow tegen een lab |
+| **Workflows & schedules** | Markdown-stappen met visuele editor; cron-schedules draaien een prompt, een workflow, of board-werk tegen een lab |
+| **Agent boards** | Kanban gekoppeld aan een lab; de agent pakt tickets op, werkt in het lab en doet verslag op het ticket (`board__*`-tools). Opdracht, acceptatiecriteria en tijdlijn staan gescheiden. Two-way sync met Azure DevOps / Jira, of alleen lezen |
 | **Azure-profielen** | Meerdere versleutelde identiteiten, syncbaar naar host of lab |
 | **Hooks** | Meerdere automatische hooks per gebeurtenis, zichtbaar als ⚙️-stappen in de chat |
+
+## Agent boards
+
+Een board is een kanban-bord dat aan een lab hangt. Die koppeling is het punt: pakt de
+agent een ticket op, dan werkt hij ín dat lab — zelfde sandbox, zelfde egress-guard,
+zelfde allowlist als een chat. Tijdens de run heeft hij `board__*`-tools waarmee hij het
+ticket leest, opmerkingen plaatst en het naar een andere kolom verplaatst; het resultaat
+staat dus op het ticket en niet in een chatlog. De thread achter zo'n run is dan ook
+verborgen in de Chat-pagina — board-werk leest je op het board.
+
+**Een ticket heeft drie gescheiden vlakken**, en die scheiding wordt in de agent-prompt
+en in de tool-beschrijvingen afgedwongen:
+
+| Vlak | Wat erin hoort | Wie schrijft |
+| --- | --- | --- |
+| **Omschrijving** | de opdracht — wat er moet gebeuren (Markdown) | mens; de agent alleen om een onduidelijke opdracht aan te scherpen |
+| **Acceptatiecriteria** | wanneer is het klaar (Markdown, toetsbaar lijstje) | mens, of de agent stelt ze op als ze ontbreken |
+| **Tijdlijn** | bevindingen, voortgang, vragen — nieuwste bovenaan | mens en agent |
+
+Zonder die scheiding schrijft een agent zijn verslag zowel in een opmerking als onder de
+omschrijving, en is na twee runs niet meer te zien wat er oorspronkelijk gevraagd werd.
+De agent toetst zijn werk expliciet aan de acceptatiecriteria en meldt per criterium of
+eraan voldaan is.
+
+Werk laten oppakken kan op drie manieren:
+
+- **Per ticket** — "Agent starten" in het ticketpaneel, met optioneel een extra instructie.
+- **Per bord** — "Pak werk op" neemt de bovenste tickets uit de agent-kolom.
+- **Op tijd** — een schedule van het type *board-werk* doet hetzelfde volgens cron.
+
+**Externe koppeling.** Een board kan zijn tickets uit **Azure DevOps Boards** (work items,
+PAT met scope *Work Items read/write*) of **Jira Cloud** (issues, e-mail + API-token)
+halen. De richting is per board instelbaar:
+
+- `two_way` (standaard) — velden, status en opmerkingen gaan ook terug naar de bron,
+  inclusief wat de agent op een ticket schrijft.
+- `pull` — de bron is leidend en LabX schrijft niets terug.
+
+De sync doet eerst de push en dan de pull, zodat een nog niet weggeschreven lokale
+wijziging niet door de bron overschreven wordt. De statusmapping (bordkolom ↔ status in de
+bron) stel je per board in; "verbinding testen" haalt de echte statusnamen op zodat je ze
+niet hoeft te raden. LabX-activiteitsregels ("verplaatst van X naar Y") blijven binnen
+LabX — alleen echte opmerkingen gaan naar buiten.
 
 ## Architectuur
 
 ```
 LabX/
   backend/    FastAPI + SQLite — src/{models,schemas,routers,services}
+              services/boards/  board- en ticketlogica, agent-runs, DevOps/Jira-sync
   frontend/   Vite + React + TypeScript + Tailwind
   desktop/    Tauri-shell (macOS/Windows) rond dezelfde compose-stack
   docker-compose.yml

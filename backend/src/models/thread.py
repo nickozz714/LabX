@@ -20,6 +20,12 @@ class Thread(Base):
     lab_id: Mapped[str] = mapped_column(String(64), ForeignKey("labs.id", ondelete="CASCADE"), nullable=False)
     # Claude Code CLI session id, for --resume across turns in this thread.
     cli_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # "chat" = een gesprek dat de gebruiker zelf begon; "board" = de thread
+    # achter een agent-run op een ticket. Board-threads worden NIET in de
+    # chatlijst getoond: dat werk hoort thuis op het ticket (als opmerkingen),
+    # niet als losse gesprekken die de chat vervuilen. De thread blijft wel
+    # bestaan — hij draagt de CLI-sessie en de volledige stappen van de run.
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="chat")
     # Per-chat overrides (null = fall back to the global default from
     # Settings). Deliberately only settable from the ChatPage itself — the
     # dropdowns/slash commands there, never a Settings-page field — chat

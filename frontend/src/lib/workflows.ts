@@ -23,4 +23,5 @@ export const scheduleApi = {
   update: (id: number, payload: Record<string, any>) => api.patch<ScheduleDto>(`/schedules/${id}`, payload),
   remove: (id: number) => api.delete<{ ok: boolean }>(`/schedules/${id}`),
   runs: (id: number) => api.get<ScheduleRunDto[]>(`/schedules/${id}/runs`),
+  runNow: (id: number) => api.post<{ ok: boolean; scheduled_for: string }>(`/schedules/${id}/run`),
 };

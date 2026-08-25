@@ -67,6 +67,88 @@ def _task_check_background(db: Session, payload: Dict[str, Any]) -> Dict[str, An
     return {"result": "\n".join(lines)}
 
 
+def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
+                args: Dict[str, Any]) -> Dict[str, Any]:
+    """De board__*-builtins uit de gateway. Het bord volgt uit het lab waar de
+    run aan hangt — de agent kiest dus nooit zelf een ander bord."""
+    from services.boards.board_service import BoardService
+    if not lab_id:
+        return {"error": "Board-tools vereisen een labgebonden run."}
+    svc = BoardService(db)
+    board = svc.board_for_lab(lab_id)
+    if board is None:
+        return {"error": "Aan dit lab hangt geen board."}
+
+    def _resolve(key: str):
+        ticket = svc.ticket_by_key(board.id, key)
+        if ticket is None:
+            raise ValueError(f"Ticket '{key}' bestaat niet op board '{board.name}'.")
+        return ticket
+
+    try:
+        if tool_name == "board__list_tickets":
+            limit = int(args.get("limit") or 50)
+            rows = svc.list_tickets(board.id, status=args.get("status") or None, limit=limit)
+            if not rows:
+                return {"result": "Geen tickets gevonden."}
+            lines = [f"Board '{board.name}' — {len(rows)} ticket(s):"]
+            for t in rows:
+                lines.append(f"- {t.key} [{t.status}] ({t.priority}) {t.title}"
+                             + (f" — extern: {t.external_key}" if t.external_key else ""))
+            return {"result": "\n".join(lines)}
+
+        if tool_name == "board__get_ticket":
+            t = _resolve(str(args.get("key") or ""))
+            lines = [f"{t.key} — {t.title}",
+                     f"Kolom: {t.status} | Prioriteit: {t.priority}"
+                     + (f" | Toegewezen: {t.assignee}" if t.assignee else ""),
+                     f"Labels: {', '.join(str(x) for x in (t.labels or [])) or '-'}"]
+            if t.external_key:
+                lines.append(f"Extern: {t.external_provider} {t.external_key} {t.external_url or ''}")
+            lines += ["", "Omschrijving (de opdracht):", (t.description or "(leeg)")]
+            lines += ["", "Acceptatiecriteria:", (t.acceptance_criteria or "(nog niet ingevuld)")]
+            comments = svc.list_comments(t.id)
+            if comments:
+                lines += ["", "Opmerkingen:"]
+                for c in comments:
+                    lines.append(f"- [{c.kind}/{c.author}] {(c.body or '')[:1000]}")
+            return {"result": "\n".join(lines)}
+
+        if tool_name == "board__create_ticket":
+            t = svc.create_ticket(board.id, {
+                "title": args.get("title"), "description": args.get("description"),
+                "acceptance_criteria": args.get("acceptance_criteria"),
+                "status": args.get("status"), "priority": args.get("priority"),
+                "labels": args.get("labels"),
+            }, author="agent")
+            return {"result": f"Ticket {t.key} aangemaakt in kolom '{t.status}'."}
+
+        if tool_name == "board__update_ticket":
+            t = _resolve(str(args.get("key") or ""))
+            payload = {k: v for k, v in args.items()
+                       if k in ("title", "description", "acceptance_criteria", "status",
+                                "priority", "assignee", "labels")
+                       and v is not None}
+            if not payload:
+                return {"error": "Geef minstens één veld op om bij te werken."}
+            updated = svc.update_ticket(t.id, payload, author="agent")
+            return {"result": f"{updated.key} bijgewerkt ({', '.join(payload)}); "
+                              f"kolom is nu '{updated.status}'."}
+
+        if tool_name == "board__comment_ticket":
+            t = _resolve(str(args.get("key") or ""))
+            body = str(args.get("body") or "").strip()
+            if not body:
+                return {"error": "body mag niet leeg zijn."}
+            svc.add_comment(t.id, body=body, author="agent")
+            return {"result": f"Opmerking geplaatst op {t.key}."}
+    except ValueError as exc:
+        return {"error": str(exc)}
+    except HTTPException as exc:
+        return {"error": str(exc.detail)}
+    return {"error": f"Onbekende board-tool: {tool_name}"}
+
+
 def _root_error(exc: BaseException) -> BaseException:
     """The mcp SDK's client context managers wrap a tool failure in (nested)
     ExceptionGroups on exit, so str(exc) is the useless 'unhandled errors in
@@ -110,6 +192,8 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             return await _task_start_background(db, payload, lab_id, args)
         if payload.get("tool_name") == "task__check_background":
             return _task_check_background(db, payload)
+        if str(payload.get("tool_name") or "").startswith("board__"):
+            return _board_tool(db, str(payload["tool_name"]), lab_id, args)
         tool_id = payload.get("tool_id")
         if tool_id is None:
             raise HTTPException(status_code=400, detail="tool_id of tool_name is verplicht")

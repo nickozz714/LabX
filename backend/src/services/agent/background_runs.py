@@ -35,6 +35,12 @@ log = get_logger(__name__)
 # cancel() can find them.
 _ACTIVE_TASKS: Dict[str, asyncio.Task] = {}
 _SUBSCRIBERS: Dict[str, List[asyncio.Queue]] = {}
+# Afloop-hooks per run: callables die één keer draaien zodra de run een
+# eindstatus bereikt. Bedoeld voor werk dat AAN de run hangt maar er niet in
+# thuishoort — een board-ticket bijwerken nadat de agent hem heeft opgepakt.
+# Ze krijgen een EIGEN db-sessie (zie _run_finish_hooks): de sessie van de run
+# is op dat moment al aan het afsluiten.
+_FINISH_HOOKS: Dict[str, List[Any]] = {}
 
 _TERMINAL = ("completed", "failed", "cancelled", "interrupted")
 
@@ -76,6 +82,30 @@ def _publish(run_id: str, event: Dict[str, Any]) -> None:
 def is_active(run_id: str) -> bool:
     t = _ACTIVE_TASKS.get(run_id)
     return t is not None and not t.done()
+
+
+def on_finish(run_id: str, hook) -> None:
+    """Registreer een callback `hook(db, run)` die draait zodra deze run een
+    eindstatus heeft. Een falende hook mag de run nooit alsnog laten stuk
+    lopen — hij is een gevolg van de run, geen onderdeel ervan."""
+    _FINISH_HOOKS.setdefault(run_id, []).append(hook)
+
+
+def _run_finish_hooks(run_id: str) -> None:
+    hooks = _FINISH_HOOKS.pop(run_id, None)
+    if not hooks:
+        return
+    from db.database import SessionLocal
+    db = SessionLocal()
+    try:
+        run = db.get(BackgroundRun, run_id)
+        for hook in hooks:
+            try:
+                hook(db, run)
+            except Exception as exc:  # noqa: BLE001
+                log.warningx("afloop-hook mislukt", run_id=run_id, error=str(exc)[:300])
+    finally:
+        db.close()
 
 
 def start(db: Session, *, thread_id: str, lab_id: str,
@@ -217,6 +247,7 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
             log.warningx("achtergrondtaak-afronding mislukt", run_id=run_id, error=str(exc)[:300])
         finally:
             db.close()
+        _run_finish_hooks(run_id)
         _publish(run_id, {"kind": "run_status", "status": status})
 
 

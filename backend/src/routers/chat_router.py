@@ -41,7 +41,12 @@ def _message_dict(m: Message) -> Dict[str, Any]:
 
 @router.get("/threads")
 def list_threads(db: Session = Depends(get_db)):
-    rows = db.query(Thread).order_by(Thread.updated_at.desc()).all()
+    """Alleen echte chats. De threads achter agent-runs op een board-ticket
+    (source="board") blijven bestaan — ze dragen de CLI-sessie en de stappen —
+    maar horen niet in deze lijst: dat werk leest de gebruiker op het ticket."""
+    rows = (db.query(Thread)
+            .filter(Thread.source != "board")
+            .order_by(Thread.updated_at.desc()).all())
     return [_thread_dict(t) for t in rows]
 
 
@@ -156,6 +161,14 @@ def list_background_runs(thread_id: str | None = None, status: str | None = None
     q = db.query(BackgroundRun)
     if thread_id:
         q = q.filter(BackgroundRun.thread_id == thread_id)
+    else:
+        # Zonder expliciete thread is dit de chat-brede lijst (o.a. de teller
+        # in de navigatiebalk): agent-runs op een board-ticket horen daar niet
+        # bij. Wie ze wél wil ziet ze op het ticket zelf.
+        from models.thread import Thread as _Thread
+        board_threads = [t.id for t in db.query(_Thread).filter(_Thread.source == "board").all()]
+        if board_threads:
+            q = q.filter(BackgroundRun.thread_id.notin_(board_threads))
     if status:
         q = q.filter(BackgroundRun.status == status)
     if mode:

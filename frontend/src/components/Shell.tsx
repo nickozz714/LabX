@@ -10,6 +10,7 @@ import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
 import {
   Boxes, MessageSquare, Settings, Wrench, Workflow, CalendarClock, KeyRound, LogOut,
+  KanbanSquare,
 } from "lucide-react";
 import { chatApi } from "@/lib/chat";
 
@@ -18,6 +19,7 @@ const WIZARD_DISMISSED_KEY = "labx_wizard_dismissed";
 const NAV = [
   { to: "/labs", label: "Labs", icon: Boxes },
   { to: "/chat", label: "Chat", icon: MessageSquare },
+  { to: "/boards", label: "Boards", icon: KanbanSquare },
   { to: "/skills", label: "Skills & Tools", icon: Wrench },
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/schedules", label: "Scheduling", icon: CalendarClock },

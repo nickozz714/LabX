@@ -9,6 +9,8 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { SkillsPage } from "@/pages/SkillsPage";
 import { WorkflowsPage } from "@/pages/WorkflowsPage";
 import { SchedulesPage } from "@/pages/SchedulesPage";
+import { BoardsPage } from "@/pages/BoardsPage";
+import { BoardPage } from "@/pages/BoardPage";
 import { AzureProfilesPage } from "@/pages/AzureProfilesPage";
 
 const queryClient = new QueryClient();
@@ -35,6 +37,8 @@ function AppRoutes() {
         <Route path="labs" element={<LabsPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="skills" element={<SkillsPage />} />
+        <Route path="boards" element={<BoardsPage />} />
+        <Route path="boards/:boardId" element={<BoardPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="schedules" element={<SchedulesPage />} />
         <Route path="azure-profiles" element={<AzureProfilesPage />} />

@@ -47,10 +47,18 @@ _ADDITIVE_COLUMNS = {
     ],
     "schedules": [
         ("json_schema", "TEXT"),
+        ("kind", "VARCHAR(16) NOT NULL DEFAULT 'prompt'"),
+        ("board_id", "INTEGER"),
+        ("board_column", "VARCHAR(64)"),
+        ("board_max_tickets", "INTEGER NOT NULL DEFAULT 1"),
     ],
     "threads": [
         ("model", "VARCHAR(128)"),
         ("effort", "VARCHAR(16)"),
+        ("source", "VARCHAR(16) NOT NULL DEFAULT 'chat'"),
+    ],
+    "tickets": [
+        ("acceptance_criteria", "TEXT"),
     ],
     "background_runs": [
         ("mode", "VARCHAR(16) NOT NULL DEFAULT 'background'"),
@@ -58,7 +66,10 @@ _ADDITIVE_COLUMNS = {
 }
 
 
-def _ensure_columns() -> None:
+def _ensure_columns() -> set[tuple[str, str]]:
+    """Voegt ontbrekende kolommen toe en geeft terug WELKE er zijn toegevoegd,
+    zodat een backfill alleen draait op een kolom die net is ontstaan."""
+    added: set[tuple[str, str]] = set()
     with engine.connect() as conn:
         for table, columns in _ADDITIVE_COLUMNS.items():
             existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
@@ -66,7 +77,37 @@ def _ensure_columns() -> None:
                 if name in existing:
                     continue
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                added.add((table, name))
                 log.info(f"migration: added {table}.{name}")
+        conn.commit()
+    return added
+
+
+# Eenmalige correcties die NA het toevoegen van een kolom moeten draaien.
+# `kind` krijgt door de ALTER TABLE de default 'prompt' — ook voor schedules
+# die al een workflow uitvoerden. Zonder deze backfill zou zo'n bestaande
+# schedule ineens als prompt-schedule draaien (en dus niets doen). Gekoppeld
+# aan het TOEVOEGEN van de kolom, niet aan elke start: wie later bewust een
+# workflow-schedule omzet naar een prompt mag daar niet in teruggedraaid worden.
+_BACKFILLS = [
+    ("schedules", "kind",
+     "UPDATE schedules SET kind = 'workflow' WHERE workflow_id IS NOT NULL AND kind = 'prompt'"),
+    # Threads die al bij een ticket-agentrun hoorden: zonder deze correctie
+    # blijven ze na de upgrade in de chatlijst staan, terwijl board-werk daar
+    # juist uit hoort.
+    ("threads", "source",
+     "UPDATE threads SET source = 'board' WHERE id IN "
+     "(SELECT agent_thread_id FROM tickets WHERE agent_thread_id IS NOT NULL)"),
+]
+
+
+def _run_backfills(added: set[tuple[str, str]]) -> None:
+    with engine.connect() as conn:
+        for table, column, sql in _BACKFILLS:
+            if (table, column) not in added:
+                continue
+            result = conn.execute(text(sql))
+            log.info(f"migration backfill: {table}.{column} ({result.rowcount} rijen)")
         conn.commit()
 
 
@@ -77,6 +118,7 @@ def init_db() -> None:
         audit,
         azure_profile,
         background_run,
+        board,
         lab,
         mcp_server,
         message,
@@ -89,5 +131,5 @@ def init_db() -> None:
     )
 
     Base.metadata.create_all(bind=engine)
-    _ensure_columns()
+    _run_backfills(_ensure_columns())
     log.info("db_initialised")
