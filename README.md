@@ -46,6 +46,23 @@ docker compose up -d --build
 - Web-UI: http://localhost:8080 — API: http://localhost:8090 (Swagger op `/docs`)
 - Optioneel lokaal guard-model meestarten: `docker compose --profile with-ollama up -d`
 
+**Interne server-deployment** — `deploy/docker-compose.server.yml` draait LabX op een
+eigen server zonder hem aan het internet te hangen: de web-container publiceert op één
+LAN-IP (`${LABX_BIND_IP}:${LABX_WEB_PORT}`) in plaats van `0.0.0.0`, de API krijgt
+helemaal geen host-poort (de browser gaat same-origin via `/api` door de web-container),
+en er is geen `VIRTUAL_HOST`-label, dus een reverse proxy/tunnel heeft er geen route
+naartoe. Bereikbaar vanaf het LAN en via VPN, nergens anders.
+
+```bash
+docker compose --env-file .env -f deploy/docker-compose.server.yml pull
+docker compose --env-file .env -f deploy/docker-compose.server.yml up -d
+```
+
+`--env-file .env` is niet optioneel: compose zoekt `.env` naast het compose-bestand, niet
+in je werkmap. Let op dat LabX `/var/run/docker.sock` mount — op een gedeelde server
+betekent dat volledige controle over de Docker-daemon; zet er een docker-socket-proxy
+voor als dat te ver gaat.
+
 Meer detail (server-hardening, reverse proxy, docker-socket-proxy, GHCR-images):
 zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
 

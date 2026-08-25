@@ -1,0 +1,98 @@
+# LabX — INTERNE server-deployment.
+#
+# Doel: een draaiende LabX op de huisserver die ALLEEN intern bereikbaar is —
+# vanaf het LAN en via WireGuard, niet vanaf het internet.
+#
+# Hoe "intern" hier is afgedwongen (zelfde patroon als home-service):
+#   • De web-container publiceert op ${LABX_BIND_IP}:${LABX_WEB_PORT} — de LAN-IP
+#     van de server, niet 0.0.0.0. Geen enkele andere interface krijgt de poort.
+#   • GEEN VIRTUAL_HOST-label → nginx-proxy kent geen route → de Cloudflare-
+#     tunnel kán er fysiek niet bij. Internet-onzichtbaar by construction.
+#   • De API publiceert HELEMAAL geen host-poort. De browser praat met /api op
+#     de web-container, die intern naar api:8090 proxyt (zie frontend/nginx.conf).
+#     Eén poort naar buiten in plaats van twee.
+#
+# Draaien (vanuit de stackmap, met .env ernaast):
+#   docker compose --env-file .env -f deploy/docker-compose.server.yml pull
+#   docker compose --env-file .env -f deploy/docker-compose.server.yml up -d
+#
+# `--env-file .env` is niet optioneel: compose zoekt .env standaard NAAST het
+# compose-bestand (dus in deploy/), niet in de werkmap. Zonder de vlag valt de
+# hele interpolatie stil en faalt de start op een ontbrekende JWT-secret.
+#
+# LET OP — docker.sock: LabX start labs als sibling-containers en heeft daarvoor
+# de Docker-socket nodig. Op een gedeelde server betekent dat: wie LabX (of de
+# agent erin) beheerst, beheerst de hele Docker-daemon — dus ook de andere
+# stacks op deze machine. Dat is inherent aan LabX, geen instelling. Wil je dat
+# niet, zet er dan een docker-socket-proxy voor en wijs LABX_DOCKER_HOST daarheen.
+
+networks:
+  # Gedeelde bridge voor de backend én elke lab-sibling, zodat de backend een
+  # gepubliceerde labpoort via container-DNS bereikt.
+  labx-labs:
+    name: labx-labs
+    driver: bridge
+
+volumes:
+  labx_data:
+  labx_claude_home:
+
+services:
+  api:
+    image: ${LABX_BACKEND_IMAGE:-ghcr.io/nickozz714/labx-backend:latest}
+    container_name: labx-api
+    restart: unless-stopped
+    networks:
+      - labx-labs
+    # Bewust geen `ports:` — alleen de web-container hoeft hierbij te kunnen.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - labx_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # CLI-sessiestatus (~/.claude/projects/*.jsonl). Zonder dit volume wist
+      # elke herstart de sessies terwijl de database er nog naar verwijst.
+      - labx_claude_home:/root/.claude
+    environment:
+      LABX_HOME: /data
+      LABX_ADMIN_USERNAME: ${LABX_ADMIN_USERNAME:-admin}
+      # Leeg laten: bij de eerste start kies je in de UI zelf een account +
+      # wachtwoord (gehasht in de database). Dat is beter dan een wachtwoord
+      # in een .env op een gedeelde server.
+      LABX_ADMIN_PASSWORD: ${LABX_ADMIN_PASSWORD:-}
+      LABX_JWT_SECRET: ${LABX_JWT_SECRET:?set LABX_JWT_SECRET in .env}
+      LABX_FERNET_KEY: ${LABX_FERNET_KEY:?set LABX_FERNET_KEY in .env}
+      LABX_INTERNAL_TOKEN: ${LABX_INTERNAL_TOKEN:?set LABX_INTERNAL_TOKEN in .env}
+      LABX_DOCKER_HOST: ${LABX_DOCKER_HOST:-unix:///var/run/docker.sock}
+      LABX_LAB_NETWORK: labx-labs
+      # Mag leeg blijven: plak de token na de eerste login bij Instellingen.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      LABX_CLI_PATH: ${LABX_CLI_PATH:-claude}
+      LABX_CLI_DEFAULT_MODEL: ${LABX_CLI_DEFAULT_MODEL:-claude-sonnet-5}
+      # Het tweede-opinie-guardmodel staat standaard UIT: de Ollama op deze
+      # server draait als eigen container op `proxy_net` en publiceert geen
+      # host-poort, dus host.docker.internal:11434 (de auto-resolve) bestaat
+      # hier niet. Wil je hem wel: hang deze service ook aan proxy_net
+      # (networks: [labx-labs, proxy_net] + een `proxy_net: {external: true}`
+      # bovenin) en zet DATA_GUARD_LLM_ENABLED=1 met
+      # DATA_GUARD_LLM_URL=http://ollama:11434. Zonder guard-model blijft de
+      # regelgebaseerde egress-guard gewoon werken.
+      DATA_GUARD_LLM_ENABLED: ${DATA_GUARD_LLM_ENABLED:-0}
+      DATA_GUARD_LLM_MODEL: ${DATA_GUARD_LLM_MODEL:-qwen2.5:1.5b}
+      DATA_GUARD_LLM_URL: ${DATA_GUARD_LLM_URL:-}
+      # De browser praat same-origin via de web-container, dus CORS hoeft niet
+      # open te staan.
+      LABX_CORS_ORIGINS: ${LABX_CORS_ORIGINS:-http://${LABX_BIND_IP}:${LABX_WEB_PORT}}
+
+  web:
+    image: ${LABX_FRONTEND_IMAGE:-ghcr.io/nickozz714/labx-frontend:latest}
+    container_name: labx-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      - labx-labs
+    ports:
+      # Alleen de LAN-IP: bereikbaar vanaf het netwerk en via WireGuard,
+      # nergens anders.
+      - "${LABX_BIND_IP}:${LABX_WEB_PORT}:80"
