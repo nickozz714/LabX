@@ -523,7 +523,8 @@ export function BoardSettings({
           >
             Board verwijderen
           </Button>
-          <Button onClick={save}>Opslaan</Button>
+          {/* Zonder wrapper geeft React het klik-event door als `close`. */}
+          <Button onClick={() => save()}>Opslaan</Button>
         </div>
       </div>
     </Modal>
