@@ -141,6 +141,25 @@ class AzureDevOpsAdapter(SyncAdapter):
                     item.comments = await self._fetch_comments(client, item.external_id)
         return items
 
+    async def fetch_items_by_keys(self, keys: List[str]) -> List[ExternalItem]:
+        """Work items op id, buiten de WIQL van het board om."""
+        ids = [int(k) for k in keys if str(k).isdigit()]
+        out: List[ExternalItem] = []
+        if not ids:
+            return out
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for start in range(0, len(ids), 200):
+                batch = await client.post(
+                    f"https://dev.azure.com/{self.organization}/_apis/wit/workitemsbatch?api-version={_API}",
+                    headers=self._headers(),
+                    json={"ids": ids[start:start + 200], "fields": _FIELDS})
+                if batch.status_code >= 400:
+                    log.warningx("DevOps: work items op id ophalen mislukt",
+                                 status=batch.status_code)
+                    continue
+                out.extend(self._to_item(raw) for raw in (batch.json().get("value") or []))
+        return out
+
     async def discover_states(self) -> List[str]:
         """De statussen van het work item type van dit board — ook die waar nu
         geen work item in staat."""

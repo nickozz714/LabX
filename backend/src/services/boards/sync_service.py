@@ -11,9 +11,20 @@ Conflictregel: de bron wint, behalve voor een ticket dat nog `dirty` is (de
 push is mislukt) — dat blijft lokaal staan zodat de wijziging niet verdampt en
 zichtbaar blijft als openstaand verschil.
 
-Statusmapping zit in `provider_config["state_map"]`: {kolom-key: externe
-status}. Ontbreekt een kolom in de map, dan blijft het ticket in de kolom waar
-het staat (pull) resp. wordt de status niet meegestuurd (push) — nooit raden.
+Statusmapping zit in `provider_config["state_map"]`: {kolom-key: [externe
+statussen]}. Ontbreekt een kolom in de map, dan blijft het ticket in de kolom
+waar het staat (pull) resp. wordt de status niet meegestuurd (push) — nooit
+raden.
+
+Die mapping wordt niet aan de gebruiker overgelaten: `_auto_map` leidt hem vóór
+elke sync af uit de bron zelf (`discover_columns`). Dat is nodig omdat de
+KOLOMMEN van een bordbron andere namen dragen dan de STATUSSEN eronder — een
+Jira-bord met kolom "In Progress" kan er de status "Actief" onder hebben. Wie de
+kolomkoppen overtypt (het voor de hand liggende), mapt op namen die als status
+niet bestaan; alles valt dan door de mapping heen en belandt in de eerste kolom.
+`_auto_map` herstelt precies dat geval, vult ontbrekende statussen aan en maakt
+zo nodig een kolom bij. Handmatige keuzes die wél naar een bestaande status
+wijzen blijven staan; `provider_config["auto_map"] = False` zet het uit.
 """
 from __future__ import annotations
 
@@ -29,9 +40,30 @@ from services.boards.sync.base import ExternalItem, build_adapter
 
 log = get_logger(__name__)
 
+# Hoeveel tickets buiten de board-query er per sync alsnog bijgewerkt worden.
+# Ruim genoeg voor een normaal board, en het houdt een bord met duizenden oude
+# tickets ervan af elke sync de bron plat te bellen.
+_RECONCILE_LIMIT = 500
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _slug(name: str) -> str:
+    """Kolomnaam -> kolom-key. "In Progress" wordt "in_progress", waardoor een
+    bronkolom zijn LabX-tegenhanger vindt zonder dat iemand ze koppelt."""
+    out = "".join(ch if ch.isalnum() else "_" for ch in (name or "").lower())
+    return "_".join(part for part in out.split("_") if part)[:32]
+
+
+def _unique_key(base: str, columns: List[Dict[str, Any]]) -> str:
+    key = base or "kolom"
+    n = 2
+    while any(str(c.get("key")) == key for c in columns):
+        key = f"{base}_{n}"
+        n += 1
+    return key
 
 
 class BoardSyncService:
@@ -80,6 +112,87 @@ class BoardSyncService:
         states = self._state_map(board).get(column_key) or []
         return states[0] if states else None
 
+    # ── mapping automatisch afleiden uit de bron ────────────────────────────
+
+    async def _auto_map(self, board: Board, adapter, stats: Dict[str, Any]) -> None:
+        """Repareer en vul `state_map` aan met wat de bron werkelijk kent.
+
+        Drie stappen, in deze volgorde:
+        1. Waarden die geen bestaande status zijn, gaan eruit — dat is de
+           kolomkop-die-als-status-is-ingevuld.
+        2. Elke bronkolom waarvan de statussen nog nergens gemapt zijn, krijgt
+           een LabX-kolom toegewezen: op sleutel, anders op naam, anders de
+           kolom die vóór stap 1 naar díé bronkolom wees, anders een nieuwe.
+        3. Wat er verandert komt in de stats, zodat de sync kan uitleggen
+           waarom een ticket ineens ergens anders staat.
+        """
+        if (board.provider_config or {}).get("auto_map") is False:
+            return
+        try:
+            source_columns = await adapter.discover_columns()
+            declared = await adapter.discover_states()
+        except Exception as exc:  # noqa: BLE001 — mapping mag de sync niet blokkeren
+            log.warningx("Mapping afleiden mislukt", board=board.name, error=str(exc)[:200])
+            return
+        if not source_columns:
+            return
+
+        valid = {s.strip().lower() for s in declared}
+        valid |= {s.strip().lower() for c in source_columns for s in c.states}
+        changes: List[str] = []
+
+        # 1. ongeldige waarden eruit, maar onthouden waar ze naar wezen
+        kept: Dict[str, List[str]] = {}
+        stale: Dict[str, List[str]] = {}
+        for key, states in self._state_map(board).items():
+            good = [s for s in states if s.strip().lower() in valid]
+            bad = [s for s in states if s.strip().lower() not in valid]
+            if good:
+                kept[key] = good
+            if bad:
+                stale[key] = bad
+                changes.append(f"'{key}' wees naar {', '.join(bad)} — bestaat niet als status")
+
+        columns = [dict(c) for c in (board.columns or [])]
+        claimed: set = set()
+
+        def _mapped() -> set:
+            return {x.strip().lower() for vals in kept.values() for x in vals}
+
+        # 2. elke bronkolom een LabX-kolom geven
+        for sc in source_columns:
+            todo = [s for s in sc.states if s.strip().lower() not in _mapped()]
+            if not todo:
+                continue
+            slug = _slug(sc.name)
+            name = sc.name.strip().lower()
+            target = (
+                next((c["key"] for c in columns if str(c.get("key", "")).lower() == slug), None)
+                or next((c["key"] for c in columns
+                         if str(c.get("name", "")).strip().lower() == name), None)
+                # De kolom die vóór stap 1 de KOLOMNAAM als status had staan:
+                # dat was de bedoeling van degene die het invulde.
+                or next((k for k, vals in stale.items()
+                         if k not in claimed
+                         and any(v.strip().lower() == name for v in vals)), None)
+            )
+            if target is None:
+                target = _unique_key(slug, columns)
+                columns.append({"key": target, "name": sc.name})
+                changes.append(f"kolom '{sc.name}' aangemaakt")
+            claimed.add(target)
+            kept.setdefault(target, []).extend(todo)
+            changes.append(f"{sc.name} → {target}: {', '.join(todo)}")
+
+        if not changes:
+            return
+        board.columns = columns
+        board.provider_config = {**(board.provider_config or {}), "state_map": kept}
+        board.updated_at = _now_iso()
+        self.db.commit()
+        stats["mapping"] = changes
+        log.infox("Statusmapping afgeleid uit de bron", board=board.name, changes=len(changes))
+
     def _adapter(self, board: Board):
         if board.provider == "local":
             raise ValueError("Dit board is lokaal — er is geen bron om mee te synchroniseren")
@@ -98,7 +211,9 @@ class BoardSyncService:
             "direction": board.sync_direction,
             "pushed": 0, "created_external": 0, "comments_pushed": 0,
             "pulled": 0, "created_local": 0, "updated_local": 0,
-            "comments_pulled": 0, "skipped_dirty": 0, "errors": [],
+            "comments_pulled": 0, "skipped_dirty": 0, "reconciled": 0, "errors": [],
+            # Wat _auto_map aan de mapping veranderde (leeg = niets te doen).
+            "mapping": [],
             # Statussen uit de bron die op geen enkele kolom gemapt zijn. Zonder
             # dit belandt zo'n ticket stilletjes in de eerste kolom en lijkt het
             # of de sync de status negeert.
@@ -113,6 +228,9 @@ class BoardSyncService:
             raise
 
         try:
+            # Vóór de push: die vertaalt kolommen naar statussen en heeft dus
+            # dezelfde mapping nodig.
+            await self._auto_map(board, adapter, stats)
             if board.sync_direction == "two_way":
                 await self._push(board, adapter, stats)
             await self._pull(board, adapter, stats)
@@ -222,6 +340,52 @@ class BoardSyncService:
             ticket.external_synced_at = _now_iso()
             self.db.commit()
             stats["comments_pulled"] += self._merge_comments(ticket, item)
+
+        await self._reconcile_known(board, adapter, existing,
+                                    {i.external_id for i in items}, stats)
+
+    async def _reconcile_known(self, board: Board, adapter,
+                               existing: Dict[str, Ticket], seen: set,
+                               stats: Dict[str, Any]) -> None:
+        """Tickets die de board-query NIET (meer) teruggeeft, alsnog bijwerken.
+
+        Een JQL/WIQL is meestal een selectie ("mijn issues in de lopende
+        sprint"). Valt een issue daarbuiten, dan blijft het lokale ticket
+        hangen op de status van de laatste keer dat het wél in de query zat —
+        en na een mappingfout is dat de eerste kolom, voorgoed. Deze stap haalt
+        die tickets op hun eigen sleutel op, maakt er nooit nieuwe bij.
+        """
+        stale = [t for external_id, t in existing.items()
+                 if external_id not in seen and not t.dirty]
+        if not stale:
+            return
+        by_key: Dict[str, Ticket] = {}
+        for t in stale[:_RECONCILE_LIMIT]:
+            key = t.external_key or t.external_id
+            if key:
+                by_key[str(key)] = t
+        if len(stale) > _RECONCILE_LIMIT:
+            stats["errors"].append(
+                f"{len(stale) - _RECONCILE_LIMIT} ticket(s) buiten de query niet bijgewerkt "
+                f"(maximaal {_RECONCILE_LIMIT} per sync)")
+        try:
+            items = await adapter.fetch_items_by_keys(list(by_key))
+        except Exception as exc:  # noqa: BLE001
+            stats["errors"].append(f"tickets buiten de query bijwerken: {str(exc)[:200]}")
+            return
+        for item in items:
+            ticket = (existing.get(item.external_id)
+                      or by_key.get(str(item.external_key or "")))
+            if ticket is None or ticket.dirty:
+                continue
+            column = self._column_for_state(board, item.state)
+            if item.state and not column and item.state not in stats["unmapped_states"]:
+                stats["unmapped_states"].append(item.state)
+            if self._apply_external_fields(ticket, item, column):
+                stats["reconciled"] += 1
+            self._apply_external_identity(ticket, board, item)
+            ticket.external_synced_at = _now_iso()
+        self.db.commit()
 
     def _create_from_external(self, board: Board, item: ExternalItem, column: str) -> Ticket:
         board.seq = int(board.seq or 0) + 1

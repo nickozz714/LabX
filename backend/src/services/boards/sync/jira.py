@@ -188,6 +188,31 @@ class JiraAdapter(SyncAdapter):
                     item.comments = await self._fetch_comments(client, item.external_key or item.external_id)
         return items
 
+    async def fetch_items_by_keys(self, keys: List[str]) -> List[ExternalItem]:
+        """`key in (...)` in blokken — Jira's JQL heeft een grens aan de lengte
+        van zo'n opsomming, en een te grote query faalt in zijn geheel."""
+        out: List[ExternalItem] = []
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for start in range(0, len(keys), 50):
+                block = [k for k in keys[start:start + 50] if k]
+                if not block:
+                    continue
+                body = {"jql": "key in ({})".format(",".join(block)),
+                        "fields": self._fields, "maxResults": len(block)}
+                resp = await client.post(f"{self.base_url}/rest/api/3/search/jql",
+                                         headers=self._headers(), json=body)
+                if resp.status_code in (404, 410):
+                    resp = await client.post(f"{self.base_url}/rest/api/3/search",
+                                             headers=self._headers(), json=body)
+                if resp.status_code >= 400:
+                    # Een verwijderd issue laat de hele opsomming falen; dat mag
+                    # de rest van de sync niet meeslepen.
+                    log.warningx("Jira: issues op sleutel ophalen mislukt",
+                                 status=resp.status_code, detail=resp.text[:200])
+                    continue
+                out.extend(self._to_item(raw) for raw in (resp.json().get("issues") or []))
+        return out
+
     # ── ontdekken (statussen + bordkolommen) ────────────────────────────────
 
     async def discover_states(self) -> List[str]:

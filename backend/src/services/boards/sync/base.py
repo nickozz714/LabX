@@ -71,6 +71,13 @@ class SyncAdapter:
     async def fetch_items(self, *, with_comments: bool = True) -> List[ExternalItem]:
         raise NotImplementedError
 
+    async def fetch_items_by_keys(self, keys: List[str]) -> List[ExternalItem]:
+        """Items opzoeken op hun eigen sleutel, buiten de query van het board om.
+        Nodig omdat een board-query (JQL/WIQL) meestal een SELECTIE is: een
+        ticket dat er niet meer in valt bestaat lokaal nog wel, en zou anders
+        voorgoed op zijn laatst bekende status blijven staan."""
+        return []
+
     async def discover_states(self) -> List[str]:
         """Alle statussen die de bron kent — niet alleen die van de opgehaalde
         items. Zonder dit ziet de gebruiker een status pas in de mapping als er

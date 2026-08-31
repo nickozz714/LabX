@@ -367,6 +367,10 @@ export interface BoardSyncStats {
   updated_local: number;
   comments_pulled: number;
   skipped_dirty: number;
+  /** Tickets die buiten de board-query vielen en toch zijn bijgewerkt. */
+  reconciled?: number;
+  /** Wat de automatische statusmapping veranderde (leeg = niets te doen). */
+  mapping?: string[];
   /** Statussen uit de bron die op geen enkele kolom gemapt zijn — die tickets
    *  belanden in de eerste kolom. */
   unmapped_states?: string[];

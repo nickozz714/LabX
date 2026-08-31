@@ -99,7 +99,11 @@ export function BoardPage() {
         `Sync klaar: ${stats.created_local} nieuw, ${stats.updated_local} bijgewerkt, ` +
           `${stats.pushed + stats.created_external} teruggeschreven, ` +
           `${stats.comments_pulled} opmerking(en) opgehaald` +
+          (stats.reconciled ? `, ${stats.reconciled} bijgewerkt buiten de query` : "") +
           (stats.skipped_dirty ? `, ${stats.skipped_dirty} overgeslagen (nog niet gepusht)` : "") +
+          // De mapping kan zichzelf hebben gerepareerd; dan verspringen er
+          // tickets en hoort erbij te staan waarom.
+          (stats.mapping?.length ? ` — statusmapping bijgewerkt: ${stats.mapping.join("; ")}` : "") +
           // Zonder deze regel lijkt het of de sync de status negeert: een niet
           // gemapte status komt in de eerste kolom terecht.
           (stats.unmapped_states?.length
