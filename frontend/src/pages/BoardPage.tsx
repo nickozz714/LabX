@@ -100,6 +100,12 @@ export function BoardPage() {
           `${stats.pushed + stats.created_external} teruggeschreven, ` +
           `${stats.comments_pulled} opmerking(en) opgehaald` +
           (stats.skipped_dirty ? `, ${stats.skipped_dirty} overgeslagen (nog niet gepusht)` : "") +
+          // Zonder deze regel lijkt het of de sync de status negeert: een niet
+          // gemapte status komt in de eerste kolom terecht.
+          (stats.unmapped_states?.length
+            ? ` — niet gekoppelde status(sen): ${stats.unmapped_states.join(", ")}; ` +
+              `koppel ze in Instellingen → Statusmapping, anders belanden die tickets in de eerste kolom`
+            : "") +
           (stats.errors.length ? ` — fouten: ${stats.errors.join("; ")}` : ""),
       );
       refresh().catch(() => {});

@@ -348,6 +348,13 @@ export interface ProviderSpec {
   write_note?: string;
 }
 
+/** Een kolom zoals de BRON hem kent (Jira-bordkolom): een naam met de
+ *  statussen die eronder vallen — bijna nooit precies één. */
+export interface ExternalBoardColumn {
+  name: string;
+  states: string[];
+}
+
 export interface BoardSyncStats {
   board_id: number;
   provider: string;
@@ -360,6 +367,9 @@ export interface BoardSyncStats {
   updated_local: number;
   comments_pulled: number;
   skipped_dirty: number;
+  /** Statussen uit de bron die op geen enkele kolom gemapt zijn — die tickets
+   *  belanden in de eerste kolom. */
+  unmapped_states?: string[];
   errors: string[];
 }
 

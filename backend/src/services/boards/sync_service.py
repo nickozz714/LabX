@@ -42,9 +42,23 @@ class BoardSyncService:
     # ── mapping ─────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _state_map(board: Board) -> Dict[str, str]:
+    def _state_map(board: Board) -> Dict[str, List[str]]:
+        """{kolom-key: [externe statussen]}. Een kolom in de bron is meestal
+        een GROEPJE statussen (een Jira-bordkolom "In uitvoering" kan "In
+        Progress" en "In Review" bevatten), dus een kolom mag er meerdere
+        hebben. Oudere configuraties schreven één string per kolom — die
+        blijven werken, komma's worden gesplitst."""
         raw = (board.provider_config or {}).get("state_map") or {}
-        return {str(k): str(v) for k, v in raw.items() if v}
+        out: Dict[str, List[str]] = {}
+        for key, value in raw.items():
+            if isinstance(value, (list, tuple)):
+                states = [str(v).strip() for v in value]
+            else:
+                states = [part.strip() for part in str(value).split(",")]
+            states = [s for s in states if s]
+            if states:
+                out[str(key)] = states
+        return out
 
     def _column_for_state(self, board: Board, state: Optional[str]) -> Optional[str]:
         """Externe status -> bordkolom. Hoofdletterongevoelig, en als de
@@ -52,8 +66,8 @@ class BoardSyncService:
         if not state:
             return None
         needle = state.strip().lower()
-        for column_key, external in self._state_map(board).items():
-            if str(external).strip().lower() == needle:
+        for column_key, externals in self._state_map(board).items():
+            if any(e.strip().lower() == needle for e in externals):
                 return column_key
         for col in (board.columns or []):
             if str(col.get("key", "")).lower() == needle or str(col.get("name", "")).lower() == needle:
@@ -61,7 +75,10 @@ class BoardSyncService:
         return None
 
     def _state_for_column(self, board: Board, column_key: str) -> Optional[str]:
-        return self._state_map(board).get(column_key)
+        """Push-richting: de EERSTE status van de kolom — dat is de status
+        waar een ticket in terechtkomt als het naar deze kolom verhuist."""
+        states = self._state_map(board).get(column_key) or []
+        return states[0] if states else None
 
     def _adapter(self, board: Board):
         if board.provider == "local":
@@ -82,6 +99,10 @@ class BoardSyncService:
             "pushed": 0, "created_external": 0, "comments_pushed": 0,
             "pulled": 0, "created_local": 0, "updated_local": 0,
             "comments_pulled": 0, "skipped_dirty": 0, "errors": [],
+            # Statussen uit de bron die op geen enkele kolom gemapt zijn. Zonder
+            # dit belandt zo'n ticket stilletjes in de eerste kolom en lijkt het
+            # of de sync de status negeert.
+            "unmapped_states": [],
         }
         try:
             adapter = self._adapter(board)
@@ -184,6 +205,8 @@ class BoardSyncService:
         for item in items:
             ticket = existing.get(item.external_id)
             column = self._column_for_state(board, item.state)
+            if item.state and not column and item.state not in stats["unmapped_states"]:
+                stats["unmapped_states"].append(item.state)
             if ticket is None:
                 ticket = self._create_from_external(board, item, column or fallback_column)
                 stats["created_local"] += 1

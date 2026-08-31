@@ -47,7 +47,8 @@ PROVIDER_SPECS = [
              "placeholder": "SELECT [System.Id] FROM WorkItems WHERE [System.State] <> 'Closed'"},
         ],
         "secret_label": "Personal Access Token (scope: Work Items read/write)",
-        "state_hint": "Bijvoorbeeld: New, Active, Resolved, Closed",
+        "state_hint": ("Bijvoorbeeld New, Active, Resolved, Closed. Meerdere statussen per "
+                       "kolom mag; de eerste is degene waar LabX het work item naartoe zet."),
         "write_note": ("Bij two-way sync schrijft LabX titel, omschrijving, prioriteit, tags "
                        "en status (System.State) terug naar het work item, en plaatst het "
                        "opmerkingen — ook die van de agent. Zet het op 'alleen lezen' voor een "
@@ -64,6 +65,9 @@ PROVIDER_SPECS = [
              "placeholder": "naam@bedrijf.nl"},
             {"key": "project_key", "label": "Projectsleutel", "required": True,
              "placeholder": "BICC"},
+            {"key": "board_name", "label": "Jira-bordnaam (optioneel — anders het eerste bord "
+                                          "van het project)", "required": False,
+             "placeholder": "BICC Sprint board"},
             {"key": "issue_type", "label": "Type voor nieuwe issues", "required": False,
              "placeholder": "Task"},
             {"key": "acceptance_field", "label": "Veld-id voor acceptatiecriteria (optioneel)",
@@ -72,7 +76,9 @@ PROVIDER_SPECS = [
              "multiline": True, "placeholder": "project = BICC AND statusCategory != Done"},
         ],
         "secret_label": "Atlassian API-token",
-        "state_hint": "Bijvoorbeeld: To Do, In Progress, Done",
+        "state_hint": ("Een Jira-bordkolom is een groepje statussen — koppel dus gerust "
+                       "meerdere statussen aan één LabX-kolom. De eerste status van een kolom "
+                       "is degene waar LabX het issue naartoe zet als je het ticket verplaatst."),
         "write_note": ("Bij two-way sync schrijft LabX summary, description, prioriteit en "
                        "labels terug, plaatst het opmerkingen (ook die van de agent) en zet "
                        "het de status om via een Jira-transitie — die moet dus in de workflow "
@@ -261,12 +267,35 @@ async def test_connection(board_id: int, db: Session = Depends(get_db)):
         items = await adapter.fetch_items(with_comments=False)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)[:1000]}
-    states = sorted({i.state for i in items if i.state})
+
+    # Statussen uit de bron zelf (alle, ook lege) aangevuld met wat er in de
+    # opgehaalde items staat — een status waar nu geen issue in zit hoort ook
+    # in de mapping te kunnen.
+    try:
+        declared = await adapter.discover_states()
+    except Exception:  # noqa: BLE001
+        declared = []
+    states = sorted(set(declared) | {i.state for i in items if i.state})
+
+    # De kolommen zoals ze in de bron op het bord staan, met de statussen
+    # eronder: hiermee kan de frontend de mapping in één klik overnemen.
+    try:
+        columns = [{"name": c.name, "states": c.states}
+                   for c in await adapter.discover_columns()]
+    except Exception:  # noqa: BLE001
+        columns = []
+
+    unmapped = [s for s in states
+                if svc._column_for_state(board, s) is None]
     return {
         "ok": True, "found": len(items),
         # De echte statusnamen uit de bron: precies wat de gebruiker nodig
         # heeft om de statusmapping in te vullen zonder te gokken.
         "states": states,
+        "columns": columns,
+        # Statussen die nu op geen kolom uitkomen — die tickets belanden bij een
+        # sync in de eerste kolom. Beter hier gezegd dan achteraf ontdekt.
+        "unmapped_states": unmapped,
         "sample": [{"key": i.external_key, "title": i.title, "state": i.state}
                    for i in items[:5]],
     }

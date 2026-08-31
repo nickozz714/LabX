@@ -6,14 +6,22 @@
  * Jira. De providervelden komen uit de backend (`/boards/providers`), zodat een
  * nieuwe bron hier niets hoeft te veranderen.
  *
- * De statusmapping (kolom -> externe status) heeft een "verbinding testen"-knop
- * die de echte statusnamen uit de bron ophaalt: de mapping goed raden is niet
- * te doen, en een verkeerde naam faalt pas bij de eerste push.
+ * De statusmapping (kolom -> statussen in de bron) heeft een "verbinding
+ * testen"-knop die de echte statusnamen én de bordkolommen uit de bron ophaalt:
+ * de mapping goed raden is niet te doen, en een verkeerde naam faalt pas bij de
+ * eerste push. Die knop laat het scherm bewust OPEN staan — hij slaat op zonder
+ * `onSaved`, want anders sloot het scherm precies voordat je de opgehaalde
+ * statussen kon gebruiken en was de mapping in de praktijk niet in te vullen.
+ *
+ * Een kolom in de bron is een GROEPJE statussen (een Jira-bordkolom "In
+ * uitvoering" kan "In Progress" en "In Review" bevatten). Daarom mapt een
+ * LabX-kolom naar een lijst statussen, en niet naar één naam; de eerste in de
+ * lijst is degene waar LabX het item naartoe zet bij terugschrijven.
  */
 import { useEffect, useState } from "react";
 import { boardApi } from "@/lib/boards";
 import { labsApi } from "@/lib/labs";
-import type { BoardColumnDto, BoardDto, Lab, ProviderSpec } from "@/lib/types";
+import type { BoardColumnDto, BoardDto, ExternalBoardColumn, Lab, ProviderSpec } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { Info } from "lucide-react";
@@ -44,6 +52,9 @@ export function BoardSettings({
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [discoveredStates, setDiscoveredStates] = useState<string[]>([]);
+  const [sourceColumns, setSourceColumns] = useState<ExternalBoardColumn[]>([]);
+  const [unmappedStates, setUnmappedStates] = useState<string[]>([]);
+  const [manualState, setManualState] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState(false);
 
   useEffect(() => {
@@ -52,16 +63,58 @@ export function BoardSettings({
   }, []);
 
   const spec = providers.find((p) => p.key === provider);
-  const stateMap: Record<string, string> = config.state_map || {};
+  // Oudere boards bewaarden één status per kolom als string; die blijft leesbaar
+  // (de backend splitst hem net zo).
+  const stateMap: Record<string, string[]> = normalizeStateMap(config.state_map);
 
-  function setStateFor(columnKey: string, value: string) {
+  function setStatesFor(columnKey: string, states: string[]) {
     const next = { ...stateMap };
-    if (value) next[columnKey] = value;
+    if (states.length) next[columnKey] = states;
     else delete next[columnKey];
     setConfig({ ...config, state_map: next });
   }
 
-  async function save() {
+  function addStateTo(columnKey: string, value: string) {
+    const clean = value.trim();
+    if (!clean) return;
+    const current = stateMap[columnKey] || [];
+    if (current.some((s) => s.toLowerCase() === clean.toLowerCase())) return;
+    setStatesFor(columnKey, [...current, clean]);
+  }
+
+  /** De LabX-kolom waar deze bronkolom nu aan hangt (via zijn statussen). */
+  function linkedColumnFor(sc: ExternalBoardColumn): string {
+    const hit = Object.entries(stateMap).find(([, states]) =>
+      sc.states.some((s) => states.some((x) => x.toLowerCase() === s.toLowerCase())),
+    );
+    return hit?.[0] || "";
+  }
+
+  /** Koppel een hele bronkolom aan een LabX-kolom: al zijn statussen verhuizen
+   *  mee. "__new__" maakt er een LabX-kolom met dezelfde naam bij. */
+  function linkSourceColumn(sc: ExternalBoardColumn, target: string) {
+    let cols = columns;
+    let key = target;
+    if (target === "__new__") {
+      key = uniqueColumnKey(sc.name, cols);
+      cols = [...cols, { key, name: sc.name }];
+      setColumns(cols);
+    }
+    // Eerst overal weghalen: een status hoort bij precies één kolom, anders
+    // wint bij het terugtrekken de eerste kolom die hem toevallig noemt.
+    const next: Record<string, string[]> = {};
+    for (const [k, states] of Object.entries(stateMap)) {
+      const kept = states.filter((s) => !sc.states.some((x) => x.toLowerCase() === s.toLowerCase()));
+      if (kept.length) next[k] = kept;
+    }
+    if (key) next[key] = [...(next[key] || []), ...sc.states];
+    setConfig({ ...config, state_map: next });
+    setUnmappedStates(unmappedStates.filter((s) => !sc.states.includes(s)));
+  }
+
+  /** `close` uit: opslaan zonder het scherm te sluiten — dat doet de
+   *  test-knop, die de opgehaalde statussen hierna nog wil laten zien. */
+  async function save(close = true): Promise<boolean> {
     setError(null);
     try {
       await boardApi.update(board.id, {
@@ -81,9 +134,11 @@ export function BoardSettings({
         // "ongewijzigd laten", niet "wissen".
         ...(secret.trim() ? { provider_secret: secret.trim() } : {}),
       });
-      onSaved();
+      if (close) onSaved();
+      return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Opslaan mislukt");
+      return false;
     }
   }
 
@@ -92,14 +147,18 @@ export function BoardSettings({
     setTestResult(null);
     try {
       // Eerst opslaan: testen op niet-opgeslagen gegevens toont een uitkomst
-      // die niets zegt over wat het board straks doet.
-      await save();
+      // die niets zegt over wat het board straks doet. Het scherm blijft open
+      // (`save(false)`), anders verdwijnt het voordat je de mapping kunt maken.
+      if (!(await save(false))) return;
       const result = await boardApi.testConnection(board.id);
       if (result.ok) {
         setDiscoveredStates(result.states || []);
+        setSourceColumns(result.columns || []);
+        setUnmappedStates(result.unmapped_states || []);
         setTestResult(
           `Verbonden — ${result.found} item(s) gevonden.` +
-            (result.states?.length ? ` Statussen in de bron: ${result.states.join(", ")}` : ""),
+            (result.columns?.length ? ` ${result.columns.length} kolom(men) in de bron.` : "") +
+            (result.states?.length ? ` Statussen: ${result.states.join(", ")}` : ""),
         );
       } else {
         setTestResult(result.error || "Verbinding mislukt");
@@ -309,20 +368,127 @@ export function BoardSettings({
                 </p>
               )}
 
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" className="text-xs" onClick={test} disabled={testing}>
+                  {testing ? "Ophalen…" : "Opslaan & kolommen/statussen ophalen"}
+                </Button>
+                {testResult && <span className="text-xs text-muted-foreground">{testResult}</span>}
+              </div>
+
+              {/* Kolommen uit de bron -> kolommen hier. Dit is de koppeling die
+                  je in Jira ziet; de statuslijst eronder is de fijnregeling. */}
+              {sourceColumns.length > 0 && (
+                <div>
+                  <Label>Kolommen in de bron → kolommen op dit board</Label>
+                  <p className="mb-1 text-xs text-muted-foreground">
+                    Kies per bronkolom waar zijn tickets terechtkomen. Alle statussen van die
+                    kolom verhuizen mee.
+                  </p>
+                  <div className="space-y-1">
+                    {sourceColumns.map((sc) => (
+                      <div key={sc.name} className="flex items-center gap-2">
+                        <span className="w-40 shrink-0 truncate text-xs" title={sc.name}>
+                          {sc.name}
+                        </span>
+                        <span className="w-56 shrink-0 truncate text-xs text-muted-foreground"
+                              title={sc.states.join(", ")}>
+                          {sc.states.length ? sc.states.join(", ") : "geen statussen"}
+                        </span>
+                        <Select
+                          value={linkedColumnFor(sc)}
+                          onChange={(e) => linkSourceColumn(sc, e.target.value)}
+                          disabled={!sc.states.length}
+                        >
+                          <option value="">— niet koppelen</option>
+                          {columns.map((c) => (
+                            <option key={c.key} value={c.key}>
+                              {c.name}
+                            </option>
+                          ))}
+                          <option value="__new__">+ kolom "{sc.name}" aanmaken</option>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
-                <Label>Statusmapping (kolom → status in de bron)</Label>
+                <Label>Statusmapping (kolom → statussen in de bron)</Label>
                 <p className="mb-1 text-xs text-muted-foreground">
-                  {spec.state_hint} Leeg laten = die kolom wordt niet aan een externe status gekoppeld.
+                  {spec.state_hint} Leeg laten = die kolom wordt niet aan een externe status
+                  gekoppeld; tickets met een niet-gekoppelde status belanden in de eerste kolom.
                 </p>
                 <div className="space-y-1">
                   {columns.map((c) => (
-                    <div key={c.key} className="flex items-center gap-2">
-                      <span className="w-32 shrink-0 text-xs text-muted-foreground">{c.name}</span>
-                      <Input
-                        list={`states-${board.id}`}
-                        value={stateMap[c.key] || ""}
-                        onChange={(e) => setStateFor(c.key, e.target.value)}
-                      />
+                    <div key={c.key} className="flex items-start gap-2">
+                      <span className="w-32 shrink-0 pt-1.5 text-xs text-muted-foreground">
+                        {c.name}
+                      </span>
+                      <div className="flex-1 space-y-1">
+                        {(stateMap[c.key] || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {(stateMap[c.key] || []).map((st, i) => (
+                              <span
+                                key={st}
+                                className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+                              >
+                                {/* De eerste status is degene waar LabX naartoe
+                                    schrijft — dat mag je zien. */}
+                                {i === 0 && direction === "two_way" && (
+                                  <span className="text-[10px] text-muted-foreground">↩</span>
+                                )}
+                                {st}
+                                <button
+                                  type="button"
+                                  className="text-muted-foreground hover:text-destructive"
+                                  onClick={() =>
+                                    setStatesFor(
+                                      c.key,
+                                      (stateMap[c.key] || []).filter((x) => x !== st),
+                                    )
+                                  }
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <Input
+                            className="text-xs"
+                            list={`states-${board.id}`}
+                            placeholder="Status toevoegen (Enter)"
+                            value={manualState[c.key] || ""}
+                            onChange={(e) =>
+                              setManualState({ ...manualState, [c.key]: e.target.value })
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key !== "Enter") return;
+                              e.preventDefault();
+                              addStateTo(c.key, manualState[c.key] || "");
+                              setManualState({ ...manualState, [c.key]: "" });
+                            }}
+                          />
+                          {discoveredStates.length > 0 && (
+                            <Select
+                              value=""
+                              onChange={(e) => {
+                                addStateTo(c.key, e.target.value);
+                                e.target.value = "";
+                              }}
+                            >
+                              <option value="">+ uit de bron…</option>
+                              {discoveredStates.map((st) => (
+                                <option key={st} value={st}>
+                                  {st}
+                                </option>
+                              ))}
+                            </Select>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   ))}
                   <datalist id={`states-${board.id}`}>
@@ -331,13 +497,13 @@ export function BoardSettings({
                     ))}
                   </datalist>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" className="text-xs" onClick={test} disabled={testing}>
-                  {testing ? "Testen…" : "Opslaan & verbinding testen"}
-                </Button>
-                {testResult && <span className="text-xs text-muted-foreground">{testResult}</span>}
+                {unmappedStates.length > 0 && (
+                  <p className="mt-1 flex items-start gap-1 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-muted-foreground">
+                    <Info size={13} className="mt-0.5 shrink-0" />
+                    Nog niet gekoppeld: {unmappedStates.join(", ")} — tickets met die status komen
+                    bij een sync in "{columns[0]?.name}" terecht.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -362,4 +528,26 @@ export function BoardSettings({
       </div>
     </Modal>
   );
+}
+
+/** state_map uit de config naar {kolom: [statussen]}. Accepteert de oude vorm
+ *  (één string, eventueel met komma's) zodat bestaande boards blijven werken. */
+function normalizeStateMap(raw: any): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(raw || {})) {
+    const parts = Array.isArray(value) ? value.map(String) : String(value ?? "").split(",");
+    const clean = parts.map((s) => s.trim()).filter(Boolean);
+    if (clean.length) out[key] = clean;
+  }
+  return out;
+}
+
+/** Kolom-key uit een bronkolomnaam, uniek binnen het board. */
+function uniqueColumnKey(name: string, columns: BoardColumnDto[]): string {
+  const base =
+    name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 32) || "kolom";
+  let key = base;
+  let n = 2;
+  while (columns.some((c) => c.key === key)) key = `${base}_${n++}`;
+  return key;
 }

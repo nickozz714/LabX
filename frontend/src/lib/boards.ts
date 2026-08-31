@@ -7,7 +7,8 @@
  */
 import { api } from "@/lib/api";
 import type {
-  AgentRunStart, BoardDto, BoardSyncStats, ProviderSpec, TicketCommentDto, TicketDto,
+  AgentRunStart, BoardDto, BoardSyncStats, ExternalBoardColumn, ProviderSpec, TicketCommentDto,
+  TicketDto,
 } from "@/lib/types";
 
 export const boardApi = {
@@ -49,7 +50,15 @@ export const boardApi = {
 
   sync: (boardId: number) => api.post<BoardSyncStats>(`/boards/${boardId}/sync`),
   testConnection: (boardId: number) =>
-    api.post<{ ok: boolean; error?: string; found?: number; states?: string[]; sample?: any[] }>(
-      `/boards/${boardId}/sync/test`,
-    ),
+    api.post<{
+      ok: boolean;
+      error?: string;
+      found?: number;
+      states?: string[];
+      // De kolommen zoals ze in de bron op het bord staan, met de statussen
+      // eronder — waarmee het instellingenscherm ze aan LabX-kolommen koppelt.
+      columns?: ExternalBoardColumn[];
+      unmapped_states?: string[];
+      sample?: any[];
+    }>(`/boards/${boardId}/sync/test`),
 };

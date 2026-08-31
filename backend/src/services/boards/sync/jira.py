@@ -7,6 +7,9 @@ Config (`Board.provider_config`):
     base_url       "https://mijnbedrijf.atlassian.net"   (verplicht)
     email          het account bij de API-token          (verplicht)
     project_key    "BICC"                                (verplicht bij create)
+    board_name     "BICC Sprint board"                   (optioneel — anders het
+                                                          eerste agile board van
+                                                          het project)
     jql            eigen JQL                             (optioneel — anders:
                                                           project = <key> ORDER
                                                           BY updated DESC)
@@ -42,7 +45,8 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from component_logging import get_logger
-from services.boards.sync.base import ExternalComment, ExternalItem, SyncAdapter
+from services.boards.sync.base import (ExternalBoardColumn, ExternalComment, ExternalItem,
+                                       SyncAdapter)
 
 log = get_logger(__name__)
 
@@ -183,6 +187,87 @@ class JiraAdapter(SyncAdapter):
                 for item in items:
                     item.comments = await self._fetch_comments(client, item.external_key or item.external_id)
         return items
+
+    # ── ontdekken (statussen + bordkolommen) ────────────────────────────────
+
+    async def discover_states(self) -> List[str]:
+        """Alle statusnamen van het project, ook die waar nu geen issue in
+        staat. `/project/{key}/statuses` geeft ze per issuetype; wij willen de
+        vereniging."""
+        names: List[str] = []
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for name in (await self._project_statuses(client)).values():
+                if name not in names:
+                    names.append(name)
+        return sorted(names)
+
+    async def _project_statuses(self, client: httpx.AsyncClient) -> Dict[str, str]:
+        """{status-id: naam} voor dit project. De agile-API noemt kolomstatussen
+        alleen bij id, dus die vertaling hebben we nodig."""
+        out: Dict[str, str] = {}
+        try:
+            resp = await client.get(
+                f"{self.base_url}/rest/api/3/project/{self._require('project_key')}/statuses",
+                headers=self._headers())
+            if resp.status_code >= 400:
+                return out
+            for issue_type in (resp.json() or []):
+                for st in (issue_type.get("statuses") or []):
+                    if st.get("id") and st.get("name"):
+                        out[str(st["id"])] = str(st["name"])
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("Jira-statussen ophalen mislukt", error=str(exc)[:200])
+        return out
+
+    async def discover_columns(self) -> List[ExternalBoardColumn]:
+        """De kolommen van het Jira-bord van dit project, met de statussen die
+        eronder hangen. Dit is wat een gebruiker in Jira ZIET — een kolom is
+        daar een groepje statussen, niet één status."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            board_id = await self._agile_board_id(client)
+            if not board_id:
+                return []
+            try:
+                resp = await client.get(
+                    f"{self.base_url}/rest/agile/1.0/board/{board_id}/configuration",
+                    headers=self._headers())
+                if resp.status_code >= 400:
+                    return []
+                config = resp.json() or {}
+            except Exception as exc:  # noqa: BLE001
+                log.warningx("Jira-bordconfiguratie ophalen mislukt", error=str(exc)[:200])
+                return []
+
+            by_id = await self._project_statuses(client)
+            columns: List[ExternalBoardColumn] = []
+            for col in ((config.get("columnConfig") or {}).get("columns") or []):
+                states = [by_id.get(str(s.get("id")), "") for s in (col.get("statuses") or [])]
+                columns.append(ExternalBoardColumn(name=str(col.get("name") or ""),
+                                                   states=[s for s in states if s]))
+            return [c for c in columns if c.name]
+
+    async def _agile_board_id(self, client: httpx.AsyncClient) -> Optional[str]:
+        """Het agile board bij dit project: op naam als `board_name` staat
+        ingevuld, anders het eerste. Een project kan er meerdere hebben."""
+        try:
+            resp = await client.get(f"{self.base_url}/rest/agile/1.0/board",
+                                    headers=self._headers(),
+                                    params={"projectKeyOrId": self._require("project_key"),
+                                            "maxResults": 50})
+            if resp.status_code >= 400:
+                return None
+            boards = (resp.json() or {}).get("values") or []
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("Jira-borden ophalen mislukt", error=str(exc)[:200])
+            return None
+        if not boards:
+            return None
+        wanted = str(self.config.get("board_name") or "").strip().lower()
+        if wanted:
+            for b in boards:
+                if str(b.get("name") or "").strip().lower() == wanted:
+                    return str(b.get("id"))
+        return str(boards[0].get("id"))
 
     def _to_item(self, raw: Dict[str, Any]) -> ExternalItem:
         fields = raw.get("fields") or {}

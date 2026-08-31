@@ -141,6 +141,24 @@ class AzureDevOpsAdapter(SyncAdapter):
                     item.comments = await self._fetch_comments(client, item.external_id)
         return items
 
+    async def discover_states(self) -> List[str]:
+        """De statussen van het work item type van dit board — ook die waar nu
+        geen work item in staat."""
+        wit = str(self.config.get("work_item_type") or "Task")
+        url = (f"https://dev.azure.com/{self.organization}/{self.project}"
+               f"/_apis/wit/workitemtypes/{wit}/states")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, headers=self._headers(),
+                                        params={"api-version": _API})
+                if resp.status_code >= 400:
+                    return []
+                return [str(v.get("name")) for v in (resp.json().get("value") or [])
+                        if v.get("name")]
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("DevOps-statussen ophalen mislukt", error=str(exc)[:200])
+            return []
+
     def _to_item(self, raw: Dict[str, Any]) -> ExternalItem:
         fields = raw.get("fields") or {}
         wid = str(raw.get("id"))

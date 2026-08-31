@@ -26,6 +26,16 @@ class ExternalComment:
 
 
 @dataclass
+class ExternalBoardColumn:
+    """Een kolom zoals de BRON hem kent (een Jira-bordkolom, een DevOps-
+    boardkolom): een naam met de statussen die eronder vallen. Een kolom is
+    dus bijna nooit één status — precies waarom de statusmapping meerdere
+    statussen per LabX-kolom moet aankunnen."""
+    name: str
+    states: List[str] = field(default_factory=list)
+
+
+@dataclass
 class ExternalItem:
     external_id: str
     title: str
@@ -60,6 +70,17 @@ class SyncAdapter:
 
     async def fetch_items(self, *, with_comments: bool = True) -> List[ExternalItem]:
         raise NotImplementedError
+
+    async def discover_states(self) -> List[str]:
+        """Alle statussen die de bron kent — niet alleen die van de opgehaalde
+        items. Zonder dit ziet de gebruiker een status pas in de mapping als er
+        toevallig een item in staat. Lege lijst = adapter weet het niet."""
+        return []
+
+    async def discover_columns(self) -> List[ExternalBoardColumn]:
+        """De kolommen van het bord in de bron, met de statussen eronder.
+        Lege lijst = de bron kent geen bordkolommen (of we mogen ze niet zien)."""
+        return []
 
     # ── schrijven (alleen aangeroepen bij sync_direction="two_way") ──────────
 
