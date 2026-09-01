@@ -5,16 +5,28 @@
  * mag er niets werken": there is no unbound chat mode. A thread cannot be
  * created without picking a (running) lab first, and the input is disabled
  * until one is bound.
+ *
+ * Diezelfde binding is ook de indeling van de chatlijst: een chat hoort bij
+ * precies één lab, dus de labs ZIJN de categorieën. De lijst is per lab
+ * gegroepeerd en elke groep start zijn eigen chat — een losse "kies een
+ * lab"-dropdown erboven zou hetzelfde nog eens vragen. De groep is afgeleid,
+ * niet toe te kennen: een chat verplaatsen naar een ander lab zou hem van zijn
+ * sandbox en zijn CLI-sessie losknippen.
+ *
+ * Hernoemen gebeurt in een pop-up. Het was een invoerveld ín de lijst, en dat
+ * viel steeds over zichzelf: blur = opslaan, dus een klik naast het veld (of op
+ * een andere chat) bevestigde ongemerkt, Escape deed niets, en in de smalle
+ * balk was van de naam nauwelijks iets te zien.
  */
 import { useEffect, useRef, useState } from "react";
-import { PanelRight, Pencil, Pin, Shield, Terminal, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi } from "@/lib/chat";
 import { labsApi } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import type { BackgroundRunDto, ChatEvent, Lab, Message, Thread } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Modal, TextArea } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { LabTerminal } from "@/components/LabTerminal";
 import { RunDetailModal, runDuration } from "@/components/BackgroundRunDetail";
@@ -51,8 +63,9 @@ export function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [liveSteps, setLiveSteps] = useState<ChatEvent[]>([]);
   const [liveAnswer, setLiveAnswer] = useState("");
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState<Thread | null>(null);
+  // Ingeklapte lab-groepen in de chatlijst (per lab-id).
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [labPanelOpen, setLabPanelOpen] = useState(false);
   const [labPanelTab, setLabPanelTab] = useState<"toegang" | "shell" | "audit">("toegang");
   const [threadRuns, setThreadRuns] = useState<BackgroundRunDto[]>([]);
@@ -128,20 +141,9 @@ export function ChatPage() {
     };
   }, [activeThread?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function startRename(t: Thread) {
-    setRenamingId(t.id);
-    setRenameValue(t.title);
-  }
-
-  async function commitRename() {
-    if (!renamingId) return;
-    const title = renameValue.trim();
-    const id = renamingId;
-    setRenamingId(null);
-    if (!title) return;
-    const updated = await chatApi.renameThread(id, title);
-    setThreads((prev) => prev.map((t) => (t.id === id ? updated : t)));
-    setActiveThread((prev) => (prev && prev.id === id ? updated : prev));
+  function applyThread(updated: Thread) {
+    setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    setActiveThread((prev) => (prev && prev.id === updated.id ? updated : prev));
   }
 
   useEffect(() => {
@@ -347,6 +349,26 @@ export function ChatPage() {
   }
 
   const lab = activeThread ? labs.find((l) => l.id === activeThread.lab_id) : null;
+
+  // De categorieën. Ze worden afgeleid en niet opgeslagen: een chat draait ín
+  // een lab (threads.lab_id is NOT NULL), dus dat lab ís zijn categorie.
+  const threadGroups: ThreadGroup[] = (() => {
+    const byLab = new Map<string, Thread[]>();
+    for (const t of threads) {
+      byLab.set(t.lab_id, [...(byLab.get(t.lab_id) || []), t]);
+    }
+    const groups: ThreadGroup[] = labs.map((l) => ({
+      id: l.id, name: l.name, lab: l, threads: byLab.get(l.id) || [],
+    }));
+    // Chats waarvan het lab niet in de lijst staat — terwijl de labs nog laden,
+    // of als er een verdwijnt. Ze mogen niet uit beeld vallen.
+    const known = new Set(labs.map((l) => l.id));
+    const rest = threads.filter((t) => !known.has(t.lab_id));
+    if (rest.length) {
+      groups.push({ id: "__overig__", name: "Overige chats", lab: null, threads: rest });
+    }
+    return groups;
+  })();
   const inputDisabled = !activeThread || !lab || lab.status !== "running" || streaming;
 
   // Cumulative token/cost counter for this conversation, summed from the
@@ -381,56 +403,90 @@ export function ChatPage() {
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold">Chats</h2>
         </div>
-        <LabPicker labs={labs} onPick={createThreadForLab} />
-        <ul className="mt-3 space-y-1">
-          {threads.map((t) => (
-            <li
-              key={t.id}
-              onClick={() => renamingId !== t.id && openThread(t)}
-              className={`group flex items-center gap-1 rounded px-2 py-1.5 text-sm ${
-                renamingId === t.id ? "" : "cursor-pointer"
-              } ${
-                activeThread?.id === t.id ? "bg-primary/10" : "hover:bg-secondary"
-              }`}
-            >
-              {renamingId === t.id ? (
-                <Input
-                  autoFocus
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.key === "Enter" && commitRename()}
-                  onBlur={commitRename}
-                  className="py-0.5"
-                />
-              ) : (
-                <>
-                  <span className="flex-1 truncate">{t.title}</span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startRename(t);
-                    }}
-                    className="hidden shrink-0 text-muted-foreground hover:text-foreground group-hover:block"
-                    title="Naam wijzigen"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeThread(t);
-                    }}
-                    className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
-                    title="Verwijderen"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
+
+        {labs.length === 0 && threadGroups.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Nog geen labs — maak er eerst een aan op de Labs-pagina.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {threadGroups.map((group) => {
+              const open = !collapsed[group.id];
+              return (
+                <section key={group.id}>
+                  <div className="group flex items-center gap-1 rounded px-1 py-1 hover:bg-secondary/60">
+                    <button
+                      onClick={() => setCollapsed((prev) => ({ ...prev, [group.id]: open }))}
+                      className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                      title={group.lab ? `Lab ${group.lab.name} — ${group.lab.status}` : group.name}
+                    >
+                      {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      {/* Statusstip: of je in dit lab kúnt chatten is de eerste
+                          vraag bij een chat, dus die staat bij de categorie. */}
+                      <span
+                        className={`size-1.5 shrink-0 rounded-full ${
+                          group.lab?.status === "running" ? "bg-success" : "bg-muted-foreground/40"
+                        }`}
+                      />
+                      <span className="truncate text-xs font-semibold">{group.name}</span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {group.threads.length}
+                      </span>
+                    </button>
+                    {group.lab && (
+                      <button
+                        onClick={() => createThreadForLab(group.lab!.id)}
+                        className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                        title={`Nieuwe chat in ${group.lab.name}`}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  {open && (
+                    <ul className="mt-0.5 space-y-1 pl-2">
+                      {group.threads.length === 0 && (
+                        <li className="px-2 py-1 text-xs text-muted-foreground">Nog geen chats</li>
+                      )}
+                      {group.threads.map((t) => (
+                        <li
+                          key={t.id}
+                          onClick={() => openThread(t)}
+                          className={`group flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 text-sm ${
+                            activeThread?.id === t.id ? "bg-primary/10" : "hover:bg-secondary"
+                          }`}
+                        >
+                          <span className="flex-1 truncate">{t.title}</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRenaming(t);
+                            }}
+                            className="hidden shrink-0 text-muted-foreground hover:text-foreground group-hover:block"
+                            title="Naam wijzigen"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeThread(t);
+                            }}
+                            className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
+                            title="Verwijderen"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
       </aside>
 
       <div className="flex flex-1 flex-col">
@@ -441,27 +497,16 @@ export function ChatPage() {
         ) : (
           <>
             <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-sm">
-              {renamingId === activeThread.id ? (
-                <Input
-                  autoFocus
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && commitRename()}
-                  onBlur={commitRename}
-                  className="max-w-xs py-0.5"
-                />
-              ) : (
-                <span className="group flex items-center gap-1 font-medium">
-                  {activeThread.title}
-                  <button
-                    onClick={() => startRename(activeThread)}
-                    className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
-                    title="Naam wijzigen"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                </span>
-              )}
+              <span className="group flex items-center gap-1 font-medium">
+                {activeThread.title}
+                <button
+                  onClick={() => setRenaming(activeThread)}
+                  className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                  title="Naam wijzigen"
+                >
+                  <Pencil size={13} />
+                </button>
+              </span>
               {lab && <Badge tone={lab.status === "running" ? "green" : "red"}>⬢ {lab.name} — {lab.status}</Badge>}
               {lab && lab.status !== "running" && (
                 <span className="ml-2 text-xs text-muted-foreground">Start dit lab om te kunnen chatten.</span>
@@ -707,6 +752,14 @@ export function ChatPage() {
       )}
 
       {runDetail && <RunDetailModal run={runDetail} onClose={() => setRunDetail(null)} />}
+
+      {renaming && (
+        <RenameThreadModal
+          thread={renaming}
+          onClose={() => setRenaming(null)}
+          onRenamed={applyThread}
+        />
+      )}
     </div>
   );
 }
@@ -812,25 +865,67 @@ function ChatGuardAudit({ labId }: { labId: string }) {
   );
 }
 
-function LabPicker({ labs, onPick }: { labs: Lab[]; onPick: (id: string) => void }) {
-  const [value, setValue] = useState("");
-  if (labs.length === 0) {
-    return <p className="text-xs text-muted-foreground">Nog geen labs — maak er eerst een aan op de Labs-pagina.</p>;
+type ThreadGroup = { id: string; name: string; lab: Lab | null; threads: Thread[] };
+
+/**
+ * Hernoemen in een pop-up. Bewust géén opslaan-op-blur: dat maakte van elke
+ * klik naast het veld een bevestiging, ook als je het net anders bedacht had.
+ * Hier bevestig je met Enter of de knop, en sluiten is annuleren.
+ */
+function RenameThreadModal({
+  thread, onClose, onRenamed,
+}: {
+  thread: Thread;
+  onClose: () => void;
+  onRenamed: (t: Thread) => void;
+}) {
+  const [value, setValue] = useState(thread.title);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    const title = value.trim();
+    if (!title || title === thread.title) {
+      onClose();
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      onRenamed(await chatApi.renameThread(thread.id, title));
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Hernoemen mislukt");
+    } finally {
+      setBusy(false);
+    }
   }
+
   return (
-    <div className="flex gap-1">
-      <select value={value} onChange={(e) => setValue(e.target.value)} className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-        <option value="">Nieuwe chat met lab…</option>
-        {labs.map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.name} ({l.status})
-          </option>
-        ))}
-      </select>
-      <Button variant="secondary" disabled={!value} onClick={() => value && onPick(value)}>
-        Start
-      </Button>
-    </div>
+    <Modal open onClose={onClose} title="Chat hernoemen">
+      <Label>Naam</Label>
+      <Input
+        autoFocus
+        value={value}
+        maxLength={255}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          }
+        }}
+      />
+      {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>
+          Annuleren
+        </Button>
+        <Button onClick={submit} disabled={busy || !value.trim()}>
+          {busy ? "Opslaan…" : "Opslaan"}
+        </Button>
+      </div>
+    </Modal>
   );
 }
 
