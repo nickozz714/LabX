@@ -25,6 +25,15 @@ log = get_logger(__name__)
 
 AZ_BUNDLE_FILES = ("msal_token_cache.json", "azureProfile.json", "service_principal_entries.json")
 
+# De client-id van de Azure CLI zelf. Een msal_token_cache uit `az login` bevat
+# refresh tokens die op déze applicatie zijn uitgegeven; wisselen kan alleen met
+# dezelfde client_id.
+AZ_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+# offline_access is wat de token-endpoint een NIEUW refresh token laat
+# teruggeven — zonder die scope krijg je alleen een access token en verloopt het
+# profiel alsnog.
+AZ_REFRESH_SCOPE = "https://management.azure.com/.default offline_access openid profile"
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -127,7 +136,8 @@ class AzureProfileService:
         self.db.delete(row)
         self.db.commit()
 
-    def capture_from_host(self, *, name: str, description: Optional[str] = None) -> AzureProfile:
+    @staticmethod
+    def _read_host_bundle() -> Dict[str, str]:
         import os
         from pathlib import Path
         host_dir = Path(os.environ.get("AZURE_CONFIG_DIR") or (Path.home() / ".azure"))
@@ -141,8 +151,139 @@ class AzureProfileService:
                     pass
         if not files.get("msal_token_cache.json") or not files.get("azureProfile.json"):
             raise HTTPException(status_code=400, detail="Geen host az-sessie gevonden. Log eerst in met 'az login'.")
-        data = AzureProfileCreate(name=name, kind="msal_bundle", description=description, files=files)
+        return files
+
+    def capture_from_host(self, *, name: str, description: Optional[str] = None) -> AzureProfile:
+        data = AzureProfileCreate(name=name, kind="msal_bundle", description=description,
+                                  files=self._read_host_bundle())
         return self.create(data)
+
+    def recapture_from_host(self, profile_id: int) -> AzureProfile:
+        """De bestanden van dit profiel opnieuw van de host halen — de knop voor
+        'ik heb net opnieuw ingelogd'. Vervangt alleen het secret; naam,
+        omschrijving en alles wat naar dit profiel verwijst blijven staan."""
+        row = self.get_or_404(profile_id)
+        if row.kind != "msal_bundle":
+            raise HTTPException(status_code=400, detail=(
+                "Alleen een 'msal_bundle'-profiel bestaat uit az-bestanden."))
+        files = self._read_host_bundle()
+        row.secret_encrypted = encrypt(json.dumps(files))
+        row.identity_json = None
+        row.updated_at = _now_iso()
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
+    async def refresh_tokens(self, profile_id: int) -> Dict[str, Any]:
+        """Het refresh token inwisselen voor een vers paar en terugschrijven.
+
+        Een az-sessie verloopt niet omdat het access token oud is — dat wisselt
+        de CLI zelf wel — maar omdat het REFRESH token verloopt als er lang niets
+        mee gebeurt. Een profiel dat alleen in de kluis ligt, gebruikt niemand,
+        dus verloopt het juist wél. Deze knop houdt het levend: nieuw refresh
+        token erin, verlopen access tokens eruit.
+        """
+        row = self.get_or_404(profile_id)
+        payload = self._decrypt(row)
+        if row.kind == "service_principal":
+            # Een service principal kent geen refresh token; een geldig
+            # client_secret ís de vernieuwing. Verifiëren is hier het antwoord.
+            identity = await self.verify(profile_id)
+            return {"ok": "error" not in identity, "kind": row.kind,
+                    "detail": "Service principal: opnieuw een token gemint.",
+                    "identity": identity}
+        if row.kind != "msal_bundle":
+            raise HTTPException(status_code=400, detail=(
+                "Een 'bearer'-profiel kan niet vernieuwd worden: er hoort geen "
+                "refresh token bij. Plak een nieuw token of gebruik een ander soort profiel."))
+
+        try:
+            cache = json.loads(payload.get("msal_token_cache.json") or "{}")
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"msal_token_cache.json is geen geldige JSON: {exc}")
+        if not isinstance(cache, dict):
+            # Geldige JSON hoeft nog geen token-cache te zijn (een half geplakt
+            # bestand levert bijvoorbeeld een losse string op).
+            raise HTTPException(status_code=400, detail=(
+                "msal_token_cache.json bevat geen token-cache (verwacht een JSON-object)."))
+        entries = cache.get("RefreshToken") or {}
+        if not entries:
+            raise HTTPException(status_code=400, detail=(
+                "Geen refresh token in msal_token_cache.json. Log opnieuw in met 'az login' "
+                "en vervang de bestanden van dit profiel."))
+
+        tenant = self._tenant_from_bundle(payload) or "organizations"
+        import httpx
+        renewed, failures = 0, []
+        async with httpx.AsyncClient(timeout=30) as client:
+            for key, entry in list(entries.items()):
+                secret = (entry or {}).get("secret")
+                if not secret:
+                    continue
+                resp = await client.post(
+                    f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+                    data={"client_id": (entry.get("client_id") or AZ_CLI_CLIENT_ID),
+                          "grant_type": "refresh_token", "refresh_token": secret,
+                          "scope": AZ_REFRESH_SCOPE},
+                )
+                if resp.status_code >= 400:
+                    failures.append(self._token_error(resp))
+                    continue
+                body = resp.json()
+                new_rt = body.get("refresh_token")
+                if new_rt:
+                    entry["secret"] = new_rt
+                    entries[key] = entry
+                    renewed += 1
+                    # Meteen wegschrijven: Azure verzilvert een refresh token
+                    # éénmalig. Pas opslaan na de lus zou bij een fout halverwege
+                    # betekenen dat het oude token al verbruikt is en het nieuwe
+                    # nergens staat — dan is het profiel dood.
+                    cache["RefreshToken"] = entries
+                    payload["msal_token_cache.json"] = json.dumps(cache)
+                    row.secret_encrypted = encrypt(json.dumps(payload))
+                    self.db.commit()
+
+        if not renewed:
+            raise HTTPException(status_code=400, detail=(
+                "Vernieuwen mislukt: " + ("; ".join(failures) or "Azure gaf geen nieuw refresh token terug") +
+                ". Log opnieuw in met 'az login' en vervang de bestanden van dit profiel."))
+
+        # Access tokens zijn na een refresh sowieso achterhaald; ze weglaten
+        # dwingt de CLI er een verse te halen in plaats van op een verlopen te
+        # stuiten.
+        cache.pop("AccessToken", None)
+        payload["msal_token_cache.json"] = json.dumps(cache)
+        row.secret_encrypted = encrypt(json.dumps(payload))
+        row.updated_at = _now_iso()
+        self.db.commit()
+
+        identity = await self.verify(profile_id)
+        identity["refreshed_at"] = _now_iso()
+        row.identity_json = json.dumps(identity)
+        self.db.commit()
+        return {"ok": True, "kind": row.kind, "renewed": renewed,
+                "detail": (f"{renewed} refresh token(s) vernieuwd" +
+                           (f"; {len(failures)} mislukt: {'; '.join(failures)}" if failures else "")),
+                "identity": identity}
+
+    @staticmethod
+    def _token_error(resp: Any) -> str:
+        try:
+            body = resp.json()
+            return str(body.get("error_description") or body.get("error") or resp.text)[:300]
+        except Exception:  # noqa: BLE001
+            return str(resp.text)[:300]
+
+    @staticmethod
+    def _tenant_from_bundle(payload: Dict[str, Any]) -> Optional[str]:
+        try:
+            prof = json.loads(payload.get("azureProfile.json") or "{}")
+            subs = prof.get("subscriptions") or []
+            active = next((s for s in subs if s.get("isDefault")), (subs[0] if subs else {}))
+            return active.get("tenantId")
+        except Exception:  # noqa: BLE001
+            return None
 
     async def verify(self, profile_id: int) -> Dict[str, Any]:
         row = self.get_or_404(profile_id)

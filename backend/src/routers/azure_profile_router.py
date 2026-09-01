@@ -52,6 +52,22 @@ def delete_profile(profile_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/{profile_id}/refresh")
+async def refresh_profile(profile_id: int, db: Session = Depends(get_db)):
+    """Het refresh token van dit profiel inwisselen voor een vers paar. Nodig
+    omdat een profiel dat alleen in de kluis ligt juist verloopt: refresh tokens
+    verlopen op stilte, niet op gebruik."""
+    return await _svc(db).refresh_tokens(profile_id)
+
+
+@router.post("/{profile_id}/recapture-host", response_model=AzureProfileRead)
+def recapture_host_profile(profile_id: int, db: Session = Depends(get_db)):
+    """De az-bestanden van dit profiel opnieuw van de host halen — na een verse
+    'az login'. Alleen het secret wordt vervangen, de rest blijft."""
+    svc = _svc(db)
+    return svc.to_dict(svc.recapture_from_host(profile_id))
+
+
 @router.post("/{profile_id}/verify")
 async def verify_profile(profile_id: int, db: Session = Depends(get_db)):
     return {"ok": True, "identity": await _svc(db).verify(profile_id)}

@@ -15,6 +15,9 @@ transport actually needs:
   as-is for a bearer profile. An msal_bundle can't be turned into a fresh
   Bearer token without an interactive refresh flow, so it's stdio-only.
 
+Voor een SYNC (de toolslijst ophalen) geldt een eigen volgorde: eerst
+server.sync_azure_profile_id, dan pas de gewone standaard. Zie resolve_profile.
+
 Resolution order: the ACTIVE LAB's own azure_profile_id wins — a chat is
 bound to one lab, so "which identity" is naturally a per-lab choice. The
 server's own azure_profile_id is the fallback for host-only calls with no
@@ -38,15 +41,29 @@ log = get_logger(__name__)
 _PROFILE_DIR_ROOT = Path(os.environ.get("LABX_DATA_DIR", "/data")) / "azure_mcp_profiles"
 
 
-def resolve_profile(db: Session, server: MCPServer, lab_id: Optional[str]) -> Optional[AzureProfile]:
+def resolve_profile(db: Session, server: MCPServer, lab_id: Optional[str],
+                    *, purpose: str = "runtime") -> Optional[AzureProfile]:
+    """Welke Azure-identiteit deze aanroep gebruikt.
+
+    purpose="sync" is het ophalen van de toolslijst: dat doet LabX zelf, zonder
+    lab en zonder gebruiker, dus daarvoor geldt eerst het aparte
+    sync-profiel. purpose="runtime" is echt werk: dan wint het lab, want een
+    aanroep hoort te draaien met de rechten van het lab waarin hij plaatsvindt,
+    en pas als dat lab niets heeft (of er is geen lab — een session-scope
+    server) valt hij terug op de standaard van de server. Het sync-profiel doet
+    daar niet aan mee: het is een dienstidentiteit, geen werkidentiteit.
+    """
     profile_id = None
-    if lab_id:
-        from models.lab import Lab
-        lab = db.get(Lab, lab_id)
-        if lab and lab.azure_profile_id:
-            profile_id = lab.azure_profile_id
-    if not profile_id:
-        profile_id = server.azure_profile_id
+    if purpose == "sync":
+        profile_id = server.sync_azure_profile_id or server.azure_profile_id
+    else:
+        if lab_id:
+            from models.lab import Lab
+            lab = db.get(Lab, lab_id)
+            if lab and lab.azure_profile_id:
+                profile_id = lab.azure_profile_id
+        if not profile_id:
+            profile_id = server.azure_profile_id
     if not profile_id:
         return None
     return db.get(AzureProfile, profile_id)
