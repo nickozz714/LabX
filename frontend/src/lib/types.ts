@@ -146,6 +146,10 @@ export interface MCPServerDto {
   usage_scope: "session" | "lab" | "both";
   azure_profile_id: number | null;
   has_auth: boolean;
+  /** Aparte inloggegevens voor het ophalen van de toolslijst; null/false =
+   *  dezelfde als voor de aanroepen zelf. */
+  sync_azure_profile_id: number | null;
+  has_sync_auth: boolean;
   last_synced_at: string | null;
   last_sync_status: string | null;
   last_sync_error: string | null;

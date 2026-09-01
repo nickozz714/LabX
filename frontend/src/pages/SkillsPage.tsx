@@ -315,16 +315,36 @@ function CreateMcpServerModal({ onClose, onCreated }: { onClose: () => void; onC
   );
 }
 
+/**
+ * Twee soorten inloggegevens, want het zijn twee soorten aanroepen. De
+ * toolslijst ophalen doet LabX zelf — geen lab, geen gebruiker in de lus — en
+ * dat is precies het geval waarvoor je een dienst-account wilt gebruiken. Een
+ * echte aanroep hoort juist te draaien met de identiteit van het lab of de
+ * sessie waarin hij plaatsvindt. Laat het tweede blok leeg en de sync gebruikt
+ * gewoon de eerste, zoals het altijd was.
+ */
 function EditAuthModal({ server, onClose, onSaved }: { server: MCPServerDto; onClose: () => void; onSaved: () => void }) {
   const [authType, setAuthType] = useState<AuthType>(server.has_auth ? "bearer" : "none");
   const [token, setToken] = useState("");
   const [headerName, setHeaderName] = useState("");
   const [headerValue, setHeaderValue] = useState("");
+  const [separate, setSeparate] = useState(server.has_sync_auth);
+  const [syncType, setSyncType] = useState<AuthType>(server.has_sync_auth ? "bearer" : "none");
+  const [syncToken, setSyncToken] = useState("");
+  const [syncHeaderName, setSyncHeaderName] = useState("");
+  const [syncHeaderValue, setSyncHeaderValue] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
     try {
-      await mcpServerApi.update(server.id, { auth: buildAuthPayload(authType, token, headerName, headerValue) });
+      await mcpServerApi.update(server.id, {
+        auth: buildAuthPayload(authType, token, headerName, headerValue),
+        // Het vinkje uit betekent expliciet "geen aparte" — dus wissen, niet
+        // overslaan, anders blijft een oude sync-credential stilletjes staan.
+        sync_auth: separate
+          ? buildAuthPayload(syncType, syncToken, syncHeaderName, syncHeaderValue)
+          : { type: "none" },
+      });
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Opslaan mislukt");
@@ -333,14 +353,40 @@ function EditAuthModal({ server, onClose, onSaved }: { server: MCPServerDto; onC
 
   return (
     <Modal open onClose={onClose} title={`Authenticatie — ${server.name}`}>
-      <div className="space-y-3">
-        {server.has_auth && <p className="text-xs text-muted-foreground">Er is al een auth geconfigureerd. Vul hieronder in om te vervangen.</p>}
-        <AuthFields
-          authType={authType} setAuthType={setAuthType}
-          token={token} setToken={setToken}
-          headerName={headerName} setHeaderName={setHeaderName}
-          headerValue={headerValue} setHeaderValue={setHeaderValue}
-        />
+      <div className="space-y-4">
+        <div>
+          <p className="mb-1 text-xs font-semibold text-muted-foreground">Voor aanroepen (lab/sessie)</p>
+          {server.has_auth && <p className="mb-1 text-xs text-muted-foreground">Er is al een auth geconfigureerd. Vul hieronder in om te vervangen.</p>}
+          <AuthFields
+            authType={authType} setAuthType={setAuthType}
+            token={token} setToken={setToken}
+            headerName={headerName} setHeaderName={setHeaderName}
+            headerValue={headerValue} setHeaderValue={setHeaderValue}
+          />
+        </div>
+
+        <div className="rounded-md border border-border p-3">
+          <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+            <input type="checkbox" checked={separate} onChange={(e) => setSeparate(e.target.checked)} />
+            Aparte inloggegevens voor het synchroniseren
+          </label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Alleen gebruikt bij "Sync tools" — het ophalen van de toolslijst. Uit = daarvoor gelden
+            dezelfde gegevens als hierboven.
+          </p>
+          {separate && (
+            <div className="mt-2">
+              {server.has_sync_auth && <p className="mb-1 text-xs text-muted-foreground">Er staat al een sync-auth ingesteld. Vul in om te vervangen.</p>}
+              <AuthFields
+                authType={syncType} setAuthType={setSyncType}
+                token={syncToken} setToken={setSyncToken}
+                headerName={syncHeaderName} setHeaderName={setSyncHeaderName}
+                headerValue={syncHeaderValue} setHeaderValue={setSyncHeaderValue}
+              />
+            </div>
+          )}
+        </div>
+
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button className="w-full" onClick={submit}>Opslaan</Button>
       </div>
@@ -352,6 +398,7 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
   const [baseUrl, setBaseUrl] = useState(server.base_url || "");
   const [stdioCommand, setStdioCommand] = useState(server.stdio_command || "");
   const [azureProfileId, setAzureProfileId] = useState<number | null>(server.azure_profile_id);
+  const [syncProfileId, setSyncProfileId] = useState<number | null>(server.sync_azure_profile_id);
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
@@ -360,6 +407,7 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
         base_url: server.server_type !== "stdio" ? baseUrl : undefined,
         stdio_command: server.server_type === "stdio" ? stdioCommand : undefined,
         azure_profile_id: azureProfileId,
+        sync_azure_profile_id: syncProfileId,
       });
       onSaved();
     } catch (err) {
@@ -395,6 +443,19 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
               Alleen relevant voor servers die met Azure/Microsoft-identiteit werken (Azure MCP Server,
               Fabric MCP, Fabric RTI, Dev Box, Azure DevOps). Gebruikt als er geen lab-specifiek profiel is.
             </p>
+            <div className="mt-3 border-t border-border pt-3">
+              <AzureProfilePicker
+                value={syncProfileId}
+                onChange={setSyncProfileId}
+                label="Azure-profiel voor het synchroniseren (leeg = hetzelfde als hierboven)"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                De toolslijst ophalen doet LabX zelf, zonder lab en zonder gebruiker. Zet hier een
+                dienst-identiteit neer als je niet wilt dat die sync op een persoonlijke of
+                lab-gebonden login leunt — en andersom: zo lekt een brede sync-identiteit niet door
+                naar aanroepen die met de rechten van het lab horen te draaien.
+              </p>
+            </div>
           </div>
         )}
         {error && <p className="text-sm text-destructive">{error}</p>}

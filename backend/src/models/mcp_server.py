@@ -67,6 +67,18 @@ class MCPServer(Base):
     # pasted token in auth_config_encrypted expires and can't refresh itself,
     # which is why Microsoft's Azure-auth'd servers need this instead.
     azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # --- inloggegevens voor het SYNCHRONISEREN, los van die voor het werk ----
+    # Een sync is iets anders dan een aanroep: hij vraagt alleen wélke tools er
+    # zijn, en hij hoort bij LabX zelf — er is geen lab en geen gebruiker in de
+    # lus. Wie daarvoor dezelfde identiteit gebruikt als voor het werk, moet een
+    # persoonlijke of lab-gebonden login geschikt maken voor een
+    # achtergrondtaak; en andersom lekt een brede sync-identiteit door naar
+    # aanroepen die juist met de rechten van dát lab horen te draaien. Vandaar
+    # een aparte: leeg = terugvallen op de gewone (zoals het was).
+    sync_azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Fernet-versleuteld, zelfde vorm als auth_config_encrypted, maar alleen
+    # gebruikt tijdens een sync/test.
+    sync_auth_config_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_synced_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_sync_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)

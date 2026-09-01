@@ -26,6 +26,8 @@ _ADDITIVE_COLUMNS = {
         ("auth_config_encrypted", "TEXT"),
         ("azure_profile_id", "INTEGER"),
         ("usage_scope", "VARCHAR(16)"),
+        ("sync_azure_profile_id", "INTEGER"),
+        ("sync_auth_config_encrypted", "TEXT"),
     ],
     "app_settings": [
         ("auto_recall_enabled", "BOOLEAN NOT NULL DEFAULT 0"),

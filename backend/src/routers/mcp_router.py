@@ -29,9 +29,25 @@ def _to_dict(s: MCPServer) -> Dict[str, Any]:
         "usage_scope": s.usage_scope or ("session" if s.always_allowed else "both"),
         "azure_profile_id": s.azure_profile_id,
         "has_auth": bool(s.auth_config_encrypted),
+        # Aparte inloggegevens voor het synchroniseren; leeg = de gewone.
+        "sync_azure_profile_id": s.sync_azure_profile_id,
+        "has_sync_auth": bool(s.sync_auth_config_encrypted),
         "last_synced_at": s.last_synced_at, "last_sync_status": s.last_sync_status,
         "last_sync_error": s.last_sync_error,
     }
+
+
+def _set_sync_auth(s: MCPServer, payload: Dict[str, Any]) -> None:
+    """`sync_auth`, zelfde vorm en zelfde schrijf-alleen-regel als `auth`, maar
+    alleen gebruikt bij het ophalen van de toolslijst."""
+    if "sync_auth" not in payload:
+        return
+    auth = payload.get("sync_auth")
+    if not auth or (auth.get("type") or "none") == "none":
+        s.sync_auth_config_encrypted = None
+        return
+    from utils.crypto import encrypt
+    s.sync_auth_config_encrypted = encrypt(json.dumps(auth))
 
 
 def _set_auth(s: MCPServer, payload: Dict[str, Any]) -> None:
@@ -119,9 +135,11 @@ def create_server(payload: Dict[str, Any], db: Session = Depends(get_db)):
         is_enabled=bool(payload.get("is_enabled", True)),
         always_allowed=bool(payload.get("always_allowed", False)),
         azure_profile_id=payload.get("azure_profile_id"),
+        sync_azure_profile_id=payload.get("sync_azure_profile_id"),
         created_at=now, updated_at=now,
     )
     _set_auth(s, payload)
+    _set_sync_auth(s, payload)
     db.add(s)
     db.commit()
     return _to_dict(s)
@@ -134,10 +152,12 @@ def update_server(server_id: int, payload: Dict[str, Any], db: Session = Depends
         raise HTTPException(status_code=404, detail="MCP-server niet gevonden")
     for field in ("name", "description", "server_type", "location", "base_url",
                   "stdio_command", "stdio_install_command", "is_enabled",
-                  "always_allowed", "azure_profile_id", "usage_scope"):
+                  "always_allowed", "azure_profile_id", "usage_scope",
+                  "sync_azure_profile_id"):
         if field in payload:
             setattr(s, field, payload[field])
     _set_auth(s, payload)
+    _set_sync_auth(s, payload)
     s.updated_at = _now_iso()
     db.commit()
     return _to_dict(s)

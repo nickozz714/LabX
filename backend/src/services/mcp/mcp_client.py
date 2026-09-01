@@ -51,32 +51,38 @@ def _extract_result(result: Any) -> Any:
 
 
 async def _resolve_auth_headers(server: MCPServer, *, db: Optional[Any] = None,
-                                lab_id: Optional[str] = None) -> Dict[str, str]:
+                                lab_id: Optional[str] = None,
+                                purpose: str = "runtime") -> Dict[str, str]:
     """An Azure profile (lab-assigned, or the server's own default) wins over
     the server's static pasted token — a static Bearer token expires and a
     profile can mint a fresh one. Falls back to the static token otherwise,
-    same as before this existed."""
+    same as before this existed.
+
+    `purpose="sync"` neemt de aparte sync-inloggegevens: het ophalen van de
+    toolslijst is werk van LabX zelf, niet van een lab of een gebruiker."""
     if db is not None:
         from services.azure.azure_mcp_auth import bearer_header_for_profile, resolve_profile
-        profile = resolve_profile(db, server, lab_id)
+        profile = resolve_profile(db, server, lab_id, purpose=purpose)
         if profile is not None:
             headers = await bearer_header_for_profile(profile)
             if headers:
                 return headers
-    return _static_auth_headers(server)
+    return _static_auth_headers(server, purpose=purpose)
 
 
-def _static_auth_headers(server: MCPServer) -> Dict[str, str]:
+def _static_auth_headers(server: MCPServer, *, purpose: str = "runtime") -> Dict[str, str]:
     """Decrypt the server's auth config (Fernet, like an Azure profile
     secret) and build the header it implies. A real host MCP server behind
     auth — e.g. Nectar/HiveMind, which 400s with "Missing Bearer token
     (HIVE_TOKEN)" without this — needs this to ever answer a call."""
-    if not server.auth_config_encrypted:
+    raw = ((server.sync_auth_config_encrypted if purpose == "sync" else None)
+           or server.auth_config_encrypted)
+    if not raw:
         return {}
     try:
         import json
         from utils.crypto import decrypt
-        cfg = json.loads(decrypt(server.auth_config_encrypted))
+        cfg = json.loads(decrypt(raw))
     except Exception as exc:  # noqa: BLE001 — a bad/rotated key must not crash the call
         log.warningx("kon auth_config niet ontsleutelen", server=server.slug, error=str(exc)[:200])
         return {}
@@ -147,7 +153,8 @@ async def call_tool(server: MCPServer, remote_name: str, args: Dict[str, Any], *
 
 
 async def _stdio_env(server: MCPServer, *, db: Optional[Any] = None,
-                     lab_id: Optional[str] = None) -> Optional[Dict[str, str]]:
+                     lab_id: Optional[str] = None,
+                     purpose: str = "runtime") -> Optional[Dict[str, str]]:
     """None means "inherit the backend's own environment unchanged" (the mcp
     SDK's default when env=None) — only override with an isolated
     AZURE_CONFIG_DIR when an Azure profile actually resolves for this call,
@@ -155,7 +162,7 @@ async def _stdio_env(server: MCPServer, *, db: Optional[Any] = None,
     if db is None:
         return None
     from services.azure.azure_mcp_auth import resolve_profile, stdio_env_for_profile
-    profile = resolve_profile(db, server, lab_id)
+    profile = resolve_profile(db, server, lab_id, purpose=purpose)
     if profile is None:
         return None
     import os
@@ -184,16 +191,16 @@ async def sync_tools(server: MCPServer) -> Dict[str, Any]:
             parts = shlex.split(server.stdio_command or "")
             if not parts:
                 return {"ok": False, "error": "Geen stdio_command geconfigureerd."}
-            env = await _stdio_env(server, db=db, lab_id=None)
+            env = await _stdio_env(server, db=db, lab_id=None, purpose="sync")
             params = StdioServerParameters(command=parts[0], args=parts[1:], env=env)
             ctx = stdio_client(params)
         elif server.server_type == "sse":
             from mcp.client.sse import sse_client
-            headers = await _resolve_auth_headers(server, db=db, lab_id=None)
+            headers = await _resolve_auth_headers(server, db=db, lab_id=None, purpose="sync")
             ctx = sse_client(server.base_url, headers=headers)
         else:
             from mcp.client.streamable_http import streamablehttp_client
-            headers = await _resolve_auth_headers(server, db=db, lab_id=None)
+            headers = await _resolve_auth_headers(server, db=db, lab_id=None, purpose="sync")
             ctx = streamablehttp_client(server.base_url, headers=headers)
 
         async with ctx as streams:
