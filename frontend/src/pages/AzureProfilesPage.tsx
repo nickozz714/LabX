@@ -9,6 +9,14 @@
  * token in voor een vers paar (het profiel blijft hetzelfde), en "Opnieuw
  * authenticeren" vervangt de bestanden — opnieuw van de host, of gekozen met de
  * bestandskiezer.
+ *
+ * Allebei eindigen ze met DOORZETTEN, en niet als losse knop erna. Een verse
+ * sessie die alleen hier in de kluis staat verandert namelijk niets: de host en
+ * elk draaiend lab houden hun oude kopie, en dat merk je pas als de agent
+ * halverwege zijn werk op een verlopen token stuit. Vernieuwen en opnieuw
+ * authenticeren zetten daarom zelf door naar alles wat het profiel gebruikt, met
+ * per doel een regel of het gelukt is. De losse knoppen (verifiëren, naar de
+ * host, naar één lab) blijven bestaan voor als je juist wél één ding wilt doen.
  */
 import { useEffect, useState } from "react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
@@ -16,6 +24,7 @@ import { labsApi } from "@/lib/labs";
 import type { AzureProfileDto, Lab } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
 import { AzureBundlePicker, bundleComplete } from "@/components/AzureBundlePicker";
+import type { ApplyStep } from "@/lib/azureProfiles";
 import { ApiError } from "@/lib/api";
 
 export function AzureProfilesPage() {
@@ -25,6 +34,7 @@ export function AzureProfilesPage() {
   const [reauth, setReauth] = useState<AzureProfileDto | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [steps, setSteps] = useState<ApplyStep[] | null>(null);
 
   function refresh() {
     azureProfilesApi.list().then(setProfiles);
@@ -38,7 +48,7 @@ export function AzureProfilesPage() {
     setBusyId(p.id);
     try {
       const r = await azureProfilesApi.verify(p.id);
-      setMessage(`Identiteit: ${JSON.stringify(r.identity)}`);
+      report(p.name, `identiteit ${JSON.stringify(r.identity)}`);
       refresh();
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : "Verify mislukt");
@@ -47,15 +57,34 @@ export function AzureProfilesPage() {
     }
   }
 
+  function report(name: string, text: string, list?: ApplyStep[] | null) {
+    setMessage(`${name}: ${text}`);
+    setSteps(list || null);
+  }
+
   async function refreshTokens(p: AzureProfileDto) {
     setBusyId(p.id);
-    setMessage(null);
+    report(p.name, "bezig…");
     try {
       const r = await azureProfilesApi.refresh(p.id);
-      setMessage(`${p.name}: ${r.detail}`);
+      report(p.name, r.detail, r.apply?.steps);
       refresh();
     } catch (err) {
-      setMessage(err instanceof ApiError ? err.message : "Vernieuwen mislukt");
+      report(p.name, err instanceof ApiError ? err.message : "Vernieuwen mislukt");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function applyEverywhere(p: AzureProfileDto) {
+    setBusyId(p.id);
+    report(p.name, "doorzetten…");
+    try {
+      const r = await azureProfilesApi.apply(p.id);
+      report(p.name, r.ok ? "overal bijgewerkt." : "niet overal gelukt — zie hieronder.", r.steps);
+      refresh();
+    } catch (err) {
+      report(p.name, err instanceof ApiError ? err.message : "Doorzetten mislukt");
     } finally {
       setBusyId(null);
     }
@@ -66,7 +95,7 @@ export function AzureProfilesPage() {
     setBusyId(p.id);
     try {
       const r = await azureProfilesApi.sync(p.id, { target: "lab", lab_id: labId });
-      setMessage(r.ok ? "Gesynct naar lab." : `Sync mislukt: ${JSON.stringify(r.detail)}`);
+      report(p.name, r.ok ? "gesynct naar lab." : `sync mislukt: ${JSON.stringify(r.detail)}`);
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : "Sync mislukt");
     } finally {
@@ -78,7 +107,7 @@ export function AzureProfilesPage() {
     setBusyId(p.id);
     try {
       const r = await azureProfilesApi.sync(p.id, { target: "host" });
-      setMessage(r.ok ? "Gesynct naar de LabX-host." : `Sync mislukt: ${JSON.stringify(r.detail)}`);
+      report(p.name, r.ok ? "gesynct naar de LabX-host." : `sync mislukt: ${JSON.stringify(r.detail)}`);
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : "Sync mislukt");
     } finally {
@@ -107,7 +136,18 @@ export function AzureProfilesPage() {
           <Button onClick={() => setCreating(true)}>+ Nieuw profiel</Button>
         </div>
       </div>
-      {message && <p className="mb-3 text-sm text-muted-foreground">{message}</p>}
+      {message && <p className="mb-1 text-sm text-muted-foreground">{message}</p>}
+      {steps && (
+        <ul className="mb-3 space-y-0.5 text-xs">
+          {steps.map((st, i) => (
+            <li key={i} className="flex gap-2">
+              <span className={st.ok ? "text-success" : "text-destructive"}>{st.ok ? "✓" : "✗"}</span>
+              <span className="font-medium">{st.target}</span>
+              <span className="text-muted-foreground">{st.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {profiles.length === 0 ? (
         <EmptyState>Nog geen Azure-profielen.</EmptyState>
       ) : (
@@ -119,18 +159,14 @@ export function AzureProfilesPage() {
                 <Badge tone="violet">{p.kind}</Badge>
               </div>
               {p.identity && <pre className="mb-2 max-h-24 overflow-auto rounded bg-secondary p-2 text-xs">{JSON.stringify(p.identity, null, 2)}</pre>}
-              <div className="flex flex-wrap gap-2 text-xs">
-                <Button variant="secondary" disabled={busyId === p.id} onClick={() => verify(p)}>
-                  Verifieer
-                </Button>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
                 {p.kind !== "bearer" && (
                   <Button
-                    variant="secondary"
                     disabled={busyId === p.id}
-                    onClick={() => refreshTokens(p)}
-                    title="Wisselt het refresh token in voor een vers paar, zodat de sessie niet verloopt"
+                    onClick={() => applyEverywhere(p)}
+                    title="Verifieert de sessie en zet hem door naar de host en elk lab dat dit profiel gebruikt"
                   >
-                    {busyId === p.id ? "Bezig…" : "Vernieuwen"}
+                    {busyId === p.id ? "Bezig…" : "Overal toepassen"}
                   </Button>
                 )}
                 {p.kind === "msal_bundle" && (
@@ -138,24 +174,45 @@ export function AzureProfilesPage() {
                     Opnieuw authenticeren…
                   </Button>
                 )}
-                <Button variant="secondary" disabled={busyId === p.id} onClick={() => syncToHost(p)}>
-                  Sync → host
-                </Button>
-                <select
-                  disabled={busyId === p.id}
-                  onChange={(e) => syncToLab(p, e.target.value)}
-                  defaultValue=""
-                  className="rounded border border-input bg-background px-2 py-1"
-                >
-                  <option value="" disabled>
-                    Sync → lab…
-                  </option>
-                  {labs.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
+                {p.kind !== "bearer" && (
+                  <Button
+                    variant="secondary"
+                    disabled={busyId === p.id}
+                    onClick={() => refreshTokens(p)}
+                    title="Wisselt het refresh token in voor een vers paar en zet dat meteen door"
+                  >
+                    Vernieuwen
+                  </Button>
+                )}
+                {/* Losse stappen, voor als je juist één ding wilt doen. */}
+                <details className="text-xs">
+                  <summary className="cursor-pointer select-none text-muted-foreground">Losse stappen</summary>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Button variant="secondary" disabled={busyId === p.id} onClick={() => verify(p)}>
+                      Verifieer
+                    </Button>
+                    <Button variant="secondary" disabled={busyId === p.id} onClick={() => syncToHost(p)}>
+                      Sync → host
+                    </Button>
+                    <select
+                      disabled={busyId === p.id}
+                      onChange={(e) => syncToLab(p, e.target.value)}
+                      // Gestuurd op "" en niet defaultValue: anders blijft het
+                      // gekozen lab staan en levert hetzelfde lab nog eens
+                      // kiezen geen change-event op — de knop deed dan niets.
+                      value=""
+                      className="rounded border border-input bg-background px-2 py-1"
+                    >
+                      <option value="">Sync → lab…</option>
+                      {labs.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name} ({l.status})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </details>
+                <span className="flex-1" />
                 <Button variant="danger" onClick={() => azureProfilesApi.remove(p.id).then(refresh)}>
                   Verwijderen
                 </Button>
@@ -169,9 +226,9 @@ export function AzureProfilesPage() {
         <ReauthProfileModal
           profile={reauth}
           onClose={() => setReauth(null)}
-          onDone={(msg) => {
+          onDone={(msg, list) => {
             setReauth(null);
-            setMessage(msg);
+            report(reauth.name, msg, list);
             refresh();
           }}
         />
@@ -256,18 +313,29 @@ function ReauthProfileModal({
 }: {
   profile: AzureProfileDto;
   onClose: () => void;
-  onDone: (message: string) => void;
+  onDone: (message: string, steps?: ApplyStep[] | null) => void;
 }) {
   const [files, setFiles] = useState<Record<string, string>>({});
+  const [spread, setSpread] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /** Opnieuw authenticeren is pas af als de host en de labs het weten. */
+  async function finish(what: string) {
+    if (!spread) {
+      onDone(`${what} — nog niet doorgezet.`);
+      return;
+    }
+    const applied = await azureProfilesApi.apply(profile.id);
+    onDone(`${what} ${applied.ok ? "en overal doorgezet." : "— niet overal gelukt:"}`, applied.steps);
+  }
 
   async function fromHost() {
     setBusy(true);
     setError(null);
     try {
       await azureProfilesApi.recaptureHost(profile.id);
-      onDone(`${profile.name}: az-sessie opnieuw van de host gehaald.`);
+      await finish("az-sessie opnieuw van de host gehaald");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Ophalen van de host mislukt");
     } finally {
@@ -280,7 +348,7 @@ function ReauthProfileModal({
     setError(null);
     try {
       await azureProfilesApi.update(profile.id, { files });
-      onDone(`${profile.name}: bestanden vervangen.`);
+      await finish("bestanden vervangen");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Opslaan mislukt");
     } finally {
@@ -315,6 +383,13 @@ function ReauthProfileModal({
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+        <label className="flex items-start gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={spread} onChange={(e) => setSpread(e.target.checked)} className="mt-0.5" />
+          <span>
+            Meteen doorzetten naar de host en de labs die dit profiel gebruiken. Zonder dit staat de
+            verse sessie alleen hier, en werken de labs door met hun oude kopie.
+          </span>
+        </label>
         <p className="text-xs text-muted-foreground">
           Naam, omschrijving en alles wat naar dit profiel verwijst blijven staan — alleen de
           opgeslagen sessie wordt vervangen.

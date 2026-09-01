@@ -327,6 +327,64 @@ class AzureProfileService:
         self.db.commit()
         return identity
 
+    async def apply_everywhere(self, profile_id: int) -> Dict[str, Any]:
+        """De sessie doorzetten naar álles wat dit profiel gebruikt.
+
+        Bestaat omdat de losse stappen (verifiëren, naar de host syncen, per lab
+        syncen) samen één handeling zijn: na een verse login of een vernieuwing
+        is de opgeslagen bundel veranderd, en dan hébben de host en de draaiende
+        labs per definitie een oude. Ze één voor één moeten aanklikken is niet
+        alleen omslachtig, het is ook makkelijk half te doen — en een lab met een
+        halve az-sessie faalt pas als de agent er iets mee probeert.
+
+        Best-effort per doel: een lab dat niet draait is geen fout (het krijgt de
+        sessie bij de volgende start, zie LabService._sync_azure_profile_into_lab).
+        """
+        row = self.get_or_404(profile_id)
+        steps: List[Dict[str, Any]] = []
+
+        identity = await self.verify(profile_id)
+        steps.append({"target": "identiteit", "ok": "error" not in identity,
+                      "detail": identity.get("error") or self._identity_line(identity)})
+
+        if row.kind == "bearer":
+            steps.append({"target": "host", "ok": False,
+                          "detail": "Een bearer-profiel kent geen az-sessie om door te zetten."})
+        else:
+            try:
+                res = await self._sync_to_host(row, self._decrypt(row))
+                steps.append({"target": "host", "ok": bool(res.get("ok")),
+                              "detail": "az-sessie op de LabX-host bijgewerkt"})
+            except Exception as exc:  # noqa: BLE001
+                steps.append({"target": "host", "ok": False, "detail": str(exc)[:200]})
+
+        if row.kind == "msal_bundle":
+            from models.lab import Lab
+            labs = self.db.query(Lab).filter(Lab.azure_profile_id == profile_id).all()
+            if not labs:
+                steps.append({"target": "labs", "ok": True,
+                              "detail": "Geen lab gebruikt dit profiel."})
+            for lab in labs:
+                if lab.status != "running":
+                    steps.append({"target": f"lab {lab.name}", "ok": True,
+                                  "detail": "staat uit — krijgt de sessie bij de volgende start"})
+                    continue
+                try:
+                    res = await self.sync(profile_id, target="lab", lab_id=lab.id)
+                    steps.append({"target": f"lab {lab.name}", "ok": bool(res.get("ok")),
+                                  "detail": "az-sessie in het lab bijgewerkt" if res.get("ok")
+                                            else str(res.get("detail"))[:200]})
+                except Exception as exc:  # noqa: BLE001
+                    steps.append({"target": f"lab {lab.name}", "ok": False, "detail": str(exc)[:200]})
+
+        return {"ok": all(s["ok"] for s in steps), "steps": steps}
+
+    @staticmethod
+    def _identity_line(identity: Dict[str, Any]) -> str:
+        parts = [str(identity.get(k)) for k in ("account", "subscription", "tenant_id", "appid")
+                 if identity.get(k)]
+        return " · ".join(parts) or "geverifieerd"
+
     async def sync(self, profile_id: int, *, target: str, lab_id: Optional[str] = None,
                    az_dir: str = "/root/.azure") -> Dict[str, Any]:
         row = self.get_or_404(profile_id)

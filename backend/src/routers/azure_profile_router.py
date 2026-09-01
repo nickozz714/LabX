@@ -53,11 +53,27 @@ def delete_profile(profile_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{profile_id}/refresh")
-async def refresh_profile(profile_id: int, db: Session = Depends(get_db)):
+async def refresh_profile(profile_id: int, apply: bool = True, db: Session = Depends(get_db)):
     """Het refresh token van dit profiel inwisselen voor een vers paar. Nodig
     omdat een profiel dat alleen in de kluis ligt juist verloopt: refresh tokens
-    verlopen op stilte, niet op gebruik."""
-    return await _svc(db).refresh_tokens(profile_id)
+    verlopen op stilte, niet op gebruik.
+
+    Het resultaat gaat standaard meteen door naar de host en de labs die dit
+    profiel gebruiken: na een vernieuwing hébben die per definitie een oude
+    sessie, dus vernieuwen zonder doorzetten is half werk. `apply=false` voor wie
+    de stappen los wil zetten."""
+    svc = _svc(db)
+    result = await svc.refresh_tokens(profile_id)
+    if apply:
+        result["apply"] = await svc.apply_everywhere(profile_id)
+    return result
+
+
+@router.post("/{profile_id}/apply")
+async def apply_profile(profile_id: int, db: Session = Depends(get_db)):
+    """De sessie doorzetten naar alles wat dit profiel gebruikt: verifiëren, naar
+    de host, en naar elk lab dat eraan hangt."""
+    return await _svc(db).apply_everywhere(profile_id)
 
 
 @router.post("/{profile_id}/recapture-host", response_model=AzureProfileRead)
