@@ -9,6 +9,8 @@ schedules, azure-profiles) register themselves the same way — see the
 """
 from __future__ import annotations
 
+import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -32,6 +34,23 @@ async def _lab_reaper_tick() -> None:
         await LabService(db).expire_due()
     finally:
         db.close()
+
+
+async def _warm_mcp_gateway() -> None:
+    """Importeer de gateway in een apart proces zodat de bestandscache warm is
+    tegen de tijd dat een echte run hem start. Faalt dit, dan is er niets aan de
+    hand — het was alleen een voorsprong."""
+    import sys
+    src_root = os.path.dirname(os.path.abspath(__file__))
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", "import fastmcp, services.mcp.gateway",
+            env={**os.environ, "PYTHONPATH": src_root},
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await asyncio.wait_for(proc.wait(), timeout=180)
+        log.infox("MCP-gateway voorverwarmd", exit_code=proc.returncode)
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("MCP-gateway voorverwarmen overgeslagen", error=str(exc)[:200])
 
 
 async def _board_sync_tick() -> None:
@@ -75,6 +94,12 @@ async def lifespan(_app: FastAPI):
     scheduler.register(name="board_sync", interval_seconds=60, fn=_board_sync_tick,
                        run_immediately=False)
     await scheduler.start()
+    # De MCP-gateway alvast één keer laten importeren. De CLI start hem per run
+    # als eigen proces, en dat proces moet de halve backend van schijf lezen:
+    # koud gemeten op de server duurde die handshake 25s, tegen ~2s warm — met
+    # de standaard 30s van de CLI is dat een gok. Deze opwarming kost niets
+    # (best-effort, op de achtergrond) en haalt de eerste run uit de gevarenzone.
+    asyncio.create_task(_warm_mcp_gateway())
     log.infox("LabX gestart")
     yield
     await scheduler.stop()
