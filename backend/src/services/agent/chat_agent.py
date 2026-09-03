@@ -289,6 +289,10 @@ class ChatAgent:
         # genuinely needed.
         prompt = (self._latest_user_text(user_input) if resume_session_id
                   else self._prompt_from_history(user_input))
+        # Een beurt in dit lab is gebruik, ook als de agent er uiteindelijk geen
+        # commando in draait: anders verloopt een lab waarin net een uur is
+        # gewerkt alsnog, omdat alleen exec en bestandsacties meetelden.
+        _mark_lab_used(lab_id)
         token = set_active_lab(lab_id)
         got_real_progress = False
         # Make hook execution VISIBLE: one step per hook, before the model's
@@ -342,3 +346,17 @@ class ChatAgent:
                     os.unlink(mcp_config_path)
                 except Exception:  # noqa: BLE001
                     pass
+
+
+def _mark_lab_used(lab_id: str) -> None:
+    """Best-effort: het bijhouden van gebruik mag een beurt nooit laten falen."""
+    try:
+        from db.database import SessionLocal
+        from services.lab.lab_service import LabService
+        db = SessionLocal()
+        try:
+            LabService(db).mark_used(lab_id)
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Lab-gebruik bijwerken overgeslagen", lab_id=lab_id, error=str(exc)[:200])

@@ -32,6 +32,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _expiry_from_now(ttl_hours: int | None) -> str:
+    """ttl_hours telt vanaf NU, niet vanaf het aanmaken: de TTL is 'zo lang
+    ongebruikt', niet 'zo oud'."""
+    hours = max(1, min(int(ttl_hours or 24), 24 * 14))
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+
+
 def default_image() -> str:
     return settings.LAB_DEFAULT_IMAGE
 
@@ -226,7 +233,7 @@ class LabService:
         lid = str(uuid4())
         now = _now_iso()
         ttl_hours = max(1, min(int(ttl_hours or 24), 24 * 14))
-        expires = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
+        expires = _expiry_from_now(ttl_hours)
         p = Lab(
             id=lid, name=name[:255],
             status="creating", image=(image or default_image())[:255],
@@ -290,6 +297,9 @@ class LabService:
         await self.runtime.start(p.container_id)
         p.status = "running"
         p.updated_at = p.last_used_at = _now_iso()
+        # Starten is gebruik: een verlopen lab dat je weer aanzet moet niet bij
+        # de eerstvolgende reaper-tick meteen weer omvallen.
+        p.expires_at = _expiry_from_now(p.ttl_hours)
         self.db.commit()
         if p.allow_network:
             # Idempotent (command -v guards): near-instant when everything is
@@ -413,8 +423,25 @@ class LabService:
         return p.container_id
 
     def _touch(self, p: Lab) -> None:
+        """Gebruik schuift de vervaltijd vooruit.
+
+        De TTL was een harde leeftijdsgrens: expires_at werd bij het AANMAKEN
+        gezet en daarna nooit meer aangeraakt, dus elk lab ging precies
+        ttl_hours na zijn geboorte op "expired" — hoe intensief je het ook
+        gebruikte. Erger nog: startte je het daarna weer, dan zette de reaper
+        het binnen een tick opnieuw uit, want expires_at lag nog steeds in het
+        verleden. Een lab opruimen dat je niet meer gebruikt is de bedoeling;
+        een lab opruimen dat je wél gebruikt niet."""
         p.last_used_at = _now_iso()
+        p.expires_at = _expiry_from_now(p.ttl_hours)
         self.db.commit()
+
+    def mark_used(self, lab_id: str) -> None:
+        """Gebruik dat niet via exec of bestanden loopt — een chatbeurt of een
+        achtergrondrun in dit lab — telt net zo goed mee. Best-effort."""
+        p = self.db.get(Lab, lab_id)
+        if p is not None:
+            self._touch(p)
 
     @staticmethod
     def _safe_path(path: str) -> str:

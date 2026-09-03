@@ -176,7 +176,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
             <Input type="number" step="256" value={mem} onChange={(e) => setMem(Number(e.target.value))} />
           </div>
           <div>
-            <Label>TTL (uur)</Label>
+            <Label>Stopt na (uur zonder gebruik)</Label>
             <Input type="number" value={ttl} onChange={(e) => setTtl(Number(e.target.value))} />
           </div>
         </div>
@@ -277,10 +277,22 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
               )}
             </div>
           )}
+          {lab.status === "expired" && (
+            <p className="mb-3 rounded-md border border-border bg-secondary/40 p-2 text-xs text-muted-foreground">
+              Dit lab is gestopt omdat het {lab.ttl_hours} uur niet gebruikt is. Er is niets weg:
+              /workspace staat op een eigen volume en de container bestaat nog. Starten zet hem
+              weer aan en de teller begint opnieuw.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3 text-sm text-muted-foreground">
             <div>CPU: {lab.cpu_limit}</div>
             <div>RAM: {lab.mem_limit_mb} MB</div>
-            <div>TTL: {lab.ttl_hours}u (verloopt {lab.expires_at ? new Date(lab.expires_at).toLocaleString() : "-"})</div>
+            <div>
+              Stopt na {lab.ttl_hours}u zonder gebruik
+              {lab.expires_at && lab.status !== "expired" && (
+                <> — nu: {new Date(lab.expires_at).toLocaleString()}</>
+              )}
+            </div>
             <div>Netwerk-alias: {lab.network_alias}</div>
           </div>
           <div className="border-t border-border pt-3">
