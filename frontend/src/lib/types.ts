@@ -331,6 +331,9 @@ export interface TicketCommentDto {
   body: string;
   external_id: string | null;
   pushed: boolean;
+  /** Intern = blijft in LabX, gaat nooit naar Jira/DevOps. Alles van de agent
+   *  is intern tot iemand het promoveert. */
+  internal: boolean;
   created_at: string;
 }
 

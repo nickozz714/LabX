@@ -46,6 +46,11 @@ class Settings:
 
     # Claude Code CLI
     CLI_PATH: str = os.environ.get("LABX_CLI_PATH", "claude")
+    # Hoe lang de CLI een MCP-server mag geven om op te starten resp. een tool
+    # te beantwoorden (milliseconden). De CLI staat standaard op 30s; de
+    # labx-gateway importeert de halve backend en haalt dat koud niet altijd.
+    MCP_STARTUP_TIMEOUT_MS: int = int(os.environ.get("LABX_MCP_STARTUP_TIMEOUT_MS", "120000"))
+    MCP_TOOL_TIMEOUT_MS: int = int(os.environ.get("LABX_MCP_TOOL_TIMEOUT_MS", "300000"))
     CLAUDE_CODE_OAUTH_TOKEN: str = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     CLI_DEFAULT_MODEL: str = os.environ.get("LABX_CLI_DEFAULT_MODEL", "claude-sonnet-5")
     CLI_MAX_TURNS: int = int(os.environ.get("LABX_CLI_MAX_TURNS", "250"))

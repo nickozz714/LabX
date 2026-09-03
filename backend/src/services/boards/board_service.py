@@ -326,10 +326,39 @@ class BoardService:
 
     def add_comment(self, ticket_id: int, *, body: str, author: str = "user",
                     kind: str = "comment", external_id: Optional[str] = None,
-                    pushed: bool = False) -> TicketComment:
+                    pushed: bool = False,
+                    internal: Optional[bool] = None) -> TicketComment:
+        """`internal=None` kiest zelf: alles van de agent is intern, de rest
+        niet. Een agent doet verslag van zijn werk — dat hoort standaard bij ons
+        te blijven, niet ongevraagd bij iedereen die in Jira meeleest."""
+        if internal is None:
+            internal = (author == "agent")
         c = TicketComment(ticket_id=ticket_id, kind=kind, author=author, body=body,
-                          external_id=external_id, pushed=pushed, created_at=_now_iso())
+                          external_id=external_id, pushed=pushed, internal=bool(internal),
+                          created_at=_now_iso())
         self.db.add(c)
+        self.db.commit()
+        self.db.refresh(c)
+        return c
+
+    def get_comment(self, comment_id: int) -> TicketComment:
+        c = self.db.get(TicketComment, comment_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail="Opmerking niet gevonden")
+        return c
+
+    def promote_comment(self, comment_id: int) -> TicketComment:
+        """Een interne opmerking alsnog naar buiten. Alleen deze kant op: is hij
+        eenmaal in de bron geplaatst, dan haal je hem daar niet terug."""
+        c = self.db.get(TicketComment, comment_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail="Opmerking niet gevonden")
+        if c.kind != "comment":
+            raise HTTPException(status_code=400, detail=(
+                "Een activiteitsregel is geen opmerking — die gaat nooit naar de bron."))
+        if not c.internal:
+            return c
+        c.internal = False
         self.db.commit()
         self.db.refresh(c)
         return c
@@ -382,7 +411,7 @@ class BoardService:
         return {
             "id": c.id, "ticket_id": c.ticket_id, "kind": c.kind, "author": c.author,
             "body": c.body, "external_id": c.external_id, "pushed": c.pushed,
-            "created_at": c.created_at,
+            "internal": bool(c.internal), "created_at": c.created_at,
         }
 
     def tickets_to_dicts(self, tickets: Iterable[Ticket]) -> List[Dict[str, Any]]:

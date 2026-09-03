@@ -178,10 +178,17 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
                 lab_id=lab_id, command=str(args.get("command") or ""),
                 timeout=float(args.get("timeout") or 60))
             return {"result": result.get("output")}
+        if payload.get("tool_name") == "lab__start":
+            if not lab_id:
+                raise HTTPException(status_code=400, detail="lab_id is verplicht voor lab__start")
+            from services.lab.lab_service import LabService
+            res = await LabService(db).ensure_running(lab_id)
+            return {"result": ("Lab gestart." if res.get("started") else "Lab draaide al.")}
         if payload.get("tool_name") == "lab__write_file":
             if not lab_id:
                 raise HTTPException(status_code=400, detail="lab_id is verplicht voor lab__write_file")
             from services.lab.lab_service import LabService
+            await LabService(db).ensure_running(lab_id)
             try:
                 res = await LabService(db).write_file(
                     lab_id, str(args.get("path") or ""), str(args.get("content") or ""))

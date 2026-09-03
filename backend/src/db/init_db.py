@@ -21,6 +21,11 @@ log = get_logger(__name__)
 # a table already existed in the wild. Remove an entry once comfortable that
 # no deployed database predates it.
 _ADDITIVE_COLUMNS = {
+    "ticket_comments": [
+        # Interne opmerkingen gaan nooit naar de bron; bestaande rijen waren
+        # allemaal extern, dus 0 is de juiste standaard voor wat er al staat.
+        ("internal", "BOOLEAN NOT NULL DEFAULT 0"),
+    ],
     "mcp_servers": [
         ("always_allowed", "BOOLEAN NOT NULL DEFAULT 0"),
         ("auth_config_encrypted", "TEXT"),

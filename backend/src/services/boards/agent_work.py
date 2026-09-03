@@ -133,7 +133,7 @@ def _thread_for_ticket(db: Session, board: Board, ticket: Ticket) -> Thread:
     return t
 
 
-def start_ticket_run(db: Session, ticket_id: int, *,
+async def start_ticket_run(db: Session, ticket_id: int, *,
                      extra_instruction: Optional[str] = None,
                      trigger: str = "handmatig") -> Dict[str, Any]:
     """Zet de agent op één ticket. Geeft de run-info terug; de run zelf loopt
@@ -149,9 +149,14 @@ def start_ticket_run(db: Session, ticket_id: int, *,
         raise HTTPException(status_code=409,
                             detail="Dit board heeft geen gekoppeld lab — de agent heeft een lab nodig om in te werken")
     lab = db.get(Lab, board.lab_id)
-    if not lab or lab.status != "running":
-        raise HTTPException(status_code=409,
-                            detail=f"Het lab van dit board draait niet (status: {lab.status if lab else 'onbekend'})")
+    if not lab:
+        raise HTTPException(status_code=409, detail="Het lab van dit board bestaat niet meer")
+    if lab.status != "running":
+        # Een lab dat uit staat is geen reden om te weigeren: aanzetten is
+        # precies wat degene die op "agent" drukt bedoelde. Lukt dát niet, dan
+        # is er pas echt iets aan de hand.
+        from services.lab.lab_service import LabService
+        await LabService(db).ensure_running(lab.id)
     if ticket.agent_state == "running" and ticket.agent_run_id and \
             background_runs.is_active(ticket.agent_run_id):
         raise HTTPException(status_code=409, detail="De agent werkt al aan dit ticket")
@@ -245,8 +250,8 @@ def reconcile_on_start(db: Session) -> int:
     return len(rows)
 
 
-def pick_up_column(db: Session, board_id: int, *, column: Optional[str] = None,
-                   max_tickets: int = 1, trigger: str = "schedule") -> List[Dict[str, Any]]:
+async def pick_up_column(db: Session, board_id: int, *, column: Optional[str] = None,
+                         max_tickets: int = 1, trigger: str = "schedule") -> List[Dict[str, Any]]:
     """Pak de bovenste N tickets uit een kolom op. Dit is wat een board-
     schedule doet: werk dat klaarstaat wordt vanzelf door de AI opgepakt.
     Tickets waar de agent al aan werkt worden overgeslagen."""
@@ -263,7 +268,7 @@ def pick_up_column(db: Session, board_id: int, *, column: Optional[str] = None,
         if ticket.agent_state == "running":
             continue
         try:
-            started.append(start_ticket_run(db, ticket.id, trigger=trigger))
+            started.append(await start_ticket_run(db, ticket.id, trigger=trigger))
         except HTTPException as exc:
             log.warningx("Ticket oppakken mislukt", ticket=ticket.key, error=str(exc.detail))
             started.append({"ticket_key": ticket.key, "status": "failed", "error": str(exc.detail)})

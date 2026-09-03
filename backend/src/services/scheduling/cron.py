@@ -64,9 +64,9 @@ async def _run_board_schedule(db, sched: Schedule, run: ScheduleRun) -> None:
     zelfstandig doorlopen. De ScheduleRun rapporteert dus wat er GESTART is —
     het resultaat per ticket landt op het ticket zelf."""
     from services.boards.agent_work import pick_up_column
-    started = pick_up_column(db, sched.board_id, column=sched.board_column,
-                             max_tickets=sched.board_max_tickets or 1,
-                             trigger=f"schedule '{sched.name}'")
+    started = await pick_up_column(db, sched.board_id, column=sched.board_column,
+                                   max_tickets=sched.board_max_tickets or 1,
+                                   trigger=f"schedule '{sched.name}'")
     if not started:
         run.status = "completed"
         run.output = "Geen tickets klaar om op te pakken."

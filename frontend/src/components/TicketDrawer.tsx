@@ -131,6 +131,8 @@ export function TicketDrawer({
 }) {
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [comments, setComments] = useState<TicketCommentDto[]>([]);
+  const [draftInternal, setDraftInternal] = useState(false);
+  const [commentBusy, setCommentBusy] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [instruction, setInstruction] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -205,9 +207,26 @@ export function TicketDrawer({
 
   async function postComment() {
     if (!ticket || !draft.trim()) return;
-    await boardApi.addComment(board.id, ticket.id, draft.trim());
+    await boardApi.addComment(board.id, ticket.id, draft.trim(), draftInternal);
     setDraft("");
     await load();
+  }
+
+  /** Een interne opmerking alsnog naar de bron. Alleen deze kant op: uit Jira
+   *  terughalen kan niet, dus vragen we het één keer expliciet. */
+  async function promote(commentId: number) {
+    if (!ticket) return;
+    if (!confirm("Deze opmerking naar de bron sturen? Terughalen kan daarna niet meer.")) return;
+    setCommentBusy(commentId);
+    try {
+      const r = await boardApi.promoteComment(board.id, ticket.id, commentId);
+      if (r.pushed && !r.pushed.ok) setError(r.pushed.error || "Plaatsen in de bron mislukt");
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Promoveren mislukt");
+    } finally {
+      setCommentBusy(null);
+    }
   }
 
   async function runAgent() {
@@ -404,10 +423,24 @@ export function TicketDrawer({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
             />
-            <Button variant="secondary" className="self-end text-xs" onClick={postComment} disabled={!draft.trim()}>
-              Plaatsen
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={draftInternal}
+                  onChange={(e) => setDraftInternal(e.target.checked)}
+                />
+                intern
+              </label>
+              <Button variant="secondary" className="text-xs" onClick={postComment} disabled={!draft.trim()}>
+                Plaatsen
+              </Button>
+            </div>
           </div>
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            Intern blijft in LabX. Alles wat de agent schrijft is intern; met "naar de bron" stuur je
+            zo'n opmerking alsnog door.
+          </p>
           <div className="space-y-2">
             {comments.length === 0 && <p className="text-xs text-muted-foreground">Nog niets.</p>}
             {comments.map((c) => (
@@ -422,7 +455,23 @@ export function TicketDrawer({
                 <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="font-semibold">{c.author}</span>
                   <span>{new Date(c.created_at).toLocaleString()}</span>
-                  {c.external_id && <Badge tone="violet">extern</Badge>}
+                  {c.kind === "comment" &&
+                    (c.internal ? (
+                      <Badge tone="yellow">intern</Badge>
+                    ) : c.pushed || c.external_id ? (
+                      <Badge tone="violet">in de bron</Badge>
+                    ) : (
+                      <Badge tone="neutral">gaat naar de bron</Badge>
+                    ))}
+                  {c.kind === "comment" && c.internal && board.provider !== "local" && (
+                    <button
+                      className="ml-auto text-muted-foreground underline hover:text-foreground"
+                      disabled={commentBusy === c.id}
+                      onClick={() => promote(c.id)}
+                    >
+                      {commentBusy === c.id ? "bezig…" : "naar de bron"}
+                    </button>
+                  )}
                 </div>
                 {c.kind === "comment" ? (
                   <div className="markdown-body">

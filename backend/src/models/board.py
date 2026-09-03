@@ -152,6 +152,13 @@ class TicketComment(Base):
     author: Mapped[str] = mapped_column(String(255), nullable=False, default="user")
     body: Mapped[str] = mapped_column(Text, nullable=False)
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # INTERN = blijft in LabX en gaat nooit naar de bron. Alles wat de agent
+    # schrijft is dat: een agent doet verslag van zijn werk, en dat verslag is
+    # voor ons — niet voor de klant, de leverancier of wie er verder in Jira
+    # meeleest. Een interne opmerking is te PROMOVEREN naar extern (dan gaat
+    # hij alsnog mee met de eerstvolgende push); de omgekeerde weg bestaat niet
+    # zodra hij verstuurd is, want teruggehaald krijg je hem niet.
+    internal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # False = lokaal ontstaan en nog niet naar de bron gepusht.
     pushed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)

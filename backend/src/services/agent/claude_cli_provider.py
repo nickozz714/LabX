@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 
+from config import settings
 from component_logging import get_logger
 
 log = get_logger(__name__)
@@ -111,6 +112,15 @@ class ClaudeCliProvider:
             env["IS_SANDBOX"] = "1"
         if self._enable_tool_search:
             env.setdefault("ENABLE_TOOL_SEARCH", "true")
+        # De CLI geeft een MCP-server standaard 30s om op te starten. De
+        # labx-gateway is een Python-proces dat de halve backend importeert:
+        # warm is dat ~2s, maar koud (net herstart, of terwijl de machine met
+        # iets anders bezig is) haalt hij die 30s niet altijd — en dan draait de
+        # agent verder zónder lab-, board- en pipelinetools, met een antwoord
+        # dat daarover klaagt in plaats van werk. Ruimer zetten kost niets: is
+        # de gateway snel, dan wordt er niets gewacht.
+        env.setdefault("MCP_TIMEOUT", str(settings.MCP_STARTUP_TIMEOUT_MS))
+        env.setdefault("MCP_TOOL_TIMEOUT", str(settings.MCP_TOOL_TIMEOUT_MS))
         return env
 
     def _build_cmd(self, model_id: str, instructions: Optional[str],

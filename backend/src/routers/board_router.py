@@ -200,8 +200,33 @@ def add_comment(board_id: int, ticket_id: int, payload: Dict[str, Any],
     body = (payload.get("body") or "").strip()
     if not body:
         raise HTTPException(status_code=400, detail="body is verplicht")
+    # `internal` weglaten laat de service kiezen: agent = intern, mens = extern.
+    internal = payload.get("internal")
     return svc.comment_to_dict(
-        svc.add_comment(ticket_id, body=body, author=payload.get("author") or "user"))
+        svc.add_comment(ticket_id, body=body, author=payload.get("author") or "user",
+                        internal=None if internal is None else bool(internal)))
+
+
+@router.post("/{board_id}/tickets/{ticket_id}/comments/{comment_id}/promote")
+async def promote_comment(board_id: int, ticket_id: int, comment_id: int,
+                          db: Session = Depends(get_db)):
+    """Een interne opmerking alsnog naar de bron. Bij een two-way board gaat hij
+    er meteen heen — wachten op de volgende sync maakt van "nu doorzetten" iets
+    dat er straks misschien staat, en dan weet je niet of het gelukt is."""
+    svc = _svc(db)
+    _ticket_of_board(svc, board_id, ticket_id)
+    comment = svc.promote_comment(comment_id)
+    board = svc.get_board(board_id)
+    pushed: Any = None
+    if board.provider != "local" and board.sync_direction == "two_way":
+        from services.boards.sync_service import BoardSyncService
+        try:
+            pushed = await BoardSyncService(db).push_comment(comment_id)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 — de promotie zelf staat al vast
+            pushed = {"ok": False, "error": str(exc)[:300]}
+    return {"comment": svc.comment_to_dict(svc.get_comment(comment_id)), "pushed": pushed}
 
 
 def _ticket_of_board(svc: BoardService, board_id: int, ticket_id: int):
@@ -224,9 +249,9 @@ async def start_agent_run(board_id: int, ticket_id: int, payload: Optional[Dict[
     from services.boards.agent_work import start_ticket_run
     svc = _svc(db)
     _ticket_of_board(svc, board_id, ticket_id)
-    return start_ticket_run(db, ticket_id,
-                            extra_instruction=(payload or {}).get("instruction"),
-                            trigger="handmatig")
+    return await start_ticket_run(db, ticket_id,
+                                  extra_instruction=(payload or {}).get("instruction"),
+                                  trigger="handmatig")
 
 
 @router.post("/{board_id}/pick-up")
@@ -236,9 +261,9 @@ async def pick_up(board_id: int, payload: Optional[Dict[str, Any]] = None,
     board-schedule automatisch uitvoert, hier met de hand."""
     from services.boards.agent_work import pick_up_column
     body = payload or {}
-    started = pick_up_column(db, board_id, column=body.get("column"),
-                             max_tickets=int(body.get("max_tickets") or 1),
-                             trigger="handmatig")
+    started = await pick_up_column(db, board_id, column=body.get("column"),
+                                   max_tickets=int(body.get("max_tickets") or 1),
+                                   trigger="handmatig")
     return {"started": started, "count": len(started)}
 
 

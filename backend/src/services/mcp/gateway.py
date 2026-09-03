@@ -270,6 +270,25 @@ def build_server():
             return await _delegate_execute(url, token, tool_name="lab__write_file",
                                            args={"path": path, "content": content}, lab_id=lab_id)
 
+        async def _lab_start_handler() -> Any:
+            url = os.environ.get("LABX_INTERNAL_URL")
+            token = os.environ.get("LABX_INTERNAL_TOKEN")
+            return await _delegate_execute(url, token, tool_name="lab__start",
+                                           args={}, lab_id=lab_id)
+
+        mcp.add_tool(FunctionTool(
+            name="lab__start",
+            description=("Start de gekoppelde lab-container als die uit staat. Een lab gaat "
+                         "vanzelf uit na een tijd zonder gebruik; dit zet hem weer aan, met "
+                         "behoud van alles in /workspace. Je hebt dit zelden nodig — een "
+                         "shell-commando of bestandsactie start het lab zelf al — maar gebruik "
+                         "het als je expliciet wilt weten of het lab draait.\n"
+                         "Args: geen"),
+            parameters={"type": "object", "properties": {}},
+            fn=_lab_start_handler,
+            meta={"labx_builtin": "lab__start"},
+        ))
+
         mcp.add_tool(FunctionTool(
             name="lab__write_file",
             description=("Schrijf een bestand IN de lab-container, byte-exact (betrouwbaarder dan "
@@ -292,7 +311,8 @@ def build_server():
             name="lab__shell_exec",
             description=("Voer een bash-commando uit IN de gekoppelde lab-container "
                          "(werkmap /workspace). Output gaat door de LabX data-egress-guard. "
-                         "Dit is het enige uitvoeringspad in het lab."),
+                         "Dit is het enige uitvoeringspad in het lab. Staat het lab uit, dan "
+                         "wordt het automatisch gestart."),
             parameters={
                 "type": "object",
                 "properties": {
@@ -382,6 +402,9 @@ def build_server():
              "Plaats een opmerking op een ticket. DIT is de plek voor je bevindingen, "
              "voortgang, resultaten, vragen en waarom je vastliep — het werklogboek. "
              "Markdown mag. Gebruik hiervoor nooit de omschrijving.\n"
+             "Je opmerkingen zijn INTERN: ze blijven in LabX en gaan niet naar het "
+             "bronsysteem (Jira/DevOps), tenzij een mens ze daar bewust naartoe "
+             "promoveert. Schrijf dus vrijuit wat je tegenkwam.\n"
              "Args: key* (string), body* (string)",
              {"type": "object", "properties": {
                  "key": {"type": "string"}, "body": {"type": "string"},

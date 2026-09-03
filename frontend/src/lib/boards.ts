@@ -40,8 +40,14 @@ export const boardApi = {
 
   comments: (boardId: number, ticketId: number) =>
     api.get<TicketCommentDto[]>(`/boards/${boardId}/tickets/${ticketId}/comments`),
-  addComment: (boardId: number, ticketId: number, body: string) =>
-    api.post<TicketCommentDto>(`/boards/${boardId}/tickets/${ticketId}/comments`, { body }),
+  addComment: (boardId: number, ticketId: number, body: string, internal = false) =>
+    api.post<TicketCommentDto>(`/boards/${boardId}/tickets/${ticketId}/comments`, { body, internal }),
+  // Een interne opmerking alsnog naar de bron sturen (alleen deze kant op).
+  promoteComment: (boardId: number, ticketId: number, commentId: number) =>
+    api.post<{ comment: TicketCommentDto; pushed: { ok: boolean; detail?: string; error?: string } | null }>(
+      `/boards/${boardId}/tickets/${ticketId}/comments/${commentId}/promote`,
+      {},
+    ),
 
   runAgent: (boardId: number, ticketId: number, instruction?: string) =>
     api.post<AgentRunStart>(`/boards/${boardId}/tickets/${ticketId}/agent-run`, { instruction }),

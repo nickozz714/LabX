@@ -284,13 +284,18 @@ class BoardSyncService:
         await self._push_comments(board, adapter, stats)
 
     async def _push_comments(self, board: Board, adapter, stats: Dict[str, Any]) -> None:
-        """Alleen echte opmerkingen (kind="comment") die lokaal zijn ontstaan.
+        """Alleen echte opmerkingen (kind="comment") die lokaal zijn ontstaan
+        én niet als intern gemarkeerd zijn.
+
         LabX-activiteitsregels blijven binnen LabX — een bron volplempen met
-        "verplaatst van todo naar agent" is ruis in andermans systeem."""
+        "verplaatst van todo naar agent" is ruis in andermans systeem. Hetzelfde
+        geldt voor alles wat de agent schrijft: dat is standaard intern, en het
+        gaat pas mee zodra iemand het bewust promoveert."""
         rows = (self.db.query(TicketComment, Ticket)
                 .join(Ticket, Ticket.id == TicketComment.ticket_id)
                 .filter(Ticket.board_id == board.id,
                         TicketComment.kind == "comment",
+                        TicketComment.internal == False,  # noqa: E712
                         TicketComment.pushed == False,  # noqa: E712
                         TicketComment.external_id.is_(None))
                 .all())
@@ -309,6 +314,29 @@ class BoardSyncService:
                 stats["comments_pushed"] += 1
             except Exception as exc:  # noqa: BLE001
                 stats["errors"].append(f"opmerking op {ticket.key}: {str(exc)[:200]}")
+
+    async def push_comment(self, comment_id: int) -> Dict[str, Any]:
+        """Eén opmerking nu naar de bron sturen — de weg die "promoveren naar
+        extern" neemt, zodat je meteen ziet of het gelukt is in plaats van te
+        moeten hopen op de volgende sync."""
+        comment = self.boards.get_comment(comment_id)
+        ticket = self.boards.get_ticket(comment.ticket_id)
+        board = self.boards.get_board(ticket.board_id)
+        if comment.internal:
+            raise ValueError("Deze opmerking staat nog op intern.")
+        if comment.pushed or comment.external_id:
+            return {"ok": True, "detail": "Stond al in de bron."}
+        target = ticket.external_key if board.provider == "jira" else ticket.external_id
+        if not target:
+            return {"ok": False, "error": "Dit ticket bestaat nog niet in de bron."}
+        adapter = self._adapter(board)
+        external_id = await adapter.add_comment(
+            external_id=target, body=f"[LabX · {comment.author}]\n\n{comment.body}")
+        comment.pushed = True
+        if external_id:
+            comment.external_id = external_id
+        self.db.commit()
+        return {"ok": True, "detail": f"Geplaatst op {ticket.external_key or target}."}
 
     # ── pull ────────────────────────────────────────────────────────────────
 

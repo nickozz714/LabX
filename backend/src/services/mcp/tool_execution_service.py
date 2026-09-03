@@ -128,7 +128,12 @@ class ToolExecutionService:
         from services.lab.data_guard import guard_lab_output
         from services.lab.lab_service import LabService
 
-        result = await LabService(self.db).exec_command(lab_id, command, timeout=timeout)
+        svc = LabService(self.db)
+        # Staat het lab uit (of is het na een tijd stilte vanzelf gestopt), dan
+        # eerst aanzetten: de agent hoort niet stuk te lopen op iets dat hij zelf
+        # kan oplossen.
+        await svc.ensure_running(lab_id)
+        result = await svc.exec_command(lab_id, command, timeout=timeout)
         lab = self._lab(lab_id)
         guarded = guard_lab_output(result, enabled=bool(lab.data_guard) if lab else True,
                                    command=command, lab_id=lab_id)

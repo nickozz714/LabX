@@ -288,6 +288,26 @@ class LabService:
         self.db.commit()
         return self._to_dict(p)
 
+    async def ensure_running(self, lab_id: str) -> Dict[str, Any]:
+        """Zorg dat dit lab draait, en start het anders.
+
+        Een lab dat uit staat is geen fout maar een toestand: het gaat vanzelf
+        uit als er een tijd niet mee gewerkt is, en dan wil je dat de eerste die
+        het weer nodig heeft het gewoon aanzet. Zonder dit strandt een agent op
+        "lab draait niet" bij een handeling die hij prima had kunnen doen.
+        """
+        p = self.get(lab_id)
+        if p.status == "running" and p.container_id:
+            return {"ok": True, "started": False, "status": p.status}
+        if not p.container_id:
+            raise HTTPException(status_code=409, detail=(
+                f"Lab '{p.name}' heeft geen container (status {p.status}) — "
+                "hij moet opnieuw aangemaakt worden."))
+        was = p.status
+        await self.start(lab_id)
+        log.infox("Lab automatisch gestart", lab_id=lab_id, vorige_status=was)
+        return {"ok": True, "started": True, "status": self.get(lab_id).status}
+
     async def start(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
         if p.status == "running":
