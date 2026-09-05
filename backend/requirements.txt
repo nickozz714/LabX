@@ -8,4 +8,7 @@ cryptography>=43.0.1
 PyJWT>=2.9.0
 python-multipart>=0.0.9
 websockets>=13.1
-fastmcp>=2.3.0
+# Pinned to a major: fastmcp 4 brought in mcp 2.x, whose client API renamed
+# streamablehttp_client and Tool.inputSchema — an unpinned bump silently broke
+# every http MCP server's tool sync. Test before widening this range.
+fastmcp>=4.0.0,<5

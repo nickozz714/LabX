@@ -33,7 +33,7 @@ def _extract_result(result: Any) -> Any:
     """A CallToolResult's `.content` is a list of content blocks; flatten text
     blocks to a string (the common case), otherwise return the raw list."""
     content = getattr(result, "content", None)
-    is_error = bool(getattr(result, "isError", False))
+    is_error = bool(getattr(result, "is_error", None) or getattr(result, "isError", False))
     if content is None:
         return result
     texts = []
@@ -94,6 +94,24 @@ def _static_auth_headers(server: MCPServer, *, purpose: str = "runtime") -> Dict
     return {}
 
 
+def _streamable_http_ctx(url: str, headers: Dict[str, str]):
+    """The streamable-http transport, across the mcp SDK's 1.x/2.x split.
+
+    mcp 2.x renamed `streamablehttp_client` to `streamable_http_client`, dropped
+    its `headers=` parameter (headers now ride on an httpx client you hand in)
+    and yields a 2-tuple instead of (read, write, get_session_id). Without this
+    shim an unpinned `fastmcp` upgrade silently breaks every http MCP server —
+    exactly how "cannot import name 'streamablehttp_client'" killed the Nectar
+    sync. Callers take the streams positionally (`streams[0], streams[1]`) so
+    both arities work.
+    """
+    import mcp.client.streamable_http as sh
+    new_client = getattr(sh, "streamable_http_client", None)
+    if new_client is not None:
+        return new_client(url, http_client=sh.create_mcp_http_client(headers=headers))
+    return sh.streamablehttp_client(url, headers=headers)
+
+
 async def call_tool(server: MCPServer, remote_name: str, args: Dict[str, Any], *,
                     lab_container_id: Optional[str] = None, timeout: float = 120.0,
                     db: Optional[Any] = None, lab_id: Optional[str] = None) -> Any:
@@ -141,11 +159,11 @@ async def call_tool(server: MCPServer, remote_name: str, args: Dict[str, Any], *
                 return _extract_result(result)
 
     # default: http (streamable-http)
-    from mcp.client.streamable_http import streamablehttp_client
     if not server.base_url:
         raise RuntimeError(f"MCP-server '{server.name}' heeft geen base_url.")
     headers = await _resolve_auth_headers(server, db=db, lab_id=lab_id)
-    async with streamablehttp_client(server.base_url, headers=headers) as (read, write, _get_sid):
+    async with _streamable_http_ctx(server.base_url, headers) as streams:
+        read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(remote_name, args)
@@ -199,9 +217,8 @@ async def sync_tools(server: MCPServer) -> Dict[str, Any]:
             headers = await _resolve_auth_headers(server, db=db, lab_id=None, purpose="sync")
             ctx = sse_client(server.base_url, headers=headers)
         else:
-            from mcp.client.streamable_http import streamablehttp_client
             headers = await _resolve_auth_headers(server, db=db, lab_id=None, purpose="sync")
-            ctx = streamablehttp_client(server.base_url, headers=headers)
+            ctx = _streamable_http_ctx(server.base_url, headers)
 
         async with ctx as streams:
             read, write = streams[0], streams[1]
@@ -219,7 +236,9 @@ async def sync_tools(server: MCPServer) -> Dict[str, Any]:
                 db.add(row)
             row.name = t.name
             row.description = t.description or ""
-            row.argument = t.inputSchema or {"type": "object", "properties": {}}
+            # mcp 2.x renamed Tool.inputSchema to input_schema.
+            schema = getattr(t, "input_schema", None) or getattr(t, "inputSchema", None)
+            row.argument = schema or {"type": "object", "properties": {}}
             row.updated_at = now
             seen.add(t.name)
         # `server` belongs to the CALLER's session (e.g. the router's
