@@ -484,9 +484,12 @@ async def browser_socket(websocket: WebSocket, lab_id: str, token: str = Query(d
     except Exception:  # noqa: BLE001
         await websocket.close(code=4401)
         return
+    from models.lab import Lab
     db = SessionLocal()
     try:
         target = _browser_target(db, lab_id).replace("http://", "ws://") + "/websockify"
+        lab = db.get(Lab, lab_id)
+        container_id = lab.container_id if lab else None
     except HTTPException:
         await websocket.close(code=4409)
         return
@@ -497,11 +500,18 @@ async def browser_socket(websocket: WebSocket, lab_id: str, token: str = Query(d
     try:
         async with websockets.connect(target, subprotocols=["binary"],
                                       max_size=None, open_timeout=15) as upstream:
+            from services.mcp.lab_session_pool import touch
+
             async def naar_lab() -> None:
                 while True:
                     msg = await websocket.receive()
                     if msg["type"] == "websocket.disconnect":
                         return
+                    # Meekijken en klikken is gebruik: zonder dit zou de
+                    # opruimtaak de browser onder je handen kunnen sluiten
+                    # terwijl je midden in een login zit.
+                    if container_id:
+                        touch(container_id)
                     data = msg.get("bytes")
                     if data is None and msg.get("text") is not None:
                         data = msg["text"].encode()

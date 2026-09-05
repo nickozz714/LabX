@@ -44,7 +44,12 @@ log = get_logger(__name__)
 # niemand gebruikt hoeft geen geheugen in het lab te bezetten. De sessie start
 # vanzelf opnieuw bij de volgende aanroep — alleen wat er in het geheugen van
 # de browser stond (de open pagina) is dan weg; het profiel op schijf niet.
-IDLE_TIMEOUT_SECONDS = 900
+#
+# Een half uur en niet een kwartier, omdat iemand die zélf inlogt in de browser
+# van het lab (tweestapsverificatie, telefoon erbij) ondertussen geen enkele
+# tool-aanroep doet — en het zuur zou zijn als de browser precies dan verdwijnt.
+# Meekijken via het Browser-tabblad telt trouwens als gebruik, zie `touch`.
+IDLE_TIMEOUT_SECONDS = 1800
 
 
 class LabMcpSession:
@@ -184,6 +189,15 @@ async def close_for_container(container_id: str) -> int:
     if sessions:
         log.infox("Lab-MCP-sessies gesloten", container=container_id[:12], count=len(sessions))
     return len(sessions)
+
+
+def touch(container_id: str) -> None:
+    """Deze container is in gebruik, ook al komt er geen tool-aanroep binnen —
+    iemand kijkt mee of zit in te loggen via het Browser-tabblad."""
+    now = time.monotonic()
+    for key, sess in _SESSIONS.items():
+        if key[1] == container_id:
+            sess.last_used = now
 
 
 async def close_idle(max_idle_seconds: int = IDLE_TIMEOUT_SECONDS) -> int:
