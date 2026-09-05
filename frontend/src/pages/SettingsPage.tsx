@@ -7,7 +7,7 @@ import { settingsApi } from "@/lib/settings";
 import { labsApi } from "@/lib/labs";
 import { useAuth } from "@/contexts/AuthContext";
 import { api, ApiError } from "@/lib/api";
-import type { AppSettingsDto, GuardModelStatus } from "@/lib/types";
+import type { AppSettingsDto, GuardModelStatus, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/components/ui";
 
 export function SettingsPage() {
@@ -299,10 +299,214 @@ export function SettingsPage() {
         </div>
       </Card>
 
+      <LabExtrasCard />
+
       <AccountCard />
 
       {saved && <p className="text-sm text-success">Opgeslagen.</p>}
     </div>
+  );
+}
+
+/**
+ * De catalogus van lab-extra's: wat je bij het aanmaken van een lab kunt
+ * aanvinken om te laten installeren. Stond eerst hardcoded in de backend —
+ * elk nieuw pakket (Playwright + Chromium bijvoorbeeld) was daardoor een
+ * code-change. Een pakket is een paar commando's: een controle die zegt of het
+ * er al staat, en de installatie voor als dat niet zo is.
+ */
+function LabExtrasCard() {
+  const [rows, setRows] = useState<LabExtra[]>([]);
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [draft, setDraft] = useState<Partial<LabExtra> | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function load() {
+    setRows(await labsApi.extras());
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function patch(row: LabExtra, payload: Partial<LabExtra>) {
+    setErr(null);
+    try {
+      const updated = await labsApi.updateExtra(row.id, payload);
+      setRows((cur) => cur.map((r) => (r.id === updated.id ? updated : r)));
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Opslaan mislukt");
+    }
+  }
+
+  async function createNew() {
+    setErr(null);
+    try {
+      await labsApi.createExtra({
+        key: draft?.key || "",
+        label: draft?.label || draft?.key || "",
+        description: draft?.description || null,
+        check_cmd: draft?.check_cmd || null,
+        install_script: draft?.install_script || "",
+        requires: draft?.requires || [],
+        timeout_s: draft?.timeout_s || 900,
+      });
+      setDraft(null);
+      await load();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Aanmaken mislukt");
+    }
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <h2 className="text-sm font-semibold">Lab-extra&apos;s</h2>
+      <p className="text-xs text-muted-foreground">
+        Pakketten die je per lab kunt aanvinken. Ze draaien als root in de container en worden
+        overgeslagen zodra het controle-commando met code 0 eindigt — daardoor kost het bij elke
+        start van een lab bijna niets, en pikt een bestaand lab een nieuw pakket vanzelf op.
+      </p>
+      {err && <p className="text-sm text-destructive">{err}</p>}
+
+      <div className="divide-y divide-border rounded-md border border-border">
+        {rows.map((row) => (
+          <div key={row.id} className="p-2">
+            <div className="flex items-center gap-2">
+              <button className="flex-1 text-left text-sm" onClick={() => setOpenId(openId === row.id ? null : row.id)}>
+                <span className="font-medium">{row.label}</span>{" "}
+                <code className="text-xs text-muted-foreground">{row.key}</code>
+                {row.builtin && <Badge tone="neutral">standaard</Badge>}
+                {row.requires.length > 0 && (
+                  <span className="ml-1 text-xs text-muted-foreground">→ vereist {row.requires.join(", ")}</span>
+                )}
+              </button>
+              <Toggle
+                checked={row.default_on}
+                onChange={(v) => patch(row, { default_on: v })}
+                label="standaard aan"
+              />
+              <Toggle checked={row.is_enabled} onChange={(v) => patch(row, { is_enabled: v })} label="actief" />
+            </div>
+
+            {openId === row.id && (
+              <div className="mt-2 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label>Naam</Label>
+                    <Input defaultValue={row.label} onBlur={(e) => patch(row, { label: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label>Time-out (seconden)</Label>
+                    <Input
+                      type="number"
+                      defaultValue={row.timeout_s}
+                      onBlur={(e) => patch(row, { timeout_s: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>Omschrijving</Label>
+                  <Input defaultValue={row.description || ""} onBlur={(e) => patch(row, { description: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Vereist (komma-gescheiden sleutels)</Label>
+                  <Input
+                    defaultValue={row.requires.join(", ")}
+                    onBlur={(e) =>
+                      patch(row, {
+                        requires: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <Label>Controle (exit 0 = staat er al, installatie wordt overgeslagen)</Label>
+                  <TextArea
+                    rows={2}
+                    className="font-mono text-xs"
+                    defaultValue={row.check_cmd || ""}
+                    onBlur={(e) => patch(row, { check_cmd: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Installatie</Label>
+                  <TextArea
+                    rows={6}
+                    className="font-mono text-xs"
+                    defaultValue={row.install_script}
+                    onBlur={(e) => patch(row, { install_script: e.target.value })}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  {row.builtin && (
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        labsApi.resetExtra(row.id).then((u) =>
+                          setRows((cur) => cur.map((r) => (r.id === u.id ? u : r))),
+                        )
+                      }
+                    >
+                      Terug naar origineel
+                    </Button>
+                  )}
+                  <Button variant="danger" onClick={() => labsApi.deleteExtra(row.id).then(load)}>
+                    Verwijderen
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {draft ? (
+        <div className="space-y-2 rounded-md border border-border p-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Sleutel (kleine letters, bijv. playwright-firefox)</Label>
+              <Input value={draft.key || ""} onChange={(e) => setDraft({ ...draft, key: e.target.value })} />
+            </div>
+            <div>
+              <Label>Naam</Label>
+              <Input value={draft.label || ""} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <Label>Controle</Label>
+            <TextArea
+              rows={2}
+              className="font-mono text-xs"
+              value={draft.check_cmd || ""}
+              onChange={(e) => setDraft({ ...draft, check_cmd: e.target.value })}
+              placeholder="command -v mijntool >/dev/null 2>&1"
+            />
+          </div>
+          <div>
+            <Label>Installatie</Label>
+            <TextArea
+              rows={5}
+              className="font-mono text-xs"
+              value={draft.install_script || ""}
+              onChange={(e) => setDraft({ ...draft, install_script: e.target.value })}
+              placeholder={"set -e\napt-get update -qq\nDEBIAN_FRONTEND=noninteractive apt-get install -y -qq mijntool"}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={createNew} disabled={!draft.key || !draft.install_script}>
+              Toevoegen
+            </Button>
+            <Button variant="ghost" onClick={() => setDraft(null)}>
+              Annuleren
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button variant="secondary" onClick={() => setDraft({ timeout_s: 900, requires: [] })}>
+          + Pakket toevoegen
+        </Button>
+      )}
+    </Card>
   );
 }
 

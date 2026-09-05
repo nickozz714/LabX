@@ -51,6 +51,10 @@ _ADDITIVE_COLUMNS = {
     ],
     "labs": [
         ("azure_profile_id", "INTEGER"),
+        ("extras", "TEXT"),
+        ("setup_script", "TEXT"),
+        ("provision_status", "VARCHAR(16)"),
+        ("provision_log", "TEXT"),
     ],
     "schedules": [
         ("json_schema", "TEXT"),
@@ -127,6 +131,7 @@ def init_db() -> None:
         background_run,
         board,
         lab,
+        lab_extra,
         mcp_server,
         message,
         schedule,

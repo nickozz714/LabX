@@ -99,7 +99,8 @@ def install_from_catalog(key: str, db: Session = Depends(get_db)):
         s = MCPServer(
             name=entry["name"], slug=key, description=entry["description"],
             server_type="stdio", location=entry["suggested_location"],
-            stdio_command=f"{runner} {install_flag}{entry['package']}{args}",
+            stdio_command=(entry.get("stdio_command")
+                           or f"{runner} {install_flag}{entry['package']}{args}"),
             is_enabled=True, created_at=now, updated_at=now,
         )
     db.add(s)

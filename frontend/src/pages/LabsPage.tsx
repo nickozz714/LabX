@@ -6,10 +6,10 @@
  * one-shot exec, interactive terminal, guard-audit). The Docker diagnostic
  * banner is the direct fix for issue 1 ("geen Docker aanwezig").
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { dockerStatus, labsApi } from "@/lib/labs";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, Toggle } from "@/components/ui";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
@@ -74,9 +74,19 @@ export function LabsPage() {
                 <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
               </div>
               <div className="text-xs text-muted-foreground">{lab.image}</div>
-              <div className="mt-2 flex gap-1 text-xs text-muted-foreground">
+              <div className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">
                 {lab.data_guard && <Badge tone="violet">data-guard</Badge>}
                 {lab.llm_guard && <Badge tone="violet">llm-guard</Badge>}
+                {/* Het lab draait al terwijl de pakketten nog binnenkomen —
+                    zonder dit zou je op "running" afgaan en je afvragen waarom
+                    Playwright er nog niet is. */}
+                {(lab.provision_status === "pending" || lab.provision_status === "running") && (
+                  <Badge tone="yellow">inrichten…</Badge>
+                )}
+                {lab.provision_status === "error" && <Badge tone="red">inrichten mislukt</Badge>}
+                {(lab.extras || []).length > 0 && lab.provision_status === "ok" && (
+                  <Badge tone="neutral">{lab.extras.length} extra&apos;s</Badge>
+                )}
               </div>
             </Card>
           ))}
@@ -102,6 +112,14 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [name, setName] = useState("");
   const [presets, setPresets] = useState<ImagePreset[]>([]);
   const [environment, setEnvironment] = useState("python");
+  // "__custom__" = niet uit de lijst maar een zelf ingetypt image.
+  const [customImage, setCustomImage] = useState("");
+  const [imageQuery, setImageQuery] = useState("");
+  const [imageHits, setImageHits] = useState<{ name: string; description: string }[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [catalog, setCatalog] = useState<LabExtra[]>([]);
+  const [extras, setExtras] = useState<string[]>([]);
+  const [setupScript, setSetupScript] = useState("");
   const [cpu, setCpu] = useState(1);
   const [mem, setMem] = useState(2048);
   const [ttl, setTtl] = useState(24);
@@ -116,7 +134,27 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
   useEffect(() => {
     labsApi.images().then((r) => setPresets(r.presets));
+    labsApi.extras().then((rows) => {
+      const available = rows.filter((e) => e.is_enabled);
+      setCatalog(available);
+      setExtras(available.filter((e) => e.default_on).map((e) => e.key));
+    });
   }, []);
+
+  async function searchImages() {
+    if (imageQuery.trim().length < 2) return;
+    setSearching(true);
+    try {
+      const r = await labsApi.searchImages(imageQuery.trim());
+      setImageHits((r.results || []).map((x: any) => ({ name: x.name, description: x.description })));
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function toggleExtra(key: string) {
+    setExtras((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
+  }
 
   async function submit() {
     setBusy(true);
@@ -131,10 +169,16 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         .filter(Boolean)
         .map(Number)
         .filter((n) => Number.isFinite(n));
+      const useCustom = environment === "__custom__";
       await labsApi.create({
-        name, environment, cpu_limit: cpu, mem_limit_mb: mem, ttl_hours: ttl,
+        name,
+        // Eén van de twee: een preset-sleutel, of een zelf opgegeven image.
+        environment: useCustom ? undefined : environment,
+        image: useCustom ? customImage.trim() : undefined,
+        cpu_limit: cpu, mem_limit_mb: mem, ttl_hours: ttl,
         allow_network: allowNetwork, data_guard: dataGuard, llm_guard: llmGuard,
         repos, ports: portList.length ? portList : undefined,
+        extras, setup_script: setupScript.trim() || undefined,
       });
       onCreated();
     } catch (err) {
@@ -163,8 +207,71 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
                 {p.label}
               </option>
             ))}
+            <option value="__custom__">Eigen image…</option>
           </select>
-          <p className="mt-1 text-xs text-muted-foreground">{presets.find((p) => p.key === environment)?.description}</p>
+          {environment === "__custom__" ? (
+            <div className="mt-2 space-y-2">
+              <Input
+                value={customImage}
+                onChange={(e) => setCustomImage(e.target.value)}
+                placeholder="mcr.microsoft.com/playwright:v1.55.0-noble"
+              />
+              <div className="flex gap-2">
+                <Input
+                  value={imageQuery}
+                  onChange={(e) => setImageQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && searchImages()}
+                  placeholder="Zoek op Docker Hub…"
+                />
+                <Button variant="secondary" onClick={searchImages} disabled={searching}>
+                  {searching ? "Zoeken…" : "Zoek"}
+                </Button>
+              </div>
+              {imageHits.length > 0 && (
+                <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+                  {imageHits.map((hit) => (
+                    <button
+                      key={hit.name}
+                      onClick={() => setCustomImage(hit.name)}
+                      className="block w-full px-2 py-1 text-left text-xs hover:bg-secondary"
+                    >
+                      <span className="font-medium">{hit.name}</span>
+                      {hit.description && <span className="text-muted-foreground"> — {hit.description}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Elk Debian/Ubuntu-gebaseerd image werkt; het basisgereedschap wordt er alsnog in gezet.
+              </p>
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-muted-foreground">{presets.find((p) => p.key === environment)?.description}</p>
+          )}
+        </div>
+        <div>
+          <Label>Erbij installeren</Label>
+          <p className="mb-1 text-xs text-muted-foreground">
+            Wordt na het aanmaken op de achtergrond geïnstalleerd — het lab is meteen bruikbaar en de
+            voortgang staat op het tabblad Inrichting. Beheer de lijst bij Instellingen &gt; Lab-extra's.
+          </p>
+          <div className="space-y-1 rounded-md border border-border p-2">
+            {catalog.length === 0 && <p className="text-xs text-muted-foreground">Geen pakketten in de catalogus.</p>}
+            {catalog.map((e) => (
+              <label key={e.key} className="flex cursor-pointer items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={extras.includes(e.key)}
+                  onChange={() => toggleExtra(e.key)}
+                />
+                <span>
+                  {e.label}
+                  {e.description && <span className="block text-xs text-muted-foreground">{e.description}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-2">
           <div>
@@ -202,10 +309,28 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
               <Label>Poorten om te publiceren (komma-gescheiden)</Label>
               <Input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="8000, 8501" />
             </div>
+            <div>
+              <Label>Eigen setup-script (draait na de pakketten, als root)</Label>
+              <TextArea
+                rows={4}
+                className="font-mono text-xs"
+                value={setupScript}
+                onChange={(e) => setSetupScript(e.target.value)}
+                placeholder={"pip install -q pandas pyarrow"}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Draait bij elk inrichten opnieuw (ook bij een herstart), dus schrijf het zo dat het
+                een tweede keer geen kwaad kan.
+              </p>
+            </div>
           </div>
         </details>
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button className="w-full" disabled={busy || !name.trim()} onClick={submit}>
+        <Button
+          className="w-full"
+          disabled={busy || !name.trim() || (environment === "__custom__" && !customImage.trim())}
+          onClick={submit}
+        >
           {busy ? "Aanmaken…" : "Aanmaken"}
         </Button>
       </div>
@@ -214,7 +339,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
 }
 
 function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
-  const [tab, setTab] = useState<"settings" | "toegang" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
+  const [tab, setTab] = useState<"settings" | "inrichting" | "toegang" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
 
   useEffect(() => {
@@ -250,14 +375,14 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1 border-b border-border text-sm">
-        {(["settings", "toegang", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
+        {(["settings", "inrichting", "toegang", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 ${tab === t ? "border-b-2 border-primary font-medium" : "text-muted-foreground"}`}
           >
-            {{ settings: "Instellingen", toegang: "Toegang", git: "Git", files: "Bestanden",
-               exec: "Commando", terminal: "Terminal", audit: "Guard-audit" }[t]}
+            {{ settings: "Instellingen", inrichting: "Inrichting", toegang: "Toegang", git: "Git",
+               files: "Bestanden", exec: "Commando", terminal: "Terminal", audit: "Guard-audit" }[t]}
           </button>
         ))}
       </div>
@@ -305,6 +430,7 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
         </div>
       )}
 
+      {tab === "inrichting" && <ProvisioningPanel lab={lab} onChanged={onChanged} />}
       {tab === "toegang" && <LabAllowlist lab={lab} onSaved={() => onChanged()} />}
       {tab === "git" && <PublishPanel lab={lab} />}
       {tab === "files" && <FileBrowser lab={lab} />}
@@ -312,6 +438,219 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       {tab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
       {tab === "audit" && <GuardAuditPanel lab={lab} />}
     </Modal>
+  );
+}
+
+function provisionTone(status: Lab["provision_status"]) {
+  return { ok: "green", error: "red", running: "yellow", pending: "yellow", skipped: "neutral" }[
+    status || "skipped"
+  ] as any;
+}
+
+/**
+ * Tabblad "Inrichting": wat er in dit lab geïnstalleerd staat, wat dat deed, en
+ * de knop om het opnieuw te proberen. Het inrichten draait op de achtergrond
+ * (een browser binnenhalen duurt minuten), dus dit scherm polt zolang het bezig
+ * is — zonder dat zou je alleen "pending" zien en moeten raden.
+ */
+function ProvisioningPanel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
+  const [catalog, setCatalog] = useState<LabExtra[]>([]);
+  const [extras, setExtras] = useState<string[]>(lab.extras || []);
+  const [script, setScript] = useState(lab.setup_script || "");
+  const [open, setOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [image, setImage] = useState(lab.image);
+  const [confirmRebuild, setConfirmRebuild] = useState(false);
+  const running = lab.provision_status === "running" || lab.provision_status === "pending";
+  const rebuilding = lab.status === "creating";
+
+  useEffect(() => {
+    labsApi.extras().then((rows) => setCatalog(rows.filter((e) => e.is_enabled)));
+  }, []);
+
+  useEffect(() => {
+    setExtras(lab.extras || []);
+    setScript(lab.setup_script || "");
+    setImage(lab.image);
+  }, [lab.extras, lab.setup_script, lab.image]);
+
+  // De verversfunctie via een ref: hij is elke render een nieuwe functie, en
+  // als hij in de deps stond zou het interval bij elke render opnieuw beginnen
+  // en dus mogelijk nooit aflopen.
+  const refreshRef = useRef(onChanged);
+  refreshRef.current = onChanged;
+  useEffect(() => {
+    if (!running && !rebuilding) return;
+    const t = setInterval(() => refreshRef.current(), 3000);
+    return () => clearInterval(t);
+  }, [running, rebuilding]);
+
+  const dirty =
+    JSON.stringify([...extras].sort()) !== JSON.stringify([...(lab.extras || [])].sort()) ||
+    script !== (lab.setup_script || "");
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      // Opslaan installeert meteen wat erbij komt (de backend start het
+      // inrichten zelf zodra deze twee velden veranderen).
+      await labsApi.update(lab.id, { extras, setup_script: script });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Opslaan mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rebuild() {
+    setBusy(true);
+    setError(null);
+    try {
+      await labsApi.rebuild(lab.id, image.trim() || undefined);
+      setConfirmRebuild(false);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Opnieuw opbouwen mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reprovision(force: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await labsApi.provision(lab.id, force);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Inrichten starten mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Status:</span>
+        <Badge tone={provisionTone(lab.provision_status)}>{lab.provision_status || "onbekend"}</Badge>
+        {running && <span className="text-xs text-muted-foreground">Bezig — dit scherm ververst zichzelf.</span>}
+        <div className="ml-auto flex gap-2">
+          <Button variant="secondary" disabled={busy || running || lab.status !== "running"}
+                  onClick={() => reprovision(false)}>
+            Opnieuw inrichten
+          </Button>
+          <Button variant="ghost" disabled={busy || running || lab.status !== "running"}
+                  onClick={() => reprovision(true)}>
+            Alles opnieuw installeren
+          </Button>
+        </div>
+      </div>
+
+      {!lab.allow_network && (
+        <p className="rounded-md border border-border bg-secondary/40 p-2 text-xs text-muted-foreground">
+          Dit lab heeft geen netwerktoegang, dus er valt niets te installeren.
+        </p>
+      )}
+
+      <div className="rounded-md border border-border p-3">
+        <Label>Image</Label>
+        <div className="mt-1 flex gap-2">
+          <Input value={image} onChange={(e) => setImage(e.target.value)} />
+          <Button variant="secondary" disabled={busy || rebuilding} onClick={() => setConfirmRebuild(true)}>
+            {rebuilding ? "Bezig…" : "Opnieuw opbouwen"}
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Een container houdt het image waarmee hij is gemaakt, dus wijzigen of bijwerken betekent:
+          opnieuw opbouwen. Laat het veld staan om dit image naar zijn nieuwste versie te halen.
+        </p>
+        {confirmRebuild && (
+          <div className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs">
+            <p>
+              <strong>/workspace blijft</strong> (eigen volume) en de aangevinkte pakketten worden
+              opnieuw geïnstalleerd. Weg is alles wat verder in de container stond — handmatig
+              geïnstalleerde tools buiten /workspace, systeeminstellingen, de az-sessie (die wordt
+              opnieuw gesynct). Duurt enkele minuten.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="danger" disabled={busy} onClick={rebuild}>
+                Ja, opnieuw opbouwen op {image.trim() || lab.image}
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmRebuild(false)}>
+                Annuleren
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <Label>Geïnstalleerd in dit lab</Label>
+        <div className="mt-1 space-y-1 rounded-md border border-border p-2">
+          {catalog.length === 0 && <p className="text-xs text-muted-foreground">Geen pakketten in de catalogus.</p>}
+          {catalog.map((e) => (
+            <label key={e.key} className="flex cursor-pointer items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={extras.includes(e.key)}
+                onChange={() =>
+                  setExtras((cur) => (cur.includes(e.key) ? cur.filter((k) => k !== e.key) : [...cur, e.key]))
+                }
+              />
+              <span>
+                {e.label}
+                {e.description && <span className="block text-xs text-muted-foreground">{e.description}</span>}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <Label>Eigen setup-script</Label>
+        <TextArea rows={4} className="font-mono text-xs" value={script}
+                  onChange={(ev) => setScript(ev.target.value)} />
+      </div>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <Button disabled={busy || !dirty} onClick={save}>
+        {busy ? "Bezig…" : "Opslaan en installeren"}
+      </Button>
+
+      {(lab.provision_log || []).length > 0 && (
+        <div>
+          <Label>Laatste ronde</Label>
+          <div className="mt-1 divide-y divide-border rounded-md border border-border text-sm">
+            {(lab.provision_log || []).map((step) => (
+              <div key={step.key}>
+                <button
+                  className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-secondary"
+                  onClick={() => setOpen(open === step.key ? null : step.key)}
+                >
+                  <Badge tone={step.status === "ok" ? "green" : step.status === "error" ? "red" : "neutral"}>
+                    {step.status}
+                  </Badge>
+                  <span>{step.label}</span>
+                  {step.exit_code != null && step.status === "error" && (
+                    <span className="text-xs text-muted-foreground">exit {step.exit_code}</span>
+                  )}
+                </button>
+                {open === step.key && step.output && (
+                  <pre className="max-h-64 overflow-auto bg-secondary/40 px-2 py-1 text-xs whitespace-pre-wrap">
+                    {step.output}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

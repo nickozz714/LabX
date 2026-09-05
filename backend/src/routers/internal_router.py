@@ -162,6 +162,104 @@ def _root_error(exc: BaseException) -> BaseException:
     return exc
 
 
+def _lab_packages(db: Session, lab_id: Optional[str]) -> Dict[str, Any]:
+    """lab__packages: wat kan er in dit lab, wat staat aan, en hoe liep de
+    laatste installatie. Als tekst, niet als JSON: het model moet hier een
+    beslissing uit halen ("Playwright ontbreekt, dus die zet ik aan"), niet een
+    structuur parseren."""
+    from models.lab import Lab
+    from models.lab_extra import LabExtra
+    lab = db.get(Lab, lab_id) if lab_id else None
+    if lab is None:
+        return {"error": "lab__packages vereist een lab-gebonden chatsessie."}
+    rows = (db.query(LabExtra).filter(LabExtra.is_enabled.is_(True))
+            .order_by(LabExtra.sort_order, LabExtra.id).all())
+    aan = list(lab.extras or [])
+    lines = [f"Lab: {lab.name} (image {lab.image})",
+             f"Inrichten: {lab.provision_status or 'onbekend'}",
+             f"Aan in dit lab: {', '.join(aan) if aan else '(geen)'}",
+             "",
+             "Beschikbare pakketten:"]
+    for r in rows:
+        mark = "x" if r.key in aan else " "
+        req = f" [vereist: {', '.join(r.requires)}]" if r.requires else ""
+        lines.append(f"  [{mark}] {r.key} — {r.label}{req}")
+        if r.description:
+            lines.append(f"        {r.description}")
+    if lab.setup_script:
+        lines += ["", "Eigen setup-script:", *(f"  {ln}" for ln in lab.setup_script.splitlines()[:20])]
+    log_rows = list(lab.provision_log or [])
+    if log_rows:
+        lines += ["", "Laatste ronde:"]
+        for step in log_rows:
+            lines.append(f"  {step.get('status'):>7}  {step.get('key')}")
+            if step.get("status") == "error" and step.get("output"):
+                tail = str(step["output"]).strip().splitlines()[-3:]
+                lines += [f"          {ln}" for ln in tail]
+    return {"result": "\n".join(lines)}
+
+
+async def _lab_install_packages(db: Session, lab_id: Optional[str],
+                                args: Dict[str, Any]) -> Dict[str, Any]:
+    """lab__install_packages: zet pakketten aan voor DIT lab en installeer ze.
+
+    Het verschil met gewoon `apt-get install` via de shell is niet het
+    installeren maar het VASTLEGGEN: wat hier binnenkomt staat op het lab, komt
+    terug na een herstart of een opnieuw opgebouwde container, en is zichtbaar
+    voor wie later in dit lab werkt."""
+    from models.lab import Lab
+    from models.lab_extra import LabExtra
+    from services.lab.lab_service import LabService
+    lab = db.get(Lab, lab_id) if lab_id else None
+    if lab is None:
+        return {"error": "lab__install_packages vereist een lab-gebonden chatsessie."}
+    wanted = [str(x).strip() for x in (args.get("packages") or []) if str(x).strip()]
+    script = args.get("setup_script")
+    if not wanted and script is None:
+        return {"error": "Geef packages (sleutels uit lab__packages) en/of een setup_script."}
+    known = {k for (k,) in db.query(LabExtra.key).filter(LabExtra.is_enabled.is_(True)).all()}
+    unknown = [k for k in wanted if k not in known]
+    if unknown:
+        return {"error": f"Onbekende pakketten: {', '.join(unknown)}. "
+                         f"Beschikbaar: {', '.join(sorted(known))}. "
+                         f"Iets anders nodig? Zet het in setup_script."}
+    if not lab.allow_network:
+        return {"error": "Dit lab heeft geen netwerktoegang, dus er valt niets te installeren."}
+    await LabService(db).ensure_running(str(lab_id))
+    # Vastleggen wat er al aan stond VOORDAT update_settings dezelfde rij
+    # bijwerkt — daarna is `lab.extras` de nieuwe lijst en zou elk pakket als
+    # "stond er al" gemeld worden.
+    eerder = list(lab.extras or [])
+    merged = list(dict.fromkeys(eerder + wanted))
+    await LabService(db).update_settings(
+        str(lab_id), extras=merged,
+        setup_script=script if script is not None else "__unset__")
+    toegevoegd = [k for k in wanted if k not in eerder] or ["(stond al aan)"]
+    return {"result": (f"Aangezet: {', '.join(toegevoegd)}. Het installeren loopt op de "
+                       f"achtergrond en kan minuten duren (een browser is honderden MB\'s). "
+                       f"Controleer met lab__packages; ga ondertussen gerust door met werk "
+                       f"dat er niet op wacht.")}
+
+
+async def _lab_rebuild(db: Session, lab_id: Optional[str],
+                       args: Dict[str, Any]) -> Dict[str, Any]:
+    """lab__rebuild: het lab opnieuw opbouwen, eventueel op een ander image."""
+    from models.lab import Lab
+    from services.lab.lab_service import rebuild_in_background
+    lab = db.get(Lab, lab_id) if lab_id else None
+    if lab is None:
+        return {"error": "lab__rebuild vereist een lab-gebonden chatsessie."}
+    image = str(args.get("image") or "").strip() or None
+    if not rebuild_in_background(str(lab_id), image=image):
+        return {"error": "Er loopt al werk voor dit lab (inrichten of opbouwen) — "
+                         "controleer met lab__packages en probeer het daarna opnieuw."}
+    doel = image or lab.image
+    return {"result": (f"Bezig met opnieuw opbouwen op {doel}. /workspace blijft staan; alles "
+                       f"daarbuiten wordt opnieuw gemaakt en de aangezette pakketten worden "
+                       f"opnieuw geïnstalleerd. Dit duurt enkele minuten — controleer met "
+                       f"lab__packages, en verwacht tot die tijd geen shell in dit lab.")}
+
+
 @router.post("/execute")
 async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] = Header(default=None)):
     if not x_labx_internal_token or x_labx_internal_token != INTERNAL_MCP_TOKEN:
@@ -195,6 +293,12 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             except HTTPException as exc:
                 return {"error": f"lab__write_file mislukt: {exc.detail}"}
             return {"result": f"Geschreven: {res['path']} ({res['bytes']} bytes)"}
+        if payload.get("tool_name") == "lab__packages":
+            return _lab_packages(db, lab_id)
+        if payload.get("tool_name") == "lab__install_packages":
+            return await _lab_install_packages(db, lab_id, args)
+        if payload.get("tool_name") == "lab__rebuild":
+            return await _lab_rebuild(db, lab_id, args)
         if payload.get("tool_name") == "task__start_background":
             return await _task_start_background(db, payload, lab_id, args)
         if payload.get("tool_name") == "task__check_background":

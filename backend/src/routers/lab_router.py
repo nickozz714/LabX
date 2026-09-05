@@ -63,6 +63,125 @@ async def search_registry_images(q: str = Query(..., min_length=2)):
         return {"ok": False, "results": [], "error": f"Docker Hub niet bereikbaar: {str(exc)[:200]}"}
 
 
+# ── lab-extra's (de catalogus van wat je in een lab kunt zetten) ────────────
+# Deze routes staan BEWUST vóór /{lab_id}: FastAPI matcht op volgorde, en
+# /labs/{lab_id} zou "extras" anders als lab-id opslokken.
+
+def _extra_to_dict(e) -> Dict[str, Any]:
+    return {
+        "id": e.id, "key": e.key, "label": e.label, "description": e.description,
+        "check_cmd": e.check_cmd, "install_script": e.install_script,
+        "requires": list(e.requires or []), "timeout_s": e.timeout_s,
+        "default_on": bool(e.default_on), "is_enabled": bool(e.is_enabled),
+        "builtin": bool(e.builtin), "sort_order": e.sort_order,
+        "updated_at": e.updated_at,
+    }
+
+
+@router.get("/extras")
+def list_lab_extras(db: Session = Depends(get_db)):
+    from models.lab_extra import LabExtra
+    rows = db.query(LabExtra).order_by(LabExtra.sort_order, LabExtra.id).all()
+    return [_extra_to_dict(e) for e in rows]
+
+
+@router.post("/extras")
+def create_lab_extra(payload: Dict[str, Any], db: Session = Depends(get_db)):
+    import re
+    from datetime import datetime, timezone
+    from models.lab_extra import LabExtra
+    key = str(payload.get("key") or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,63}", key):
+        raise HTTPException(status_code=400,
+                            detail="Sleutel: kleine letters, cijfers, . _ - (2-64 tekens)")
+    if db.query(LabExtra).filter(LabExtra.key == key).first():
+        raise HTTPException(status_code=409, detail=f"Er bestaat al een pakket '{key}'")
+    if not str(payload.get("install_script") or "").strip():
+        raise HTTPException(status_code=400, detail="Een installatiescript is verplicht")
+    now = datetime.now(timezone.utc).isoformat()
+    row = LabExtra(
+        key=key, label=str(payload.get("label") or key)[:255],
+        description=payload.get("description"),
+        check_cmd=(payload.get("check_cmd") or None),
+        install_script=str(payload.get("install_script")),
+        requires=[str(x) for x in (payload.get("requires") or [])],
+        timeout_s=max(30, min(int(payload.get("timeout_s") or 900), 7200)),
+        default_on=bool(payload.get("default_on", False)),
+        is_enabled=bool(payload.get("is_enabled", True)),
+        builtin=False, sort_order=int(payload.get("sort_order") or 100),
+        created_at=now, updated_at=now,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _extra_to_dict(row)
+
+
+@router.patch("/extras/{extra_id}")
+def update_lab_extra(extra_id: int, payload: Dict[str, Any], db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+    from models.lab_extra import LabExtra
+    row = db.get(LabExtra, extra_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pakket niet gevonden")
+    for field in ("label", "description", "check_cmd", "install_script"):
+        if field in payload:
+            setattr(row, field, payload[field] or None)
+    if not (row.install_script or "").strip():
+        raise HTTPException(status_code=400, detail="Een installatiescript is verplicht")
+    if "requires" in payload:
+        row.requires = [str(x) for x in (payload.get("requires") or [])]
+    if "timeout_s" in payload:
+        row.timeout_s = max(30, min(int(payload.get("timeout_s") or 900), 7200))
+    for flag in ("default_on", "is_enabled"):
+        if flag in payload:
+            setattr(row, flag, bool(payload[flag]))
+    if "sort_order" in payload:
+        row.sort_order = int(payload.get("sort_order") or 100)
+    row.updated_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    db.refresh(row)
+    return _extra_to_dict(row)
+
+
+@router.post("/extras/{extra_id}/reset")
+def reset_lab_extra(extra_id: int, db: Session = Depends(get_db)):
+    """Een meegeleverd pakket terugzetten naar het origineel — de uitweg als een
+    eigen aanpassing het script gesloopt heeft."""
+    from datetime import datetime, timezone
+    from models.lab_extra import LabExtra
+    from services.lab.extras_catalog import builtin_for
+    row = db.get(LabExtra, extra_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pakket niet gevonden")
+    spec = builtin_for(row.key)
+    if spec is None:
+        raise HTTPException(status_code=400,
+                            detail="Dit is een eigen pakket — er is geen origineel om naar terug te gaan")
+    row.label = spec["label"]
+    row.description = spec.get("description")
+    row.check_cmd = spec.get("check_cmd")
+    row.install_script = spec["install_script"]
+    row.requires = list(spec.get("requires") or [])
+    row.timeout_s = int(spec.get("timeout_s") or 900)
+    row.sort_order = int(spec.get("sort_order") or 100)
+    row.updated_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    db.refresh(row)
+    return _extra_to_dict(row)
+
+
+@router.delete("/extras/{extra_id}")
+def delete_lab_extra(extra_id: int, db: Session = Depends(get_db)):
+    from models.lab_extra import LabExtra
+    row = db.get(LabExtra, extra_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pakket niet gevonden")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/guard-model/status")
 async def guard_model_status():
     from services.lab.data_guard_llm import guard_model_status as _st
@@ -133,6 +252,8 @@ async def create_lab(payload: Dict[str, Any], db: Session = Depends(get_db)):
         allowed_tools=payload.get("allowed_tools"),
         allowed_skills=payload.get("allowed_skills"),
         environment=(payload.get("environment") or "").strip() or None,
+        extras=payload.get("extras"),
+        setup_script=payload.get("setup_script"),
     )
 
 
@@ -150,8 +271,53 @@ async def update_lab(lab_id: str, payload: Dict[str, Any], db: Session = Depends
         allowed_mcp=payload.get("allowed_mcp") if "allowed_mcp" in payload else None,
         allowed_tools=payload.get("allowed_tools") if "allowed_tools" in payload else None,
         allowed_skills=payload.get("allowed_skills") if "allowed_skills" in payload else None,
+        extras=payload.get("extras") if "extras" in payload else None,
+        setup_script=payload.get("setup_script") if "setup_script" in payload else "__unset__",
         azure_profile_id=payload.get("azure_profile_id") if "azure_profile_id" in payload else "__unset__",
     )
+
+
+@router.post("/{lab_id}/provision")
+async def provision_lab(lab_id: str, payload: Optional[Dict[str, Any]] = None,
+                        db: Session = Depends(get_db)):
+    """Opnieuw inrichten. Antwoordt meteen — het werk loopt op de achtergrond,
+    de voortgang staat in provision_status/provision_log op het lab zelf.
+    force=true slaat de "staat er al"-controles over, voor een tweede poging na
+    een halve installatie."""
+    from services.lab.lab_service import provision_in_background
+    svc = _service(db)
+    lab = svc.get(lab_id)
+    if lab.status != "running":
+        raise HTTPException(status_code=409, detail="Lab draait niet (start hem eerst)")
+    if not lab.allow_network:
+        raise HTTPException(status_code=409,
+                            detail="Dit lab heeft geen netwerk — er valt niets binnen te halen")
+    if not provision_in_background(lab_id, force=bool((payload or {}).get("force"))):
+        raise HTTPException(status_code=409, detail="Er loopt al werk voor dit lab — wacht tot dat klaar is")
+    lab.provision_status = "pending"
+    db.commit()
+    return {"ok": True, "provision_status": "pending"}
+
+
+@router.post("/{lab_id}/rebuild")
+async def rebuild_lab(lab_id: str, payload: Optional[Dict[str, Any]] = None,
+                      db: Session = Depends(get_db)):
+    """Het lab opnieuw opbouwen op (een nieuw) image — de manier om het image
+    van een bestaand lab te wijzigen of bij te werken. /workspace blijft; de
+    rest van de container wordt opnieuw gemaakt en daarna opnieuw ingericht.
+    Antwoordt meteen: het ophalen van een image kan gigabytes zijn, dus het werk
+    loopt op de achtergrond (volg `status` en `provision_status`)."""
+    from services.lab.lab_service import rebuild_in_background
+    svc = _service(db)
+    lab = svc.get(lab_id)
+    image = str((payload or {}).get("image") or "").strip() or None
+    # `rebuild` zet de status zelf op "creating" zodra de taak begint; hier
+    # alvast iets beweren dat misschien nooit gebeurt zou het lab voorgoed op
+    # "creating" laten staan.
+    if not rebuild_in_background(lab_id, image=image,
+                                 pull=bool((payload or {}).get("pull", True))):
+        raise HTTPException(status_code=409, detail="Er loopt al werk voor dit lab — wacht tot dat klaar is")
+    return {"ok": True, "status": "creating", "image": image or lab.image}
 
 
 @router.post("/{lab_id}/start")

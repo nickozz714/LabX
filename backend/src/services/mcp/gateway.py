@@ -276,6 +276,14 @@ def build_server():
             return await _delegate_execute(url, token, tool_name="lab__start",
                                            args={}, lab_id=lab_id)
 
+        def _lab_env_handler(tool_name: str):
+            async def _handler(**kwargs: Any) -> Any:
+                url = os.environ.get("LABX_INTERNAL_URL")
+                token = os.environ.get("LABX_INTERNAL_TOKEN")
+                return await _delegate_execute(url, token, tool_name=tool_name,
+                                               args=kwargs, lab_id=lab_id)
+            return _handler
+
         mcp.add_tool(FunctionTool(
             name="lab__start",
             description=("Start de gekoppelde lab-container als die uit staat. Een lab gaat "
@@ -305,6 +313,71 @@ def build_server():
             },
             fn=_write_file_handler,
             meta={"labx_builtin": "lab__write_file"},
+        ))
+
+        # De agent mag zijn eigen omgeving bijwerken. Hij kan met de shell al
+        # van alles installeren, maar dat blijft in de containerlaag hangen:
+        # onzichtbaar voor de volgende, en weg zodra het lab opnieuw opgebouwd
+        # wordt. Deze twee tools leggen het VAST op het lab, zodat het
+        # terugkomt — dat is het verschil, niet het installeren zelf.
+        mcp.add_tool(FunctionTool(
+            name="lab__packages",
+            description=("Toon wat er in dit lab geïnstalleerd kan worden, wat er aan staat en hoe "
+                         "de laatste installatie liep. Gebruik dit vóór lab__install_packages (voor "
+                         "de juiste sleutels) en erna (om te zien of het gelukt is — installeren "
+                         "loopt op de achtergrond).\n"
+                         "Args: geen"),
+            parameters={"type": "object", "properties": {}},
+            fn=_lab_env_handler("lab__packages"),
+            meta={"labx_builtin": "lab__packages"},
+        ))
+
+        mcp.add_tool(FunctionTool(
+            name="lab__install_packages",
+            description=("Zet pakketten aan voor dit lab en installeer ze (bv. Playwright + "
+                         "Chromium om een browser te kunnen aansturen). Gebruik dit in plaats van "
+                         "los apt/pip/npm via de shell wanneer het gereedschap moet BLIJVEN: wat "
+                         "hier binnenkomt staat op het lab en komt terug na een herstart of een "
+                         "opnieuw opgebouwde container. Zit wat je nodig hebt niet in de lijst, "
+                         "geef dan setup_script mee — dat draait als root, na de pakketten, en "
+                         "opnieuw bij elke herstart, dus schrijf het zo dat een tweede keer geen "
+                         "kwaad kan. Het installeren draait op de achtergrond; controleer met "
+                         "lab__packages.\n"
+                         "Args: packages (array van sleutels uit lab__packages), setup_script "
+                         "(string, vervangt het huidige script)"),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "packages": {"type": "array", "items": {"type": "string"},
+                                 "description": "Sleutels uit lab__packages, bv. [\"playwright-python\"]"},
+                    "setup_script": {"type": "string",
+                                     "description": "Eigen shell-script voor wat niet in de catalogus staat"},
+                },
+            },
+            fn=_lab_env_handler("lab__install_packages"),
+            meta={"labx_builtin": "lab__install_packages"},
+        ))
+
+        mcp.add_tool(FunctionTool(
+            name="lab__rebuild",
+            description=("Bouw dit lab opnieuw op, eventueel op een ander image — de enige manier "
+                         "om het image van een bestaand lab te wijzigen of bij te werken (zonder "
+                         "image: dezelfde, in zijn nieuwste versie). /workspace blijft staan en de "
+                         "aangezette pakketten worden opnieuw geïnstalleerd; alles wat je verder "
+                         "buiten /workspace in de container had gezet is weg. Zet dus eerst veilig "
+                         "wat je wilt houden, en gebruik dit alleen als een ander image echt nodig "
+                         "is — een pakket erbij kan met lab__install_packages. Duurt minuten; het "
+                         "lab is intussen niet bruikbaar.\n"
+                         "Args: image (string, optioneel — bv. node:lts-bookworm)"),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "image": {"type": "string",
+                              "description": "Docker-image; leeg laten = huidige image bijwerken"},
+                },
+            },
+            fn=_lab_env_handler("lab__rebuild"),
+            meta={"labx_builtin": "lab__rebuild"},
         ))
 
         mcp.add_tool(FunctionTool(

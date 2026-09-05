@@ -56,6 +56,33 @@ IMAGE_PRESETS: List[Dict[str, str]] = [
      "description": "Minimale basis; git + Azure CLI worden standaard geprovisioneerd."},
 ]
 
+# Dev-workstation-basis die in ELK lab met netwerk komt, ongeacht wat er verder
+# is aangevinkt: het spul waar praktisch elke taak tegenaan loopt (curl voor
+# REST, jq voor de JSON, git, unzip). Zelfde vorm als een lab-extra — een
+# check-commando dat "staat er al" betekent, plus een installatie — zodat één
+# runner beide afhandelt en alles idempotent blijft.
+_BASE_STEPS: List[Dict[str, Any]] = [
+    {"key": "git", "label": "git",
+     "check": "command -v git >/dev/null 2>&1",
+     "script": "apt-get update -qq && "
+               "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git",
+     "timeout_s": 600},
+    {"key": "base-tools", "label": "bash, curl, jq, unzip",
+     "check": "command -v bash >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && "
+              "command -v jq >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1",
+     "script": "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
+               "bash curl jq unzip ca-certificates",
+     "timeout_s": 600},
+]
+
+_AZ_STEP: Dict[str, Any] = {
+    "key": "az", "label": "Azure CLI",
+    "check": "command -v az >/dev/null 2>&1",
+    "script": "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
+              "curl ca-certificates && curl -sL https://aka.ms/InstallAzureCLIDeb | bash",
+    "timeout_s": 900,
+}
+
 
 class LabService:
     def __init__(self, db: Session, runtime: Optional[DockerRuntime] = None) -> None:
@@ -158,43 +185,163 @@ class LabService:
                'clone --depth 1 "$REPO_URL" "$DEST"']
         await self.runtime.run_ephemeral(image=p.image, volume=p.volume_name, cmd=cmd, env=env)
 
-    async def _provision_base_tools(self, container_id: str) -> None:
-        """Dev-workstation basics in every network-enabled lab. Best-effort:
-        each step fails silently (logged) so an offline/other-distro image
-        doesn't fail lab creation. Idempotent (command -v guards), so this
-        also runs on every lab START — an older lab picks up newly added
-        base tools on its next start without being recreated.
+    # ── inrichten: basis + aangevinkte extra's + eigen setup-script ─────────
 
-        This is a floor, not a ceiling: the lab is a sandbox, and the agent
-        is explicitly allowed to apt/pip/npm-install anything else it needs
-        (see AGENT_PREAMBLE in chat_agent.py) — the base set just saves it
-        the round-trips for the things practically every task touches
-        (curl for REST APIs, jq for their JSON, git, unzip)."""
-        steps = [
-            ("git", "command -v git >/dev/null 2>&1 || "
-                    "(apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git)"),
-            ("bash+curl+jq+unzip",
-             "(command -v bash >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && "
-             "command -v jq >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1) || "
-             "(apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
-             "bash curl jq unzip ca-certificates)"),
-        ]
-        if settings.LAB_PROVISION_AZ:
-            steps.append((
-                "az",
-                "command -v az >/dev/null 2>&1 || ("
-                "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates && "
-                "curl -sL https://aka.ms/InstallAzureCLIDeb | bash)"))
-        for tool, script in steps:
+    def _extra_steps(self, p: Lab) -> List[Dict[str, Any]]:
+        """De aangevinkte extra's als stappen, met hun `requires` ervóór.
+
+        De volgorde is die van de catalogus, met afhankelijkheden ervoor:
+        Playwright voor Node heeft Node nodig, en die moet er dus eerst zijn —
+        ook als het lab alleen Playwright heeft aangevinkt."""
+        keys = [str(k) for k in (getattr(p, "extras", None) or [])]
+        if not keys:
+            return []
+        from models.lab_extra import LabExtra
+        rows = self.db.query(LabExtra).filter(LabExtra.is_enabled.is_(True)).all()
+        by_key = {r.key: r for r in rows}
+
+        # Eerst de hele verzameling uitklappen (aangevinkt + alles waar dat op
+        # leunt), en die pas dáárna op catalogusvolgorde zetten. Andersom gaat
+        # het mis: een meegetrokken pakket zou dan pas aan de beurt zijn op de
+        # plek van degene die het nodig had, en zo belandde "echte Chrome" vóór
+        # de Playwright-installatie waar het zijn kanaal aan toevoegt.
+        closure: Dict[str, Any] = {}
+
+        def expand(key: str, chain: frozenset) -> None:
+            row = by_key.get(key)
+            if row is None or key in closure or key in chain:
+                return
+            closure[key] = row
+            for dep in (row.requires or []):
+                expand(str(dep), chain | {key})
+
+        for key in keys:
+            expand(key, frozenset())
+
+        ordered: List[Any] = []
+        taken: set[str] = set()
+
+        def add(row: Any, chain: frozenset) -> None:
+            """Catalogusvolgorde, behalve waar `requires` iets anders zegt: een
+            eigen pakket met een verkeerde sorteervolgorde mag zijn eigen
+            afhankelijkheid niet inhalen. `chain` vangt een kringetje af."""
+            if row.key in taken or row.key in chain:
+                return
+            for dep in (row.requires or []):
+                dep_row = closure.get(str(dep))
+                if dep_row is not None:
+                    add(dep_row, chain | {row.key})
+            taken.add(row.key)
+            ordered.append(row)
+
+        for row in sorted(closure.values(), key=lambda r: (r.sort_order, r.id)):
+            add(row, frozenset())
+
+        steps: List[Dict[str, Any]] = [{
+            "key": r.key, "label": r.label, "check": r.check_cmd,
+            "script": r.install_script, "timeout_s": int(r.timeout_s or 900),
+        } for r in ordered]
+        # Een lab kan verwijzen naar een pakket dat sindsdien weg is of uit
+        # staat. Dat stil overslaan is precies het soort verdwijnende
+        # installatie waar dit scherm voor bestaat — dus benoemen.
+        for key in keys:
+            if key not in by_key:
+                steps.append({"key": key, "label": key, "status": "skipped",
+                              "output": "Dit pakket bestaat niet meer of staat uit."})
+        return steps
+
+    async def _run_provision_step(self, container_id: str, step: Dict[str, Any], *,
+                                  force: bool) -> Dict[str, Any]:
+        key = str(step.get("key"))
+        label = str(step.get("label") or key)
+        if step.get("status"):  # al beslist (onbekend pakket)
+            return {"key": key, "label": label, "status": step["status"],
+                    "exit_code": None, "output": step.get("output") or ""}
+        check = step.get("check")
+        if check and not force:
             try:
-                res = await self.runtime.exec(container_id, ["sh", "-c", script], timeout=600)
+                res = await self.runtime.exec(container_id, ["sh", "-c", check], timeout=60)
                 if res.get("exit_code") == 0:
-                    log.infox("Lab-provisioning ok", tool=tool, container=container_id[:12])
-                else:
-                    log.warningx("Lab-provisioning niet gelukt (overgeslagen)",
-                                 tool=tool, exit_code=res.get("exit_code"))
-            except Exception as exc:  # noqa: BLE001 — never fail create over this
-                log.warningx("Lab-provisioning fout (overgeslagen)", tool=tool, error=str(exc))
+                    return {"key": key, "label": label, "status": "skipped",
+                            "exit_code": 0, "output": "Stond er al."}
+            except Exception as exc:  # noqa: BLE001 — check mislukt = gewoon installeren
+                log.warningx("Controle van lab-pakket mislukt", pakket=key, error=str(exc)[:200])
+        timeout = int(step.get("timeout_s") or 900)
+        try:
+            res = await self.runtime.exec(
+                container_id, ["sh", "-c", str(step.get("script") or "")], timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            return {"key": key, "label": label, "status": "error",
+                    "exit_code": None, "output": str(exc)[:2000]}
+        ok = res.get("exit_code") == 0
+        if not ok:
+            log.warningx("Lab-pakket installeren mislukt", pakket=key,
+                         exit_code=res.get("exit_code"), container=container_id[:12])
+        return {"key": key, "label": label, "status": "ok" if ok else "error",
+                "exit_code": res.get("exit_code"),
+                # De staart is waar de fout staat; de kop is apt-ruis.
+                "output": (res.get("output") or "")[-3000:]}
+
+    async def provision(self, lab_id: str, *, force: bool = False) -> Dict[str, Any]:
+        """Het lab inrichten: basisgereedschap, de aangevinkte extra's en het
+        eigen setup-script.
+
+        Idempotent — elke stap heeft een check-commando en wordt overgeslagen
+        als hij al gedaan is. Daarom draait dit ook bij elke START van een lab:
+        een bestaand lab pikt een net aangevinkt (of net toegevoegd) pakket op
+        zonder opnieuw aangemaakt te hoeven worden, en kost het verder niets.
+        `force=True` slaat de checks over — voor "opnieuw installeren" nadat er
+        iets misging.
+
+        Best-effort per stap: een pakket dat niet installeert (verkeerde
+        distributie, netwerk weg, typefout in een eigen script) laat de rest
+        gewoon doorgaan en landt als fout in provision_log. Inrichten mag nooit
+        een lab kapotmaken dat verder prima werkt."""
+        p = self.get(lab_id)
+        if p.status != "running" or not p.container_id:
+            return {"ok": False, "status": p.provision_status, "reason": "Lab draait niet"}
+        if not p.allow_network:
+            p.provision_status = "skipped"
+            p.provision_log = [{
+                "key": "network", "label": "Netwerktoegang", "status": "skipped",
+                "output": "Dit lab heeft geen netwerk — er valt niets binnen te halen."}]
+            p.updated_at = _now_iso()
+            self.db.commit()
+            return {"ok": True, "status": "skipped", "steps": list(p.provision_log)}
+
+        steps: List[Dict[str, Any]] = list(_BASE_STEPS)
+        if settings.LAB_PROVISION_AZ:
+            steps.append(_AZ_STEP)
+        steps += self._extra_steps(p)
+        script = (p.setup_script or "").strip()
+        if script:
+            # Geen check: een eigen script hoort zelf idempotent te zijn, en wat
+            # het klaar-zijn ervan betekent weet alleen de schrijver.
+            steps.append({"key": "setup-script", "label": "Eigen setup-script",
+                          "check": None, "script": script, "timeout_s": 1800})
+
+        p.provision_status = "running"
+        p.provision_log = []
+        p.updated_at = _now_iso()
+        self.db.commit()
+
+        entries: List[Dict[str, Any]] = []
+        failed = 0
+        for step in steps:
+            entry = await self._run_provision_step(p.container_id, step, force=force)
+            if entry["status"] == "error":
+                failed += 1
+            entries.append(entry)
+            # Na elke stap wegschrijven: het scherm volgt provision_log live, en
+            # bij een herstart middenin is te zien hoe ver het gekomen was.
+            p.provision_log = list(entries)
+            p.updated_at = _now_iso()
+            self.db.commit()
+        p.provision_status = "error" if failed else "ok"
+        p.updated_at = _now_iso()
+        self.db.commit()
+        log.infox("Lab ingericht", lab_id=p.id, stappen=len(entries), mislukt=failed)
+        return {"ok": failed == 0, "status": p.provision_status, "steps": entries}
 
     async def create(
         self,
@@ -213,6 +360,8 @@ class LabService:
         allowed_tools: Optional[List[str]] = None,
         allowed_skills: Optional[List[str]] = None,
         environment: Optional[str] = None,
+        extras: Optional[List[str]] = None,
+        setup_script: Optional[str] = None,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -223,7 +372,9 @@ class LabService:
                 status_code=503,
                 detail=f"Docker is niet beschikbaar: {diag.get('hint') or 'onbekende oorzaak'}",
             )
-        if environment:
+        # Een expliciet image wint van een preset: het create-scherm biedt
+        # "eigen image" naast de lijst, en dan is dát wat de gebruiker bedoelt.
+        if environment and not (image or "").strip():
             preset = next((p for p in IMAGE_PRESETS if p["key"] == environment), None)
             if not preset:
                 raise HTTPException(status_code=400, detail=f"Onbekende omgeving '{environment}'")
@@ -249,6 +400,10 @@ class LabService:
             allowed_mcp=[str(x) for x in (allowed_mcp or [])],
             allowed_tools=[str(x) for x in (allowed_tools or [])],
             allowed_skills=[str(x) for x in (allowed_skills or [])],
+            extras=[str(x) for x in (extras or [])],
+            setup_script=(setup_script or "").strip() or None,
+            provision_status="pending" if allow_network else "skipped",
+            provision_log=[],
             created_at=now, updated_at=now,
         )
         self.db.add(p)
@@ -271,8 +426,6 @@ class LabService:
             )
             p.container_id = container_id
             p.status = "running"
-            if p.allow_network:
-                await self._provision_base_tools(container_id)
             await self._sync_azure_profile_into_lab(p)
             if p.llm_guard:
                 try:
@@ -286,6 +439,11 @@ class LabService:
             log.warningx("Lab aanmaken mislukt", lab_id=lid, error=str(exc))
         p.updated_at = _now_iso()
         self.db.commit()
+        # Het inrichten loopt erachteraan (zie provision_in_background): een
+        # browser binnenhalen duurt minuten en dit antwoord mag daar niet op
+        # wachten — het lab bestaat en draait al.
+        if p.status == "running" and p.allow_network:
+            provision_in_background(p.id)
         return self._to_dict(p)
 
     async def ensure_running(self, lab_id: str) -> Dict[str, Any]:
@@ -322,12 +480,86 @@ class LabService:
         p.expires_at = _expiry_from_now(p.ttl_hours)
         self.db.commit()
         if p.allow_network:
-            # Idempotent (command -v guards): near-instant when everything is
-            # already there, and an older lab picks up newly added base tools.
-            try:
-                await self._provision_base_tools(p.container_id)
-            except Exception as exc:  # noqa: BLE001
-                log.warningx("Lab-provisioning bij start overgeslagen", error=str(exc)[:200])
+            # Idempotent (elke stap heeft een check): bijna gratis als alles er
+            # al staat, en een ouder lab pikt zo een net aangevinkt pakket op.
+            # Op de achtergrond, want een agent die `ensure_running` aanroept
+            # mag niet minuten stilstaan voor een installatie.
+            provision_in_background(p.id)
+        await self._sync_azure_profile_into_lab(p)
+        return self._to_dict(p)
+
+    async def rebuild(self, lab_id: str, *, image: Optional[str] = None,
+                      pull: bool = True) -> Dict[str, Any]:
+        """Het lab opnieuw opbouwen, eventueel op een ander image.
+
+        Dit is de énige manier om het image van een BESTAAND lab te wijzigen of
+        bij te werken: een container krijgt zijn image bij het aanmaken mee en
+        houdt dat tot hij weg is. Dus: container weg, nieuwe container op
+        hetzelfde volume.
+
+        Wat blijft: /workspace (eigen volume), de naam, de instellingen, de
+        allowlist, de poorten en de aangevinkte pakketten. Wat weg is: alles
+        wat in de containerlaag zat — handmatig geïnstalleerde spullen buiten
+        /workspace incluis. Precies daarom zijn die pakketten een lijst op het
+        lab en geen apt-geschiedenis in iemands hoofd: na het opbouwen zet
+        `provision` ze automatisch terug.
+
+        Bij hetzelfde image betekent dit "haal de nieuwste versie van dit tag
+        op" — dat is wat bijwerken hier ís."""
+        p = self.get(lab_id)
+        target = (image or p.image or default_image()).strip()[:255]
+        if not target:
+            raise HTTPException(status_code=400, detail="Geen image opgegeven")
+        diag = await self.runtime.diagnose()
+        if not diag["cli_present"] or not diag["daemon_up"]:
+            raise HTTPException(status_code=503,
+                                detail=f"Docker is niet beschikbaar: {diag.get('hint') or 'onbekende oorzaak'}")
+        old_container = p.container_id
+        p.status = "creating"
+        p.error = None
+        p.updated_at = _now_iso()
+        self.db.commit()
+        try:
+            if old_container:
+                # rm -f stopt hem ook; een mislukte verwijdering laat de naam
+                # bezet en de volgende stap valt daar hoorbaar over.
+                try:
+                    await self.runtime.remove(old_container)
+                except Exception as exc:  # noqa: BLE001
+                    log.warningx("Oude container verwijderen mislukt", lab_id=p.id,
+                                 error=str(exc)[:200])
+            if pull:
+                try:
+                    await self.runtime.pull(target)
+                except Exception as exc:  # noqa: BLE001 — offline? lokaal image doet het ook
+                    log.warningx("Image-pull overgeslagen", image=target, error=str(exc)[:200])
+            if not p.volume_name:
+                p.volume_name = f"labx_lab_{p.id[:12]}"
+            if not p.network_alias:
+                p.network_alias = f"labx-lab-{p.id[:12]}"
+            await self.runtime.create_volume(p.volume_name)  # bestaat al = niets aan de hand
+            container_id = await self.runtime.run_container(
+                name=p.network_alias, image=target, volume=p.volume_name,
+                cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
+                allow_network=p.allow_network, ports=p.ports or [],
+                expires_at=p.expires_at,
+            )
+        except Exception as exc:  # noqa: BLE001
+            p.status = "error"
+            p.error = f"Opnieuw opbouwen mislukt: {str(exc)[:1900]}"
+            p.updated_at = _now_iso()
+            self.db.commit()
+            log.warningx("Lab opnieuw opbouwen mislukt", lab_id=p.id, error=str(exc)[:300])
+            raise HTTPException(status_code=502, detail=p.error)
+        p.container_id = container_id
+        p.image = target
+        p.status = "running"
+        p.provision_status = "pending" if p.allow_network else "skipped"
+        p.provision_log = []
+        p.expires_at = _expiry_from_now(p.ttl_hours)
+        p.updated_at = p.last_used_at = _now_iso()
+        self.db.commit()
+        log.infox("Lab opnieuw opgebouwd", lab_id=p.id, image=target)
         await self._sync_azure_profile_into_lab(p)
         return self._to_dict(p)
 
@@ -358,6 +590,8 @@ class LabService:
                               allowed_mcp: Optional[List[str]] = None,
                               allowed_tools: Optional[List[str]] = None,
                               allowed_skills: Optional[List[str]] = None,
+                              extras: Optional[List[str]] = None,
+                              setup_script: Any = "__unset__",
                               azure_profile_id: Any = "__unset__") -> Dict[str, Any]:
         p = self.get(lab_id)
         if data_guard is not None:
@@ -370,6 +604,15 @@ class LabService:
             p.allowed_tools = [str(x) for x in allowed_tools]
         if allowed_skills is not None:
             p.allowed_skills = [str(x) for x in allowed_skills]
+        inrichting_changed = False
+        if extras is not None:
+            new_extras = [str(x) for x in extras]
+            inrichting_changed = new_extras != list(p.extras or [])
+            p.extras = new_extras
+        if setup_script != "__unset__":
+            new_script = (setup_script or "").strip() or None
+            inrichting_changed = inrichting_changed or new_script != (p.setup_script or None)
+            p.setup_script = new_script
         profile_changed = False
         if azure_profile_id != "__unset__":
             profile_changed = p.azure_profile_id != azure_profile_id
@@ -378,6 +621,12 @@ class LabService:
         self.db.commit()
         if profile_changed and p.azure_profile_id and p.status == "running":
             await self._sync_azure_profile_into_lab(p)
+        # Een pakket erbij vinken betekent: installeer het ook echt, nu, in dit
+        # lab — niet pas bij de volgende start.
+        if inrichting_changed and p.status == "running" and p.allow_network:
+            p.provision_status = "pending"
+            self.db.commit()
+            provision_in_background(p.id)
         if llm_guard:
             try:
                 from services.lab.data_guard_llm import ensure_guard_model
@@ -615,7 +864,109 @@ class LabService:
             "allowed_tools": list(getattr(p, "allowed_tools", None) or []),
             "allowed_skills": list(getattr(p, "allowed_skills", None) or []),
             "azure_profile_id": p.azure_profile_id,
+            "extras": list(getattr(p, "extras", None) or []),
+            "setup_script": getattr(p, "setup_script", None),
+            "provision_status": getattr(p, "provision_status", None),
+            "provision_log": list(getattr(p, "provision_log", None) or []),
             "error": p.error,
             "created_at": p.created_at, "updated_at": p.updated_at,
             "last_used_at": p.last_used_at,
         }
+
+
+# ── inrichten op de achtergrond ─────────────────────────────────────────────
+# Eén taak per lab, met de taak-referentie vastgehouden zodat de garbage
+# collector hem niet halverwege opruimt (zelfde patroon als
+# services/agent/background_runs.py).
+_PROVISION_TASKS: Dict[str, Any] = {}
+
+
+def provision_in_background(lab_id: str, *, force: bool = False) -> bool:
+    """Inrichten kan minuten duren — Playwright haalt een browser van honderden
+    megabytes binnen — en een verzoek dat daarop wacht laat het scherm net zo
+    lang hangen (en loopt tegen de time-out van elke proxy ertussen aan). Dus:
+    het lab is meteen klaar, het inrichten loopt erachteraan, en de UI volgt
+    `provision_status` / `provision_log`.
+
+    Draait er al een ronde voor dit lab, dan doet een tweede aanvraag niets —
+    twee keer tegelijk apt draaien in dezelfde container loopt vast op elkaars
+    lock. Geeft terug OF er iets is ingepland, zodat de aanroeper de status niet
+    op "bezig" zet voor werk dat nooit begint."""
+    import asyncio
+
+    running = _PROVISION_TASKS.get(lab_id)
+    if running is not None and not running.done():
+        log.infox("Inrichten loopt al", lab_id=lab_id)
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # geen draaiende loop (script/test) — dan niet
+        log.warningx("Inrichten niet gestart: geen event loop", lab_id=lab_id)
+        return False
+    task = loop.create_task(_provision_worker(lab_id, force=force))
+    _PROVISION_TASKS[lab_id] = task
+    task.add_done_callback(lambda _t: _PROVISION_TASKS.pop(lab_id, None))
+    return True
+
+
+def rebuild_in_background(lab_id: str, *, image: Optional[str] = None,
+                          pull: bool = True) -> bool:
+    """Opnieuw opbouwen op de achtergrond, om dezelfde reden als het inrichten:
+    een image ophalen kan gigabytes zijn, en zowel het scherm als een tool-call
+    van de agent heeft een kortere adem dan dat. Volgt dezelfde ene-taak-per-lab
+    regel — opbouwen terwijl er nog geïnstalleerd wordt zou de installatie in
+    een container schrijven die net verdwijnt."""
+    import asyncio
+
+    running = _PROVISION_TASKS.get(lab_id)
+    if running is not None and not running.done():
+        log.infox("Er loopt al werk voor dit lab", lab_id=lab_id)
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        log.warningx("Opnieuw opbouwen niet gestart: geen event loop", lab_id=lab_id)
+        return False
+    task = loop.create_task(_rebuild_worker(lab_id, image=image, pull=pull))
+    _PROVISION_TASKS[lab_id] = task
+    task.add_done_callback(lambda _t: _PROVISION_TASKS.pop(lab_id, None))
+    return True
+
+
+async def _rebuild_worker(lab_id: str, *, image: Optional[str], pull: bool) -> None:
+    from db.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        svc = LabService(db)
+        await svc.rebuild(lab_id, image=image, pull=pull)
+        # Meteen doorpakken in dezelfde taak: een verse container is leeg, en
+        # zonder dit zou het lab draaien zonder één van zijn pakketten.
+        await svc.provision(lab_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Opnieuw opbouwen mislukt", lab_id=lab_id, error=str(exc)[:300])
+    finally:
+        db.close()
+
+
+async def _provision_worker(lab_id: str, *, force: bool) -> None:
+    from db.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        await LabService(db).provision(lab_id, force=force)
+    except Exception as exc:  # noqa: BLE001 — een achtergrondtaak heeft geen aanroeper
+        log.warningx("Inrichten mislukt", lab_id=lab_id, error=str(exc)[:300])
+        try:
+            p = db.get(Lab, lab_id)
+            if p is not None:
+                p.provision_status = "error"
+                p.provision_log = list(p.provision_log or []) + [{
+                    "key": "provisioning", "label": "Inrichten", "status": "error",
+                    "output": str(exc)[:2000]}]
+                p.updated_at = _now_iso()
+                db.commit()
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        db.close()

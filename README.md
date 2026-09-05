@@ -71,6 +71,7 @@ zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
 | Onderdeel | Kort |
 | --- | --- |
 | **Labs** | Docker-sandboxes (sibling containers), bestandsbrowser, exec, interactieve terminal (xterm.js), egress-guard, publish-naar-git, az-login |
+| **Lab-inrichting** | Kies bij het aanmaken een preset-image of een eigen image, vink aan wat erbij moet (Playwright + Chromium, Node, uv, compilers) en geef desgewenst een eigen setup-script mee. De catalogus beheer je zelf bij Instellingen > Lab-extra's — geen code-change per pakket. Installeren gebeurt op de achtergrond en idempotent, dus een bestaand lab pikt een nieuw pakket op bij de volgende start. Een bestaand lab kan ook opnieuw opgebouwd worden op een ander of bijgewerkt image (/workspace blijft, pakketten komen automatisch terug), en de agent kan dit alles zelf via `lab__packages`, `lab__install_packages` en `lab__rebuild` |
 | **Chat** | Claude Code CLI als volwaardige agent, gekoppeld aan een draaiend lab; Markdown, live stappen, tokenteller, per-chat model/effort (dropdown + `/model`, `/effort`) |
 | **Achtergrondtaken** | Handmatig of door het model zelf gestart; turns draaien server-side door, ook als je wegnavigeert — Taken-tab in het rechterpaneel |
 | **MCP-servers** | Host- (extern) of lab-servers (stdio in de container), scope per sessie/lab/beide, Azure-profielkoppeling, bulk-acties |

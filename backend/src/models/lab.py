@@ -58,6 +58,23 @@ class Lab(Base):
     # chat is bound to one lab and "which Azure identity" is naturally a
     # per-lab choice. See services/azure/azure_mcp_auth.py.
     azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # ── inrichting bovenop het basis-image (zie models/lab_extra.py) ─────────
+    # Keys uit `lab_extras` die in dit lab geïnstalleerd worden (Playwright +
+    # Chromium, Node, ...). Zonder dit kon alleen een code-change bepalen wat
+    # er in een lab zat.
+    extras: Mapped[list] = mapped_column(JSON, nullable=True, default=list)
+    # Vrij shell-script dat NA de extra's draait — voor het ene pakket waar
+    # geen catalogus-entry voor is. Draait bij elk inrichten opnieuw, dus
+    # schrijf het idempotent.
+    setup_script: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # pending | running | ok | error | skipped — het inrichten loopt op de
+    # achtergrond (een browser binnenhalen duurt minuten), dus de UI moet
+    # kunnen zien hoe het ervoor staat.
+    provision_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Per stap: {key, label, status, exit_code, output} van de laatste ronde.
+    provision_log: Mapped[list] = mapped_column(JSON, nullable=True, default=list)
+
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -88,6 +88,26 @@ CATALOG: List[Dict[str, Any]] = [
         "provenance": "control",
     },
     {
+        "key": "ms-playwright-lab",
+        "name": "Playwright (in het lab)",
+        "description": "Dezelfde Playwright-server, maar als proces IN de labcontainer: de browser "
+                       "draait dan in de sandbox en achter de egress-guard, niet op de host. "
+                       "Vink daarvoor bij het lab de extra's 'Node.js' en 'Playwright (Node) + "
+                       "Chromium' aan (Instellingen > Lab-extra's) — zonder browser start de server "
+                       "niet.",
+        "kind": "stdio", "runner": "npx",
+        "package": "@playwright/mcp@latest",
+        # Expliciet commando i.p.v. `npx -y @playwright/mcp@latest`: de extra
+        # zet het pakket globaal in het lab neer, en `npx ... @latest` zou bij
+        # ELKE aanroep opnieuw het netwerk op om te kijken of er iets nieuwers
+        # is — merkbaar traag voor een tool die de agent tientallen keren
+        # aanroept.
+        "stdio_command": "mcp-server-playwright --headless --browser chromium",
+        "suggested_location": "lab",
+        "suggested_args": "",
+        "provenance": "data",
+    },
+    {
         "key": "ms-azure",
         "name": "Azure MCP Server (Microsoft)",
         "description": "Alle Azure-tools (40+ diensten) in één server. Gebruikt de LOKALE `az`-sessie "

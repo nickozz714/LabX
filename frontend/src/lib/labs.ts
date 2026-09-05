@@ -1,5 +1,5 @@
 import { api } from "@/lib/api";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab } from "@/lib/types";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
 
 export const labsApi = {
   list: () => api.get<Lab[]>("/labs"),
@@ -7,6 +7,18 @@ export const labsApi = {
   images: () => api.get<{ presets: ImagePreset[]; local_images: string[]; default_image: string }>("/labs/images"),
   searchImages: (q: string) =>
     api.get<{ ok: boolean; results: any[]; error?: string }>(`/labs/images/search?q=${encodeURIComponent(q)}`),
+  // Lab-extra's: de catalogus van wat je in een lab kunt laten installeren.
+  extras: () => api.get<LabExtra[]>("/labs/extras"),
+  createExtra: (payload: Partial<LabExtra>) => api.post<LabExtra>("/labs/extras", payload),
+  updateExtra: (id: number, payload: Partial<LabExtra>) => api.patch<LabExtra>(`/labs/extras/${id}`, payload),
+  resetExtra: (id: number) => api.post<LabExtra>(`/labs/extras/${id}/reset`),
+  deleteExtra: (id: number) => api.delete<{ ok: boolean }>(`/labs/extras/${id}`),
+  // Opnieuw inrichten; antwoordt meteen, de voortgang staat op het lab zelf.
+  provision: (id: string, force = false) =>
+    api.post<{ ok: boolean; provision_status: string }>(`/labs/${id}/provision`, { force }),
+  // Opnieuw opbouwen op (een nieuw) image; /workspace blijft staan.
+  rebuild: (id: string, image?: string) =>
+    api.post<{ ok: boolean; status: string; image: string }>(`/labs/${id}/rebuild`, { image }),
   guardModelStatus: () => api.get<GuardModelStatus>("/labs/guard-model/status"),
   guardModelEnsure: () => api.post<GuardModelStatus>("/labs/guard-model/ensure"),
   create: (payload: Record<string, any>) => api.post<Lab>("/labs", payload),

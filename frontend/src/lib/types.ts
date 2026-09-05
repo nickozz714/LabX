@@ -17,11 +17,41 @@ export interface Lab {
   allowed_tools: string[];
   allowed_skills: string[];
   azure_profile_id: number | null;
+  extras: string[];
+  setup_script: string | null;
+  provision_status: "pending" | "running" | "ok" | "error" | "skipped" | null;
+  provision_log: ProvisionStep[];
   error: string | null;
   created_at: string;
   updated_at: string;
   last_used_at: string | null;
   port_map?: Record<string, number>;
+}
+
+/** Eén stap uit het inrichten van een lab (basisgereedschap, een extra, of het eigen script). */
+export interface ProvisionStep {
+  key: string;
+  label: string;
+  status: "ok" | "skipped" | "error";
+  exit_code?: number | null;
+  output?: string;
+}
+
+/** Een installeerbaar pakket uit de lab-catalogus (Instellingen > Lab-extra's). */
+export interface LabExtra {
+  id: number;
+  key: string;
+  label: string;
+  description: string | null;
+  check_cmd: string | null;
+  install_script: string;
+  requires: string[];
+  timeout_s: number;
+  default_on: boolean;
+  is_enabled: boolean;
+  builtin: boolean;
+  sort_order: number;
+  updated_at?: string;
 }
 
 export interface ImagePreset {

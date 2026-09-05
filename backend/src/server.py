@@ -69,6 +69,10 @@ async def lifespan(_app: FastAPI):
 
     db = SessionLocal()
     try:
+        # De meegeleverde lab-extra's (Playwright + Chromium, Node, ...) als rij
+        # neerzetten zodra ze ontbreken; bestaande, aangepaste rijen blijven.
+        from services.lab.extras_catalog import seed_builtin_extras
+        seed_builtin_extras(db)
         fixed = await LabService(db).reconcile_on_start()
         if fixed:
             log.infox("Labs gereconcilieerd bij opstart", fixed=fixed)
