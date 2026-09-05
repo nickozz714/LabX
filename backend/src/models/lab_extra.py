@@ -56,6 +56,12 @@ class LabExtra(Base):
     # zo'n rij gewoon aanpassen; `builtin` onthoudt alleen dat er een origineel
     # is om naar terug te zetten.
     builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Vingerafdruk van het MEEGELEVERDE origineel op het moment dat deze rij is
+    # gezet. Daarmee kan een nieuwe LabX-versie een verbeterd pakket alsnog
+    # doorvoeren zonder eigen aanpassingen te overschrijven: komt de huidige
+    # inhoud nog overeen met deze afdruk, dan heeft niemand eraan gezeten en mag
+    # het origineel bijgewerkt worden; wijkt hij af, dan blijft de rij met rust.
+    builtin_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
 
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)

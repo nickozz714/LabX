@@ -51,6 +51,7 @@ _ADDITIVE_COLUMNS = {
     ],
     "lab_extras": [
         ("mcp_server", "TEXT"),
+        ("builtin_hash", "VARCHAR(64)"),
     ],
     "labs": [
         ("azure_profile_id", "INTEGER"),

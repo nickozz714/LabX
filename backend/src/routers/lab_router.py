@@ -165,6 +165,11 @@ def reset_lab_extra(extra_id: int, db: Session = Depends(get_db)):
     row.requires = list(spec.get("requires") or [])
     row.timeout_s = int(spec.get("timeout_s") or 900)
     row.sort_order = int(spec.get("sort_order") or 100)
+    row.mcp_server = spec.get("mcp_server")
+    # Weer gelijk aan het origineel, dus ook weer meegaan met toekomstige
+    # verbeteringen daarvan (zie seed_builtin_extras).
+    from services.lab.extras_catalog import _spec_fingerprint
+    row.builtin_hash = _spec_fingerprint(spec)
     row.updated_at = datetime.now(timezone.utc).isoformat()
     db.commit()
     db.refresh(row)

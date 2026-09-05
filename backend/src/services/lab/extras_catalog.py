@@ -193,31 +193,98 @@ def builtin_for(key: str) -> Optional[Dict[str, Any]]:
     return next((e for e in BUILTIN_EXTRAS if e["key"] == key), None)
 
 
-def seed_builtin_extras(db) -> int:
-    """Ontbrekende ingebouwde pakketten aanmaken. Bestaande rijen blijven zoals
-    ze zijn — een aangepast script van de gebruiker mag niet bij elke start van
-    LabX teruggedraaid worden."""
+# De velden die het meegeleverde origineel bepaalt. Alles daarbuiten (aan/uit,
+# standaard aangevinkt) is een keuze van de gebruiker en telt niet mee.
+_MANAGED = ("label", "description", "check_cmd", "install_script", "requires",
+            "timeout_s", "sort_order", "mcp_server")
+
+
+def _fingerprint(values: Dict[str, Any]) -> str:
+    import hashlib
+    import json
+    payload = json.dumps({k: values.get(k) for k in _MANAGED}, sort_keys=True,
+                         ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _spec_fingerprint(spec: Dict[str, Any]) -> str:
+    return _fingerprint({
+        "label": spec["label"], "description": spec.get("description"),
+        "check_cmd": spec.get("check_cmd"), "install_script": spec["install_script"],
+        "requires": list(spec.get("requires") or []),
+        "timeout_s": int(spec.get("timeout_s") or 900),
+        "sort_order": int(spec.get("sort_order") or 100),
+        "mcp_server": spec.get("mcp_server"),
+    })
+
+
+def _row_fingerprint(row) -> str:
+    return _fingerprint({
+        "label": row.label, "description": row.description, "check_cmd": row.check_cmd,
+        "install_script": row.install_script, "requires": list(row.requires or []),
+        "timeout_s": int(row.timeout_s or 900), "sort_order": int(row.sort_order or 100),
+        "mcp_server": row.mcp_server,
+    })
+
+
+def _apply_spec(row, spec: Dict[str, Any], now: str) -> None:
+    row.label = spec["label"]
+    row.description = spec.get("description")
+    row.check_cmd = spec.get("check_cmd")
+    row.install_script = spec["install_script"]
+    row.requires = list(spec.get("requires") or [])
+    row.timeout_s = int(spec.get("timeout_s") or 900)
+    row.sort_order = int(spec.get("sort_order") or 100)
+    row.mcp_server = spec.get("mcp_server")
+    row.builtin_hash = _spec_fingerprint(spec)
+    row.updated_at = now
+
+
+def seed_builtin_extras(db) -> Dict[str, int]:
+    """Ontbrekende ingebouwde pakketten aanmaken, en een ONGEWIJZIGD pakket
+    bijwerken als het meegeleverde origineel veranderd is.
+
+    Dat tweede is niet luxe: de eerste versie van het Playwright-MCP-pakket had
+    een verkeerde binarynaam en bracht nog geen serverkoppeling mee. Zonder deze
+    stap zou geen enkele bestaande installatie die verbetering ooit zien —
+    alleen wie LabX voor het eerst opzette had een werkend pakket, en dat is de
+    ergste soort verschil om te moeten debuggen.
+
+    Een rij die de gebruiker zelf heeft aangepast blijft met rust: dat blijkt
+    uit een vingerafdruk die niet meer overeenkomt met het origineel waarmee de
+    rij is gezet."""
     from models.lab_extra import LabExtra
 
     now = datetime.now(timezone.utc).isoformat()
-    existing = {k for (k,) in db.query(LabExtra.key).all()}
-    added = 0
+    rows = {r.key: r for r in db.query(LabExtra).all()}
+    added = updated = kept = 0
     for spec in BUILTIN_EXTRAS:
-        if spec["key"] in existing:
+        row = rows.get(spec["key"])
+        if row is None:
+            row = LabExtra(
+                key=spec["key"], default_on=bool(spec.get("default_on", False)),
+                is_enabled=True, builtin=True, created_at=now, updated_at=now,
+                install_script=spec["install_script"], label=spec["label"])
+            _apply_spec(row, spec, now)
+            db.add(row)
+            added += 1
             continue
-        db.add(LabExtra(
-            key=spec["key"], label=spec["label"], description=spec.get("description"),
-            mcp_server=spec.get("mcp_server"),
-            check_cmd=spec.get("check_cmd"), install_script=spec["install_script"],
-            requires=list(spec.get("requires") or []),
-            timeout_s=int(spec.get("timeout_s") or 900),
-            default_on=bool(spec.get("default_on", False)),
-            is_enabled=True, builtin=True,
-            sort_order=int(spec.get("sort_order") or 100),
-            created_at=now, updated_at=now,
-        ))
-        added += 1
-    if added:
+        if not row.builtin:
+            continue
+        spec_fp = _spec_fingerprint(spec)
+        if _row_fingerprint(row) == spec_fp:
+            continue  # al gelijk aan het origineel
+        # builtin_hash leeg = gezet door een versie van vóór deze vingerafdruk;
+        # dan is er geen bewijs van een eigen aanpassing en wint het origineel.
+        if row.builtin_hash and row.builtin_hash != _row_fingerprint(row):
+            kept += 1
+            log.infox("Lab-extra aangepast door de gebruiker — origineel niet doorgevoerd",
+                      pakket=row.key)
+            continue
+        _apply_spec(row, spec, now)
+        updated += 1
+    if added or updated:
         db.commit()
-        log.infox("Lab-extra's toegevoegd", count=added)
-    return added
+        log.infox("Lab-extra's bijgewerkt", toegevoegd=added, vernieuwd=updated,
+                  eigen_aanpassing_behouden=kept)
+    return {"added": added, "updated": updated, "kept": kept}
