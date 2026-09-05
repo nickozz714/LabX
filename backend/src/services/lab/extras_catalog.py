@@ -180,7 +180,8 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
         # X-scherm en de VNC-brug moeten ook na een herstart van het lab weer
         # draaien, en inrichten gebeurt bij elke start. Zo komt de boel vanzelf
         # weer omhoog zonder dat iemand iets hoeft te starten.
-        "check_cmd": "curl -sf http://127.0.0.1:6080/vnc.html >/dev/null 2>&1",
+        "check_cmd": ("curl -sf -o /dev/null http://127.0.0.1:6080/vnc.html 2>/dev/null && "
+                      "pgrep -x x11vnc >/dev/null 2>&1 && pgrep -x Xvfb >/dev/null 2>&1"),
         "install_script": (
             "set -e\n"
             "if ! command -v Xvfb >/dev/null 2>&1 || ! command -v x11vnc >/dev/null 2>&1 "
@@ -207,8 +208,18 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
             "curl -sf -o /dev/null http://127.0.0.1:6080/vnc.html 2>/dev/null || "
             "(nohup websockify --web /usr/share/novnc 6080 localhost:5900 "
             ">/tmp/websockify.log 2>&1 &)\n"
-            "sleep 2\n"
-            "curl -sf http://127.0.0.1:6080/vnc.html >/dev/null"
+            # Even geduld met de eindcontrole: websockify heeft na het starten een
+            # paar seconden nodig, en een vaste `sleep 2` was er net één te
+            # weinig — dan meldde het pakket zich als mislukt terwijl het een
+            # tel later gewoon stond.
+            "i=0\n"
+            "while [ $i -lt 20 ]; do\n"
+            "  curl -sf -o /dev/null http://127.0.0.1:6080/vnc.html 2>/dev/null && "
+            "pgrep -x x11vnc >/dev/null 2>&1 && break\n"
+            "  sleep 1\n"
+            "  i=$((i+1))\n"
+            "done\n"
+            "curl -sf -o /dev/null http://127.0.0.1:6080/vnc.html && pgrep -x x11vnc >/dev/null"
         ),
         "requires": ["playwright-mcp"],
         "timeout_s": 1200,
