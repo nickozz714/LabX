@@ -46,6 +46,8 @@ export interface LabExtra {
   check_cmd: string | null;
   install_script: string;
   requires: string[];
+  /** Brengt dit pakket een MCP-server mee die in het lab draait? */
+  mcp_server: { slug: string; name?: string; command: string; description?: string; replaces?: string[] } | null;
   timeout_s: number;
   default_on: boolean;
   is_enabled: boolean;

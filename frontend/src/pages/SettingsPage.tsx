@@ -379,6 +379,11 @@ function LabExtrasCard() {
                 {row.requires.length > 0 && (
                   <span className="ml-1 text-xs text-muted-foreground">→ vereist {row.requires.join(", ")}</span>
                 )}
+                {row.mcp_server && (
+                  <span className="ml-1 text-xs text-muted-foreground">
+                    → koppelt zichzelf als MCP-server <code>{row.mcp_server.slug}</code>
+                  </span>
+                )}
               </button>
               <Toggle
                 checked={row.default_on}

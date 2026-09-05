@@ -33,7 +33,13 @@ def _extract_result(result: Any) -> Any:
     """A CallToolResult's `.content` is a list of content blocks; flatten text
     blocks to a string (the common case), otherwise return the raw list."""
     content = getattr(result, "content", None)
-    is_error = bool(getattr(result, "is_error", None) or getattr(result, "isError", False))
+    # Eerst de naam van mcp 2.x, en de oude ALLEEN als die nieuwe er niet is:
+    # een `or` zou bij een geslaagde aanroep (is_error=False) alsnog het oude
+    # veld aanraken, en dat waarschuwt luid bij elke tool-call.
+    is_error = getattr(result, "is_error", None)
+    if is_error is None:
+        is_error = getattr(result, "isError", False)
+    is_error = bool(is_error)
     if content is None:
         return result
     texts = []

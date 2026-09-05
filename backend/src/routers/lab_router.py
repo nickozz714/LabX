@@ -72,6 +72,7 @@ def _extra_to_dict(e) -> Dict[str, Any]:
         "id": e.id, "key": e.key, "label": e.label, "description": e.description,
         "check_cmd": e.check_cmd, "install_script": e.install_script,
         "requires": list(e.requires or []), "timeout_s": e.timeout_s,
+        "mcp_server": e.mcp_server,
         "default_on": bool(e.default_on), "is_enabled": bool(e.is_enabled),
         "builtin": bool(e.builtin), "sort_order": e.sort_order,
         "updated_at": e.updated_at,
@@ -105,6 +106,9 @@ def create_lab_extra(payload: Dict[str, Any], db: Session = Depends(get_db)):
         check_cmd=(payload.get("check_cmd") or None),
         install_script=str(payload.get("install_script")),
         requires=[str(x) for x in (payload.get("requires") or [])],
+        # Een eigen pakket mag ook een lab-MCP-server meebrengen; zelfde vorm
+        # als bij de meegeleverde (zie models/lab_extra.py).
+        mcp_server=payload.get("mcp_server") or None,
         timeout_s=max(30, min(int(payload.get("timeout_s") or 900), 7200)),
         default_on=bool(payload.get("default_on", False)),
         is_enabled=bool(payload.get("is_enabled", True)),
@@ -131,6 +135,8 @@ def update_lab_extra(extra_id: int, payload: Dict[str, Any], db: Session = Depen
         raise HTTPException(status_code=400, detail="Een installatiescript is verplicht")
     if "requires" in payload:
         row.requires = [str(x) for x in (payload.get("requires") or [])]
+    if "mcp_server" in payload:
+        row.mcp_server = payload.get("mcp_server") or None
     if "timeout_s" in payload:
         row.timeout_s = max(30, min(int(payload.get("timeout_s") or 900), 7200))
     for flag in ("default_on", "is_enabled"):
