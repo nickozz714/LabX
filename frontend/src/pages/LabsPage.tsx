@@ -339,7 +339,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
 }
 
 function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
-  const [tab, setTab] = useState<"settings" | "inrichting" | "toegang" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
+  const [tab, setTab] = useState<"settings" | "inrichting" | "browser" | "toegang" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
 
   useEffect(() => {
@@ -375,14 +375,15 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1 border-b border-border text-sm">
-        {(["settings", "inrichting", "toegang", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
+        {(["settings", "inrichting", "browser", "toegang", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 ${tab === t ? "border-b-2 border-primary font-medium" : "text-muted-foreground"}`}
           >
-            {{ settings: "Instellingen", inrichting: "Inrichting", toegang: "Toegang", git: "Git",
-               files: "Bestanden", exec: "Commando", terminal: "Terminal", audit: "Guard-audit" }[t]}
+            {{ settings: "Instellingen", inrichting: "Inrichting", browser: "Browser", toegang: "Toegang",
+               git: "Git", files: "Bestanden", exec: "Commando", terminal: "Terminal",
+               audit: "Guard-audit" }[t]}
           </button>
         ))}
       </div>
@@ -431,6 +432,7 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       )}
 
       {tab === "inrichting" && <ProvisioningPanel lab={lab} onChanged={onChanged} />}
+      {tab === "browser" && <BrowserPanel lab={lab} />}
       {tab === "toegang" && <LabAllowlist lab={lab} onSaved={() => onChanged()} />}
       {tab === "git" && <PublishPanel lab={lab} />}
       {tab === "files" && <FileBrowser lab={lab} />}
@@ -650,6 +652,57 @@ function ProvisioningPanel({ lab, onChanged }: { lab: Lab; onChanged: () => void
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Tabblad "Browser": dezelfde browser die de agent bestuurt, maar dan zichtbaar
+ * — zodat je er zelf in kunt inloggen waar de agent niet langs komt (een
+ * Microsoft-login met tweestapsverificatie bijvoorbeeld). Wat jij hier doet,
+ * doe je in zíjn sessie: hij werkt daarna gewoon verder achter die login.
+ *
+ * De VNC-poort van het lab wordt niet op de host gepubliceerd; dit gaat door
+ * een proxy in LabX, dus achter dezelfde login als de rest.
+ */
+function BrowserPanel({ lab }: { lab: Lab }) {
+  const heeftPakket = (lab.extras || []).includes("browser-vnc");
+  const url = `/api/labs/${lab.id}/browser?token=${encodeURIComponent(getToken() || "")}`;
+
+  if (!heeftPakket) {
+    return (
+      <div className="space-y-2 text-sm">
+        <p className="text-muted-foreground">
+          Dit lab heeft het pakket <strong>Zelf inloggen in de browser van het lab</strong> niet aan
+          staan. Vink het aan bij <strong>Inrichting</strong>; daarna draait de browser van de agent
+          zichtbaar en kun je hier meekijken en zelf inloggen.
+        </p>
+      </div>
+    );
+  }
+  if (lab.status !== "running") {
+    return <p className="text-sm text-muted-foreground">Start het lab om de browser te zien.</p>;
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span>
+          Je kijkt naar de browser van de agent. Log hier in en hij werkt verder in die sessie;
+          het profiel staat op /workspace en blijft dus bewaard.
+        </span>
+        <a className="ml-auto whitespace-nowrap underline" href={url} target="_blank" rel="noreferrer">
+          In een nieuw tabblad
+        </a>
+      </div>
+      <iframe
+        title="Browser van het lab"
+        src={url}
+        className="h-[70vh] w-full rounded-md border border-border bg-black"
+      />
+      <p className="text-xs text-muted-foreground">
+        Nog geen venster te zien? De browser start pas zodra de agent hem gebruikt — laat hem
+        bijvoorbeeld naar de pagina navigeren waar de login op komt.
+      </p>
     </div>
   );
 }

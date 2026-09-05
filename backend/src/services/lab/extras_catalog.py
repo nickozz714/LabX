@@ -169,6 +169,61 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
         },
     },
     {
+        "key": "browser-vnc",
+        "label": "Zelf inloggen in de browser van het lab",
+        "description": "Draait de browser van de agent zichtbaar (Xvfb + noVNC) in plaats van "
+                       "onzichtbaar, zodat je hem via LabX kunt openen en er ZELF in kunt inloggen "
+                       "— ook bij tweestapsverificatie. Je kijkt naar dezelfde browser als de agent, "
+                       "dus na jouw login werkt hij verder in die sessie. Het profiel staat op "
+                       "/workspace en blijft dus bewaard.",
+        # De controle is "serveert noVNC?" en niet "staat het pakket er?": het
+        # X-scherm en de VNC-brug moeten ook na een herstart van het lab weer
+        # draaien, en inrichten gebeurt bij elke start. Zo komt de boel vanzelf
+        # weer omhoog zonder dat iemand iets hoeft te starten.
+        "check_cmd": "curl -sf http://127.0.0.1:6080/vnc.html >/dev/null 2>&1",
+        "install_script": (
+            "set -e\n"
+            "if ! command -v Xvfb >/dev/null 2>&1 || ! command -v x11vnc >/dev/null 2>&1 "
+            "|| ! command -v websockify >/dev/null 2>&1; then\n"
+            "  apt-get update -qq\n"
+            "  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb x11vnc novnc "
+            "websockify openbox procps curl fonts-liberation\n"
+            "fi\n"
+            "pgrep -x Xvfb >/dev/null 2>&1 || "
+            "(nohup Xvfb :99 -screen 0 1440x900x24 >/tmp/xvfb.log 2>&1 &)\n"
+            "sleep 1\n"
+            # Zonder vensterbeheerder krijgen pop-ups (en dat IS een Microsoft-login
+            # vaak) geen focus en kun je er niets in typen.
+            "pgrep -x openbox >/dev/null 2>&1 || "
+            "(DISPLAY=:99 nohup openbox >/tmp/openbox.log 2>&1 &)\n"
+            # -localhost: de VNC-poort zelf is van buiten de container onbereikbaar.
+            # De enige weg naar binnen loopt via LabX, dus achter jouw login.
+            "pgrep -x x11vnc >/dev/null 2>&1 || "
+            "(nohup x11vnc -display :99 -forever -shared -nopw -localhost -rfbport 5900 "
+            ">/tmp/x11vnc.log 2>&1 &)\n"
+            "pgrep -f 'websockify.*6080' >/dev/null 2>&1 || "
+            "(nohup websockify --web /usr/share/novnc 6080 localhost:5900 "
+            ">/tmp/websockify.log 2>&1 &)\n"
+            "sleep 2\n"
+            "curl -sf http://127.0.0.1:6080/vnc.html >/dev/null"
+        ),
+        "requires": ["playwright-mcp"],
+        "timeout_s": 1200,
+        "sort_order": 55,
+        "mcp_server": {
+            "slug": "playwright-lab",
+            "name": "Playwright (in dit lab, zichtbaar)",
+            # Zonder --headless, op het X-scherm van hierboven: dit IS de browser
+            # die je in beeld krijgt. Zelfde --user-data-dir als de onzichtbare
+            # variant, zodat een login in de een geldt voor de ander.
+            "command": ("sh -c 'DISPLAY=:99 exec playwright-mcp --browser chromium "
+                        "--user-data-dir /workspace/.labx-browser'"),
+            "description": "Browserautomatisering in de labcontainer, zichtbaar via het "
+                           "Browser-tabblad van het lab zodat je zelf kunt inloggen.",
+            "replaces": ["ms-playwright"],
+        },
+    },
+    {
         "key": "uv",
         "label": "uv (snelle Python-packagemanager)",
         "description": "uv + uvx van Astral: pakketten en losse tools installeren zonder een venv op "

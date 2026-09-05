@@ -138,6 +138,9 @@ app.include_router(auth_router.router, prefix="/api")
 app.include_router(system_router.router, prefix="/api")
 app.include_router(lab_router.router, prefix="/api")
 app.include_router(lab_router.ws_router, prefix="/api")
+# De zichtbare browser van een lab: eigen router, want een <iframe> en een
+# WebSocket kunnen geen Authorization-header meesturen (zie lab_router).
+app.include_router(lab_router.browser_router, prefix="/api")
 app.include_router(chat_router.router, prefix="/api")
 app.include_router(internal_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")

@@ -5,12 +5,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from authentication import require_user
 from db.database import get_db
+from component_logging import get_logger
 from services.lab.lab_service import LabService
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/labs", tags=["labs"], dependencies=[Depends(require_user)])
 
@@ -18,6 +21,17 @@ router = APIRouter(prefix="/labs", tags=["labs"], dependencies=[Depends(require_
 # an Authorization header, so auth runs via a ?token= query param the endpoint
 # validates itself.
 ws_router = APIRouter(prefix="/labs", tags=["labs"])
+
+# En eentje voor de zichtbare browser van een lab (het pakket "Zelf inloggen in
+# de browser van het lab"). Dat is noVNC in een <iframe>, en een iframe stuurt
+# geen Authorization-header mee — net zomin als een WebSocket. Daarom: één keer
+# een ?token= dat hier wordt gecontroleerd en als pad-gebonden cookie wordt
+# teruggegeven, waarna de vervolgverzoeken van de noVNC-pagina (scripts, en de
+# WebSocket zelf) die cookie meesturen.
+browser_router = APIRouter(prefix="/labs", tags=["labs"])
+
+BROWSER_PORT = 6080
+_BROWSER_COOKIE = "labx_browser"
 
 
 def _service(db: Session) -> LabService:
@@ -386,6 +400,135 @@ async def publish_lab_repo(lab_id: str, payload: Dict[str, Any], db: Session = D
 async def az_login_lab(lab_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     files = payload.get("files") if isinstance(payload.get("files"), dict) else None
     return await _service(db).az_login(lab_id, az_dir=(payload.get("az_dir") or "/root/.azure"), files=files)
+
+
+
+
+# ── de zichtbare browser van een lab (noVNC) ────────────────────────────────
+
+def _browser_auth(token: str, cookie: Optional[str]) -> None:
+    from authentication import decode_access_token
+    raw = (token or cookie or "").strip()
+    if not raw:
+        raise HTTPException(status_code=401, detail="Geen token")
+    try:
+        decode_access_token(raw)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=401, detail="Ongeldig token")
+
+
+def _browser_target(db: Session, lab_id: str) -> str:
+    """De basis-URL van de noVNC-server IN het lab. Via de container-DNS-naam op
+    het gedeelde bridge-netwerk — de labpoort wordt bewust niet op de host
+    gepubliceerd, zodat de enige weg naar die browser via LabX loopt (en dus
+    achter een login)."""
+    from models.lab import Lab
+    p = db.get(Lab, lab_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Lab niet gevonden")
+    if p.status != "running" or not p.network_alias:
+        raise HTTPException(status_code=409, detail="Lab draait niet — start hem eerst")
+    if "browser-vnc" not in [str(x) for x in (p.extras or [])]:
+        raise HTTPException(
+            status_code=409,
+            detail="Dit lab heeft het pakket 'Zelf inloggen in de browser van het lab' niet aan staan.")
+    return f"http://{p.network_alias}:{BROWSER_PORT}"
+
+
+@browser_router.get("/{lab_id}/browser")
+async def browser_entry(lab_id: str, token: str = Query(default=""),
+                        db: Session = Depends(get_db)):
+    """Instap: token controleren, als pad-gebonden cookie zetten en doorsturen
+    naar de noVNC-pagina die meteen verbinding maakt."""
+    from fastapi.responses import RedirectResponse
+    _browser_auth(token, None)
+    _browser_target(db, lab_id)
+    base = f"/api/labs/{lab_id}/browser"
+    target = (f"{base}/vnc.html?path={base.lstrip('/')}/websockify"
+              "&autoconnect=true&resize=scale&reconnect=true")
+    resp = RedirectResponse(url=target, status_code=307)
+    resp.set_cookie(_BROWSER_COOKIE, token, httponly=True, samesite="lax",
+                    path=base, max_age=8 * 3600)
+    return resp
+
+
+@browser_router.get("/{lab_id}/browser/{path:path}")
+async def browser_asset(lab_id: str, path: str, request: Request,
+                        db: Session = Depends(get_db)):
+    """De noVNC-bestanden uit het lab doorgeven (html/js/css)."""
+    import httpx
+    from fastapi.responses import Response as FastResponse
+    _browser_auth(request.query_params.get("token", ""),
+                  request.cookies.get(_BROWSER_COOKIE))
+    base = _browser_target(db, lab_id)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(f"{base}/{path}", params=dict(request.query_params))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Browser in het lab niet bereikbaar: {str(exc)[:200]}")
+    return FastResponse(content=r.content, status_code=r.status_code,
+                        media_type=r.headers.get("content-type", "application/octet-stream"))
+
+
+@browser_router.websocket("/{lab_id}/browser/websockify")
+async def browser_socket(websocket: WebSocket, lab_id: str, token: str = Query(default="")):
+    """De VNC-stroom zelf, doorgegeven tussen de noVNC-pagina en het lab."""
+    import asyncio
+    import websockets
+
+    from authentication import decode_access_token
+    from db.database import SessionLocal
+    raw = (token or websocket.cookies.get(_BROWSER_COOKIE) or "").strip()
+    try:
+        decode_access_token(raw)
+    except Exception:  # noqa: BLE001
+        await websocket.close(code=4401)
+        return
+    db = SessionLocal()
+    try:
+        target = _browser_target(db, lab_id).replace("http://", "ws://") + "/websockify"
+    except HTTPException:
+        await websocket.close(code=4409)
+        return
+    finally:
+        db.close()
+
+    await websocket.accept(subprotocol="binary")
+    try:
+        async with websockets.connect(target, subprotocols=["binary"],
+                                      max_size=None, open_timeout=15) as upstream:
+            async def naar_lab() -> None:
+                while True:
+                    msg = await websocket.receive()
+                    if msg["type"] == "websocket.disconnect":
+                        return
+                    data = msg.get("bytes")
+                    if data is None and msg.get("text") is not None:
+                        data = msg["text"].encode()
+                    if data is not None:
+                        await upstream.send(data)
+
+            async def naar_browser() -> None:
+                async for data in upstream:
+                    if isinstance(data, str):
+                        data = data.encode()
+                    await websocket.send_bytes(data)
+
+            done, pending = await asyncio.wait(
+                [asyncio.create_task(naar_lab()), asyncio.create_task(naar_browser())],
+                return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Browser-verbinding met het lab verbroken", lab_id=lab_id,
+                     error=str(exc)[:200])
+    finally:
+        try:
+            await websocket.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @ws_router.websocket("/{lab_id}/terminal")
