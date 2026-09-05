@@ -312,12 +312,17 @@ class LabService:
                 stdio_command=command, is_enabled=True, created_at=now, updated_at=now)
             self.db.add(srv)
         else:
-            # Een bestaande rij is misschien door de gebruiker aangepast; alleen
-            # bijwerken wat nodig is om hem te laten werken.
             srv.location = "lab"
             srv.server_type = "stdio"
             srv.is_enabled = True
-            if not (srv.stdio_command or "").strip():
+            # Het pakket beheert het commando: het weet welke vlaggen bij deze
+            # installatie horen (waar het profiel staat, of hij zichtbaar moet
+            # draaien) en dat verandert mee met het pakket. Een eigen variant
+            # maak je als aparte server, niet door deze rij te verbouwen — dan
+            # zou de volgende inrichtronde hem stilletjes terugzetten.
+            if (srv.stdio_command or "").strip() != command:
+                log.infox("Commando van lab-MCP-server bijgewerkt door het pakket",
+                          server=slug, commando=command)
                 srv.stdio_command = command
             srv.updated_at = now
         allowed = [str(x) for x in (p.allowed_mcp or [])]
@@ -587,6 +592,7 @@ class LabService:
         p.error = None
         p.updated_at = _now_iso()
         self.db.commit()
+        await self._close_lab_mcp_sessions(old_container)
         try:
             if old_container:
                 # rm -f stopt hem ook; een mislukte verwijdering laat de naam
@@ -703,8 +709,22 @@ class LabService:
                 log.warningx("Guard-model ensure overgeslagen (update)", error=str(exc)[:200])
         return self._to_dict(p)
 
+    async def _close_lab_mcp_sessions(self, container_id: Optional[str]) -> None:
+        """Blijvende MCP-processen in deze container afsluiten. Zonder dit
+        blijft er een `docker exec` hangen dat naar een container wijst die zo
+        meteen niet meer bestaat, en zou de eerstvolgende aanroep na een
+        herstart op een dood proces landen."""
+        if not container_id:
+            return
+        try:
+            from services.mcp.lab_session_pool import close_for_container
+            await close_for_container(container_id)
+        except Exception as exc:  # noqa: BLE001 — opruimen mag nooit de actie blokkeren
+            log.warningx("Lab-MCP-sessies sluiten mislukt", error=str(exc)[:200])
+
     async def stop(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
+        await self._close_lab_mcp_sessions(p.container_id)
         if p.container_id and p.status == "running":
             await self.runtime.stop(p.container_id)
         p.status = "stopped"
@@ -714,6 +734,7 @@ class LabService:
 
     async def delete(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
+        await self._close_lab_mcp_sessions(p.container_id)
         for op, ref in (("container", p.container_id), ("volume", p.volume_name)):
             if not ref:
                 continue
@@ -742,6 +763,7 @@ class LabService:
         for p in due:
             try:
                 if p.container_id and p.status == "running":
+                    await self._close_lab_mcp_sessions(p.container_id)
                     await self.runtime.stop(p.container_id)
             except Exception as exc:  # noqa: BLE001
                 log.warningx("Lab stoppen bij expiry mislukt", lab_id=p.id, error=str(exc))

@@ -196,6 +196,11 @@ class DockerRuntime:
             "--cpus", str(cpu_limit),
             "--memory", f"{int(mem_limit_mb)}m",
             "--pids-limit", "512",
+            # PID 1 in een lab is `sleep infinity`, en die ruimt geen
+            # weeskinderen op. Zonder init-proces stapelen zombies zich op —
+            # een browser laat er tientallen per sessie achter — tot de
+            # pids-limit vol zit en er niets meer start.
+            "--init",
             "--security-opt", "no-new-privileges",
             "--network", self._network,
             "--network-alias", name,

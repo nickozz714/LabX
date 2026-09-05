@@ -53,6 +53,13 @@ async def _warm_mcp_gateway() -> None:
         log.warningx("MCP-gateway voorverwarmen overgeslagen", error=str(exc)[:200])
 
 
+async def _mcp_session_tick() -> None:
+    """Blijvende MCP-processen in labs die niemand meer gebruikt afsluiten —
+    een browser die staat te wachten hoeft geen geheugen te bezetten."""
+    from services.mcp.lab_session_pool import close_idle
+    await close_idle()
+
+
 async def _board_sync_tick() -> None:
     """Boards met auto_sync_minutes > 0 bijwerken vanuit hun bron (DevOps/Jira)."""
     from services.boards.sync_service import BoardSyncService
@@ -96,6 +103,8 @@ async def lifespan(_app: FastAPI):
     from services.scheduling.cron import tick as _cron_tick
     scheduler.register(name="schedule_cron", interval_seconds=30, fn=_cron_tick, run_immediately=True)
     scheduler.register(name="board_sync", interval_seconds=60, fn=_board_sync_tick,
+                       run_immediately=False)
+    scheduler.register(name="mcp_lab_sessions", interval_seconds=300, fn=_mcp_session_tick,
                        run_immediately=False)
     await scheduler.start()
     # De MCP-gateway alvast één keer laten importeren. De CLI start hem per run

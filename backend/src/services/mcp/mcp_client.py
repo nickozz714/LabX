@@ -128,18 +128,13 @@ async def call_tool(server: MCPServer, remote_name: str, args: Dict[str, Any], *
         if not lab_container_id:
             raise RuntimeError(
                 f"MCP-server '{server.name}' draait in een lab, maar er is geen actief lab gebonden.")
-        if not server.stdio_command:
-            raise RuntimeError(f"MCP-server '{server.name}' heeft geen stdio_command geconfigureerd.")
-        parts = shlex.split(server.stdio_command)
-        params = StdioServerParameters(
-            command="docker",
-            args=["exec", "-i", "-w", "/workspace", lab_container_id, *parts],
-        )
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(remote_name, args)
-                return _extract_result(result)
+        # Via de sessiepool: één blijvend proces per lab-server in plaats van
+        # een nieuw proces per aanroep. Zie services/mcp/lab_session_pool.py —
+        # een server die iets vasthoudt (een browser met zijn ingelogde sessie)
+        # kan anders niet bestaan.
+        from services.mcp.lab_session_pool import call_lab_tool
+        result = await call_lab_tool(server, remote_name, args, container_id=lab_container_id)
+        return _extract_result(result)
 
     if server.server_type == "stdio":
         if not server.stdio_command:

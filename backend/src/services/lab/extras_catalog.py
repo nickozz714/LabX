@@ -153,7 +153,12 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
         "mcp_server": {
             "slug": "playwright-lab",
             "name": "Playwright (in dit lab)",
-            "command": "playwright-mcp --headless --browser chromium",
+            # --user-data-dir op /workspace: dáár landt een ingelogde sessie, en
+            # /workspace staat op een eigen volume — dus een cookie overleeft
+            # een herstart én een opnieuw opgebouwde container. Het standaardpad
+            # zit in de containerlaag en is bij een rebuild weg.
+            "command": ("playwright-mcp --headless --browser chromium "
+                        "--user-data-dir /workspace/.labx-browser"),
             "description": "Browserautomatisering IN de labcontainer; de browser blijft in de "
                            "sandbox en achter de data-egress-guard.",
             # De host-variant levert dezelfde browser_*-tools vanuit de
