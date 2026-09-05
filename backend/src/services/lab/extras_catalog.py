@@ -127,15 +127,25 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
         "description": "Zet `@playwright/mcp` in het lab neer, zodat de agent browser-TOOLS krijgt "
                        "(browser_navigate, browser_click, ...) in plaats van scripts te moeten "
                        "schrijven. De browser draait dan in de sandbox achter de egress-guard. "
-                       "LabX registreert de server na installatie zelf, zet hem op de allowlist van "
-                       "dit lab en haalt zijn tools op.",
-        "check_cmd": "command -v playwright-mcp >/dev/null 2>&1",
+                       "Haalt ook de browserbuild op die deze server zelf nodig heeft. LabX "
+                       "registreert de server na installatie, zet hem op de allowlist van dit lab "
+                       "en haalt zijn tools op — je hoeft niets meer te koppelen.",
+        # De controle vraagt het aan de tool zelf, en dat is met opzet: welke
+        # browserbuild deze server nodig heeft hangt af van de Playwright-versie
+        # die IN @playwright/mcp zit, niet van de losse `playwright` uit het
+        # Node-pakket. Die twee liepen uit elkaar, en dan staat er wel een
+        # browser maar niet de zijne — met een foutmelding die naar een pad
+        # wijst dat niemand kan raden. `install-browser` is klaar in nul
+        # seconden als het goed zit, en haalt hem anders alsnog op.
+        "check_cmd": ("command -v playwright-mcp >/dev/null 2>&1 && "
+                      "playwright-mcp install-browser chrome-for-testing >/dev/null 2>&1"),
         "install_script": (
             "set -e\n"
             "npm install -g --silent @playwright/mcp@latest\n"
             # De binary heet `playwright-mcp` (niet mcp-server-playwright — die
             # naam is van een oudere release en levert hier een stille 127 op).
-            "command -v playwright-mcp"
+            "command -v playwright-mcp\n"
+            "playwright-mcp install-browser chrome-for-testing"
         ),
         "requires": ["node", "playwright-node"],
         "timeout_s": 900,
