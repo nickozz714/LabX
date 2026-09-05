@@ -201,7 +201,10 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
             "pgrep -x x11vnc >/dev/null 2>&1 || "
             "(nohup x11vnc -display :99 -forever -shared -nopw -localhost -rfbport 5900 "
             ">/tmp/x11vnc.log 2>&1 &)\n"
-            "pgrep -f 'websockify.*6080' >/dev/null 2>&1 || "
+            # Niet `pgrep -f websockify.*6080`: dit script bevat die tekst zelf,
+            # dus pgrep vindt het inrichtingsproces en concludeert dat er al
+            # iets draait. Vragen of de poort antwoordt kan die fout niet maken.
+            "curl -sf -o /dev/null http://127.0.0.1:6080/vnc.html 2>/dev/null || "
             "(nohup websockify --web /usr/share/novnc 6080 localhost:5900 "
             ">/tmp/websockify.log 2>&1 &)\n"
             "sleep 2\n"
