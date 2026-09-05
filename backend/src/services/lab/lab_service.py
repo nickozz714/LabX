@@ -240,6 +240,7 @@ class LabService:
         steps: List[Dict[str, Any]] = [{
             "key": r.key, "label": r.label, "check": r.check_cmd,
             "script": r.install_script, "timeout_s": int(r.timeout_s or 900),
+            "mcp_server": getattr(r, "mcp_server", None),
         } for r in ordered]
         # Een lab kan verwijzen naar een pakket dat sindsdien weg is of uit
         # staat. Dat stil overslaan is precies het soort verdwijnende
@@ -281,6 +282,59 @@ class LabService:
                 "exit_code": res.get("exit_code"),
                 # De staart is waar de fout staat; de kop is apt-ruis.
                 "output": (res.get("output") or "")[-3000:]}
+
+    async def _register_lab_mcp_server(self, p: Lab, cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """Een pakket dat een MCP-server meebrengt, koppelt zichzelf.
+
+        Anders blijft er precies één handmatige stap over die niemand kan
+        raden: de software staat in het lab, maar de agent ziet geen enkele
+        tool — want de gateway leest uit Tool-rijen, en die vult alleen een
+        sync. Erger nog, zolang de host-variant van dezelfde server op de
+        allowlist staat pakt díe de aanroepen op, vanuit een container zonder
+        browser: een foutmelding die zegt dat de browser ontbreekt terwijl hij
+        aantoonbaar in het lab staat. Vandaar dat `replaces` hem hier weghaalt.
+
+        Registreren, toestaan en synchroniseren horen bij elkaar; alle drie of
+        geen van drieën."""
+        from models.mcp_server import MCPServer
+        from services.mcp.mcp_client import sync_tools
+
+        slug = str(cfg.get("slug") or "").strip().lower()
+        command = str(cfg.get("command") or "").strip()
+        if not slug or not command:
+            return {"status": "skipped", "output": "Geen slug/commando in de serverkoppeling."}
+        now = _now_iso()
+        srv = self.db.query(MCPServer).filter(MCPServer.slug == slug).one_or_none()
+        if srv is None:
+            srv = MCPServer(
+                name=str(cfg.get("name") or slug)[:255], slug=slug,
+                description=cfg.get("description"), server_type="stdio", location="lab",
+                stdio_command=command, is_enabled=True, created_at=now, updated_at=now)
+            self.db.add(srv)
+        else:
+            # Een bestaande rij is misschien door de gebruiker aangepast; alleen
+            # bijwerken wat nodig is om hem te laten werken.
+            srv.location = "lab"
+            srv.server_type = "stdio"
+            srv.is_enabled = True
+            if not (srv.stdio_command or "").strip():
+                srv.stdio_command = command
+            srv.updated_at = now
+        allowed = [str(x) for x in (p.allowed_mcp or [])]
+        weg = {str(x).strip().lower() for x in (cfg.get("replaces") or [])}
+        verwijderd = [x for x in allowed if x.strip().lower() in weg]
+        allowed = [x for x in allowed if x.strip().lower() not in weg]
+        if slug not in {x.strip().lower() for x in allowed}:
+            allowed.append(slug)
+        p.allowed_mcp = allowed
+        self.db.commit()
+        res = await sync_tools(srv, lab_container_id=p.container_id)
+        note = f"Gekoppeld als '{slug}' en toegestaan in dit lab."
+        if verwijderd:
+            note += f" Van de allowlist gehaald omdat deze server hem vervangt: {', '.join(verwijderd)}."
+        if res.get("ok"):
+            return {"status": "ok", "output": f"{note} {res.get('tool_count', 0)} tools opgehaald."}
+        return {"status": "error", "output": f"{note} Tools ophalen mislukt: {res.get('error')}"}
 
     async def provision(self, lab_id: str, *, force: bool = False) -> Dict[str, Any]:
         """Het lab inrichten: basisgereedschap, de aangevinkte extra's en het
@@ -332,6 +386,20 @@ class LabService:
             if entry["status"] == "error":
                 failed += 1
             entries.append(entry)
+            # "skipped" telt hier net zo goed als "ok": de software staat er, en
+            # de koppeling kan ontbreken (nieuw lab, of een lab van vóór deze
+            # functie). Registreren is idempotent.
+            cfg = step.get("mcp_server")
+            if cfg and entry["status"] in ("ok", "skipped"):
+                try:
+                    res = await self._register_lab_mcp_server(p, cfg)
+                except Exception as exc:  # noqa: BLE001
+                    res = {"status": "error", "output": str(exc)[:1000]}
+                if res["status"] == "error":
+                    failed += 1
+                entries.append({"key": f"{step['key']}:mcp", "label": "MCP-server koppelen",
+                                "status": res["status"], "exit_code": None,
+                                "output": res["output"]})
             # Na elke stap wegschrijven: het scherm volgt provision_log live, en
             # bij een herstart middenin is te zien hoe ver het gekomen was.
             p.provision_log = list(entries)

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from authentication import require_user
@@ -177,15 +177,41 @@ def delete_server(server_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{server_id}/sync")
-async def sync_server(server_id: int, db: Session = Depends(get_db)):
-    """List the server's tools and upsert them as Tool rows. Only meaningful
-    for a HOST server (a lab server can't be reached until a lab runs it —
-    sync a lab-located server from within the lab's own detail screen once
-    running; not implemented in this POC pass, see plan Fase 4)."""
+async def sync_server(server_id: int, lab_id: Optional[str] = Query(default=None),
+                      db: Session = Depends(get_db)):
+    """Haal de tools van deze server op en zet ze als Tool-rijen neer.
+
+    Een LAB-server draait als proces in een labcontainer, dus voor die is er een
+    draaiend lab nodig om hem heel even te kunnen starten. Geef `lab_id` mee, of
+    laat het leeg: dan wordt een draaiend lab gekozen dat deze server toestaat.
+    Zonder deze weg bleef een lab-server voor altijd zonder tools — en dus
+    onzichtbaar voor de agent, hoe netjes hij ook geregistreerd was."""
     s = db.get(MCPServer, server_id)
     if not s:
         raise HTTPException(status_code=404, detail="MCP-server niet gevonden")
     from services.mcp.mcp_client import sync_tools
-    result = await sync_tools(s)
+    container_id = None
+    if s.location == "lab":
+        container_id = _lab_container_for(db, s, lab_id)
+        if not container_id:
+            raise HTTPException(
+                status_code=409,
+                detail=("Deze server draait in een lab. Start een lab dat hem toestaat "
+                        "(Toegang-tab) en probeer het opnieuw."))
+    result = await sync_tools(s, lab_container_id=container_id)
     db.refresh(s)
     return {**result, "server": _to_dict(s)}
+
+
+def _lab_container_for(db: Session, server: MCPServer, lab_id: Optional[str]) -> Optional[str]:
+    """De container waarin deze lab-server gestart kan worden: het gevraagde lab,
+    of anders een willekeurig draaiend lab dat hem op zijn allowlist heeft."""
+    from models.lab import Lab
+    if lab_id:
+        lab = db.get(Lab, lab_id)
+        return lab.container_id if lab and lab.status == "running" else None
+    slug = (server.slug or "").lower()
+    for lab in db.query(Lab).filter(Lab.status == "running").all():
+        if slug in {str(x).lower() for x in (lab.allowed_mcp or [])}:
+            return lab.container_id
+    return None

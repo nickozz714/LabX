@@ -124,19 +124,34 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
     {
         "key": "playwright-mcp",
         "label": "Playwright MCP-server (in het lab)",
-        "description": "Zet `@playwright/mcp` in het lab neer, zodat de agent browser-TOOLS krijgt in "
-                       "plaats van scripts te moeten schrijven. Koppel hem daarna op de MCP-pagina als "
-                       "server met locatie 'lab' en commando: "
-                       "mcp-server-playwright --headless --browser chromium",
-        "check_cmd": "npm ls -g --depth=0 @playwright/mcp >/dev/null 2>&1",
+        "description": "Zet `@playwright/mcp` in het lab neer, zodat de agent browser-TOOLS krijgt "
+                       "(browser_navigate, browser_click, ...) in plaats van scripts te moeten "
+                       "schrijven. De browser draait dan in de sandbox achter de egress-guard. "
+                       "LabX registreert de server na installatie zelf, zet hem op de allowlist van "
+                       "dit lab en haalt zijn tools op.",
+        "check_cmd": "command -v playwright-mcp >/dev/null 2>&1",
         "install_script": (
             "set -e\n"
             "npm install -g --silent @playwright/mcp@latest\n"
-            "command -v mcp-server-playwright"
+            # De binary heet `playwright-mcp` (niet mcp-server-playwright — die
+            # naam is van een oudere release en levert hier een stille 127 op).
+            "command -v playwright-mcp"
         ),
         "requires": ["node", "playwright-node"],
         "timeout_s": 900,
         "sort_order": 50,
+        "mcp_server": {
+            "slug": "playwright-lab",
+            "name": "Playwright (in dit lab)",
+            "command": "playwright-mcp --headless --browser chromium",
+            "description": "Browserautomatisering IN de labcontainer; de browser blijft in de "
+                           "sandbox en achter de data-egress-guard.",
+            # De host-variant levert dezelfde browser_*-tools vanuit de
+            # LabX-container, waar geen browser staat. Zolang die op de
+            # allowlist van dit lab staat, wint hij of botst hij — dus haalt de
+            # registratie hem hier weg.
+            "replaces": ["ms-playwright"],
+        },
     },
     {
         "key": "uv",
@@ -192,6 +207,7 @@ def seed_builtin_extras(db) -> int:
             continue
         db.add(LabExtra(
             key=spec["key"], label=spec["label"], description=spec.get("description"),
+            mcp_server=spec.get("mcp_server"),
             check_cmd=spec.get("check_cmd"), install_script=spec["install_script"],
             requires=list(spec.get("requires") or []),
             timeout_s=int(spec.get("timeout_s") or 900),

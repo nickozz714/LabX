@@ -40,6 +40,15 @@ class LabExtra(Base):
     # zou daar middenin afkappen.
     timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=900)
 
+    # Brengt dit pakket een MCP-SERVER mee die in het lab draait? Dan
+    # {"slug", "name", "command", "description"?, "replaces"?: [slugs]}. Na een
+    # geslaagde installatie registreert LabX die server zelf, zet hem op de
+    # allowlist van dit lab en haalt zijn tools op. Zonder dat blijft er een
+    # handmatige stap over die niemand kan raden: het pakket staat er, de agent
+    # ziet niets, en de host-variant van dezelfde server pakt de aanroep op —
+    # in een container zonder browser.
+    mcp_server: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Standaard aangevinkt in het "Nieuw lab"-scherm.
     default_on: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

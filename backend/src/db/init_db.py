@@ -49,6 +49,9 @@ _ADDITIVE_COLUMNS = {
         ("admin_username", "VARCHAR(128)"),
         ("admin_password_hash", "VARCHAR(512)"),
     ],
+    "lab_extras": [
+        ("mcp_server", "TEXT"),
+    ],
     "labs": [
         ("azure_profile_id", "INTEGER"),
         ("extras", "TEXT"),

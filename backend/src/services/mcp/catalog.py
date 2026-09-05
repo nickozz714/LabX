@@ -93,8 +93,8 @@ CATALOG: List[Dict[str, Any]] = [
         "description": "Dezelfde Playwright-server, maar als proces IN de labcontainer: de browser "
                        "draait dan in de sandbox en achter de egress-guard, niet op de host. "
                        "Vink daarvoor bij het lab de extra's 'Node.js' en 'Playwright (Node) + "
-                       "Chromium' aan (Instellingen > Lab-extra's) — zonder browser start de server "
-                       "niet.",
+                       "Chromium' aan — of eenvoudiger: vink het pakket 'Playwright MCP-server' "
+                       "aan, dan registreert LabX deze server zelf.",
         "kind": "stdio", "runner": "npx",
         "package": "@playwright/mcp@latest",
         # Expliciet commando i.p.v. `npx -y @playwright/mcp@latest`: de extra
@@ -102,7 +102,7 @@ CATALOG: List[Dict[str, Any]] = [
         # ELKE aanroep opnieuw het netwerk op om te kijken of er iets nieuwers
         # is — merkbaar traag voor een tool die de agent tientallen keren
         # aanroept.
-        "stdio_command": "mcp-server-playwright --headless --browser chromium",
+        "stdio_command": "playwright-mcp --headless --browser chromium",
         "suggested_location": "lab",
         "suggested_args": "",
         "provenance": "data",

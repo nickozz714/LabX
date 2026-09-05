@@ -190,9 +190,17 @@ async def _stdio_env(server: MCPServer, *, db: Optional[Any] = None,
     return {**os.environ, **overrides}
 
 
-async def sync_tools(server: MCPServer) -> Dict[str, Any]:
+async def sync_tools(server: MCPServer, *,
+                    lab_container_id: Optional[str] = None) -> Dict[str, Any]:
     """List a server's tools and upsert them as Tool rows — the picker's data
-    source for the Skill Wizard (issue 3: show the tool's input schema)."""
+    source for the Skill Wizard (issue 3: show the tool's input schema).
+
+    Voor een lab-gebonden server is `lab_container_id` verplicht: die draait
+    niet op de host maar als proces IN een labcontainer, en er is geen andere
+    manier om te weten wélke tools hij heeft dan hem daar even starten. Zonder
+    dit bleef zo'n server voorgoed leeg — hij liet zich registreren en
+    toestaan, maar de agent kreeg nooit een tool te zien, want de gateway leest
+    uit de Tool-rijen die alleen een sync kan vullen."""
     from datetime import datetime, timezone
     from sqlalchemy.orm import Session as _Session
     from db.database import SessionLocal
@@ -201,10 +209,22 @@ async def sync_tools(server: MCPServer) -> Dict[str, Any]:
     db: _Session = SessionLocal()
     now = datetime.now(timezone.utc).isoformat()
     try:
-        if server.location == "lab":
-            return {"ok": False, "error": "Sync een lab-gebonden server via het lab zelf (het moet draaien)."}
         from mcp import ClientSession, StdioServerParameters
-        if server.server_type == "stdio":
+        if server.location == "lab":
+            if not lab_container_id:
+                return {"ok": False,
+                        "error": "Deze server draait in een lab: start een lab dat hem toestaat "
+                                 "en synchroniseer vanuit dat lab."}
+            parts = shlex.split(server.stdio_command or "")
+            if not parts:
+                return {"ok": False, "error": "Geen stdio_command geconfigureerd."}
+            from mcp.client.stdio import stdio_client
+            # Zelfde vorm als call_tool: `-i` zonder `-t`, want een tty zou de
+            # JSON-RPC-framing bederven.
+            ctx = stdio_client(StdioServerParameters(
+                command="docker",
+                args=["exec", "-i", "-w", "/workspace", lab_container_id, *parts]))
+        elif server.server_type == "stdio":
             from mcp.client.stdio import stdio_client
             parts = shlex.split(server.stdio_command or "")
             if not parts:

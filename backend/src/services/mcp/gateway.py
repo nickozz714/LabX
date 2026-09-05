@@ -193,6 +193,13 @@ def _list_gateway_tools(db, lab_id: Optional[str]) -> List[Any]:
 
     tools = ToolRepository(db).get_all_with_relations(skip=0, limit=2000)
     out: List[Any] = []
+    # Twee servers kunnen dezelfde toolnaam leveren — de Playwright-server op de
+    # host en die in het lab heten allebei browser_navigate. Dan wint de
+    # LAB-variant: die draait in de sandbox, achter de guard, mét de browser die
+    # in dat lab geïnstalleerd is. De host-variant zou dezelfde aanroep
+    # aannemen vanuit een container waar niets van dat alles staat, en klagen
+    # over een ontbrekende browser terwijl hij aantoonbaar in het lab staat.
+    by_name: Dict[str, int] = {}
     for t in tools:
         if not getattr(t, "is_enabled", True):
             continue
@@ -236,13 +243,23 @@ def _list_gateway_tools(db, lab_id: Optional[str]) -> List[Any]:
         if sig:
             description = f"{description}\n{sig}"
 
-        out.append(FunctionTool(
+        is_lab = getattr(server, "location", "host") == "lab" if server is not None else False
+        tool = FunctionTool(
             name=name,
             description=description[:1024],
             parameters=schema,
             fn=_make_handler(tool_id, schema, name),
-            meta={"labx_tool_id": tool_id, "labx_server": server_name},
-        ))
+            meta={"labx_tool_id": tool_id, "labx_server": server_name, "labx_lab_tool": is_lab},
+        )
+        eerder = by_name.get(name)
+        if eerder is None:
+            by_name[name] = len(out)
+            out.append(tool)
+            continue
+        if is_lab and not out[eerder].meta.get("labx_lab_tool"):
+            log.infox("gateway: lab-tool gaat voor op de host-variant",
+                      tool=name, server=server_name)
+            out[eerder] = tool
     return out
 
 
