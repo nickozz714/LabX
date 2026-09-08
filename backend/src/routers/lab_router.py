@@ -326,6 +326,36 @@ async def provision_lab(lab_id: str, payload: Optional[Dict[str, Any]] = None,
     return {"ok": True, "provision_status": "pending"}
 
 
+@router.get("/{lab_id}/tunnel")
+async def lab_tunnel(lab_id: str, port: int = Query(default=8400),
+                     db: Session = Depends(get_db)):
+    """Gegevens voor een tunnel naar dit lab: het IP van de container en de
+    poort. Zie LabService.tunnel_info voor waarom dit nodig is."""
+    return await _service(db).tunnel_info(lab_id, port=port)
+
+
+@router.get("/{lab_id}/tunnel-script")
+async def lab_tunnel_script(lab_id: str, ssh_target: str = Query(...),
+                            port: int = Query(default=8400),
+                            db: Session = Depends(get_db)):
+    """Het tunnel-script als tekst. De front-end biedt het aan als download —
+    zo hoeft er geen route open te staan die zonder token te benaderen is.
+
+    `ssh_target` komt van de gebruiker en belandt in een script dat hij op zijn
+    eigen machine draait; daarom streng gefilterd op wat een gebruiker@host
+    hoort te zijn, en niets anders."""
+    import re
+    doel = (ssh_target or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+(@[A-Za-z0-9._-]+)?", doel):
+        raise HTTPException(status_code=400,
+                            detail="ssh_target mag alleen letters, cijfers, . _ - en één @ bevatten")
+    svc = _service(db)
+    info = await svc.tunnel_info(lab_id, port=port)
+    return {"filename": f"labx-tunnel-{info['lab_name'].lower().replace(' ', '-')}-{info['port']}.sh",
+            "script": svc.tunnel_script(lab_name=info["lab_name"], ssh_target=doel,
+                                        ip=info["container_ip"], port=info["port"])}
+
+
 @router.post("/{lab_id}/workers")
 async def scale_workers(lab_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     """De grenzen van de autoscaler zetten: `min_workers` blijft altijd staan,

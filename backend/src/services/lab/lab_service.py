@@ -525,6 +525,62 @@ class LabService:
         w.updated_at = _now_iso()
         self.db.commit()
 
+    # ── inloggen met je eigen browser (tunnel) ───────────────────────────────
+
+    # De poort waarop een interactieve Microsoft-login in het lab zijn redirect
+    # verwacht. Vast, want een willekeurige poort valt niet door te sturen —
+    # dat is de hele reden dat de fab-CLI hierop gepatcht wordt.
+    AUTH_PORT = 8400
+
+    async def tunnel_info(self, lab_id: str, *, port: Optional[int] = None,
+                          worker_id: Optional[int] = None) -> Dict[str, Any]:
+        """Alles wat je nodig hebt om `localhost:<poort>` op JOUW machine in dit
+        lab te laten uitkomen.
+
+        Waarom dat nodig is: een interactieve Microsoft-login stuurt de browser
+        naar `http://localhost:<poort>`, en dat is de localhost van de machine
+        waar je klikt — niet die van de server. De listener zit in de
+        labcontainer. Iets moet die twee verbinden, en dat iets moet op jouw
+        machine draaien; LabX kan het voorbereiden maar niet zelf starten.
+
+        Geen gepubliceerde poort nodig: de server bereikt de container
+        rechtstreeks op zijn IP in het labnetwerk."""
+        p = self.get(lab_id)
+        poort = int(port or self.AUTH_PORT)
+        cid = self.container_for(p, worker_id)
+        if p.status != "running" or not cid:
+            raise HTTPException(status_code=409, detail="Lab draait niet (start hem eerst)")
+        ip = await self.runtime.container_ip(cid)
+        if not ip:
+            raise HTTPException(status_code=502, detail="Kon het IP van de labcontainer niet bepalen")
+        return {"lab_id": p.id, "lab_name": p.name, "port": poort,
+                "container_ip": ip, "container": cid[:12],
+                "network": settings.LAB_NETWORK}
+
+    @staticmethod
+    def tunnel_script(*, lab_name: str, ssh_target: str, ip: str, port: int) -> str:
+        """Een klein script dat de tunnel opzet en openhoudt. Bewust `ssh` en
+        geen eigen programmaatje: dat zit al op elke Mac en Linux-machine, het
+        heeft geen installatie nodig, en het is te lezen wat het doet."""
+        return f"""#!/bin/sh
+# LabX — tunnel naar lab '{lab_name}'
+#
+# Zet localhost:{port} op DEZE machine door naar de labcontainer op de server.
+# Nodig voor een interactieve Microsoft-login vanuit het lab: die stuurt je
+# browser naar http://localhost:{port}, en dat is de localhost van de machine
+# waar je klikt.
+#
+# Laat dit venster openstaan zolang je inlogt. Stoppen: Ctrl-C.
+set -e
+echo "Tunnel: localhost:{port} -> {ip}:{port} (via {ssh_target})"
+echo "Laat dit venster open tijdens het inloggen. Stoppen met Ctrl-C."
+exec ssh -N \\
+    -o ServerAliveInterval=30 \\
+    -o ExitOnForwardFailure=yes \\
+    -L {port}:{ip}:{port} \\
+    {ssh_target}
+"""
+
     # ── autoscaler ───────────────────────────────────────────────────────────
     #
     # Een lab houdt altijd `min_workers` containers aan (standaard één: die
@@ -1352,6 +1408,31 @@ class LabService:
             raise HTTPException(status_code=500, detail=result["output"][:300])
         self._touch(p)
         return {"ok": True, "path": target, "bytes": len((content or "").encode("utf-8"))}
+
+    async def read_lab_file_raw(self, lab_id: str, path: str, *,
+                                worker_id: Optional[int] = None,
+                                max_bytes: int = 4_000_000) -> Optional[str]:
+        """Een bestand volledig uit het lab halen.
+
+        Niet via read_file: die kapt af (`head -c 200000`, en de exec-uitvoer
+        zelf op 60k tekens). Voor een tokencache is dat funest — je krijgt dan
+        een half JSON-bestand dat er op het oog uitziet als een sessie en het
+        nergens doet. Vandaar base64 met een ruime grens: geen afkapping, geen
+        gedoe met tekensets, en een lengte die we kunnen controleren."""
+        import base64 as _b64
+        p = self.get(lab_id)
+        cid = self._require_running(p, worker_id)
+        veilig = self._safe_path(path)
+        res = await self.runtime.exec(
+            cid, ["sh", "-c", f"test -f '{veilig}' && base64 -w0 '{veilig}' || true"],
+            timeout=60, max_chars=int(max_bytes * 1.4))
+        data = (res.get("output") or "").strip()
+        if not data or res.get("truncated"):
+            return None
+        try:
+            return _b64.b64decode(data).decode("utf-8")
+        except Exception:  # noqa: BLE001
+            return None
 
     async def az_login(self, lab_id: str, *, az_dir: str = "/root/.azure",
                        files: Optional[Dict[str, str]] = None) -> Dict[str, Any]:

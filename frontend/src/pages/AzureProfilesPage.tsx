@@ -22,10 +22,82 @@ import { useEffect, useState } from "react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
 import { labsApi } from "@/lib/labs";
 import type { AzureProfileDto, Lab } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { AzureBundlePicker, bundleComplete } from "@/components/AzureBundlePicker";
 import type { ApplyStep } from "@/lib/azureProfiles";
 import { ApiError } from "@/lib/api";
+
+/**
+ * Een az-sessie die IN een lab is ontstaan vastleggen als profiel.
+ *
+ * Dit is de omgekeerde richting van de gewone sync: normaal duwt LabX een
+ * profiel een lab in, maar bij een interactieve login (via het Browser-tabblad
+ * van het lab, of met een tunnel naar je eigen browser) ontstaat de sessie
+ * juist dáár. Zonder deze stap blijft die login in dat ene lab hangen en weet
+ * LabX er niets van — dan kan hij hem ook niet vernieuwen of ergens anders
+ * naartoe zetten.
+ */
+function UitLabKnop({ labs, onKlaar, onFout }: {
+  labs: Lab[];
+  onKlaar: () => void;
+  onFout: (bericht: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [labId, setLabId] = useState("");
+  const [naam, setNaam] = useState("");
+  const [busy, setBusy] = useState(false);
+  const draaiend = labs.filter((l) => l.status === "running");
+
+  async function overnemen() {
+    setBusy(true);
+    try {
+      await azureProfilesApi.captureLab(labId, naam.trim() || "Lab az-login");
+      setOpen(false);
+      setNaam("");
+      onKlaar();
+    } catch (err) {
+      onFout(err instanceof ApiError ? err.message : "Overnemen uit het lab mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>Uit een lab</Button>
+      {open && (
+        <Modal open onClose={() => setOpen(false)} title="Az-sessie uit een lab overnemen">
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Log eerst in het lab in — via het Browser-tabblad van dat lab, of in de labshell met{" "}
+              <code>az login --use-device-code</code>. Daarna leg je die sessie hier vast als
+              profiel, zodat LabX hem kan vernieuwen en naar andere labs kan doorzetten.
+            </p>
+            <div>
+              <Label>Lab</Label>
+              <Select value={labId} onChange={(e) => setLabId(e.target.value)}>
+                <option value="">Kies een draaiend lab…</option>
+                {draaiend.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </Select>
+              {draaiend.length === 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">Er draait geen lab.</p>
+              )}
+            </div>
+            <div>
+              <Label>Naam van het profiel</Label>
+              <Input value={naam} onChange={(e) => setNaam(e.target.value)} placeholder="Lab az-login" />
+            </div>
+            <Button className="w-full" disabled={busy || !labId} onClick={overnemen}>
+              {busy ? "Bezig…" : "Overnemen"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
 
 export function AzureProfilesPage() {
   const [profiles, setProfiles] = useState<AzureProfileDto[]>([]);
@@ -133,6 +205,7 @@ export function AzureProfilesPage() {
           >
             Vanaf host
           </Button>
+          <UitLabKnop labs={labs} onKlaar={refresh} onFout={setMessage} />
           <Button onClick={() => setCreating(true)}>+ Nieuw profiel</Button>
         </div>
       </div>

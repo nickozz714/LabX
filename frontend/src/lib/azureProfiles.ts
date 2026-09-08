@@ -32,6 +32,13 @@ export const azureProfilesApi = {
   apply: (id: number) =>
     api.post<{ ok: boolean; steps: ApplyStep[] }>(`/azure-profiles/${id}/apply`),
   // Haalt de az-bestanden opnieuw van de host, na een verse `az login` daar.
+  // De andere kant van sync: een sessie die IN een lab is ontstaan (interactief
+  // ingelogd via de labbrowser of een tunnel) vastleggen als profiel.
+  captureLab: (labId: string, name: string, description?: string) =>
+    api.post<AzureProfileDto>("/azure-profiles/capture-lab",
+      { lab_id: labId, name, description }),
+  recaptureLab: (id: number, labId: string) =>
+    api.post<AzureProfileDto>(`/azure-profiles/${id}/recapture-lab`, { lab_id: labId }),
   recaptureHost: (id: number) =>
     api.post<AzureProfileDto>(`/azure-profiles/${id}/recapture-host`, {}),
   sync: (id: number, payload: { target: "host" | "lab"; lab_id?: string; az_dir?: string }) =>

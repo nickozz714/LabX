@@ -238,6 +238,58 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
         },
     },
     {
+        "key": "fabric-cli",
+        "label": "Fabric CLI (fab) met vaste inlogpoort",
+        "description": "De Microsoft Fabric CLI, plus een aanpassing die zijn inlog-redirect op een "
+                       "vaste poort (8400) zet. Zonder die vaste poort kiest MSAL elke keer een "
+                       "willekeurige poort en valt er niets door te sturen naar je eigen machine. "
+                       "Inloggen doe je daarna via het Browser-tabblad van het lab, of via een "
+                       "tunnel naar je eigen browser (zie datzelfde tabblad).",
+        # De controle dekt beide helften: is fab er, én staat de patch er nog in?
+        # Een fab-upgrade herstelt het pakket en gooit de patch eruit; dan slaat
+        # deze controle aan en zet het installatiescript hem terug.
+        "check_cmd": ("command -v fab >/dev/null 2>&1 && "
+                      "python3 -c \"import fabric_cli,os,sys; "
+                      "p=os.path.join(os.path.dirname(fabric_cli.__file__),'core','fab_auth.py'); "
+                      "sys.exit(0 if 'port=8400' in open(p).read() else 1)\" >/dev/null 2>&1"),
+        "install_script": (
+            "set -e\n"
+            "command -v fab >/dev/null 2>&1 || pip install --quiet --break-system-packages "
+            "ms-fabric-cli || pip install --quiet ms-fabric-cli\n"
+            # De patch zelf doet Python, niet sed. Het anker uit de oorspronkelijke
+            # handleiding (de `parent_window_handle=`-regel) bestaat in de huidige
+            # fab niet eens meer; alleen de aanroep `acquire_token_interactive(`
+            # ligt vast. Daar `port=8400, ` achter zetten werkt ongeacht de
+            # inspringing en ongeacht of de argumenten op één regel of over
+            # meerdere staan — het is een kwarg tussen haakjes.
+            #
+            # En het schrijft pas ná het parsen. Daarmee kan er geen kapotte fab
+            # ontstaan die achteraf teruggezet moet worden: mislukt het, dan is
+            # er simpelweg niets veranderd.
+            "python3 - <<'PATCH'\n"
+            "import ast, pathlib\n"
+            "import fabric_cli, os\n"
+            "pad = pathlib.Path(os.path.dirname(fabric_cli.__file__)) / 'core' / 'fab_auth.py'\n"
+            "bron = pad.read_text()\n"
+            "if 'port=8400' in bron:\n"
+            "    print('fab: inlogpoort stond al vast op 8400.')\n"
+            "elif 'acquire_token_interactive(' not in bron:\n"
+            "    raise SystemExit('fab: geen acquire_token_interactive gevonden — '\n"
+            "                     'deze fab-versie logt anders in; patch overgeslagen.')\n"
+            "else:\n"
+            "    nieuw = bron.replace('acquire_token_interactive(',\n"
+            "                         'acquire_token_interactive(port=8400, ', 1)\n"
+            "    ast.parse(nieuw)\n"
+            "    pad.write_text(nieuw)\n"
+            "    print(f'fab: inlog-redirect vastgezet op poort 8400 ({pad}).')\n"
+            "PATCH\n"
+            "fab --version"
+        ),
+        "requires": [],
+        "timeout_s": 900,
+        "sort_order": 65,
+    },
+    {
         "key": "uv",
         "label": "uv (snelle Python-packagemanager)",
         "description": "uv + uvx van Astral: pakketten en losse tools installeren zonder een venv op "

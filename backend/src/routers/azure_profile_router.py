@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from authentication import require_user
@@ -39,6 +39,33 @@ def capture_host_profile(body: Dict[str, Any], db: Session = Depends(get_db)):
     row = svc.capture_from_host(name=str((body or {}).get("name") or "Host az-login"),
                                 description=(body or {}).get("description"))
     return svc.to_dict(row)
+
+
+@router.post("/capture-lab", response_model=AzureProfileRead)
+async def capture_lab_profile(body: Dict[str, Any], db: Session = Depends(get_db)):
+    """Een az-sessie die IN een lab is ontstaan vastleggen als profiel — de
+    andere kant van de sync. Zo blijft een interactieve login niet in dat ene
+    lab hangen."""
+    svc = _svc(db)
+    lab_id = str((body or {}).get("lab_id") or "").strip()
+    if not lab_id:
+        raise HTTPException(status_code=400, detail="lab_id is verplicht")
+    row = await svc.capture_from_lab(lab_id=lab_id,
+                                     name=str((body or {}).get("name") or "Lab az-login"),
+                                     description=(body or {}).get("description"))
+    return svc.to_dict(row)
+
+
+@router.post("/{profile_id}/recapture-lab", response_model=AzureProfileRead)
+async def recapture_lab_profile(profile_id: int, body: Dict[str, Any],
+                                db: Session = Depends(get_db)):
+    """De bestanden van dit profiel opnieuw uit een lab halen — na een verse
+    login daarbinnen."""
+    svc = _svc(db)
+    lab_id = str((body or {}).get("lab_id") or "").strip()
+    if not lab_id:
+        raise HTTPException(status_code=400, detail="lab_id is verplicht")
+    return svc.to_dict(await svc.recapture_from_lab(profile_id, lab_id=lab_id))
 
 
 @router.put("/{profile_id}", response_model=AzureProfileRead)

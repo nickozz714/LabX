@@ -764,41 +764,147 @@ function BrowserPanel({ lab }: { lab: Lab }) {
   const heeftPakket = (lab.extras || []).includes("browser-vnc");
   const url = `/api/labs/${lab.id}/browser?token=${encodeURIComponent(getToken() || "")}`;
 
-  if (!heeftPakket) {
-    return (
-      <div className="space-y-2 text-sm">
-        <p className="text-muted-foreground">
-          Dit lab heeft het pakket <strong>Zelf inloggen in de browser van het lab</strong> niet aan
-          staan. Vink het aan bij <strong>Inrichting</strong>; daarna draait de browser van de agent
-          zichtbaar en kun je hier meekijken en zelf inloggen.
-        </p>
-      </div>
-    );
-  }
-  if (lab.status !== "running") {
-    return <p className="text-sm text-muted-foreground">Start het lab om de browser te zien.</p>;
-  }
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>
-          Je kijkt naar de browser van de agent. Log hier in en hij werkt verder in die sessie;
-          het profiel staat op /workspace en blijft dus bewaard.
-        </span>
-        <a className="ml-auto whitespace-nowrap underline" href={url} target="_blank" rel="noreferrer">
-          In een nieuw tabblad
-        </a>
-      </div>
-      <iframe
-        title="Browser van het lab"
-        src={url}
-        className="h-[70vh] w-full rounded-md border border-border bg-black"
-      />
+    <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Nog geen venster te zien? De browser start pas zodra de agent hem gebruikt — laat hem
-        bijvoorbeeld naar de pagina navigeren waar de login op komt.
+        Sommige logins kun je niet automatiseren — een Microsoft-account met tweestapsverificatie
+        bijvoorbeeld. Er zijn twee manieren om er zelf doorheen te klikken; de eerste heeft niets
+        op jouw machine nodig, de tweede gebruikt je eigen browser.
       </p>
+
+      <Card className="p-3">
+        <div className="mb-1 text-sm font-semibold">1. In de browser van het lab</div>
+        {!heeftPakket ? (
+          <p className="text-xs text-muted-foreground">
+            Vink bij <strong>Inrichting</strong> het pakket{" "}
+            <em>Zelf inloggen in de browser van het lab</em> aan. Daarna draait de browser van de
+            agent zichtbaar en klik je hier zelf door het inlogscherm — wat jij doet, doe je in
+            zijn sessie.
+          </p>
+        ) : lab.status !== "running" ? (
+          <p className="text-xs text-muted-foreground">Start het lab om de browser te zien.</p>
+        ) : (
+          <>
+            <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <span>Je kijkt naar de browser van de agent; het profiel staat op /workspace.</span>
+              <a className="ml-auto whitespace-nowrap underline" href={url} target="_blank" rel="noreferrer">
+                In een nieuw tabblad
+              </a>
+            </div>
+            <iframe
+              title="Browser van het lab"
+              src={url}
+              className="h-[60vh] w-full rounded-md border border-border bg-black"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Nog geen venster? De browser start pas zodra de agent hem gebruikt.
+            </p>
+          </>
+        )}
+      </Card>
+
+      <TunnelPaneel lab={lab} />
     </div>
+  );
+}
+
+/**
+ * De tweede inlogroute: met JOUW browser, via een tunnel.
+ *
+ * Nodig omdat een interactieve Microsoft-login de browser naar
+ * `http://localhost:<poort>` stuurt — en dat is de localhost van de machine
+ * waar je klikt, niet die van de server. De listener zit in de labcontainer.
+ * Iets moet die twee verbinden, en dat iets kan alleen op jouw machine
+ * draaien: LabX kan het voorbereiden, niet starten. Vandaar een commando en
+ * een script in plaats van een knop die het "even doet".
+ *
+ * Publiceren van de poort is niet nodig: de server bereikt de container
+ * rechtstreeks op zijn IP in het labnetwerk.
+ */
+function TunnelPaneel({ lab }: { lab: Lab }) {
+  const [poort, setPoort] = useState(8400);
+  const [doel, setDoel] = useState(() => `${window.location.hostname}`);
+  const [info, setInfo] = useState<{ container_ip: string; port: number } | null>(null);
+  const [fout, setFout] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (lab.status !== "running") return;
+    labsApi
+      .tunnel(lab.id, poort)
+      .then((r) => {
+        setInfo(r);
+        setFout(null);
+      })
+      .catch((err) => setFout(err instanceof ApiError ? err.message : "Kon de tunnel niet opzoeken"));
+  }, [lab.id, lab.status, poort]);
+
+  const commando = info
+    ? `ssh -N -L ${info.port}:${info.container_ip}:${info.port} ${doel}`
+    : "";
+
+  async function download() {
+    setBusy(true);
+    setFout(null);
+    try {
+      const r = await labsApi.tunnelScript(lab.id, doel, poort);
+      const blob = new Blob([r.script], { type: "text/x-shellscript" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = r.filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      setFout(err instanceof ApiError ? err.message : "Script maken mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="p-3">
+      <div className="mb-1 text-sm font-semibold">2. Met je eigen browser (tunnel)</div>
+      <p className="mb-2 text-xs text-muted-foreground">
+        Zet <code>localhost:{poort}</code> op jouw machine door naar dit lab, en start daarna in de
+        labshell bijvoorbeeld <code>fab auth login</code> of <code>az login</code>. De browser die
+        opent is die van jou; de redirect komt via de tunnel weer in het lab terecht. Laat het
+        tunnelvenster open tot je klaar bent.
+      </p>
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <Label>Poort</Label>
+          <Input type="number" value={poort} onChange={(e) => setPoort(Number(e.target.value))} />
+        </div>
+        <div className="col-span-2">
+          <Label>SSH-doel (gebruiker@server)</Label>
+          <Input value={doel} onChange={(e) => setDoel(e.target.value)} placeholder="nick@192.168.2.15" />
+        </div>
+      </div>
+      {lab.status !== "running" && (
+        <p className="mt-2 text-xs text-muted-foreground">Start het lab om het adres op te halen.</p>
+      )}
+      {commando && (
+        <div className="mt-2">
+          <Label>Commando voor jouw machine</Label>
+          <pre className="overflow-x-auto rounded-md bg-secondary/40 px-2 py-1 text-xs">{commando}</pre>
+          <div className="mt-2 flex gap-2">
+            <Button variant="secondary" className="text-xs"
+                    onClick={() => navigator.clipboard?.writeText(commando)}>
+              Commando kopiëren
+            </Button>
+            <Button variant="secondary" className="text-xs" disabled={busy || !doel.trim()}
+                    onClick={download}>
+              {busy ? "Bezig…" : "Script downloaden"}
+            </Button>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Ingelogd? Leg de sessie vast als Azure-profiel met <strong>Uit een lab overnemen</strong>{" "}
+            op de Azure-profielen-pagina — anders blijft de login in dit ene lab hangen.
+          </p>
+        </div>
+      )}
+      {fout && <p className="mt-2 text-sm text-destructive">{fout}</p>}
+    </Card>
   );
 }
 

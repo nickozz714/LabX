@@ -153,6 +153,49 @@ class AzureProfileService:
             raise HTTPException(status_code=400, detail="Geen host az-sessie gevonden. Log eerst in met 'az login'.")
         return files
 
+    async def _read_lab_bundle(self, lab_id: str, az_dir: str = "/root/.azure") -> Dict[str, str]:
+        """De az-bestanden uit een LAB halen.
+
+        Dit is de andere kant van de sync: normaal duwen we een profiel een lab
+        in, maar bij een interactieve login gebeurt het omgekeerde — je logt in
+        de browser van het lab in (of via een tunnel naar je eigen browser), en
+        de sessie ontstaat daar. Zonder deze stap blijft die login in dat ene
+        lab hangen en weet LabX er niets van."""
+        from services.lab.lab_service import LabService
+
+        svc = LabService(self.db)
+        files: Dict[str, str] = {}
+        for fname in AZ_BUNDLE_FILES:
+            inhoud = await svc.read_lab_file_raw(lab_id, f"{az_dir}/{fname}")
+            if inhoud:
+                files[fname] = inhoud
+        if not files.get("msal_token_cache.json") or not files.get("azureProfile.json"):
+            raise HTTPException(status_code=400, detail=(
+                "Geen az-sessie in dit lab gevonden. Log eerst in het lab in — via het "
+                "Browser-tabblad, of met 'az login --use-device-code' in de shell."))
+        return files
+
+    async def capture_from_lab(self, *, lab_id: str, name: str,
+                               description: Optional[str] = None) -> AzureProfile:
+        data = AzureProfileCreate(name=name, kind="msal_bundle", description=description,
+                                  files=await self._read_lab_bundle(lab_id))
+        return self.create(data)
+
+    async def recapture_from_lab(self, profile_id: int, *, lab_id: str) -> AzureProfile:
+        """"Ik heb net in dit lab opnieuw ingelogd" — dezelfde knop als
+        recapture_from_host, maar dan met het lab als bron."""
+        row = self.get_or_404(profile_id)
+        if row.kind != "msal_bundle":
+            raise HTTPException(status_code=400, detail=(
+                "Alleen een 'msal_bundle'-profiel bestaat uit az-bestanden."))
+        files = await self._read_lab_bundle(lab_id)
+        row.secret_encrypted = encrypt(json.dumps(files))
+        row.identity_json = None
+        row.updated_at = _now_iso()
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
     def capture_from_host(self, *, name: str, description: Optional[str] = None) -> AzureProfile:
         data = AzureProfileCreate(name=name, kind="msal_bundle", description=description,
                                   files=self._read_host_bundle())

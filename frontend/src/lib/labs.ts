@@ -17,6 +17,14 @@ export const labsApi = {
   provision: (id: string, force = false) =>
     api.post<{ ok: boolean; provision_status: string }>(`/labs/${id}/provision`, { force }),
   // Opnieuw opbouwen op (een nieuw) image; /workspace blijft staan.
+  // Gegevens voor een tunnel naar dit lab (interactief inloggen met je eigen
+  // browser): het container-IP en de poort, plus een kant-en-klaar script.
+  tunnel: (id: string, port = 8400) =>
+    api.get<{ lab_id: string; lab_name: string; port: number; container_ip: string;
+              container: string; network: string }>(`/labs/${id}/tunnel?port=${port}`),
+  tunnelScript: (id: string, sshTarget: string, port = 8400) =>
+    api.get<{ filename: string; script: string }>(
+      `/labs/${id}/tunnel-script?ssh_target=${encodeURIComponent(sshTarget)}&port=${port}`),
   // De grenzen van de autoscaler: min blijft altijd staan, tot max mag hij
   // bijschalen als er werk wacht.
   scaleWorkers: (id: string, minWorkers: number, maxWorkers: number) =>

@@ -214,6 +214,20 @@ class DockerRuntime:
         args += [image, "sleep", "infinity"]
         return await self._cli_ok(*args, timeout=180)
 
+    async def container_ip(self, container_id: str) -> Optional[str]:
+        """Het IP van deze container op het lab-netwerk. De host kan daar
+        rechtstreeks bij (de bridge is routeerbaar), en dat is precies wat een
+        `ssh -L` nodig heeft — zonder de poort te publiceren en dus zonder de
+        container opnieuw op te bouwen."""
+        code, out, _ = await self._run_cli(
+            "inspect", "--format",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+            container_id, timeout=15)
+        if code != 0:
+            return None
+        ips = [x for x in out.split() if x]
+        return ips[0] if ips else None
+
     async def port_map(self, container_id: str) -> Dict[int, int]:
         """{container_port: host_port} for ports published for browser access
         from the docker host. NOT how the backend itself reaches a lab port —
@@ -318,6 +332,7 @@ class DockerRuntime:
         workdir: str = "/workspace",
         stdin: Optional[bytes] = None,
         timeout: float = _DEFAULT_EXEC_TIMEOUT_S,
+        max_chars: int = _MAX_OUTPUT_CHARS,
     ) -> Dict[str, Any]:
         """Run a command in the container. Wrapped in an in-container `timeout`
         so a hung command doesn't outlive a client-side time-out — ND3X's
@@ -330,7 +345,7 @@ class DockerRuntime:
         args += [container_id, *wrapped]
         code, out, err = await self._run_cli(*args, stdin=stdin, timeout=timeout + 5)
         combined = out if not err else (out + ("\n" if out else "") + err)
-        truncated = len(combined) > _MAX_OUTPUT_CHARS
+        truncated = len(combined) > max_chars
         if truncated:
-            combined = combined[:_MAX_OUTPUT_CHARS] + "\n… [output afgekapt]"
+            combined = combined[:max_chars] + "\n… [output afgekapt]"
         return {"exit_code": code, "output": combined, "truncated": truncated}
