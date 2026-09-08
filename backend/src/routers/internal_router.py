@@ -111,7 +111,13 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             if comments:
                 lines += ["", "Opmerkingen:"]
                 for c in comments:
-                    lines.append(f"- [{c.kind}/{c.author}] {(c.body or '')[:1000]}")
+                    # Ruim: dit is de plek waar een agent zijn eigen eerdere
+                    # verslag terughaalt, en dat verslag is nu juist lang. Op
+                    # 1000 tekens viel de conclusie er standaard af.
+                    body = (c.body or "").strip()
+                    if len(body) > 8000:
+                        body = body[:8000] + f"\n  […afgekapt, {len(body) - 8000} tekens]"
+                    lines.append(f"- [{c.kind}/{c.author}] {body}")
             return {"result": "\n".join(lines)}
 
         if tool_name == "board__create_ticket":

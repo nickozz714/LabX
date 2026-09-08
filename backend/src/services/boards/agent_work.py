@@ -46,6 +46,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _kort(tekst: Optional[str], grens: int) -> str:
+    """Inkorten met een spoor. Stil afkappen is het probleem, niet het
+    afkappen zelf: dan denkt de lezer dat hij alles heeft."""
+    body = (tekst or "").strip()
+    if len(body) <= grens:
+        return body
+    return body[:grens] + f"\n  […afgekapt, {len(body) - grens} tekens; " \
+                          f"vraag de volledige tekst op met board__get_ticket]"
+
+
 def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
                    extra_instruction: Optional[str] = None) -> str:
     lines = [
@@ -73,8 +83,15 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
     if visible:
         lines.append("")
         lines.append("### Eerdere opmerkingen (het werklogboek)")
+        # De JONGSTE opmerkingen onverkort, oudere ingekort. Een run die eerder
+        # werk voortzet leunt op zijn laatste eigen notitie, en juist daar stond
+        # de staart — "wat er nog moet gebeuren" — buiten de oude grens van 1500
+        # tekens. Wie met de inleiding van zijn eigen aantekeningen begint en
+        # zonder de conclusie, doet het werk over of slaat het over.
+        recent = visible[-3:]
         for c in visible[-15:]:
-            lines.append(f"- [{c.author}] {(c.body or '').strip()[:1500]}")
+            grens = 8000 if c in recent else 1500
+            lines.append(f"- [{c.author}] {_kort(c.body, grens)}")
 
     if (board.agent_instruction or "").strip():
         lines.append("")
