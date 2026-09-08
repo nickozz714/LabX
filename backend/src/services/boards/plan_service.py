@@ -198,9 +198,14 @@ class PlanService:
         lab = self.db.get(Lab, board.lab_id)
         if lab is None:
             return None, None
-        werkers = [w for w in lab_svc.ensure_workers(lab)
-                   if w.status == "running" and w.container_id]
+        werkers = lab_svc.claimbare_werkers(lab)
         if not werkers:
+            if lab_svc.workers(lab.id):
+                # Er zijn wél werkers, maar geen enkele is bruikbaar (ze worden
+                # nog ingericht, of ze staan op error). Wachten dus — anders
+                # zou de planning alsnog op de container van het lab landen en
+                # zou de hele verdeling stilzwijgend instorten.
+                return None, -1
             # Lab (nog) niet gestart: laat start_ticket_run hem aanzetten en
             # gebruik werker 1 — precies zoals het ging toen er één was.
             return None, None
@@ -217,8 +222,28 @@ class PlanService:
             return None, next((r[1] for r in bezet_rijen if r[0] is None), None)
         vrij = [w for w in werkers if w.id not in bezet]
         if vrij:
+            lab_svc.touch_worker(vrij[0].id)
             return vrij[0], None
+        # Niets vrij: laat de autoscaler er een bijzetten (tot het plafond dat
+        # de mens heeft ingesteld). Die nieuwe werker moet eerst ingericht
+        # worden, dus deze ronde wacht nog; de volgende tick pakt hem op. Dat
+        # is beter dan een run beginnen in een half opgebouwde container waar
+        # zijn pakketten nog niet in zitten.
+        self._vraag_werker_bij(lab.id)
         return None, next((r[1] for r in bezet_rijen), None)
+
+    def _vraag_werker_bij(self, lab_id: str) -> None:
+        """Bijschalen op de achtergrond: een container starten en inrichten
+        duurt te lang om een planning-tick op te laten wachten."""
+        import asyncio
+        if lab_id in _SCHAAL_BEZIG:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        _SCHAAL_BEZIG.add(lab_id)
+        loop.create_task(_schaal_worker(lab_id))
 
     async def advance(self, plan_id: int) -> Dict[str, Any]:
         """Zet het volgende ticket in gang, als dat kan."""
@@ -276,9 +301,11 @@ class PlanService:
         werker, bezet_door = self._claim_worker(plan)
         if werker is None and bezet_door is not None:
             # Niet pauzeren: dit is geen probleem maar een wachtrij. Zodra er
-            # een werker vrijkomt, komt deze planning vanzelf aan bod.
+            # een werker vrijkomt — of de autoscaler er een heeft bijgezet en
+            # ingericht — komt deze planning vanzelf aan bod.
             return {"plan": plan.id, "state": plan.state, "gestart": None,
-                    "wacht_op_planning": bezet_door}
+                    "wacht_op_planning": None if bezet_door == -1 else bezet_door,
+                    "wacht_op_werker": bezet_door == -1}
 
         if plan.state == "scheduled":
             plan.state = "running"
@@ -474,6 +501,25 @@ class PlanService:
         return out
 
 
+_SCHAAL_BEZIG: set = set()
+
+
+async def _schaal_worker(lab_id: str) -> None:
+    from db.database import SessionLocal
+    from services.lab.lab_service import LabService
+
+    db = SessionLocal()
+    try:
+        w = await LabService(db).ensure_extra_worker(lab_id)
+        if w is not None:
+            log.infox("Autoscaler zette een werker bij", lab_id=lab_id, werker=w.index)
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Autoscaler kon niet bijschalen", lab_id=lab_id, error=str(exc)[:300])
+    finally:
+        _SCHAAL_BEZIG.discard(lab_id)
+        db.close()
+
+
 def _maak_afloop_hook(plan_id: int, item_id: int):
     """Wanneer de run van dit item klaar is: de uitslag vastleggen en meteen
     door naar het volgende. Het doorpakken gebeurt in een eigen taak — de hook
@@ -493,6 +539,9 @@ def _maak_afloop_hook(plan_id: int, item_id: int):
         if status != "completed":
             item.error = (getattr(run, "error", None) or f"Run eindigde als '{status}'")[:2000]
         item.finished_at = _now_iso()
+        if item.worker_id:
+            from services.lab.lab_service import LabService
+            LabService(db).touch_worker(item.worker_id)
         plan = db.get(TicketPlan, plan_id)
         if plan is not None:
             plan.updated_at = _now_iso()

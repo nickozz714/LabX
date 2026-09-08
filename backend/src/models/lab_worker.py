@@ -52,6 +52,11 @@ class LabWorker(Base):
     provision_log: Mapped[list] = mapped_column(JSON, nullable=True, default=list)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Wanneer hier voor het laatst werk op draaide. Dit is waar de autoscaler
+    # op afgaat bij het afschalen: een extra werker die een tijd niets doet,
+    # kost geheugen zonder iets terug te geven.
+    last_used_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
 

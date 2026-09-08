@@ -60,6 +60,16 @@ async def _plan_tick() -> None:
     await _tick()
 
 
+async def _worker_reaper_tick() -> None:
+    """Extra werkers die een tijd niets deden weer opruimen (de andere kant van
+    de autoscaler). Nooit onder de ondergrens van het lab."""
+    db = SessionLocal()
+    try:
+        await LabService(db).reap_idle_workers()
+    finally:
+        db.close()
+
+
 async def _mcp_session_tick() -> None:
     """Blijvende MCP-processen in labs die niemand meer gebruikt afsluiten —
     een browser die staat te wachten hoeft geen geheugen te bezetten."""
@@ -116,6 +126,8 @@ async def lifespan(_app: FastAPI):
     scheduler.register(name="board_sync", interval_seconds=60, fn=_board_sync_tick,
                        run_immediately=False)
     scheduler.register(name="mcp_lab_sessions", interval_seconds=300, fn=_mcp_session_tick,
+                       run_immediately=False)
+    scheduler.register(name="worker_reaper", interval_seconds=300, fn=_worker_reaper_tick,
                        run_immediately=False)
     await scheduler.start()
     # De MCP-gateway alvast één keer laten importeren. De CLI start hem per run

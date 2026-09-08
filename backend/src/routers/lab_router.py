@@ -279,7 +279,8 @@ async def create_lab(payload: Dict[str, Any], db: Session = Depends(get_db)):
         environment=(payload.get("environment") or "").strip() or None,
         extras=payload.get("extras"),
         setup_script=payload.get("setup_script"),
-        worker_count=int(payload.get("worker_count") or 1),
+        min_workers=int(payload.get("min_workers") or 1),
+        max_workers=int(payload.get("max_workers") or payload.get("min_workers") or 1),
     )
 
 
@@ -327,13 +328,16 @@ async def provision_lab(lab_id: str, payload: Optional[Dict[str, Any]] = None,
 
 @router.post("/{lab_id}/workers")
 async def scale_workers(lab_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
-    """Het aantal werkers (containers) van dit lab zetten.
+    """De grenzen van de autoscaler zetten: `min_workers` blijft altijd staan,
+    tot `max_workers` mag hij bijschalen als er werk wacht.
 
-    Meer werkers = meer planningen die tegelijk in dit lab kunnen werken. Ze
-    delen /workspace — het is één werkplaats met meer handen, geen losse labs.
-    Minder werkers raakt alleen werkers die niets doen, en nooit de eerste."""
+    Werkers delen /workspace — één werkplaats met meer handen, geen losse
+    labs. Afschalen raakt alleen werkers die niets doen, en nooit de eerste."""
     svc = _service(db)
-    return await svc.scale(lab_id, int(payload.get("count") or 1))
+    return await svc.scale(lab_id,
+                           min_workers=payload.get("min_workers"),
+                           max_workers=payload.get("max_workers"),
+                           count=payload.get("count"))
 
 
 @router.post("/{lab_id}/rebuild")

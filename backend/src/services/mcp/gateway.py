@@ -379,6 +379,30 @@ def build_server():
         ))
 
         mcp.add_tool(FunctionTool(
+            name="lab__scale_workers",
+            description=("Vraag om meer werkers voor dit lab. Een werker is een container; elke "
+                         "planning die tegelijk draait bezet er één. Standaard schaalt LabX zelf "
+                         "bij zodra er werk staat te wachten — gebruik dit alleen als je NU al "
+                         "weet dat er meerdere dingen naast elkaar moeten lopen.\n"
+                         "Je kunt niet boven het plafond dat de beheerder heeft ingesteld; vraag "
+                         "je meer, dan krijg je wat er mocht en hoor je waar de grens ligt. "
+                         "Werkers delen /workspace, dus twee runs bewerken hetzelfde "
+                         "bestandssysteem — verdeel het werk zo dat ze elkaar niet in de weg "
+                         "zitten. Een nieuwe werker moet nog ingericht worden en is een paar "
+                         "minuten later pas bruikbaar.\n"
+                         "Args: count* (number)"),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "count": {"type": "number", "description": "Gewenst aantal werkers"},
+                },
+                "required": ["count"],
+            },
+            fn=_lab_env_handler("lab__scale_workers"),
+            meta={"labx_builtin": "lab__scale_workers"},
+        ))
+
+        mcp.add_tool(FunctionTool(
             name="lab__rebuild",
             description=("Bouw dit lab opnieuw op, eventueel op een ander image — de enige manier "
                          "om het image van een bestaand lab te wijzigen of bij te werken (zonder "

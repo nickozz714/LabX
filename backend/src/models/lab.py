@@ -30,7 +30,10 @@ class Lab(Base):
     cpu_limit: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     mem_limit_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=2048)
     allow_network: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    ttl_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    # Zoveel uur zonder gebruik blijft een lab staan; daarna stopt de reaper
+    # hem (werker 1 incluis — die is de ondergrens van de autoscaler, geen
+    # uitzondering op de TTL).
+    ttl_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=14)
     expires_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Repos cloned into /workspace at creation:
@@ -59,10 +62,18 @@ class Lab(Base):
     # per-lab choice. See services/azure/azure_mcp_auth.py.
     azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Hoeveel containers dit lab heeft (zie models/lab_worker.py). 1 = zoals
-    # het altijd was. Meer werkers = meer planningen die tegelijk in dit lab
-    # kunnen werken; ze delen /workspace.
+    # Hoeveel containers dit lab NU heeft (zie models/lab_worker.py). Dit is
+    # een afgeleide: de autoscaler beweegt hem tussen min en max.
     worker_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # De ondergrens: zoveel werkers blijven altijd staan. Eén is genoeg — die
+    # eerste draagt de identiteit van het lab (terminal, bestanden, poorten) en
+    # gaat pas uit als het hele lab door zijn TTL heen valt.
+    min_workers: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Het plafond. De autoscaler mag hier tot aan gaan als er werk staat te
+    # wachten, en de agent mag er zelf om vragen — maar nooit erboven. Dit is
+    # de knop van de mens: een agent die het druk heeft mag niet ongelimiteerd
+    # containers op deze machine zetten. max = min betekent: niet schalen.
+    max_workers: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # ── inrichting bovenop het basis-image (zie models/lab_extra.py) ─────────
     # Keys uit `lab_extras` die in dit lab geïnstalleerd worden (Playwright +

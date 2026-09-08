@@ -42,7 +42,7 @@ class ResolvedSettings:
         self.guard_llm_url = row.guard_llm_url or env.DATA_GUARD_LLM_URL
         self.guard_llm_model = row.guard_llm_model or env.DATA_GUARD_LLM_MODEL
         self.default_image = row.default_image or env.LAB_DEFAULT_IMAGE
-        self.default_ttl_hours = row.default_ttl_hours or 24
+        self.default_ttl_hours = row.default_ttl_hours or 14
         self.auto_recall_enabled = row.auto_recall_enabled
         self.auto_recall_tool_name = row.auto_recall_tool_name or "hive_recall"
         self.auto_recall_query_template = row.auto_recall_query_template

@@ -17,8 +17,12 @@ export interface Lab {
   allowed_tools: string[];
   allowed_skills: string[];
   azure_profile_id: number | null;
-  /** Aantal containers van dit lab; meer = meer planningen tegelijk. */
+  /** Aantal containers dat dit lab NU heeft (de autoscaler beweegt het). */
   worker_count: number;
+  /** Ondergrens: zoveel werkers blijven altijd staan. */
+  min_workers: number;
+  /** Plafond: tot hier mag de autoscaler (en de agent) gaan. */
+  max_workers: number;
   workers: {
     id: number;
     index: number;
@@ -26,6 +30,7 @@ export interface Lab {
     container_id: string | null;
     network_alias: string | null;
     provision_status: string | null;
+    last_used_at: string | null;
     error: string | null;
   }[];
   extras: string[];

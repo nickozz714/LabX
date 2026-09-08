@@ -35,7 +35,7 @@ def _now_iso() -> str:
 def _expiry_from_now(ttl_hours: int | None) -> str:
     """ttl_hours telt vanaf NU, niet vanaf het aanmaken: de TTL is 'zo lang
     ongebruikt', niet 'zo oud'."""
-    hours = max(1, min(int(ttl_hours or 24), 24 * 14))
+    hours = max(1, min(int(ttl_hours or 14), 24 * 14))
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
@@ -525,70 +525,176 @@ class LabService:
         w.updated_at = _now_iso()
         self.db.commit()
 
-    async def scale(self, lab_id: str, count: int) -> Dict[str, Any]:
-        """Het aantal werkers van dit lab zetten.
+    # ── autoscaler ───────────────────────────────────────────────────────────
+    #
+    # Een lab houdt altijd `min_workers` containers aan (standaard één: die
+    # draagt de identiteit van het lab en gaat pas uit als het hele lab door
+    # zijn TTL heen valt). Staat er werk te wachten en is er geen werker vrij,
+    # dan komt er eentje bij tot aan `max_workers` — het plafond dat de mens
+    # zet. Doet een extra werker een tijd niets, dan gaat hij weer weg.
+    #
+    # Waarom een nieuwe werker niet meteen gebruikt wordt: hij moet eerst
+    # ingericht worden (pakketten zitten in de containerlaag, niet in het
+    # gedeelde /workspace). Een planning die in een half opgebouwde container
+    # begint, vindt zijn browser niet — dus wacht hij liever twintig seconden.
 
-        Erbij: containers starten en inrichten (dat laatste op de achtergrond,
-        want het kan minuten duren). Eraf: alleen werkers die niets aan het
-        doen zijn, en nooit werker 1 — die draagt de identiteit van het lab.
-        """
+    async def ensure_extra_worker(self, lab_id: str) -> Optional[Any]:
+        """Er is werk en geen vrije werker: probeer er een bij te zetten.
+
+        Geeft de nieuwe werker terug, of None als het plafond bereikt is (of
+        het lab niet draait). De werker is bij terugkeer nog aan het inrichten;
+        claimen kan pas als dat klaar is."""
         from models.lab_worker import LabWorker
 
         p = self.get(lab_id)
-        gewenst = max(1, min(int(count or 1), 8))
-        self.ensure_workers(p)
+        if p.status != "running":
+            return None
         huidig = self.workers(p.id)
+        plafond = max(int(getattr(p, "min_workers", 1) or 1),
+                      int(getattr(p, "max_workers", 1) or 1))
+        if len(huidig) >= plafond:
+            return None
         now = _now_iso()
+        index = max((w.index for w in huidig), default=0) + 1
+        w = LabWorker(lab_id=p.id, index=index, network_alias=self._worker_alias(p, index),
+                      status="creating", provision_status="pending", provision_log=[],
+                      last_used_at=now, created_at=now, updated_at=now)
+        self.db.add(w)
+        self.db.commit()
+        try:
+            await self._start_worker_container(p, w)
+        except Exception as exc:  # noqa: BLE001
+            w.status = "error"
+            w.error = str(exc)[:2000]
+            w.provision_status = None
+            w.updated_at = _now_iso()
+            self.db.commit()
+            log.warningx("Bijschalen mislukt", lab_id=p.id, werker=index, error=str(exc)[:200])
+            return None
+        p.worker_count = len(self.workers(p.id))
+        p.updated_at = _now_iso()
+        self.db.commit()
+        log.infox("Werker bijgezet", lab_id=p.id, werker=index, plafond=plafond)
+        if p.allow_network:
+            provision_in_background(p.id)
+        else:
+            w.provision_status = "skipped"
+            w.updated_at = _now_iso()
+            self.db.commit()
+        return w
 
-        toegevoegd, verwijderd = [], []
-        if gewenst > len(huidig):
-            volgende = (max((w.index for w in huidig), default=0)) + 1
-            for index in range(volgende, volgende + (gewenst - len(huidig))):
-                w = LabWorker(lab_id=p.id, index=index,
-                              network_alias=self._worker_alias(p, index),
-                              status="creating", provision_log=[],
-                              created_at=now, updated_at=now)
-                self.db.add(w)
-                self.db.commit()
-                try:
-                    if p.status == "running":
-                        await self._start_worker_container(p, w)
-                    toegevoegd.append(w.index)
-                except Exception as exc:  # noqa: BLE001
-                    w.status = "error"
-                    w.error = str(exc)[:2000]
-                    w.updated_at = _now_iso()
-                    self.db.commit()
-                    log.warningx("Werker starten mislukt", lab_id=p.id, werker=index,
-                                 error=str(exc)[:200])
-        elif gewenst < len(huidig):
+    def claimbare_werkers(self, p: Lab) -> List[Any]:
+        """Werkers waar nu werk op mag starten.
+
+        Een NIEUWE werker die nog wordt ingericht telt niet mee: daar zou een
+        run zijn pakketten missen. Werker 1 doet altijd mee, ook als hij nog
+        aan het inrichten is — dat is de container van het lab zelf, en zo
+        werkte het altijd al; hem uitsluiten zou elk vers lab minutenlang
+        blokkeren voor werk dat prima kan beginnen."""
+        return [w for w in self.ensure_workers(p)
+                if w.status == "running" and w.container_id
+                and (w.index == 1 or w.provision_status != "pending")]
+
+    async def reap_idle_workers(self, idle_minutes: int = 30) -> int:
+        """Extra werkers opruimen die een tijd niets deden.
+
+        Nooit onder `min_workers`, nooit werker 1, en nooit een werker waar
+        werk op draait. Een lab dat een piek had, zakt zo vanzelf terug naar
+        zijn ondergrens in plaats van containers te blijven aanhouden."""
+        from datetime import timedelta
+        from models.lab_worker import LabWorker
+
+        grens = (datetime.now(timezone.utc) - timedelta(minutes=max(5, idle_minutes))).isoformat()
+        opgeruimd = 0
+        for p in self.db.query(Lab).filter(Lab.status == "running").all():
+            werkers = self.workers(p.id)
+            ondergrens = max(1, int(getattr(p, "min_workers", 1) or 1))
+            if len(werkers) <= ondergrens:
+                continue
             bezet = self._bezette_werkers(p.id)
-            for w in sorted(huidig, key=lambda x: x.index, reverse=True):
-                if len(self.workers(p.id)) <= gewenst:
+            for w in sorted(werkers, key=lambda x: x.index, reverse=True):
+                if len(self.workers(p.id)) <= ondergrens:
                     break
-                if w.index <= 1:
+                if w.index <= 1 or w.id in bezet:
                     continue
-                if w.id in bezet:
-                    log.infox("Werker niet verwijderd: er draait werk", lab_id=p.id, werker=w.index)
+                if (w.last_used_at or w.created_at) > grens:
                     continue
                 await self._close_lab_mcp_sessions(w.container_id)
                 if w.container_id:
                     try:
                         await self.runtime.remove(w.container_id, timeout=120)
                     except Exception as exc:  # noqa: BLE001
-                        log.warningx("Werker-container verwijderen mislukt", lab_id=p.id,
+                        log.warningx("Ongebruikte werker opruimen mislukt", lab_id=p.id,
+                                     werker=w.index, error=str(exc)[:200])
+                self.db.delete(w)
+                self.db.commit()
+                opgeruimd += 1
+                log.infox("Ongebruikte werker opgeruimd", lab_id=p.id, werker=w.index)
+            p.worker_count = len(self.workers(p.id))
+            p.updated_at = _now_iso()
+            self.db.commit()
+        return opgeruimd
+
+    def touch_worker(self, worker_id: Optional[int]) -> None:
+        """Deze werker is in gebruik — houdt hem uit handen van de opruimer."""
+        if not worker_id:
+            return
+        from models.lab_worker import LabWorker
+        w = self.db.get(LabWorker, int(worker_id))
+        if w is not None:
+            w.last_used_at = _now_iso()
+            self.db.commit()
+
+    async def scale(self, lab_id: str, *, min_workers: Optional[int] = None,
+                    max_workers: Optional[int] = None,
+                    count: Optional[int] = None) -> Dict[str, Any]:
+        """De grenzen van de autoscaler zetten, en meteen naar de ondergrens
+        toewerken.
+
+        `count` is de kortere weg voor "ik wil er nu zoveel": dat zet de
+        ondergrens. Het plafond blijft van de mens — daar mag ook de agent
+        niet overheen."""
+        p = self.get(lab_id)
+        self.ensure_workers(p)
+        if count is not None:
+            min_workers = int(count)
+        onder = max(1, min(int(min_workers if min_workers is not None
+                               else getattr(p, "min_workers", 1) or 1), 8))
+        boven = max(onder, min(int(max_workers if max_workers is not None
+                                   else getattr(p, "max_workers", 1) or 1), 8))
+        p.min_workers, p.max_workers = onder, boven
+        p.updated_at = _now_iso()
+        self.db.commit()
+
+        toegevoegd = []
+        while len(self.workers(p.id)) < onder:
+            w = await self.ensure_extra_worker(p.id)
+            if w is None:
+                break
+            toegevoegd.append(w.index)
+        verwijderd = []
+        if len(self.workers(p.id)) > boven:
+            bezet = self._bezette_werkers(p.id)
+            for w in sorted(self.workers(p.id), key=lambda x: x.index, reverse=True):
+                if len(self.workers(p.id)) <= boven:
+                    break
+                if w.index <= 1 or w.id in bezet:
+                    continue
+                await self._close_lab_mcp_sessions(w.container_id)
+                if w.container_id:
+                    try:
+                        await self.runtime.remove(w.container_id, timeout=120)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warningx("Werker verwijderen mislukt", lab_id=p.id,
                                      werker=w.index, error=str(exc)[:200])
                 verwijderd.append(w.index)
                 self.db.delete(w)
                 self.db.commit()
-
         p.worker_count = len(self.workers(p.id))
         p.updated_at = _now_iso()
         self._spiegel_werker1(p)
         self.db.commit()
-        if toegevoegd and p.status == "running" and p.allow_network:
-            provision_in_background(p.id)
-        return {"ok": True, "workers": p.worker_count,
+        return {"ok": True, "workers": p.worker_count, "min": onder, "max": boven,
                 "toegevoegd": toegevoegd, "verwijderd": verwijderd}
 
     def _bezette_werkers(self, lab_id: str) -> set:
@@ -639,7 +745,8 @@ class LabService:
         environment: Optional[str] = None,
         extras: Optional[List[str]] = None,
         setup_script: Optional[str] = None,
-        worker_count: int = 1,
+        min_workers: int = 1,
+        max_workers: int = 1,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -661,7 +768,7 @@ class LabService:
 
         lid = str(uuid4())
         now = _now_iso()
-        ttl_hours = max(1, min(int(ttl_hours or 24), 24 * 14))
+        ttl_hours = max(1, min(int(ttl_hours or 14), 24 * 14))
         expires = _expiry_from_now(ttl_hours)
         p = Lab(
             id=lid, name=name[:255],
@@ -682,7 +789,9 @@ class LabService:
             setup_script=(setup_script or "").strip() or None,
             provision_status="pending" if allow_network else "skipped",
             provision_log=[],
-            worker_count=max(1, min(int(worker_count or 1), 8)),
+            min_workers=max(1, min(int(min_workers or 1), 8)),
+            max_workers=max(1, min(int(max_workers or 1), 8)),
+            worker_count=1,
             created_at=now, updated_at=now,
         )
         self.db.add(p)
@@ -712,8 +821,9 @@ class LabService:
             eerste.status = "running"
             eerste.updated_at = _now_iso()
             self.db.commit()
-            if int(getattr(p, "worker_count", 1) or 1) > 1:
-                await self.scale(p.id, int(p.worker_count))
+            if int(getattr(p, "min_workers", 1) or 1) > 1:
+                await self.scale(p.id, min_workers=int(p.min_workers),
+                                 max_workers=int(p.max_workers))
             await self._sync_azure_profile_into_lab(p)
             if p.llm_guard:
                 try:
@@ -1176,6 +1286,7 @@ class LabService:
         result = await self.runtime.exec(cid, ["sh", "-lc", wrapper, command],
                                          timeout=max(5.0, min(timeout, 600.0)))
         self._touch(p)
+        self.touch_worker(worker_id)
         return self._duid_proces_tabel(result)
 
     @staticmethod
@@ -1332,11 +1443,13 @@ class LabService:
             "allowed_skills": list(getattr(p, "allowed_skills", None) or []),
             "azure_profile_id": p.azure_profile_id,
             "worker_count": int(getattr(p, "worker_count", 1) or 1),
+            "min_workers": int(getattr(p, "min_workers", 1) or 1),
+            "max_workers": int(getattr(p, "max_workers", 1) or 1),
             "workers": [{"id": w.id, "index": w.index, "status": w.status,
                          "container_id": (w.container_id or "")[:12] or None,
                          "network_alias": w.network_alias,
                          "provision_status": w.provision_status,
-                         "error": w.error}
+                         "last_used_at": w.last_used_at, "error": w.error}
                         for w in self.workers(p.id)],
             "extras": list(getattr(p, "extras", None) or []),
             "setup_script": getattr(p, "setup_script", None),

@@ -122,8 +122,9 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [setupScript, setSetupScript] = useState("");
   const [cpu, setCpu] = useState(1);
   const [mem, setMem] = useState(2048);
-  const [ttl, setTtl] = useState(24);
-  const [werkers, setWerkers] = useState(1);
+  const [ttl, setTtl] = useState(14);
+  const [minWerkers, setMinWerkers] = useState(1);
+  const [maxWerkers, setMaxWerkers] = useState(1);
   const [allowNetwork, setAllowNetwork] = useState(true);
   const [dataGuard, setDataGuard] = useState(true);
   const [llmGuard, setLlmGuard] = useState(true);
@@ -180,7 +181,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         allow_network: allowNetwork, data_guard: dataGuard, llm_guard: llmGuard,
         repos, ports: portList.length ? portList : undefined,
         extras, setup_script: setupScript.trim() || undefined,
-        worker_count: werkers,
+        min_workers: minWerkers, max_workers: Math.max(minWerkers, maxWerkers),
       });
       onCreated();
     } catch (err) {
@@ -291,12 +292,23 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         </div>
         <div>
           <Label>Werkers (containers)</Label>
-          <Input type="number" min={1} max={8} value={werkers}
-                 onChange={(e) => setWerkers(Number(e.target.value))} />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Input type="number" min={1} max={8} value={minWerkers}
+                     onChange={(e) => setMinWerkers(Number(e.target.value))} />
+              <p className="mt-0.5 text-xs text-muted-foreground">minimaal (altijd aan)</p>
+            </div>
+            <div>
+              <Input type="number" min={1} max={8} value={maxWerkers}
+                     onChange={(e) => setMaxWerkers(Number(e.target.value))} />
+              <p className="mt-0.5 text-xs text-muted-foreground">maximaal (plafond)</p>
+            </div>
+          </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Zoveel planningen kunnen tegelijk in dit lab werken. Ze delen /workspace — één
-            werkplaats met meer handen, geen losse labs. Elke werker kost geheugen en wordt
-            apart ingericht, dus begin bij 1 en schaal op als je het nodig hebt.
+            Elke planning die tegelijk draait bezet één werker. LabX schaalt zelf bij zodra er
+            werk staat te wachten, tot het plafond, en ruimt ongebruikte werkers na een half uur
+            weer op. Ze delen /workspace — één werkplaats met meer handen, geen losse labs.
+            Zet het plafond gelijk aan het minimum om niet te schalen.
           </p>
         </div>
         <div className="space-y-2 rounded-md border border-border p-3">
@@ -478,17 +490,23 @@ function provisionTone(status: Lab["provision_status"]) {
  * (terminal, bestandsbrowser, browserproxy en gepubliceerde poorten).
  */
 function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
-  const [aantal, setAantal] = useState(lab.worker_count || 1);
+  const [onder, setOnder] = useState(lab.min_workers || 1);
+  const [boven, setBoven] = useState(lab.max_workers || 1);
   const [busy, setBusy] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
 
-  useEffect(() => setAantal(lab.worker_count || 1), [lab.worker_count]);
+  useEffect(() => {
+    setOnder(lab.min_workers || 1);
+    setBoven(lab.max_workers || 1);
+  }, [lab.min_workers, lab.max_workers]);
+
+  const gewijzigd = onder !== (lab.min_workers || 1) || boven !== (lab.max_workers || 1);
 
   async function schalen() {
     setBusy(true);
     setFout(null);
     try {
-      await labsApi.scaleWorkers(lab.id, aantal);
+      await labsApi.scaleWorkers(lab.id, onder, Math.max(onder, boven));
       onChanged();
     } catch (err) {
       setFout(err instanceof ApiError ? err.message : "Schalen mislukt");
@@ -499,16 +517,19 @@ function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
 
   return (
     <div className="space-y-2">
-      <Label>Werkers (containers)</Label>
+      <Label>Werkers (containers) — nu {lab.worker_count || 1} actief</Label>
       <div className="flex items-center gap-2">
-        <Input type="number" min={1} max={8} className="w-24" value={aantal}
-               onChange={(e) => setAantal(Number(e.target.value))} />
-        <Button variant="secondary" disabled={busy || aantal === (lab.worker_count || 1)}
-                onClick={schalen}>
+        <Input type="number" min={1} max={8} className="w-20" value={onder}
+               onChange={(e) => setOnder(Number(e.target.value))} title="Minimaal" />
+        <span className="text-xs text-muted-foreground">tot</span>
+        <Input type="number" min={1} max={8} className="w-20" value={boven}
+               onChange={(e) => setBoven(Number(e.target.value))} title="Maximaal" />
+        <Button variant="secondary" disabled={busy || !gewijzigd} onClick={schalen}>
           {busy ? "Bezig…" : "Toepassen"}
         </Button>
         <span className="text-xs text-muted-foreground">
-          Zoveel planningen kunnen hier tegelijk werken. Ze delen /workspace.
+          LabX schaalt zelf bij als er werk wacht, tot het plafond, en ruimt ongebruikte
+          werkers na een half uur op. Ze delen /workspace.
         </span>
       </div>
       <div className="flex flex-wrap gap-1">

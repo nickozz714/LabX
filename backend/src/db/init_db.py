@@ -53,6 +53,9 @@ _ADDITIVE_COLUMNS = {
         ("mcp_server", "TEXT"),
         ("builtin_hash", "VARCHAR(64)"),
     ],
+    "lab_workers": [
+        ("last_used_at", "VARCHAR(64)"),
+    ],
     "ticket_plans": [
         ("resume_at", "VARCHAR(64)"),
     ],
@@ -66,6 +69,8 @@ _ADDITIVE_COLUMNS = {
         ("provision_status", "VARCHAR(16)"),
         ("provision_log", "TEXT"),
         ("worker_count", "INTEGER NOT NULL DEFAULT 1"),
+        ("min_workers", "INTEGER NOT NULL DEFAULT 1"),
+        ("max_workers", "INTEGER NOT NULL DEFAULT 1"),
     ],
     "schedules": [
         ("json_schema", "TEXT"),

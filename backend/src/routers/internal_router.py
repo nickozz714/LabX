@@ -262,6 +262,34 @@ async def _lab_install_packages(db: Session, lab_id: Optional[str],
                        f"dat er niet op wacht.")}
 
 
+async def _lab_scale(db: Session, lab_id: Optional[str],
+                     args: Dict[str, Any]) -> Dict[str, Any]:
+    """lab__scale_workers: de agent vraagt om meer handen.
+
+    Het plafond blijft van de mens: een agent die het druk heeft mag niet
+    ongelimiteerd containers op de machine zetten. Vraagt hij meer, dan krijgt
+    hij wat mocht en hoort hij waar de grens ligt — dat is bruikbaarder dan een
+    weigering waar hij niets mee kan."""
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    lab = db.get(Lab, lab_id) if lab_id else None
+    if lab is None:
+        return {"error": "lab__scale_workers vereist een lab-gebonden chatsessie."}
+    gevraagd = max(1, int(args.get("count") or 1))
+    plafond = max(1, int(getattr(lab, "max_workers", 1) or 1))
+    res = await LabService(db).scale(str(lab_id), count=min(gevraagd, plafond))
+    tekst = (f"Dit lab heeft nu {res['workers']} werker(s) "
+             f"(ondergrens {res['min']}, plafond {res['max']}).")
+    if gevraagd > plafond:
+        tekst += (f" Je vroeg er {gevraagd}, maar het plafond staat op {plafond} — dat is een "
+                  f"instelling van de beheerder, niet iets wat ik hier kan ophogen.")
+    if res["toegevoegd"]:
+        tekst += (" De nieuwe werker(s) worden nu ingericht en zijn over een paar minuten "
+                  "bruikbaar; controleer met lab__packages.")
+    return {"result": tekst}
+
+
 async def _lab_rebuild(db: Session, lab_id: Optional[str],
                        args: Dict[str, Any]) -> Dict[str, Any]:
     """lab__rebuild: het lab opnieuw opbouwen, eventueel op een ander image."""
@@ -339,6 +367,8 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             return _lab_packages(db, lab_id)
         if payload.get("tool_name") == "lab__install_packages":
             return await _lab_install_packages(db, lab_id, args)
+        if payload.get("tool_name") == "lab__scale_workers":
+            return await _lab_scale(db, lab_id, args)
         if payload.get("tool_name") == "lab__rebuild":
             return await _lab_rebuild(db, lab_id, args)
         if payload.get("tool_name") == "task__start_background":
