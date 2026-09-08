@@ -110,14 +110,12 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             comments = svc.list_comments(t.id)
             if comments:
                 lines += ["", "Opmerkingen:"]
+                from services.boards.agent_work import MAX_COMMENT_CHARS, _kort
                 for c in comments:
-                    # Ruim: dit is de plek waar een agent zijn eigen eerdere
-                    # verslag terughaalt, en dat verslag is nu juist lang. Op
-                    # 1000 tekens viel de conclusie er standaard af.
-                    body = (c.body or "").strip()
-                    if len(body) > 8000:
-                        body = body[:8000] + f"\n  […afgekapt, {len(body) - 8000} tekens]"
-                    lines.append(f"- [{c.kind}/{c.author}] {body}")
+                    # Dezelfde grens als in de startprompt en als in het advies
+                    # dat de agent bij het schrijven krijgt: één getal, zodat
+                    # wat hij mag schrijven ook is wat hij terugleest.
+                    lines.append(f"- [{c.kind}/{c.author}] {_kort(c.body, MAX_COMMENT_CHARS)}")
             return {"result": "\n".join(lines)}
 
         if tool_name == "board__create_ticket":
@@ -146,7 +144,17 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             body = str(args.get("body") or "").strip()
             if not body:
                 return {"error": "body mag niet leeg zijn."}
+            from services.boards.agent_work import MAX_COMMENT_CHARS
             svc.add_comment(t.id, body=body, author="agent")
+            if len(body) > MAX_COMMENT_CHARS:
+                # Wel plaatsen (weggooien van werk is erger), maar het eerlijk
+                # zeggen: bij een volgende run leest hij alleen het begin terug.
+                return {"result": (
+                    f"Opmerking geplaatst op {t.key}, maar hij is {len(body)} tekens en "
+                    f"daarmee langer dan de {MAX_COMMENT_CHARS} die later worden "
+                    f"teruggelezen. De staart mis je dus bij een volgende run. Zet het "
+                    f"belangrijkste (wat er nog moet gebeuren) in een korte tweede "
+                    f"opmerking, of splits deze alsnog.")}
             return {"result": f"Opmerking geplaatst op {t.key}."}
     except ValueError as exc:
         return {"error": str(exc)}

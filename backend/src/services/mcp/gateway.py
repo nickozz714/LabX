@@ -495,6 +495,10 @@ def build_server():
              "Je opmerkingen zijn INTERN: ze blijven in LabX en gaan niet naar het "
              "bronsysteem (Jira/DevOps), tenzij een mens ze daar bewust naartoe "
              "promoveert. Schrijf dus vrijuit wat je tegenkwam.\n"
+             "HOUD HET ONDER DE 3000 TEKENS: zoveel wordt er bij een volgende run "
+             "teruggelezen. Schrijf je langer, dan mis je later je eigen staart — en "
+             "daar staat meestal juist wat er nog moet gebeuren. Meer te melden? "
+             "Splits het in meerdere opmerkingen met een eigen kop.\n"
              "Args: key* (string), body* (string)",
              {"type": "object", "properties": {
                  "key": {"type": "string"}, "body": {"type": "string"},

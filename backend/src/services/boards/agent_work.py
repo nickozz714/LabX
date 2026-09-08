@@ -46,14 +46,24 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Hoe lang een opmerking mag zijn. Eén getal voor lezen én schrijven: de agent
+# krijgt te horen dat hij hieronder moet blijven, en precies zoveel krijgt hij
+# ook terug te lezen. Zou het schrijfadvies ruimer zijn dan de leesgrens, dan
+# bouwt hij netjes een verslag dat hij later zelf niet meer compleet ziet.
+MAX_COMMENT_CHARS = 3000
+# Oudere opmerkingen blijven korter: die zijn context, geen werkinstructie.
+OUDERE_COMMENT_CHARS = 1500
+# Zoveel van de jongste opmerkingen komen onverkort door.
+RECENTE_OPMERKINGEN = 3
+
+
 def _kort(tekst: Optional[str], grens: int) -> str:
     """Inkorten met een spoor. Stil afkappen is het probleem, niet het
     afkappen zelf: dan denkt de lezer dat hij alles heeft."""
     body = (tekst or "").strip()
     if len(body) <= grens:
         return body
-    return body[:grens] + f"\n  […afgekapt, {len(body) - grens} tekens; " \
-                          f"vraag de volledige tekst op met board__get_ticket]"
+    return body[:grens] + f"\n  […afgekapt, {len(body) - grens} tekens]"
 
 
 def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
@@ -88,9 +98,9 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
         # de staart — "wat er nog moet gebeuren" — buiten de oude grens van 1500
         # tekens. Wie met de inleiding van zijn eigen aantekeningen begint en
         # zonder de conclusie, doet het werk over of slaat het over.
-        recent = visible[-3:]
+        recent = visible[-RECENTE_OPMERKINGEN:]
         for c in visible[-15:]:
-            grens = 8000 if c in recent else 1500
+            grens = MAX_COMMENT_CHARS if c in recent else OUDERE_COMMENT_CHARS
             lines.append(f"- [{c.author}] {_kort(c.body, grens)}")
 
     if (board.agent_instruction or "").strip():
@@ -113,6 +123,11 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
         f"- **Je bevindingen, voortgang, resultaten en vragen** gaan als OPMERKING op"
         f" {ticket.key}, met `board__comment_ticket`. Dat is het werklogboek en de"
         " enige plek waar verslag hoort.",
+        f"- **Houd een opmerking onder de {MAX_COMMENT_CHARS} tekens.** Zoveel wordt er"
+        " later ook teruggelezen — wie hier overheen schrijft, ziet zijn eigen staart"
+        " niet terug bij een volgende run, en dat is nu juist het deel met wat er nog"
+        " moet gebeuren. Heb je meer te melden: splits het in meerdere opmerkingen,"
+        " elk met een eigen kop, en zet het belangrijkste vooraan.",
         "- **De omschrijving is de OPDRACHT, geen verslag.** Laat hem met rust, tenzij"
         " de opdracht zelf onduidelijk of onvolledig blijkt; dan scherp je hem aan met"
         " `board__update_ticket(description=...)`. Plak er NOOIT je bevindingen,"
