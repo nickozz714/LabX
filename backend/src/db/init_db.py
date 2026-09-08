@@ -53,6 +53,9 @@ _ADDITIVE_COLUMNS = {
         ("mcp_server", "TEXT"),
         ("builtin_hash", "VARCHAR(64)"),
     ],
+    "ticket_plans": [
+        ("resume_at", "VARCHAR(64)"),
+    ],
     "ticket_plan_items": [
         ("worker_id", "INTEGER"),
     ],

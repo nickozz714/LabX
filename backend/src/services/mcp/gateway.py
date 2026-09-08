@@ -506,6 +506,21 @@ def build_server():
              {"type": "object", "properties": {
                  "key": {"type": "string"}, "body": {"type": "string"},
              }, "required": ["key", "body"]}),
+            ("board__wait_until",
+             "Wacht op iets dat MINUTEN duurt (een pipeline, een notebook-run, een deploy) en "
+             "ga daarna verder. De planning pauzeert, jouw werker komt vrij voor ander werk, en "
+             "dit ticket wordt op het afgesproken moment opnieuw opgepakt.\n"
+             "Gebruik dit in plaats van wachten of pollen in het lab: dat houdt een werker bezet "
+             "en verbrandt je context. Zet vlak vóór of ná deze aanroep in een OPMERKING wat je "
+             "hebt gedaan en wat er na de wachttijd moet gebeuren — bij het hervatten is die "
+             "opmerking je enige context. Rond je beurt daarna gewoon af.\n"
+             "Werkt alleen als dit ticket vanuit een planning draait; anders krijg je dat te "
+             "horen.\n"
+             "Args: minutes* (number, 1-720), reason* (string)",
+             {"type": "object", "properties": {
+                 "minutes": {"type": "number", "description": "Hoeveel minuten wachten (1-720)"},
+                 "reason": {"type": "string", "description": "Waar je op wacht, kort"},
+             }, "required": ["minutes", "reason"]}),
         ]
         for tool_name, description, schema in board_specs:
             mcp.add_tool(FunctionTool(

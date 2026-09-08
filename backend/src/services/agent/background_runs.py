@@ -204,6 +204,16 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
         try:
             run = db.get(BackgroundRun, run_id)
             if run is not None:
+                # De melder: heeft deze run een eigen CLI-tool gebruikt die wij
+                # niet toestaan? Dan staat hij niet op de denylist — en die
+                # loopt per definitie achter op de CLI. Hier zichtbaar maken is
+                # het verschil tussen "we ontdekken het bij de volgende
+                # release" en "het draait maanden stil mee".
+                from services.agent.claude_cli_provider import onverwachte_native_tools
+                vreemd = onverwachte_native_tools(steps)
+                if vreemd:
+                    log.warningx("Run gebruikte CLI-tools die niet zijn toegestaan",
+                                 run_id=run_id, tools=", ".join(vreemd))
                 run.status = status
                 run.steps = list(steps)
                 run.answer = answer or None

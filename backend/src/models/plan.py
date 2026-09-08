@@ -61,6 +61,10 @@ class TicketPlan(Base):
     instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Waarom hij stilstaat (geblokkeerd ticket, handmatig gepauzeerd, fout).
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Gepauzeerd tot dit moment (ISO), gezet door de agent die op iets langs
+    # loopends wacht: de scheduler zet de planning dan vanzelf weer aan. De
+    # werker komt ondertussen vrij voor ander werk — daar zit de winst.
+    resume_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)

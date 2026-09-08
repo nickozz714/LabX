@@ -315,6 +315,68 @@ class PlanService:
         return {"plan": plan.id, "state": plan.state, "gestart": ticket.key,
                 "run_id": res.get("run_id")}
 
+    def wacht_tot(self, *, lab_id: str, worker_id: Optional[int],
+                  minuten: int, reden: str) -> Dict[str, Any]:
+        """De agent wacht op iets dat tijd kost; de planning pakt het ticket
+        later opnieuw op.
+
+        Dit vervangt wat de agent anders zelf probeerde: een wekker zetten die
+        in een headless run niet bestaat, of minutenlang pollen in het lab.
+        Beide kosten een werker en het tweede kost ook nog zijn context. Nu
+        gaat de planning op pauze met een hervattijd, komt de werker vrij voor
+        ander werk, en start dit ticket straks opnieuw — met zijn eigen
+        opmerkingen als context.
+        """
+        from datetime import timedelta
+
+        from models.board import Board
+        minuten = max(1, min(int(minuten or 5), 720))
+        item = self._lopend_item(lab_id, worker_id)
+        if item is None:
+            return {"error": ("Dit ticket draait niet vanuit een planning, dus er is niets om "
+                              "later te hervatten. Wacht binnen deze run (kort), of zet in een "
+                              "opmerking wat er nog moet gebeuren en rond af.")}
+        plan = self.get(item.plan_id)
+        tot = (datetime.now(timezone.utc) + timedelta(minutes=minuten)).isoformat()
+        # Terug in de rij op zijn eigen plek, en de werker meteen vrij: daar
+        # zit het verschil met wachten in de run.
+        item.state = "waiting"
+        item.worker_id = None
+        item.finished_at = _now_iso()
+        plan.state = "paused"
+        plan.resume_at = tot
+        plan.note = f"Wacht tot {tot[11:16]} UTC — {reden[:300]}"
+        plan.updated_at = _now_iso()
+        self.db.commit()
+        ticket = self.db.get(Ticket, item.ticket_id)
+        board = self.db.get(Board, plan.board_id) if plan else None
+        if ticket is not None and board is not None:
+            from services.boards.board_service import BoardService
+            BoardService(self.db).add_comment(
+                ticket.id, kind="activity", author="agent",
+                body=f"Wacht tot {tot[11:16]} UTC voordat het werk verdergaat — {reden[:500]}")
+        log.infox("Planning wacht", plan=plan.id, tot=tot, minuten=minuten)
+        return {"result": (f"Genoteerd. De planning '{plan.name}' pauzeert en pakt dit ticket om "
+                           f"{tot[11:16]} UTC opnieuw op; de werker komt nu vrij voor ander werk. "
+                           f"Rond deze run nu af: zet in een OPMERKING wat je hebt gedaan en wat "
+                           f"er na de wachttijd moet gebeuren — die opmerking is straks je enige "
+                           f"context.")}
+
+    def _lopend_item(self, lab_id: str, worker_id: Optional[int]) -> Optional[TicketPlanItem]:
+        """Het planning-ticket dat nu op deze werker draait. Een werker doet er
+        één tegelijk, dus dat is eenduidig; zonder werker (één-werker-lab of
+        een oudere run) valt hij terug op het lopende item van dit lab."""
+        from models.board import Board
+        borden = [b.id for b in self.db.query(Board).filter(Board.lab_id == lab_id).all()]
+        if not borden:
+            return None
+        q = (self.db.query(TicketPlanItem)
+             .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
+             .filter(TicketPlan.board_id.in_(borden), TicketPlanItem.state == "running"))
+        if worker_id:
+            return q.filter(TicketPlanItem.worker_id == int(worker_id)).first()
+        return q.first()
+
     # ── sturen ──────────────────────────────────────────────────────────────
 
     def pause(self, plan_id: int, *, note: str = "Handmatig gepauzeerd") -> TicketPlan:
@@ -339,6 +401,7 @@ class PlanService:
                 it.state = "waiting"
         plan.state = "running"
         plan.note = None
+        plan.resume_at = None
         plan.updated_at = _now_iso()
         self.db.commit()
         return await self.advance(plan.id)
@@ -383,6 +446,7 @@ class PlanService:
             "id": plan.id, "board_id": plan.board_id, "name": plan.name,
             "state": plan.state, "start_at": plan.start_at, "source": plan.source,
             "instruction": plan.instruction, "note": plan.note,
+            "resume_at": getattr(plan, "resume_at", None),
             "created_at": plan.created_at, "updated_at": plan.updated_at,
             "started_at": plan.started_at, "finished_at": plan.finished_at,
         }
@@ -418,6 +482,11 @@ def _maak_afloop_hook(plan_id: int, item_id: int):
     def _hook(db: Session, run) -> None:
         item = db.get(TicketPlanItem, item_id)
         if item is None:
+            return
+        if item.state != "running":
+            # Al afgehandeld of opnieuw ingepland (de agent vroeg om later
+            # verder te gaan). Zijn uitslag overschrijven zou die herplanning
+            # stilzwijgend ongedaan maken.
             return
         status = getattr(run, "status", None) or "failed"
         item.state = "done" if status == "completed" else "failed"
@@ -473,6 +542,20 @@ async def tick() -> int:
                        TicketPlan.start_at <= nu).all())
         for plan in due:
             log.infox("Geplande planning gestart", plan=plan.id, gepland_voor=plan.start_at)
+            await svc.advance(plan.id)
+            aantal += 1
+        # Planningen die wachtten op iets dat tijd kost (de agent vroeg om
+        # later verder te gaan) en waarvan de tijd om is.
+        wakker = (db.query(TicketPlan)
+                  .filter(TicketPlan.state == "paused",
+                          TicketPlan.resume_at.isnot(None),
+                          TicketPlan.resume_at <= nu).all())
+        for plan in wakker:
+            log.infox("Wachtende planning hervat", plan=plan.id, wachtte_tot=plan.resume_at)
+            plan.resume_at = None
+            plan.state = "running"
+            plan.note = None
+            db.commit()
             await svc.advance(plan.id)
             aantal += 1
         for plan in db.query(TicketPlan).filter(TicketPlan.state == "running").all():

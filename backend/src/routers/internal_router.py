@@ -68,7 +68,7 @@ def _task_check_background(db: Session, payload: Dict[str, Any]) -> Dict[str, An
 
 
 def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
-                args: Dict[str, Any]) -> Dict[str, Any]:
+                args: Dict[str, Any], worker_id: Optional[int] = None) -> Dict[str, Any]:
     """De board__*-builtins uit de gateway. Het bord volgt uit het lab waar de
     run aan hangt — de agent kiest dus nooit zelf een ander bord."""
     from services.boards.board_service import BoardService
@@ -138,6 +138,13 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             updated = svc.update_ticket(t.id, payload, author="agent")
             return {"result": f"{updated.key} bijgewerkt ({', '.join(payload)}); "
                               f"kolom is nu '{updated.status}'."}
+
+        if tool_name == "board__wait_until":
+            from services.boards.plan_service import PlanService
+            return PlanService(db).wacht_tot(
+                lab_id=str(lab_id), worker_id=worker_id,
+                minuten=int(args.get("minutes") or 5),
+                reden=str(args.get("reason") or "").strip() or "geen reden opgegeven")
 
         if tool_name == "board__comment_ticket":
             t = _resolve(str(args.get("key") or ""))
@@ -339,7 +346,7 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
         if payload.get("tool_name") == "task__check_background":
             return _task_check_background(db, payload)
         if str(payload.get("tool_name") or "").startswith("board__"):
-            return _board_tool(db, str(payload["tool_name"]), lab_id, args)
+            return _board_tool(db, str(payload["tool_name"]), lab_id, args, worker_id)
         tool_id = payload.get("tool_id")
         if tool_id is None:
             raise HTTPException(status_code=400, detail="tool_id of tool_name is verplicht")

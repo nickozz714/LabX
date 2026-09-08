@@ -33,17 +33,62 @@ log = get_logger(__name__)
 _STRIPPED_ENV_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE")
 _STRIPPED_ENV_PREFIXES = ("CLAUDE_CODE_",)
 
-# Every native CLI tool except WebSearch and Task — hard-disallowed so the
-# CLI has no I/O path of its own; everything routes through mcp__labx and
-# the guard. WebSearch is allowed (query -> search engine, low exfiltration
-# risk); WebFetch stays closed (arbitrary URL fetch = an exfiltration
-# channel). Task (subagents) is allowed: verified live (see the subagent
-# smoke test run during implementation) that a Task-spawned subagent
-# inherits the parent session's --disallowedTools rather than getting its
-# own unrestricted tool profile — a subagent's tool list genuinely does not
-# contain Bash/Edit/etc, so allowing Task does not reopen the native I/O
-# path the rest of this list exists to close.
-_NATIVE_TOOLS_MINUS_WEBSEARCH = "Bash,Edit,Write,NotebookEdit,Read,Glob,Grep,WebFetch,TodoWrite"
+# Wat de agent van de CLI ZELF mag gebruiken. Alles daarbuiten hoort via
+# mcp__labx te lopen, zodat het langs de data-egress-guard komt.
+#
+# WebSearch mag (een zoekopdracht is een lage lek-kans), WebFetch niet (een
+# willekeurige URL ophalen ís een uitgaand kanaal). Task/Agent mag: live
+# nagegaan dat een subagent de --disallowedTools van de sessie erft en dus
+# geen eigen, onbeperkt toolprofiel krijgt. ToolSearch mag, want zonder dat
+# kan de agent de uitgestelde mcp__labx-tools niet eens laden.
+NATIVE_TOOLS_TOEGESTAAN = {"WebSearch", "Task", "Agent", "ToolSearch"}
+
+# En dit is wat er dicht gaat. Het was ooit "de I/O-tools", en dat bleek te
+# smal: de CLI heeft er sindsdien tools bij gekregen die hier niets te zoeken
+# hebben en toch openstonden. Zo riep een ticket-run `ScheduleWakeup` aan om
+# "over 4 minuten terug te komen" — in een headless run bestaat die wekker
+# niet, dus de run eindigde met werk dat nooit is afgemaakt, en niets dat dat
+# verklapte.
+#
+# Een opsomming veroudert; daarom staat er een MELDER naast (zie
+# onverwachte_native_tools): gebruikt een run een eigen CLI-tool die niet in
+# NATIVE_TOOLS_TOEGESTAAN staat, dan zegt het log en het ticket dat, ook als
+# een nieuwe CLI-versie hem heeft toegevoegd nadat deze regel geschreven werd.
+_NATIVE_TOOLS_DICHT = ",".join([
+    # eigen I/O buiten de guard om
+    "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
+    "Read", "Glob", "Grep", "WebFetch", "TodoWrite",
+    # plannen/wekkers: bestaan niet in een headless run, en de agent denkt
+    # van wel — dat is de gevaarlijkste soort no-op
+    "ScheduleWakeup", "CronCreate", "CronList", "CronDelete", "Monitor",
+    # naar buiten praten of andere sessies aansturen
+    "SendMessage", "ListAgents", "TaskOutput", "TaskStop", "SendUserFile",
+    "PushNotification", "RemoteTrigger", "EndConversation", "SendFeedback",
+    # sessiemodi en werkomgevingen van de CLI zelf
+    "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree",
+    "Skill", "Workflow", "DesignSync", "ReportFindings",
+    # artifacts en losse MCP-bronnen: LabX bepaalt zelf wat er gekoppeld is
+    "Artifact", "ListMcpResourcesTool", "ReadMcpResourceTool",
+    "ReadMcpResourceDirTool",
+])
+
+
+def onverwachte_native_tools(steps) -> list:
+    """Welke eigen CLI-tools een run heeft gebruikt die wij niet toestaan.
+
+    De denylist hierboven is een opsomming en loopt dus altijd achter op de
+    CLI. Deze melder kijkt naar wat er ECHT is aangeroepen: alles wat geen
+    mcp__labx-tool is en niet in NATIVE_TOOLS_TOEGESTAAN staat, hoort er niet
+    te zijn. Zo valt een tool die een volgende CLI-versie toevoegt meteen op,
+    in plaats van maanden stil mee te draaien."""
+    gezien = []
+    for stap in (steps or []):
+        naam = str((stap or {}).get("name") or (stap or {}).get("tool") or "").strip()
+        if not naam or naam.startswith("mcp__") or naam in NATIVE_TOOLS_TOEGESTAAN:
+            continue
+        if naam not in gezien:
+            gezien.append(naam)
+    return gezien
 
 _STDOUT_LIMIT = 64 * 1024 * 1024  # a stream-json line can carry a big tool result
 
@@ -133,8 +178,8 @@ class ClaudeCliProvider:
         if instructions:
             cmd += ["--append-system-prompt", instructions]
         cmd += ["--permission-mode", "bypassPermissions"]
-        cmd += ["--allowedTools", "mcp__labx WebSearch Task"]
-        cmd += ["--disallowedTools", _NATIVE_TOOLS_MINUS_WEBSEARCH]
+        cmd += ["--allowedTools", "mcp__labx WebSearch Task ToolSearch"]
+        cmd += ["--disallowedTools", _NATIVE_TOOLS_DICHT]
         if self._max_turns:
             cmd += ["--max-turns", str(int(self._max_turns))]
         if effort:

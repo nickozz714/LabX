@@ -123,6 +123,12 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
         f"- **Je bevindingen, voortgang, resultaten en vragen** gaan als OPMERKING op"
         f" {ticket.key}, met `board__comment_ticket`. Dat is het werklogboek en de"
         " enige plek waar verslag hoort.",
+        "- **Moet je wachten op iets dat minuten duurt** (een pipeline, een"
+        " notebook-run, een deploy)? Gebruik `board__wait_until` — de planning"
+        " pauzeert, je werker komt vrij en dit ticket wordt op tijd opnieuw"
+        " opgepakt. Blijf niet wachten of pollen in het lab: dat houdt een werker"
+        " bezet en verbrandt je context. Zet wél eerst in een opmerking waar je"
+        " gebleven bent; bij het hervatten is dat je enige context.",
         f"- **Houd een opmerking onder de {MAX_COMMENT_CHARS} tekens.** Zoveel wordt er"
         " later ook teruggelezen — wie hier overheen schrijft, ziet zijn eigen staart"
         " niet terug bij een volgende run, en dat is nu juist het deel met wat er nog"
@@ -268,6 +274,17 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
                                        or f"Run eindigde als '{status}'")[:2000]
             svc.add_comment(ticket.id, kind="activity", author="agent",
                             body=f"Agent-run {status}: {ticket.agent_last_error[:500]}")
+        # Zag deze run eigen CLI-tools die er niet horen? Dan hoort dat op het
+        # ticket, niet alleen in een logregel die niemand leest. Dit is hoe een
+        # `ScheduleWakeup` zich verraadt: de agent denkt dat hij later terugkomt
+        # en de run eindigt gewoon.
+        from services.agent.claude_cli_provider import onverwachte_native_tools
+        vreemd = onverwachte_native_tools(getattr(run, "steps", None))
+        if vreemd:
+            svc.add_comment(ticket.id, kind="activity", author="agent",
+                            body=(f"Let op: deze run gebruikte CLI-tools die LabX niet ondersteunt "
+                                  f"({', '.join(vreemd)}). Die doen hier niets — werk dat daarvan "
+                                  f"afhing is dus niet gebeurd."))
         ticket.updated_at = _now_iso()
         db.commit()
     return _hook
