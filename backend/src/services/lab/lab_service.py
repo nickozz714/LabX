@@ -545,7 +545,10 @@ class LabService:
             return self._to_dict(p)
         if not p.container_id:
             raise HTTPException(status_code=409, detail="Lab heeft geen container (status error?)")
-        await self.runtime.start(p.container_id)
+        try:
+            await self.runtime.start(p.container_id)
+        except Exception as exc:  # noqa: BLE001
+            raise self._container_weg_of_fout(p, exc)
         p.status = "running"
         p.updated_at = p.last_used_at = _now_iso()
         # Starten is gebruik: een verlopen lab dat je weer aanzet moet niet bij
@@ -560,6 +563,38 @@ class LabService:
             provision_in_background(p.id)
         await self._sync_azure_profile_into_lab(p)
         return self._to_dict(p)
+
+    async def _remove_before_rebuild(self, p: Lab, old_container: str) -> None:
+        """De oude container weg krijgen VOORDAT er een nieuwe met dezelfde naam
+        start.
+
+        Dit ging eerder mis en legde een lab helemaal plat. `docker rm -f`
+        kreeg een time-out na 60s op een container waarvan de proces-tabel vol
+        zat; de code logde dat als waarschuwing en ging door, waarna `docker
+        run` met diezelfde naam gegarandeerd afketste op "container name is
+        already in use". Het lab bleef achter op `error` met een container-id
+        dat intussen verdween — en elke volgende actie liep op een 500. Een
+        tweede poging deed precies hetzelfde ("removal is already in
+        progress").
+
+        Twee dingen zijn daarom veranderd: het verwijderen krijgt ruim de tijd,
+        en daarna wordt gecontroleerd dat zowel het id als de NAAM echt weg
+        zijn bij de daemon. Lukt dat niet, dan stopt het opbouwen hier met een
+        melding waar je iets mee kunt — in plaats van een fout te veroorzaken
+        die daarna niemand meer kan plaatsen."""
+        try:
+            await self.runtime.remove(old_container, timeout=300)
+        except Exception as exc:  # noqa: BLE001 — kan al bezig zijn; hieronder wachten we het af
+            log.warningx("Oude container verwijderen gaf een fout", lab_id=p.id,
+                         error=str(exc)[:200])
+        weg = await self.runtime.wait_until_gone(old_container, p.network_alias or "",
+                                                 timeout=300)
+        if not weg:
+            raise HTTPException(
+                status_code=409,
+                detail=("De oude container van dit lab is nog niet opgeruimd (dat kan even duren "
+                        "als de proces-tabel vol zat). Het lab is niet aangeraakt — probeer het "
+                        "over een minuut opnieuw."))
 
     async def rebuild(self, lab_id: str, *, image: Optional[str] = None,
                       pull: bool = True) -> Dict[str, Any]:
@@ -595,13 +630,7 @@ class LabService:
         await self._close_lab_mcp_sessions(old_container)
         try:
             if old_container:
-                # rm -f stopt hem ook; een mislukte verwijdering laat de naam
-                # bezet en de volgende stap valt daar hoorbaar over.
-                try:
-                    await self.runtime.remove(old_container)
-                except Exception as exc:  # noqa: BLE001
-                    log.warningx("Oude container verwijderen mislukt", lab_id=p.id,
-                                 error=str(exc)[:200])
+                await self._remove_before_rebuild(p, old_container)
             if pull:
                 try:
                     await self.runtime.pull(target)
@@ -618,6 +647,15 @@ class LabService:
                 allow_network=p.allow_network, ports=p.ports or [],
                 expires_at=p.expires_at,
             )
+        except HTTPException as exc:
+            # Afgebroken vóór we iets sloopten (de oude container is nog niet
+            # opgeruimd): het lab stond en staat er nog, dus terug naar de
+            # vorige toestand in plaats van het als kapot markeren.
+            p.status = "stopped" if old_container else "error"
+            p.error = str(exc.detail)[:1900]
+            p.updated_at = _now_iso()
+            self.db.commit()
+            raise
         except Exception as exc:  # noqa: BLE001
             p.status = "error"
             p.error = f"Opnieuw opbouwen mislukt: {str(exc)[:1900]}"
@@ -636,6 +674,29 @@ class LabService:
         log.infox("Lab opnieuw opgebouwd", lab_id=p.id, image=target)
         await self._sync_azure_profile_into_lab(p)
         return self._to_dict(p)
+
+    def _container_weg_of_fout(self, p: Lab, exc: BaseException) -> HTTPException:
+        """Een container die niet meer bestaat is een TOESTAND, geen crash.
+
+        Zonder dit kwam er een onafgevangen RuntimeError uit `docker start` —
+        en dus een kale 500 op elk shell-commando, waar niemand (de agent al
+        helemaal niet) uit kan opmaken wat er aan de hand is of wat te doen.
+        Nu staat het op het lab én in het antwoord: de container is weg, bouw
+        het lab opnieuw op."""
+        tekst = str(exc)
+        verdwenen = ("No such container" in tekst
+                     or "marked for removal" in tekst
+                     or "is not running" in tekst and "removal" in tekst)
+        if verdwenen:
+            p.status = "error"
+            p.error = ("De container van dit lab bestaat niet meer (mogelijk halverwege een "
+                       "eerdere herbouw verdwenen). /workspace staat op een eigen volume en is "
+                       "er nog: bouw het lab opnieuw op om verder te kunnen.")
+            p.updated_at = _now_iso()
+            self.db.commit()
+            log.warningx("Lab-container bestaat niet meer", lab_id=p.id, error=tekst[:200])
+            return HTTPException(status_code=409, detail=p.error)
+        return HTTPException(status_code=502, detail=f"Lab starten mislukt: {tekst[:500]}")
 
     async def _sync_azure_profile_into_lab(self, p: Lab) -> None:
         """If the lab has an assigned Azure profile (msal_bundle), push its
@@ -826,6 +887,30 @@ class LabService:
         result = await self.runtime.exec(cid, ["sh", "-lc", wrapper, command],
                                          timeout=max(5.0, min(timeout, 600.0)))
         self._touch(p)
+        return self._duid_proces_tabel(result)
+
+    @staticmethod
+    def _duid_proces_tabel(result: Dict[str, Any]) -> Dict[str, Any]:
+        """`fork: Resource temporarily unavailable` betekent iets heel anders dan
+        het lijkt, en dat is een dure verwarring gebleken.
+
+        Het is niet "geen geheugen" en niet "de server is stuk": het is de
+        PID-limiet van deze container (512), volgelopen door processen die er
+        nog staan. Een agent die dat niet weet, ziet alleen dat commando's
+        mislukken en grijpt naar het zwaarste middel — een herbouw — wat het
+        alleen maar erger maakte. Eén regel uitleg bij de fout scheelt dat hele
+        pad; opruimen kan gewoon, en het lab hoeft er niet voor om."""
+        uitvoer = result.get("output") or ""
+        if "Resource temporarily unavailable" not in uitvoer and "fork:" not in uitvoer:
+            return result
+        result["output"] = uitvoer + (
+            "\n\n[LabX] Dit is de proces-limiet van dit lab (512 processen), niet het "
+            "geheugen en niet een fout van LabX. Meestal staan er eigen achtergrondprocessen "
+            "open: kijk met `ps -eo pid,ppid,etime,args --sort=-etime | head -30` en ruim ze op "
+            "met `pkill -f <patroon>`. Een lab hoeft hier niet voor herbouwd te worden — en "
+            "herbouwen tijdens een volle proces-tabel duurt juist lang, omdat de container "
+            "dan traag afsterft."
+        )
         return result
 
     async def list_files(self, lab_id: str, path: str = "/workspace") -> Dict[str, Any]:

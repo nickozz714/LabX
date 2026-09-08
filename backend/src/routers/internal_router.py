@@ -272,15 +272,30 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
         if payload.get("tool_name") == "lab__shell_exec":
             if not lab_id:
                 raise HTTPException(status_code=400, detail="lab_id is verplicht voor lab__shell_exec")
-            result = await svc.execute_builtin_shell(
-                lab_id=lab_id, command=str(args.get("command") or ""),
-                timeout=float(args.get("timeout") or 60))
+            # Een lab dat niet meer te starten is (container verdwenen) is een
+            # toestand waar de agent zelf iets mee kan — mits hij hem te horen
+            # krijgt. Zonder dit werd het een kale 500 waarop hij alleen kon
+            # concluderen dat "de server stuk is", en dat is precies hoe een
+            # ticket-run een uur lang bleef hangen.
+            try:
+                result = await svc.execute_builtin_shell(
+                    lab_id=lab_id, command=str(args.get("command") or ""),
+                    timeout=float(args.get("timeout") or 60))
+            except HTTPException as exc:
+                return {"error": f"lab__shell_exec kan niet: {exc.detail}"}
+            except RuntimeError as exc:
+                return {"error": f"lab__shell_exec mislukt: {str(exc)[:600]}"}
             return {"result": result.get("output")}
         if payload.get("tool_name") == "lab__start":
             if not lab_id:
                 raise HTTPException(status_code=400, detail="lab_id is verplicht voor lab__start")
             from services.lab.lab_service import LabService
-            res = await LabService(db).ensure_running(lab_id)
+            try:
+                res = await LabService(db).ensure_running(lab_id)
+            except HTTPException as exc:
+                return {"error": f"lab__start kan niet: {exc.detail}"}
+            except RuntimeError as exc:
+                return {"error": f"lab__start mislukt: {str(exc)[:600]}"}
             return {"result": ("Lab gestart." if res.get("started") else "Lab draaide al.")}
         if payload.get("tool_name") == "lab__write_file":
             if not lab_id:

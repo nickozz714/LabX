@@ -258,8 +258,29 @@ class DockerRuntime:
     async def stop(self, container_id: str) -> None:
         await self._cli_ok("stop", "-t", "5", container_id)
 
-    async def remove(self, container_id: str) -> None:
-        await self._cli_ok("rm", "-f", container_id)
+    async def exists(self, name_or_id: str) -> bool:
+        code, _, _ = await self._run_cli("inspect", "--format", "{{.Id}}", name_or_id, timeout=15)
+        return code == 0
+
+    async def wait_until_gone(self, *names: str, timeout: float = 180.0) -> bool:
+        """Wacht tot deze containers écht weg zijn bij de daemon.
+
+        `docker rm -f` is niet klaar als de CLI terugkeert: bij een container
+        met een volgelopen proces-tabel duurt het opruimen daemon-zijdig door,
+        en een client-side time-out maakt daar niets aan uit — die doodt alleen
+        de CLI. Wie in die tussentijd een nieuwe container met dezelfde naam
+        start, krijgt gegarandeerd een naamconflict. Vandaar: kijken tot het
+        écht weg is, niet aannemen dat het klaar is."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            if not any([await self.exists(n) for n in names if n]):
+                return True
+            if asyncio.get_running_loop().time() >= deadline:
+                return False
+            await asyncio.sleep(2)
+
+    async def remove(self, container_id: str, *, timeout: float = 60.0) -> None:
+        await self._cli_ok("rm", "-f", container_id, timeout=timeout)
 
     async def state(self, container_id: str) -> Optional[str]:
         code, out, _ = await self._run_cli(
