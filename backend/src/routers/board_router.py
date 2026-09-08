@@ -141,6 +141,13 @@ def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db
         for t in tickets:
             per_kolom[t.status] = per_kolom.get(t.status, 0) + 1
         lab = labs.get(b.lab_id) if b.lab_id else None
+        werkers_totaal = werkers_bezet = 0
+        if lab is not None:
+            from services.lab.lab_service import LabService
+            lab_svc = LabService(db)
+            alle = lab_svc.ensure_workers(lab)
+            werkers_totaal = len(alle)
+            werkers_bezet = len(lab_svc._bezette_werkers(lab.id))
         actief = [p for p in db.query(TicketPlan)
                   .filter(TicketPlan.board_id == b.id,
                           TicketPlan.state.in_(("running", "paused", "scheduled"))).all()]
@@ -150,6 +157,8 @@ def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db
             "lab_name": lab.name if lab else None,
             "lab_status": lab.status if lab else None,
             "agent_column": b.agent_column,
+            "workers_total": werkers_totaal,
+            "workers_busy": werkers_bezet,
             "columns": b.columns or [],
             "ticket_counts": per_kolom,
             "ticket_total": len(tickets),

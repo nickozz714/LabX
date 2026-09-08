@@ -9,7 +9,7 @@
 # at the same time). See services/agent/background_runs.py.
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Index, JSON, String, Text
+from sqlalchemy import ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.database import Base
@@ -42,6 +42,10 @@ class BackgroundRun(Base):
     # in the thread transcript.
     message_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    # De werker (container) van het lab waarin deze run draaide. Leeg = het
+    # lab had er maar één, of de run is van vóór meerdere werkers.
+    lab_worker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     started_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String(64), nullable=True)

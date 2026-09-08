@@ -179,6 +179,11 @@ export function OverviewPage() {
                 ) : (
                   <Badge tone="red">geen lab</Badge>
                 )}
+                {b.workers_total > 0 && (
+                  <span className="text-muted-foreground" title="Bezette werkers van dit lab">
+                    {b.workers_busy}/{b.workers_total} werkers bezig
+                  </span>
+                )}
                 {b.wachtend_in_agentkolom > 0 && (
                   <span className="flex items-center gap-1 text-muted-foreground">
                     <Bot size={12} /> {b.wachtend_in_agentkolom} klaar om op te pakken

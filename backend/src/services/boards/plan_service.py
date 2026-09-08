@@ -6,13 +6,13 @@ lijst op is of er iets tegenhoudt.
 
 Drie regels bepalen het gedrag, en die zijn allemaal een keuze geweest:
 
-- **Eén run tegelijk per LAB, niet per planning.** Alle tickets van een bord
-  werken in dezelfde container. Twee agents die daar tegelijk in graaien
-  vechten om dezelfde bestanden, processen en `az`-sessie — zo liep de
-  proces-tabel van een lab een keer vol en lag alles plat. Planningen op
-  vérschillende borden (en dus verschillende labs) lopen wél gewoon naast
-  elkaar. Zodra een lab meerdere werkers kan hebben, is `_lab_bezet` de enige
-  plek die daarvoor open hoeft.
+- **Eén run tegelijk per WERKER.** Een lab heeft één of meer werkers
+  (containers) die /workspace delen; elke lopende planning bezet er één. Twee
+  runs in dezelfde container vechten om dezelfde bestanden, processen en
+  `az`-sessie — zo liep de proces-tabel van een lab een keer vol en lag alles
+  plat. Met drie werkers lopen er dus drie planningen naast elkaar, ook binnen
+  hetzelfde bord; zijn ze allemaal bezet, dan wacht de volgende planning (hij
+  pauzeert niet — dat is iets anders dan een probleem).
 - **Een geblokkeerd ticket pauzeert de planning**, hij slaat het niet over.
   Doorgaan met de rest zou de volgorde die jij bedoelde stilzwijgend
   omgooien; nu staat er expliciet "wacht op SWI-3" en beslis jij.
@@ -180,20 +180,45 @@ class PlanService:
 
     # ── uitvoeren ───────────────────────────────────────────────────────────
 
-    def _lab_bezet(self, plan: TicketPlan) -> Optional[int]:
-        """Draait er al een planning in hetzelfde lab? Geeft dan díe planning
-        terug. Dit is de enige plek die weet dat een lab één werker heeft —
-        krijgt een lab er meer, dan telt hier het aantal vrije werkers."""
+    def _claim_worker(self, plan: TicketPlan) -> Tuple[Optional[Any], Optional[int]]:
+        """Een vrije werker van het lab pakken, of vertellen wie hem bezet houdt.
+
+        Een lab heeft één of meer werkers (containers) die /workspace delen.
+        Elke lopende planning bezet er één: twee runs in dezelfde container
+        vechten om dezelfde bestanden, processen en `az`-sessie. Zijn er drie
+        werkers, dan lopen er dus drie planningen naast elkaar — ook binnen
+        hetzelfde bord."""
+        from models.lab import Lab
+        from services.lab.lab_service import LabService
+
         board = self.db.get(Board, plan.board_id)
         if board is None or not board.lab_id:
-            return None
+            return None, None
+        lab_svc = LabService(self.db)
+        lab = self.db.get(Lab, board.lab_id)
+        if lab is None:
+            return None, None
+        werkers = [w for w in lab_svc.ensure_workers(lab)
+                   if w.status == "running" and w.container_id]
+        if not werkers:
+            # Lab (nog) niet gestart: laat start_ticket_run hem aanzetten en
+            # gebruik werker 1 — precies zoals het ging toen er één was.
+            return None, None
+
         borden = [b.id for b in self.db.query(Board).filter(Board.lab_id == board.lab_id).all()]
-        rij = (self.db.query(TicketPlanItem, TicketPlan)
-               .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
-               .filter(TicketPlan.board_id.in_(borden),
-                       TicketPlan.id != plan.id,
-                       TicketPlanItem.state == "running").first())
-        return rij[1].id if rij else None
+        bezet_rijen = (self.db.query(TicketPlanItem.worker_id, TicketPlan.id)
+                       .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
+                       .filter(TicketPlan.board_id.in_(borden),
+                               TicketPlanItem.state == "running").all())
+        bezet = {r[0] for r in bezet_rijen if r[0]}
+        # Een lopend item zonder werker (van vóór deze functie) bezet het lab
+        # als geheel — anders zou hij naast zichzelf gaan draaien.
+        if any(r[0] is None for r in bezet_rijen):
+            return None, next((r[1] for r in bezet_rijen if r[0] is None), None)
+        vrij = [w for w in werkers if w.id not in bezet]
+        if vrij:
+            return vrij[0], None
+        return None, next((r[1] for r in bezet_rijen), None)
 
     async def advance(self, plan_id: int) -> Dict[str, Any]:
         """Zet het volgende ticket in gang, als dat kan."""
@@ -248,10 +273,10 @@ class PlanService:
             return {"plan": plan.id, "state": "paused", "gestart": None,
                     "geblokkeerd": ticket.key, "wacht_op": open_keys}
 
-        bezet_door = self._lab_bezet(plan)
-        if bezet_door is not None:
-            # Niet pauzeren: dit is geen probleem maar een wachtrij. Zodra de
-            # andere planning een ticket afrondt, komt deze vanzelf aan bod.
+        werker, bezet_door = self._claim_worker(plan)
+        if werker is None and bezet_door is not None:
+            # Niet pauzeren: dit is geen probleem maar een wachtrij. Zodra er
+            # een werker vrijkomt, komt deze planning vanzelf aan bod.
             return {"plan": plan.id, "state": plan.state, "gestart": None,
                     "wacht_op_planning": bezet_door}
 
@@ -260,6 +285,7 @@ class PlanService:
         if not plan.started_at:
             plan.started_at = _now_iso()
         volgende.state = "running"
+        volgende.worker_id = werker.id if werker is not None else None
         volgende.started_at = _now_iso()
         plan.note = None
         plan.updated_at = _now_iso()
@@ -268,7 +294,8 @@ class PlanService:
         try:
             res = await start_ticket_run(self.db, ticket.id,
                                          extra_instruction=plan.instruction,
-                                         trigger=f"planning '{plan.name}'")
+                                         trigger=f"planning '{plan.name}'",
+                                         lab_worker_id=werker.id if werker is not None else None)
         except HTTPException as exc:
             volgende.state = "failed"
             volgende.error = str(exc.detail)[:2000]

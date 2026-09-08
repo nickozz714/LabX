@@ -17,6 +17,12 @@ export const labsApi = {
   provision: (id: string, force = false) =>
     api.post<{ ok: boolean; provision_status: string }>(`/labs/${id}/provision`, { force }),
   // Opnieuw opbouwen op (een nieuw) image; /workspace blijft staan.
+  // Het aantal werkers (containers) van een lab; meer = meer planningen tegelijk.
+  scaleWorkers: (id: string, count: number) =>
+    api.post<{ ok: boolean; workers: number; toegevoegd: number[]; verwijderd: number[] }>(
+      `/labs/${id}/workers`,
+      { count },
+    ),
   rebuild: (id: string, image?: string) =>
     api.post<{ ok: boolean; status: string; image: string }>(`/labs/${id}/rebuild`, { image }),
   guardModelStatus: () => api.get<GuardModelStatus>("/labs/guard-model/status"),

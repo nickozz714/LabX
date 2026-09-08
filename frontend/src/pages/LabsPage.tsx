@@ -123,6 +123,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [cpu, setCpu] = useState(1);
   const [mem, setMem] = useState(2048);
   const [ttl, setTtl] = useState(24);
+  const [werkers, setWerkers] = useState(1);
   const [allowNetwork, setAllowNetwork] = useState(true);
   const [dataGuard, setDataGuard] = useState(true);
   const [llmGuard, setLlmGuard] = useState(true);
@@ -179,6 +180,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         allow_network: allowNetwork, data_guard: dataGuard, llm_guard: llmGuard,
         repos, ports: portList.length ? portList : undefined,
         extras, setup_script: setupScript.trim() || undefined,
+        worker_count: werkers,
       });
       onCreated();
     } catch (err) {
@@ -286,6 +288,16 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
             <Label>Stopt na (uur zonder gebruik)</Label>
             <Input type="number" value={ttl} onChange={(e) => setTtl(Number(e.target.value))} />
           </div>
+        </div>
+        <div>
+          <Label>Werkers (containers)</Label>
+          <Input type="number" min={1} max={8} value={werkers}
+                 onChange={(e) => setWerkers(Number(e.target.value))} />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Zoveel planningen kunnen tegelijk in dit lab werken. Ze delen /workspace — één
+            werkplaats met meer handen, geen losse labs. Elke werker kost geheugen en wordt
+            apart ingericht, dus begin bij 1 en schaal op als je het nodig hebt.
+          </p>
         </div>
         <div className="space-y-2 rounded-md border border-border p-3">
           <Toggle checked={allowNetwork} onChange={setAllowNetwork} label="Netwerktoegang" />
@@ -422,6 +434,9 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
             <div>Netwerk-alias: {lab.network_alias}</div>
           </div>
           <div className="border-t border-border pt-3">
+            <WerkerRegel lab={lab} onChanged={onChanged} />
+          </div>
+          <div className="border-t border-border pt-3">
             <AzureProfilePicker
               value={lab.azure_profile_id}
               onChange={(id) => labsApi.update(lab.id, { azure_profile_id: id }).then(onChanged)}
@@ -455,6 +470,65 @@ function provisionTone(status: Lab["provision_status"]) {
  * (een browser binnenhalen duurt minuten), dus dit scherm polt zolang het bezig
  * is — zonder dat zou je alleen "pending" zien en moeten raden.
  */
+
+/**
+ * Het aantal werkers van een lab: containers die /workspace delen en waarin
+ * planningen naast elkaar kunnen draaien. Afschalen raakt alleen werkers die
+ * niets doen, en nooit de eerste — die draagt de identiteit van het lab
+ * (terminal, bestandsbrowser, browserproxy en gepubliceerde poorten).
+ */
+function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
+  const [aantal, setAantal] = useState(lab.worker_count || 1);
+  const [busy, setBusy] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+
+  useEffect(() => setAantal(lab.worker_count || 1), [lab.worker_count]);
+
+  async function schalen() {
+    setBusy(true);
+    setFout(null);
+    try {
+      await labsApi.scaleWorkers(lab.id, aantal);
+      onChanged();
+    } catch (err) {
+      setFout(err instanceof ApiError ? err.message : "Schalen mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>Werkers (containers)</Label>
+      <div className="flex items-center gap-2">
+        <Input type="number" min={1} max={8} className="w-24" value={aantal}
+               onChange={(e) => setAantal(Number(e.target.value))} />
+        <Button variant="secondary" disabled={busy || aantal === (lab.worker_count || 1)}
+                onClick={schalen}>
+          {busy ? "Bezig…" : "Toepassen"}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Zoveel planningen kunnen hier tegelijk werken. Ze delen /workspace.
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {(lab.workers || []).map((w) => (
+          <span key={w.id}
+                className="rounded-md border border-border px-2 py-0.5 text-xs"
+                title={w.error || w.network_alias || ""}>
+            werker {w.index}
+            <Badge tone={w.status === "running" ? "green" : w.status === "error" ? "red" : "neutral"}>
+              {w.status}
+            </Badge>
+            {w.provision_status === "error" && <Badge tone="red">inrichten</Badge>}
+          </span>
+        ))}
+      </div>
+      {fout && <p className="text-sm text-destructive">{fout}</p>}
+    </div>
+  );
+}
+
 function ProvisioningPanel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
   const [catalog, setCatalog] = useState<LabExtra[]>([]);
   const [extras, setExtras] = useState<string[]>(lab.extras || []);

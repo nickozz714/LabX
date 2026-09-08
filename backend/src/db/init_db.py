@@ -53,12 +53,16 @@ _ADDITIVE_COLUMNS = {
         ("mcp_server", "TEXT"),
         ("builtin_hash", "VARCHAR(64)"),
     ],
+    "ticket_plan_items": [
+        ("worker_id", "INTEGER"),
+    ],
     "labs": [
         ("azure_profile_id", "INTEGER"),
         ("extras", "TEXT"),
         ("setup_script", "TEXT"),
         ("provision_status", "VARCHAR(16)"),
         ("provision_log", "TEXT"),
+        ("worker_count", "INTEGER NOT NULL DEFAULT 1"),
     ],
     "schedules": [
         ("json_schema", "TEXT"),
@@ -78,6 +82,8 @@ _ADDITIVE_COLUMNS = {
     ],
     "background_runs": [
         ("mode", "VARCHAR(16) NOT NULL DEFAULT 'background'"),
+        # In welke werker (container) van het lab deze run draaide.
+        ("lab_worker_id", "INTEGER"),
     ],
 }
 
@@ -137,6 +143,7 @@ def init_db() -> None:
         board,
         lab,
         lab_extra,
+        lab_worker,
         mcp_server,
         message,
         plan,

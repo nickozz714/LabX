@@ -89,6 +89,10 @@ class TicketPlanItem(Base):
     # De achtergrondrun die dit ticket heeft uitgevoerd, zodat het overzicht
     # naar het echte verloop kan wijzen in plaats van naar een samenvatting.
     run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # In welke werker (container) van het lab dit ticket draait/draaide. Dit
+    # is ook wat "bezet" betekent: zolang hier een lopend item aan hangt, is
+    # die werker niet vrij voor een andere planning.
+    worker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String(64), nullable=True)

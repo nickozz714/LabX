@@ -134,6 +134,19 @@ class LabService:
                 p.status = live_status
                 p.updated_at = _now_iso()
                 fixed += 1
+            # De werkers volgen wat de daemon zegt; een container die weg is,
+            # laat zijn werker als "error" achter zodat een start hem opnieuw
+            # aanmaakt in plaats van eeuwig naar een dode id te wijzen.
+            for w in self.ensure_workers(p):
+                m_w = by_container.get(w.container_id) if w.container_id else None
+                nieuw = ("running" if m_w and m_w["state"] == "running"
+                         else ("stopped" if m_w else "error"))
+                if nieuw != w.status:
+                    w.status = nieuw
+                    if nieuw == "error":
+                        w.container_id = None
+                        w.error = "Container niet meer gevonden na herstart van LabX"
+                    w.updated_at = _now_iso()
         if fixed:
             self.db.commit()
         # Orphans: labelled containers with no matching DB row at all. A
@@ -144,7 +157,12 @@ class LabService:
         # false signal is exactly how that bug destroyed a real lab. Only
         # stopped/exited orphans (genuinely abandoned — e.g. a Lab row whose
         # own delete-cleanup failed) are safe to remove automatically.
+        # ÓÓK de containers van extra werkers: die staan niet in Lab.container_id
+        # (dat is werker 1), en zonder deze regel ziet de opruiming ze als
+        # weeskinderen en gooit ze weg zodra ze even uit staan.
+        from models.lab_worker import LabWorker
         db_container_ids = {c for (c,) in self.db.query(Lab.container_id).all() if c}
+        db_container_ids |= {c for (c,) in self.db.query(LabWorker.container_id).all() if c}
         for m in managed:
             if m["id"] in db_container_ids:
                 continue
@@ -384,18 +402,32 @@ class LabService:
         p.updated_at = _now_iso()
         self.db.commit()
 
+        # Inrichten gebeurt PER WERKER: /workspace is gedeeld, maar wat je
+        # installeert zit in de containerlaag en dus in één container. Een lab
+        # met drie werkers waarvan er één Playwright heeft, is een lab dat soms
+        # werkt en soms niet — het onaangenaamste soort storing.
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            werkers = []
         entries: List[Dict[str, Any]] = []
         failed = 0
         for step in steps:
-            entry = await self._run_provision_step(p.container_id, step, force=force)
-            if entry["status"] == "error":
-                failed += 1
-            entries.append(entry)
+            for w in werkers:
+                entry = await self._run_provision_step(w.container_id, step, force=force)
+                if len(werkers) > 1:
+                    entry["key"] = f"{entry['key']}@w{w.index}"
+                    entry["label"] = f"{entry['label']} (werker {w.index})"
+                if entry["status"] == "error":
+                    failed += 1
+                entries.append(entry)
+            entry = entries[-1] if entries else {"status": "skipped"}
             # "skipped" telt hier net zo goed als "ok": de software staat er, en
             # de koppeling kan ontbreken (nieuw lab, of een lab van vóór deze
             # functie). Registreren is idempotent.
             cfg = step.get("mcp_server")
-            if cfg and entry["status"] in ("ok", "skipped"):
+            gelukt_overal = all(e["status"] in ("ok", "skipped")
+                                for e in entries[-len(werkers):]) if werkers else False
+            if cfg and gelukt_overal:
                 try:
                     res = await self._register_lab_mcp_server(p, cfg)
                 except Exception as exc:  # noqa: BLE001
@@ -411,10 +443,182 @@ class LabService:
             p.updated_at = _now_iso()
             self.db.commit()
         p.provision_status = "error" if failed else "ok"
+        for w in werkers:
+            eigen = [e for e in entries if str(e.get("key", "")).endswith(f"@w{w.index}")] \
+                if len(werkers) > 1 else entries
+            w.provision_status = "error" if any(e["status"] == "error" for e in eigen) else "ok"
+            w.provision_log = eigen
+            w.updated_at = _now_iso()
         p.updated_at = _now_iso()
         self.db.commit()
-        log.infox("Lab ingericht", lab_id=p.id, stappen=len(entries), mislukt=failed)
+        log.infox("Lab ingericht", lab_id=p.id, werkers=len(werkers),
+                  stappen=len(entries), mislukt=failed)
         return {"ok": failed == 0, "status": p.provision_status, "steps": entries}
+
+    # ── werkers (de containers van dit lab) ──────────────────────────────────
+
+    def workers(self, lab_id: str) -> List[Any]:
+        from models.lab_worker import LabWorker
+        return (self.db.query(LabWorker).filter(LabWorker.lab_id == lab_id)
+                .order_by(LabWorker.index.asc()).all())
+
+    def worker(self, worker_id: int) -> Any:
+        from models.lab_worker import LabWorker
+        w = self.db.get(LabWorker, worker_id)
+        if w is None:
+            raise HTTPException(status_code=404, detail="Werker niet gevonden")
+        return w
+
+    def _worker_alias(self, p: Lab, index: int) -> str:
+        """Werker 1 houdt de naam die het lab altijd had — een bestaande
+        verwijzing (DNS-alias, browserproxy, gepubliceerde poort) blijft
+        daarmee gewoon kloppen."""
+        basis = p.network_alias or f"labx-lab-{p.id[:12]}"
+        return basis if index <= 1 else f"{basis}-w{index}"
+
+    def ensure_workers(self, p: Lab) -> List[Any]:
+        """Zorg dat er werker-rijen zijn, ook voor een lab van vóór deze
+        functie: de bestaande container wordt werker 1. Zonder deze inhaalslag
+        zou een bestaand lab ineens nul werkers hebben en nergens meer kunnen
+        draaien."""
+        from models.lab_worker import LabWorker
+        rijen = self.workers(p.id)
+        if not rijen:
+            now = _now_iso()
+            w = LabWorker(lab_id=p.id, index=1, container_id=p.container_id,
+                          network_alias=p.network_alias or f"labx-lab-{p.id[:12]}",
+                          status=p.status if p.status in ("running", "stopped", "error") else "stopped",
+                          provision_status=p.provision_status,
+                          provision_log=list(p.provision_log or []),
+                          created_at=now, updated_at=now)
+            self.db.add(w)
+            self.db.commit()
+            rijen = [w]
+        return rijen
+
+    def _spiegel_werker1(self, p: Lab) -> None:
+        """`Lab.container_id`/`network_alias` blijven meelopen met werker 1.
+        Alles wat met "het lab" praat (terminal, bestanden, browserproxy)
+        gebruikt die velden, en hoeft van werkers niets te weten."""
+        eerste = next((w for w in self.workers(p.id) if w.index == 1), None)
+        if eerste is None:
+            return
+        p.container_id = eerste.container_id
+        p.network_alias = eerste.network_alias
+
+    async def _start_worker_container(self, p: Lab, w: Any) -> None:
+        """Eén werker-container (op)starten. Alle werkers draaien hetzelfde
+        image en delen hetzelfde volume — dat is wat ze werkers van hetzelfde
+        lab maakt en geen losse labs."""
+        # Poorten alleen op werker 1: twee containers kunnen niet dezelfde
+        # hostpoort publiceren, en "de poort van dit lab" hoort bij één plek.
+        poorten = (p.ports or []) if w.index <= 1 else []
+        container_id = await self.runtime.run_container(
+            name=w.network_alias, image=p.image, volume=p.volume_name,
+            cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
+            allow_network=p.allow_network, ports=poorten,
+            expires_at=p.expires_at,
+        )
+        w.container_id = container_id
+        w.status = "running"
+        w.error = None
+        w.updated_at = _now_iso()
+        self.db.commit()
+
+    async def scale(self, lab_id: str, count: int) -> Dict[str, Any]:
+        """Het aantal werkers van dit lab zetten.
+
+        Erbij: containers starten en inrichten (dat laatste op de achtergrond,
+        want het kan minuten duren). Eraf: alleen werkers die niets aan het
+        doen zijn, en nooit werker 1 — die draagt de identiteit van het lab.
+        """
+        from models.lab_worker import LabWorker
+
+        p = self.get(lab_id)
+        gewenst = max(1, min(int(count or 1), 8))
+        self.ensure_workers(p)
+        huidig = self.workers(p.id)
+        now = _now_iso()
+
+        toegevoegd, verwijderd = [], []
+        if gewenst > len(huidig):
+            volgende = (max((w.index for w in huidig), default=0)) + 1
+            for index in range(volgende, volgende + (gewenst - len(huidig))):
+                w = LabWorker(lab_id=p.id, index=index,
+                              network_alias=self._worker_alias(p, index),
+                              status="creating", provision_log=[],
+                              created_at=now, updated_at=now)
+                self.db.add(w)
+                self.db.commit()
+                try:
+                    if p.status == "running":
+                        await self._start_worker_container(p, w)
+                    toegevoegd.append(w.index)
+                except Exception as exc:  # noqa: BLE001
+                    w.status = "error"
+                    w.error = str(exc)[:2000]
+                    w.updated_at = _now_iso()
+                    self.db.commit()
+                    log.warningx("Werker starten mislukt", lab_id=p.id, werker=index,
+                                 error=str(exc)[:200])
+        elif gewenst < len(huidig):
+            bezet = self._bezette_werkers(p.id)
+            for w in sorted(huidig, key=lambda x: x.index, reverse=True):
+                if len(self.workers(p.id)) <= gewenst:
+                    break
+                if w.index <= 1:
+                    continue
+                if w.id in bezet:
+                    log.infox("Werker niet verwijderd: er draait werk", lab_id=p.id, werker=w.index)
+                    continue
+                await self._close_lab_mcp_sessions(w.container_id)
+                if w.container_id:
+                    try:
+                        await self.runtime.remove(w.container_id, timeout=120)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warningx("Werker-container verwijderen mislukt", lab_id=p.id,
+                                     werker=w.index, error=str(exc)[:200])
+                verwijderd.append(w.index)
+                self.db.delete(w)
+                self.db.commit()
+
+        p.worker_count = len(self.workers(p.id))
+        p.updated_at = _now_iso()
+        self._spiegel_werker1(p)
+        self.db.commit()
+        if toegevoegd and p.status == "running" and p.allow_network:
+            provision_in_background(p.id)
+        return {"ok": True, "workers": p.worker_count,
+                "toegevoegd": toegevoegd, "verwijderd": verwijderd}
+
+    def _bezette_werkers(self, lab_id: str) -> set:
+        """Werkers waar nu een planning-ticket op draait."""
+        from models.board import Board
+        from models.plan import TicketPlan, TicketPlanItem
+        borden = [b.id for b in self.db.query(Board).filter(Board.lab_id == lab_id).all()]
+        if not borden:
+            return set()
+        rijen = (self.db.query(TicketPlanItem.worker_id)
+                 .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
+                 .filter(TicketPlan.board_id.in_(borden),
+                         TicketPlanItem.state == "running",
+                         TicketPlanItem.worker_id.isnot(None)).all())
+        return {r[0] for r in rijen}
+
+    def container_for(self, p: Lab, worker_id: Optional[int] = None) -> Optional[str]:
+        """De container waarin een handeling hoort te landen.
+
+        Zonder werker: die van het lab zelf (werker 1) — dat is waar de
+        terminal, de bestandsbrowser en een gewone chat thuishoren. Mét
+        werker: precies die container, want een agent-run die op werker 3 is
+        gestart moet daar blijven; anders schrijft hij in het bestandssysteem
+        van een run waar hij niets mee te maken heeft."""
+        if worker_id:
+            from models.lab_worker import LabWorker
+            w = self.db.get(LabWorker, int(worker_id))
+            if w is not None and w.lab_id == p.id and w.container_id:
+                return w.container_id
+        return p.container_id
 
     async def create(
         self,
@@ -435,6 +639,7 @@ class LabService:
         environment: Optional[str] = None,
         extras: Optional[List[str]] = None,
         setup_script: Optional[str] = None,
+        worker_count: int = 1,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -477,6 +682,7 @@ class LabService:
             setup_script=(setup_script or "").strip() or None,
             provision_status="pending" if allow_network else "skipped",
             provision_log=[],
+            worker_count=max(1, min(int(worker_count or 1), 8)),
             created_at=now, updated_at=now,
         )
         self.db.add(p)
@@ -499,6 +705,15 @@ class LabService:
             )
             p.container_id = container_id
             p.status = "running"
+            # Werker 1 is deze container; extra werkers komen er via scale bij.
+            self.ensure_workers(p)
+            eerste = self.workers(p.id)[0]
+            eerste.container_id = container_id
+            eerste.status = "running"
+            eerste.updated_at = _now_iso()
+            self.db.commit()
+            if int(getattr(p, "worker_count", 1) or 1) > 1:
+                await self.scale(p.id, int(p.worker_count))
             await self._sync_azure_profile_into_lab(p)
             if p.llm_guard:
                 try:
@@ -549,6 +764,29 @@ class LabService:
             await self.runtime.start(p.container_id)
         except Exception as exc:  # noqa: BLE001
             raise self._container_weg_of_fout(p, exc)
+        # De overige werkers erbij: die horen bij hetzelfde lab en moeten dus
+        # met hem mee aan. Eentje die niet wil starten is geen reden om het
+        # hele lab te weigeren — dat wordt op de werker zelf gemeld.
+        for w in self.ensure_workers(p):
+            if w.index == 1:
+                w.container_id = p.container_id
+                w.status = "running"
+                w.updated_at = _now_iso()
+                continue
+            try:
+                if w.container_id:
+                    await self.runtime.start(w.container_id)
+                else:
+                    await self._start_worker_container(p, w)
+                w.status = "running"
+                w.error = None
+            except Exception as exc:  # noqa: BLE001
+                w.status = "error"
+                w.error = str(exc)[:2000]
+                log.warningx("Werker starten mislukt", lab_id=p.id, werker=w.index,
+                             error=str(exc)[:200])
+            w.updated_at = _now_iso()
+        self.db.commit()
         p.status = "running"
         p.updated_at = p.last_used_at = _now_iso()
         # Starten is gebruik: een verlopen lab dat je weer aanzet moet niet bij
@@ -564,7 +802,8 @@ class LabService:
         await self._sync_azure_profile_into_lab(p)
         return self._to_dict(p)
 
-    async def _remove_before_rebuild(self, p: Lab, old_container: str) -> None:
+    async def _remove_before_rebuild(self, p: Lab, old_container: str,
+                                     naam: Optional[str] = None) -> None:
         """De oude container weg krijgen VOORDAT er een nieuwe met dezelfde naam
         start.
 
@@ -587,7 +826,8 @@ class LabService:
         except Exception as exc:  # noqa: BLE001 — kan al bezig zijn; hieronder wachten we het af
             log.warningx("Oude container verwijderen gaf een fout", lab_id=p.id,
                          error=str(exc)[:200])
-        weg = await self.runtime.wait_until_gone(old_container, p.network_alias or "",
+        weg = await self.runtime.wait_until_gone(old_container,
+                                                 naam or p.network_alias or "",
                                                  timeout=300)
         if not weg:
             raise HTTPException(
@@ -666,6 +906,28 @@ class LabService:
         p.container_id = container_id
         p.image = target
         p.status = "running"
+        # Werker 1 is de zojuist gemaakte container; de rest wordt op hetzelfde
+        # image opnieuw opgebouwd, want een lab met werkers op verschillende
+        # images is geen lab meer maar een verzameling.
+        for w in self.ensure_workers(p):
+            if w.index == 1:
+                w.container_id = container_id
+                w.status = "running"
+                w.error = None
+                w.updated_at = _now_iso()
+                continue
+            await self._close_lab_mcp_sessions(w.container_id)
+            try:
+                if w.container_id:
+                    await self._remove_before_rebuild(p, w.container_id, w.network_alias)
+                await self._start_worker_container(p, w)
+            except Exception as exc:  # noqa: BLE001
+                w.status = "error"
+                w.error = str(exc)[:2000]
+                w.updated_at = _now_iso()
+                log.warningx("Werker opnieuw opbouwen mislukt", lab_id=p.id,
+                             werker=w.index, error=str(exc)[:200])
+        self.db.commit()
         p.provision_status = "pending" if p.allow_network else "skipped"
         p.provision_log = []
         p.expires_at = _expiry_from_now(p.ttl_hours)
@@ -785,7 +1047,19 @@ class LabService:
 
     async def stop(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
-        await self._close_lab_mcp_sessions(p.container_id)
+        for w in self.ensure_workers(p):
+            if not w.container_id:
+                continue
+            await self._close_lab_mcp_sessions(w.container_id)
+            if w.index > 1:
+                try:
+                    await self.runtime.stop(w.container_id)
+                except Exception as exc:  # noqa: BLE001
+                    log.warningx("Werker stoppen mislukt", lab_id=p.id, werker=w.index,
+                                 error=str(exc)[:200])
+            w.status = "stopped"
+            w.updated_at = _now_iso()
+        self.db.commit()
         if p.container_id and p.status == "running":
             await self.runtime.stop(p.container_id)
         p.status = "stopped"
@@ -795,7 +1069,18 @@ class LabService:
 
     async def delete(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
-        await self._close_lab_mcp_sessions(p.container_id)
+        # Eerst de extra werkers; het volume gaat pas mee met werker 1, want
+        # dat delen ze allemaal.
+        for w in self.ensure_workers(p):
+            await self._close_lab_mcp_sessions(w.container_id)
+            if w.index > 1 and w.container_id:
+                try:
+                    await self.runtime.remove(w.container_id, timeout=120)
+                except Exception as exc:  # noqa: BLE001
+                    log.warningx("Werker opruimen mislukt", lab_id=p.id, werker=w.index,
+                                 error=str(exc)[:200])
+            self.db.delete(w)
+        self.db.commit()
         for op, ref in (("container", p.container_id), ("volume", p.volume_name)):
             if not ref:
                 continue
@@ -824,8 +1109,7 @@ class LabService:
         for p in due:
             try:
                 if p.container_id and p.status == "running":
-                    await self._close_lab_mcp_sessions(p.container_id)
-                    await self.runtime.stop(p.container_id)
+                    await self.stop(p.id)
             except Exception as exc:  # noqa: BLE001
                 log.warningx("Lab stoppen bij expiry mislukt", lab_id=p.id, error=str(exc))
             p.status = "expired"
@@ -837,10 +1121,14 @@ class LabService:
 
     # ── execution & files ─────────────────────────────────────────────────────
 
-    def _require_running(self, p: Lab) -> str:
+    def _require_running(self, p: Lab, worker_id: Optional[int] = None) -> str:
         if p.status != "running" or not p.container_id:
             raise HTTPException(status_code=409, detail="Lab draait niet (start hem eerst)")
-        return p.container_id
+        cid = self.container_for(p, worker_id)
+        if not cid:
+            raise HTTPException(status_code=409,
+                                detail="De werker van dit lab heeft geen container (start het lab opnieuw)")
+        return cid
 
     def _touch(self, p: Lab) -> None:
         """Gebruik schuift de vervaltijd vooruit.
@@ -871,9 +1159,10 @@ class LabService:
             raise HTTPException(status_code=400, detail="Ongeldig pad")
         return candidate.rstrip("/") or "/workspace"
 
-    async def exec_command(self, lab_id: str, command: str, *, timeout: float = 120.0) -> Dict[str, Any]:
+    async def exec_command(self, lab_id: str, command: str, *, timeout: float = 120.0,
+                           worker_id: Optional[int] = None) -> Dict[str, Any]:
         p = self.get(lab_id)
-        cid = self._require_running(p)
+        cid = self._require_running(p, worker_id)
         if not (command or "").strip():
             raise HTTPException(status_code=400, detail="Leeg commando")
         # The exec tool is documented as BASH ("Voer een bash-commando uit").
@@ -913,9 +1202,10 @@ class LabService:
         )
         return result
 
-    async def list_files(self, lab_id: str, path: str = "/workspace") -> Dict[str, Any]:
+    async def list_files(self, lab_id: str, path: str = "/workspace", *,
+                    worker_id: Optional[int] = None) -> Dict[str, Any]:
         p = self.get(lab_id)
-        cid = self._require_running(p)
+        cid = self._require_running(p, worker_id)
         target = self._safe_path(path)
         result = await self.runtime.exec(cid, ["ls", "-Ap", "--", target], timeout=20)
         if result["exit_code"] != 0:
@@ -928,18 +1218,20 @@ class LabService:
             entries.append({"name": n.rstrip("/"), "is_dir": n.endswith("/")})
         return {"path": target, "entries": entries}
 
-    async def read_file(self, lab_id: str, path: str) -> Dict[str, Any]:
+    async def read_file(self, lab_id: str, path: str, *,
+                    worker_id: Optional[int] = None) -> Dict[str, Any]:
         p = self.get(lab_id)
-        cid = self._require_running(p)
+        cid = self._require_running(p, worker_id)
         target = self._safe_path(path)
         result = await self.runtime.exec(cid, ["head", "-c", "200000", "--", target], timeout=30)
         if result["exit_code"] != 0:
             raise HTTPException(status_code=404, detail=result["output"][:300])
         return {"path": target, "content": result["output"], "truncated": result["truncated"]}
 
-    async def write_file(self, lab_id: str, path: str, content: str) -> Dict[str, Any]:
+    async def write_file(self, lab_id: str, path: str, content: str, *,
+                    worker_id: Optional[int] = None) -> Dict[str, Any]:
         p = self.get(lab_id)
-        cid = self._require_running(p)
+        cid = self._require_running(p, worker_id)
         target = self._safe_path(path)
         parent = target.rsplit("/", 1)[0] or "/workspace"
         result = await self.runtime.exec(
@@ -1039,6 +1331,13 @@ class LabService:
             "allowed_tools": list(getattr(p, "allowed_tools", None) or []),
             "allowed_skills": list(getattr(p, "allowed_skills", None) or []),
             "azure_profile_id": p.azure_profile_id,
+            "worker_count": int(getattr(p, "worker_count", 1) or 1),
+            "workers": [{"id": w.id, "index": w.index, "status": w.status,
+                         "container_id": (w.container_id or "")[:12] or None,
+                         "network_alias": w.network_alias,
+                         "provision_status": w.provision_status,
+                         "error": w.error}
+                        for w in self.workers(p.id)],
             "extras": list(getattr(p, "extras", None) or []),
             "setup_script": getattr(p, "setup_script", None),
             "provision_status": getattr(p, "provision_status", None),

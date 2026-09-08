@@ -280,6 +280,11 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
         raise HTTPException(status_code=403, detail="Ongeldig intern token")
     lab_id = payload.get("lab_id")
     args = payload.get("args") or {}
+    # De werker waarin deze run werkt (zie gateway: LABX_GATEWAY_WORKER). Leeg
+    # = het lab zelf, dus werker 1 — zo werkt een gewone chat en zo werkte
+    # alles voordat labs meer dan één container konden hebben.
+    worker_id = payload.get("worker_id")
+    worker_id = int(worker_id) if worker_id else None
     db: Session = SessionLocal()
     try:
         svc = ToolExecutionService(db)
@@ -294,7 +299,7 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             try:
                 result = await svc.execute_builtin_shell(
                     lab_id=lab_id, command=str(args.get("command") or ""),
-                    timeout=float(args.get("timeout") or 60))
+                    timeout=float(args.get("timeout") or 60), worker_id=worker_id)
             except HTTPException as exc:
                 return {"error": f"lab__shell_exec kan niet: {exc.detail}"}
             except RuntimeError as exc:
@@ -318,7 +323,8 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             await LabService(db).ensure_running(lab_id)
             try:
                 res = await LabService(db).write_file(
-                    lab_id, str(args.get("path") or ""), str(args.get("content") or ""))
+                    lab_id, str(args.get("path") or ""), str(args.get("content") or ""),
+                    worker_id=worker_id)
             except HTTPException as exc:
                 return {"error": f"lab__write_file mislukt: {exc.detail}"}
             return {"result": f"Geschreven: {res['path']} ({res['bytes']} bytes)"}
@@ -338,7 +344,8 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
         if tool_id is None:
             raise HTTPException(status_code=400, detail="tool_id of tool_name is verplicht")
         try:
-            result = await svc.execute_tool(int(tool_id), args, lab_id=lab_id)
+            result = await svc.execute_tool(int(tool_id), args, lab_id=lab_id,
+                                            worker_id=worker_id)
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001

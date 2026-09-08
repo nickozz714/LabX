@@ -242,9 +242,11 @@ class ChatAgent:
         return results
 
     async def _prepare(self, *, lab_id: str, model: Optional[str], user_input: Any = None,
-                       thread_id: Optional[str] = None, is_background: bool = False):
+                       thread_id: Optional[str] = None, is_background: bool = False,
+                       lab_worker_id: Optional[int] = None):
         mcp_config_path = self._write_gateway_config(lab_id, thread_id=thread_id,
-                                                     is_background=is_background)
+                                                     is_background=is_background,
+                                                     lab_worker_id=lab_worker_id)
         from services.settings_service import get_settings
         settings = get_settings(self.db)
         provider, cc_model = self._build_provider(model, mcp_config_path, settings)
@@ -264,7 +266,8 @@ class ChatAgent:
 
     @staticmethod
     def _write_gateway_config(lab_id: str, *, thread_id: Optional[str] = None,
-                              is_background: bool = False) -> Optional[str]:
+                              is_background: bool = False,
+                              lab_worker_id: Optional[int] = None) -> Optional[str]:
         import json
         import tempfile
         from services.mcp.gateway import mcp_config_for_cli
@@ -272,7 +275,8 @@ class ChatAgent:
             fd, path = tempfile.mkstemp(prefix="labx-mcp-", suffix=".json")
             with os.fdopen(fd, "w") as f:
                 json.dump(mcp_config_for_cli(lab_id=lab_id, thread_id=thread_id,
-                                             is_background=is_background), f)
+                                             is_background=is_background,
+                                             lab_worker_id=lab_worker_id), f)
             return path
         except Exception as exc:  # noqa: BLE001 — run still proceeds, just tool-less
             log.warningx("MCP-gateway config schrijven mislukt", error=str(exc))
@@ -285,10 +289,12 @@ class ChatAgent:
                                 json_schema: Optional[str] = None,
                                 thread_id: Optional[str] = None,
                                 is_background: bool = False,
+                                lab_worker_id: Optional[int] = None,
                                 ) -> AsyncIterator[Dict[str, Any]]:
         provider, instructions, mcp_config_path, cc_model, default_effort, hook_results = await self._prepare(
             lab_id=lab_id, model=model, user_input=user_input,
-            thread_id=thread_id, is_background=is_background)
+            thread_id=thread_id, is_background=is_background,
+            lab_worker_id=lab_worker_id)
         # With a live --resume, the CLI session ALREADY holds the prior turns
         # — re-sending the flattened history block on top would double the
         # context every beurt (observed: it was a large chunk of a 175k-token

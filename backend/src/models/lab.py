@@ -59,6 +59,11 @@ class Lab(Base):
     # per-lab choice. See services/azure/azure_mcp_auth.py.
     azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Hoeveel containers dit lab heeft (zie models/lab_worker.py). 1 = zoals
+    # het altijd was. Meer werkers = meer planningen die tegelijk in dit lab
+    # kunnen werken; ze delen /workspace.
+    worker_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
     # ── inrichting bovenop het basis-image (zie models/lab_extra.py) ─────────
     # Keys uit `lab_extras` die in dit lab geïnstalleerd worden (Playwright +
     # Chromium, Node, ...). Zonder dit kon alleen een code-change bepalen wat

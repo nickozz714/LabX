@@ -43,9 +43,18 @@ class ToolExecutionService:
         from models.lab import Lab
         return self.db.get(Lab, lab_id)
 
-    def _lab_container_id(self, lab_id: Optional[str]) -> Optional[str]:
+    def _lab_container_id(self, lab_id: Optional[str],
+                          worker_id: Optional[int] = None) -> Optional[str]:
+        """De container waarin een lab-gebonden MCP-server moet draaien. Mét
+        werker: die van deze run — een browser die bij run X hoort mag niet in
+        de container van run Y opengaan."""
         lab = self._lab(lab_id)
-        return lab.container_id if lab and lab.status == "running" else None
+        if not lab or lab.status != "running":
+            return None
+        if worker_id:
+            from services.lab.lab_service import LabService
+            return LabService(self.db).container_for(lab, worker_id)
+        return lab.container_id
 
     async def _second_opinion(self, *, lab, guarded: Dict[str, Any]) -> Dict[str, Any]:
         """Track B: once the rules ALLOW an output, ask the local guard model
@@ -88,7 +97,8 @@ class ToolExecutionService:
         self.db.commit()
 
     async def execute_tool(self, tool_id: int, args: Dict[str, Any], *,
-                           lab_id: Optional[str] = None) -> Any:
+                           lab_id: Optional[str] = None,
+                           worker_id: Optional[int] = None) -> Any:
         tool = self.db.get(Tool, tool_id)
         if not tool or not tool.is_enabled:
             raise RuntimeError(f"Tool {tool_id} niet gevonden of uitgeschakeld")
@@ -98,7 +108,7 @@ class ToolExecutionService:
         if not server:
             raise RuntimeError(f"Tool '{tool.name}' heeft geen MCP-server")
 
-        cid = self._lab_container_id(lab_id) if server.location == "lab" else None
+        cid = self._lab_container_id(lab_id, worker_id) if server.location == "lab" else None
         result = await mcp_client.call_tool(server, tool.remote_name, args, lab_container_id=cid,
                                             db=self.db, lab_id=lab_id)
 
@@ -121,7 +131,8 @@ class ToolExecutionService:
         return result
 
     async def execute_builtin_shell(self, *, lab_id: str, command: str,
-                                    timeout: float = 60.0) -> Dict[str, Any]:
+                                    timeout: float = 60.0,
+                                    worker_id: Optional[int] = None) -> Dict[str, Any]:
         """The one always-available in-lab tool: run a shell command in the
         bound lab, guarded. This is the chokepoint the chat agent's
         `lab__shell_exec` gateway tool routes through."""
@@ -133,7 +144,7 @@ class ToolExecutionService:
         # eerst aanzetten: de agent hoort niet stuk te lopen op iets dat hij zelf
         # kan oplossen.
         await svc.ensure_running(lab_id)
-        result = await svc.exec_command(lab_id, command, timeout=timeout)
+        result = await svc.exec_command(lab_id, command, timeout=timeout, worker_id=worker_id)
         lab = self._lab(lab_id)
         guarded = guard_lab_output(result, enabled=bool(lab.data_guard) if lab else True,
                                    command=command, lab_id=lab_id)

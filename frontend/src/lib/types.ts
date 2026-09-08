@@ -17,6 +17,17 @@ export interface Lab {
   allowed_tools: string[];
   allowed_skills: string[];
   azure_profile_id: number | null;
+  /** Aantal containers van dit lab; meer = meer planningen tegelijk. */
+  worker_count: number;
+  workers: {
+    id: number;
+    index: number;
+    status: string;
+    container_id: string | null;
+    network_alias: string | null;
+    provision_status: string | null;
+    error: string | null;
+  }[];
   extras: string[];
   setup_script: string | null;
   provision_status: "pending" | "running" | "ok" | "error" | "skipped" | null;
@@ -368,6 +379,8 @@ export interface BoardOverviewDto {
   lab_name: string | null;
   lab_status: string | null;
   agent_column: string | null;
+  workers_total: number;
+  workers_busy: number;
   columns: { key: string; name: string; is_done?: boolean }[];
   ticket_counts: Record<string, number>;
   ticket_total: number;

@@ -167,7 +167,8 @@ def _thread_for_ticket(db: Session, board: Board, ticket: Ticket) -> Thread:
 
 async def start_ticket_run(db: Session, ticket_id: int, *,
                      extra_instruction: Optional[str] = None,
-                     trigger: str = "handmatig") -> Dict[str, Any]:
+                     trigger: str = "handmatig",
+                     lab_worker_id: Optional[int] = None) -> Dict[str, Any]:
     """Zet de agent op één ticket. Geeft de run-info terug; de run zelf loopt
     non-blocking door (zelfde patroon als een achtergrondtaak in de chat)."""
     from models.lab import Lab
@@ -200,6 +201,9 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
         db, thread_id=thread.id, lab_id=board.lab_id,
         history=[{"role": "user", "content": prompt}], prompt=prompt,
         mode="background",
+        # De werker waarin deze run moet werken. Zonder werker landt alles in
+        # de container van het lab zelf — zoals altijd, toen er één was.
+        lab_worker_id=lab_worker_id,
     )
 
     ticket.agent_state = "running"
@@ -215,7 +219,8 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
     log.infox("Agent-run op ticket gestart", ticket=ticket.key, board=board.name,
               run_id=run.id, trigger=trigger)
     return {"run_id": run.id, "thread_id": thread.id, "ticket_id": ticket.id,
-            "ticket_key": ticket.key, "status": "running"}
+            "ticket_key": ticket.key, "status": "running",
+            "lab_worker_id": lab_worker_id}
 
 
 def _agent_commented_since(db: Session, ticket_id: int, since: str) -> bool:

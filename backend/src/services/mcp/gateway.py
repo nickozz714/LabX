@@ -50,6 +50,9 @@ async def _delegate_execute(url: str, token: str, *, tool_id: Optional[int] = No
     thread_id = os.environ.get("LABX_GATEWAY_THREAD")
     if thread_id:
         body["thread_id"] = thread_id
+    worker_id = os.environ.get("LABX_GATEWAY_WORKER")
+    if worker_id:
+        body["worker_id"] = worker_id
     if os.environ.get("LABX_GATEWAY_IS_BG"):
         body["is_background"] = True
     async with httpx.AsyncClient(timeout=300.0) as client:
@@ -568,7 +571,8 @@ def build_server():
 
 def mcp_config_for_cli(*, python: Optional[str] = None, cwd: Optional[str] = None,
                        lab_id: Optional[str] = None, thread_id: Optional[str] = None,
-                       is_background: bool = False) -> Dict[str, Any]:
+                       is_background: bool = False,
+                       lab_worker_id: Optional[int] = None) -> Dict[str, Any]:
     """The --mcp-config object the chat runner writes for the CLI."""
     from config import settings
     from services.mcp.internal_auth import INTERNAL_MCP_TOKEN
@@ -580,6 +584,11 @@ def mcp_config_for_cli(*, python: Optional[str] = None, cwd: Optional[str] = Non
         env["LABX_GATEWAY_LAB"] = str(lab_id)
     if thread_id:
         env["LABX_GATEWAY_THREAD"] = str(thread_id)
+    if lab_worker_id:
+        # Welke werker (container) van het lab deze run gebruikt. Via de env en
+        # niet via de thread: een achtergrondrun — en een ticket-run ís dat —
+        # krijgt geen thread mee, dus daar valt niets uit af te leiden.
+        env["LABX_GATEWAY_WORKER"] = str(lab_worker_id)
     if is_background:
         env["LABX_GATEWAY_IS_BG"] = "1"
     env["LABX_INTERNAL_URL"] = settings.INTERNAL_URL

@@ -113,7 +113,8 @@ def start(db: Session, *, thread_id: str, lab_id: str,
           model: Optional[str] = None, effort: Optional[str] = None,
           mode: str = "background",
           resume_session_id: Optional[str] = None,
-          pre_subscribe: bool = False):
+          pre_subscribe: bool = False,
+          lab_worker_id: Optional[int] = None):
     """Create + fire a run. mode="foreground" is a normal chat turn: it
     resumes the thread's CLI session, keeps the task tools available, and
     persists a plain assistant message. pre_subscribe=True returns
@@ -122,6 +123,10 @@ def start(db: Session, *, thread_id: str, lab_id: str,
     now = _now_iso()
     run = BackgroundRun(id=str(uuid4()), thread_id=thread_id, prompt=prompt,
                         model=model, effort=effort, status="running", mode=mode,
+                        # De werker waarin deze run werkt: alles wat hij in het
+                        # lab doet moet in díe container landen, niet in die van
+                        # een run waar hij niets mee te maken heeft.
+                        lab_worker_id=lab_worker_id,
                         steps=[], created_at=now, started_at=now)
     db.add(run)
     db.commit()
@@ -130,7 +135,8 @@ def start(db: Session, *, thread_id: str, lab_id: str,
     q = subscribe(run.id) if pre_subscribe else None
     task = asyncio.get_running_loop().create_task(
         _execute(run.id, lab_id=lab_id, history=history, model=model, effort=effort,
-                 mode=mode, resume_session_id=resume_session_id))
+                 mode=mode, resume_session_id=resume_session_id,
+                 lab_worker_id=lab_worker_id))
     _ACTIVE_TASKS[run.id] = task
     task.add_done_callback(lambda _t: _ACTIVE_TASKS.pop(run.id, None))
     return (run, q) if pre_subscribe else run
@@ -139,7 +145,8 @@ def start(db: Session, *, thread_id: str, lab_id: str,
 async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
                    model: Optional[str], effort: Optional[str],
                    mode: str = "background",
-                   resume_session_id: Optional[str] = None) -> None:
+                   resume_session_id: Optional[str] = None,
+                   lab_worker_id: Optional[int] = None) -> None:
     from db.database import SessionLocal
     from models.message import Message
     from services.agent.chat_agent import ChatAgent
@@ -166,6 +173,7 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
             model=model, effort=effort,
             thread_id=thread_id_for_run if foreground else None,
             is_background=not foreground,
+            lab_worker_id=lab_worker_id,
         ):
             kind = ev.get("kind")
             if kind == "session":
