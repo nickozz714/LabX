@@ -107,6 +107,8 @@ export interface Thread {
   model: string | null;
   effort: string | null;
   created_at: string;
+  /** "board" = de sessie achter een agent-run op een ticket. */
+  source?: string;
   updated_at: string;
 }
 

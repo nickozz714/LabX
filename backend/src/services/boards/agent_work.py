@@ -274,6 +274,25 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
                                        or f"Run eindigde als '{status}'")[:2000]
             svc.add_comment(ticket.id, kind="activity", author="agent",
                             body=f"Agent-run {status}: {ticket.agent_last_error[:500]}")
+        # De CLI-sessie van deze run overnemen op de thread van het ticket, zodat
+        # je er in de chat in KUNT doorpraten: een volgende beurt hervat dan
+        # precies deze sessie, met alles wat de agent onderweg gezien heeft.
+        #
+        # Een achtergrondrun deelt bewust nooit een lopende sessie (het
+        # sessiebestand van de CLI heeft geen bescherming tegen twee
+        # schrijvers). Ná afloop is dat bezwaar weg: er schrijft niemand meer
+        # in. Draait er op dit moment tóch een gesprek in deze thread, dan
+        # blijven we eraf — die beurt heeft zijn eigen sessie en die mag niet
+        # onder zijn handen verwisseld worden.
+        sessie = getattr(run, "cli_session_id", None)
+        if sessie and ticket.agent_thread_id:
+            from models.thread import Thread as _Thread
+            from services.agent.background_runs import active_foreground_run
+            thread = db.get(_Thread, ticket.agent_thread_id)
+            if thread is not None and not active_foreground_run(db, thread.id):
+                thread.cli_session_id = sessie
+                thread.updated_at = _now_iso()
+
         # Zag deze run eigen CLI-tools die er niet horen? Dan hoort dat op het
         # ticket, niet alleen in een logregel die niemand leest. Dit is hoe een
         # `ScheduleWakeup` zich verraadt: de agent denkt dat hij later terugkomt

@@ -2,7 +2,8 @@ import { api, streamSSE } from "@/lib/api";
 import type { BackgroundRunDto, ChatEvent, Message, Thread } from "@/lib/types";
 
 export const chatApi = {
-  listThreads: () => api.get<Thread[]>("/chat/threads"),
+  listThreads: (includeBoard = false) =>
+    api.get<Thread[]>(`/chat/threads${includeBoard ? "?include_board=true" : ""}`),
   createThread: (lab_id: string, title?: string) => api.post<Thread>("/chat/threads", { lab_id, title }),
   getThread: (id: string) => api.get<Thread>(`/chat/threads/${id}`),
   renameThread: (id: string, title: string) => api.patch<Thread>(`/chat/threads/${id}`, { title }),

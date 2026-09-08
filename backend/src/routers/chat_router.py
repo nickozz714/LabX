@@ -31,6 +31,10 @@ def _now_iso() -> str:
 
 def _thread_dict(t: Thread) -> Dict[str, Any]:
     return {"id": t.id, "title": t.title, "lab_id": t.lab_id, "model": t.model, "effort": t.effort,
+            # "board" = de sessie achter een agent-run op een ticket. De UI toont
+            # die anders (en houdt hem uit de gewone lijst), maar je kunt er
+            # gewoon in doorpraten.
+            "source": getattr(t, "source", "chat") or "chat",
             "created_at": t.created_at, "updated_at": t.updated_at}
 
 
@@ -40,14 +44,28 @@ def _message_dict(m: Message) -> Dict[str, Any]:
 
 
 @router.get("/threads")
-def list_threads(db: Session = Depends(get_db)):
-    """Alleen echte chats. De threads achter agent-runs op een board-ticket
-    (source="board") blijven bestaan — ze dragen de CLI-sessie en de stappen —
-    maar horen niet in deze lijst: dat werk leest de gebruiker op het ticket."""
-    rows = (db.query(Thread)
-            .filter(Thread.source != "board")
-            .order_by(Thread.updated_at.desc()).all())
-    return [_thread_dict(t) for t in rows]
+def list_threads(include_board: bool = False, db: Session = Depends(get_db)):
+    """Standaard alleen echte chats.
+
+    De threads achter agent-runs op een board-ticket (source="board") blijven
+    bestaan — ze dragen de CLI-sessie en de stappen — maar horen hier niet
+    standaard in: op een bord met tachtig tickets zou de chatlijst niet meer te
+    lezen zijn. Met `include_board` komen ze er wél bij, voor wie in zo'n
+    sessie wil doorpraten; het ticket zelf linkt er rechtstreeks naartoe."""
+    q = db.query(Thread)
+    if not include_board:
+        q = q.filter(Thread.source != "board")
+    return [_thread_dict(t) for t in q.order_by(Thread.updated_at.desc()).all()]
+
+
+@router.get("/threads/{thread_id}")
+def get_thread(thread_id: str, db: Session = Depends(get_db)):
+    """Eén thread, ook als hij niet in de lijst staat — dat is wat een
+    rechtstreekse link vanaf een ticket nodig heeft."""
+    t = db.get(Thread, thread_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Chat niet gevonden")
+    return _thread_dict(t)
 
 
 @router.post("/threads")

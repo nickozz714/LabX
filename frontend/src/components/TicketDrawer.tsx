@@ -16,6 +16,7 @@
  * achter een agent-run is verborgen (Thread.source = "board").
  */
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { boardApi } from "@/lib/boards";
@@ -23,7 +24,7 @@ import { chatApi } from "@/lib/chat";
 import type { BoardDto, ChatEvent, TicketCommentDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { Bot, ExternalLink, Pencil, Trash2, X } from "lucide-react";
+import { Bot, ExternalLink, MessageSquare, Pencil, Trash2, X } from "lucide-react";
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 
@@ -129,6 +130,7 @@ export function TicketDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const navigate = useNavigate();
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [comments, setComments] = useState<TicketCommentDto[]>([]);
   const [draftInternal, setDraftInternal] = useState(false);
@@ -409,10 +411,27 @@ export function TicketDrawer({
             >
               {ticket.agent_state === "running" ? "Agent werkt…" : "Agent starten"}
             </Button>
+            {ticket.agent_thread_id && (
+              <Button
+                variant="ghost"
+                className="text-xs"
+                title="Open de sessie van deze agent-run als chat en praat erin door"
+                onClick={() => navigate(`/chat?thread=${ticket.agent_thread_id}`)}
+              >
+                <MessageSquare size={13} /> Verder chatten
+              </Button>
+            )}
             <span className="text-[11px] text-muted-foreground">
               Het verslag verschijnt hieronder in de tijdlijn.
             </span>
           </div>
+          {ticket.agent_thread_id && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              "Verder chatten" opent de sessie van de laatste run. De agent hervat daar zijn
+              eigen sessie, dus hij weet nog wat hij gedaan en gezien heeft — je hoeft niets
+              opnieuw uit te leggen.
+            </p>
+          )}
           {ticket.agent_last_error && (
             <p className="mt-2 text-xs text-destructive">{ticket.agent_last_error}</p>
           )}

@@ -19,6 +19,7 @@
  * balk was van de naam nauwelijks iets te zien.
  */
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -56,6 +57,11 @@ const EFFORT_OPTIONS = [
 
 export function ChatPage() {
   const [threads, setThreads] = useState<Thread[]>([]);
+  // Sessies achter agent-runs op een ticket. Standaard uit: op een bord met
+  // tachtig tickets zou de lijst niet meer te lezen zijn. Aan als je erin wilt
+  // doorpraten — of vanzelf, als je via een ticket binnenkomt.
+  const [toonBoard, setToonBoard] = useState(false);
+  const [zoekParams, setZoekParams] = useSearchParams();
   const [labs, setLabs] = useState<Lab[]>([]);
   const [activeThread, setActiveThread] = useState<Thread | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -147,9 +153,29 @@ export function ChatPage() {
   }
 
   useEffect(() => {
-    chatApi.listThreads().then(setThreads);
+    chatApi.listThreads(toonBoard).then(setThreads);
+  }, [toonBoard]);
+
+  useEffect(() => {
     labsApi.list().then(setLabs);
   }, []);
+
+  // Rechtstreekse link vanaf een ticket: /chat?thread=<id>. Die thread staat
+  // niet per se in de lijst (board-sessies zitten er standaard niet in), dus
+  // hem apart ophalen en meteen openen.
+  useEffect(() => {
+    const gevraagd = zoekParams.get("thread");
+    if (!gevraagd || activeThread?.id === gevraagd) return;
+    chatApi
+      .getThread(gevraagd)
+      .then(async (t) => {
+        if (t.source === "board") setToonBoard(true);
+        await openThread(t);
+        setZoekParams({}, { replace: true });
+      })
+      .catch(() => setZoekParams({}, { replace: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoekParams]);
 
   const activeThreadIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -402,6 +428,11 @@ export function ChatPage() {
       <aside className="w-64 shrink-0 overflow-y-auto border-r border-border p-3">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold">Chats</h2>
+          <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground"
+                 title="Ook de sessies achter agent-runs op een ticket tonen. Daar kun je gewoon in doorpraten — de agent hervat dan zijn eigen sessie.">
+            <input type="checkbox" checked={toonBoard} onChange={(e) => setToonBoard(e.target.checked)} />
+            board
+          </label>
         </div>
 
         {labs.length === 0 && threadGroups.length === 0 ? (
@@ -458,6 +489,12 @@ export function ChatPage() {
                           }`}
                         >
                           <span className="flex-1 truncate">{t.title}</span>
+                          {t.source === "board" && (
+                            <span className="shrink-0 rounded bg-secondary px-1 text-[10px] text-muted-foreground"
+                                  title="Sessie van een agent-run op een ticket">
+                              ticket
+                            </span>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
