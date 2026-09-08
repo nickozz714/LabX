@@ -333,6 +333,29 @@ export function TicketDrawer({
           />
         </div>
 
+        <div>
+          <Label>Wacht op (ticket-keys, komma-gescheiden)</Label>
+          <Input
+            value={(ticket.depends_on || []).join(", ")}
+            onChange={(e) =>
+              setTicket({ ...ticket, depends_on: e.target.value.split(",").map((s) => s.trim()) })
+            }
+            onBlur={(e) =>
+              save({
+                depends_on: e.target.value
+                  .split(",")
+                  .map((s) => s.trim().toUpperCase())
+                  .filter(Boolean),
+              })
+            }
+            placeholder="SWI-3, SWI-7"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Een planning pauzeert bij dit ticket zolang die tickets nog niet in een klaar-kolom
+            staan. Blijft in LabX — het gaat niet mee naar Jira of DevOps.
+          </p>
+        </div>
+
         <MarkdownField
           label="Omschrijving — de opdracht"
           value={ticket.description}

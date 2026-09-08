@@ -53,6 +53,13 @@ async def _warm_mcp_gateway() -> None:
         log.warningx("MCP-gateway voorverwarmen overgeslagen", error=str(exc)[:200])
 
 
+async def _plan_tick() -> None:
+    """Planningen die aan de beurt zijn losmaken, en lopende planningen die
+    stilvielen weer aanschoppen (zie services/boards/plan_service.tick)."""
+    from services.boards.plan_service import tick as _tick
+    await _tick()
+
+
 async def _mcp_session_tick() -> None:
     """Blijvende MCP-processen in labs die niemand meer gebruikt afsluiten —
     een browser die staat te wachten hoeft geen geheugen te bezetten."""
@@ -102,6 +109,10 @@ async def lifespan(_app: FastAPI):
     )
     from services.scheduling.cron import tick as _cron_tick
     scheduler.register(name="schedule_cron", interval_seconds=30, fn=_cron_tick, run_immediately=True)
+    # Elke 20s: fijner dan de cron, want een planning die op een bezet lab
+    # wacht moet er kort na het vrijkomen in kunnen.
+    scheduler.register(name="ticket_plans", interval_seconds=20, fn=_plan_tick,
+                       run_immediately=True)
     scheduler.register(name="board_sync", interval_seconds=60, fn=_board_sync_tick,
                        run_immediately=False)
     scheduler.register(name="mcp_lab_sessions", interval_seconds=300, fn=_mcp_session_tick,

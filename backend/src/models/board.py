@@ -108,8 +108,14 @@ class Ticket(Base):
     assignee: Mapped[str | None] = mapped_column(String(255), nullable=True)
     labels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # Sorteervolgorde binnen een kolom; floats zodat "tussenvoegen" geen
-    # herindexering van de hele kolom vraagt.
+    # herindexering van de hele kolom vraagt. Dit IS de prioriteit: hoger in de
+    # kolom = eerder aan de beurt, en zo pakt een planning ze ook op.
     position: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Tickets op DIT bord die eerst klaar moeten zijn, als lijst van keys
+    # (["SWI-3"]). Keys en geen id's: dat is waar mensen en de agent het over
+    # hebben, en ze zijn stabiel binnen een bord. Een planning stopt bij een
+    # ticket waarvan een afhankelijkheid nog niet in een klaar-kolom staat.
+    depends_on: Mapped[list] = mapped_column(JSON, nullable=True, default=list)
 
     # --- agent -------------------------------------------------------------
     agent_state: Mapped[str] = mapped_column(String(16), nullable=False, default="idle")

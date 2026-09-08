@@ -10,12 +10,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
-import type { BoardDto, TicketDto } from "@/lib/types";
+import type { BoardDto, PlanDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
-import { ArrowLeft, Bot, RefreshCw, Settings2 } from "lucide-react";
+import { ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, X } from "lucide-react";
 
 const PRIORITY_TONE = {
   urgent: "red", high: "yellow", normal: "neutral", low: "neutral",
@@ -34,6 +34,12 @@ export function BoardPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const dragged = useRef<number | null>(null);
+  // Selectiemodus: aanvinken welke tickets in een planning moeten, in de
+  // volgorde waarin je ze aanvinkt — dat is meestal precies de bedoelde
+  // volgorde, en anders sleep je ze in het planningsvenster nog om.
+  const [selectie, setSelectie] = useState<number[]>([]);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [plans, setPlans] = useState<PlanDto[]>([]);
 
   const refresh = useCallback(async () => {
     const [b, t] = await Promise.all([boardApi.get(id), boardApi.tickets(id)]);
@@ -55,39 +61,80 @@ export function BoardPage() {
     return () => clearInterval(timer);
   }, [tickets, refresh]);
 
-  async function onDrop(columnKey: string) {
+  /**
+   * Loslaten op een kolom, of tussen twee kaarten in. `voorTicketId` is de
+   * kaart waar hij bovenop komt; die bepaalt de nieuwe positie — en positie IS
+   * de prioriteit: wie bovenaan staat, is als eerste aan de beurt.
+   */
+  async function onDrop(columnKey: string, voorTicketId?: number) {
     const ticketId = dragged.current;
     dragged.current = null;
-    if (ticketId == null) return;
+    if (ticketId == null || ticketId === voorTicketId) return;
     const ticket = tickets.find((t) => t.id === ticketId);
-    if (!ticket || ticket.status === columnKey) return;
-    // Optimistisch verplaatsen: de kaart springt meteen, de server bevestigt.
-    setTickets((prev) => prev.map((t) => (t.id === ticketId ? { ...t, status: columnKey } : t)));
+    if (!ticket) return;
+
+    const kolomkaarten = tickets
+      .filter((t) => t.status === columnKey && t.id !== ticketId)
+      .sort((a, b) => a.position - b.position);
+    let positie: number | undefined;
+    if (voorTicketId != null) {
+      const index = kolomkaarten.findIndex((t) => t.id === voorTicketId);
+      const doel = kolomkaarten[index];
+      const ervoor = kolomkaarten[index - 1];
+      // Precies tussen de buren in — met floats hoeft de rest van de kolom
+      // niet hernummerd te worden.
+      positie = ervoor ? (ervoor.position + doel.position) / 2 : doel.position - 100;
+    } else if (ticket.status === columnKey) {
+      return; // op de kolom zelf laten vallen terwijl hij er al in staat
+    }
+
+    setTickets((prev) =>
+      prev.map((t) =>
+        t.id === ticketId
+          ? { ...t, status: columnKey, position: positie ?? t.position }
+          : t,
+      ),
+    );
     try {
-      await boardApi.moveTicket(id, ticketId, columnKey);
+      await boardApi.moveTicket(id, ticketId, columnKey, positie);
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : "Verplaatsen mislukt");
     }
     refresh().catch(() => {});
   }
 
-  async function pickUp() {
+  const laadPlans = useCallback(() => {
+    boardApi.plans(id).then(setPlans).catch(() => {});
+  }, [id]);
+
+  useEffect(() => {
+    laadPlans();
+    const t = setInterval(laadPlans, 5000);
+    return () => clearInterval(t);
+  }, [laadPlans]);
+
+  async function pakKolomOp() {
     if (!board) return;
     setBusy(true);
     setNotice(null);
     try {
-      const result = await boardApi.pickUp(id, { max_tickets: 1 });
-      setNotice(
-        result.count === 0
-          ? `Geen tickets klaar in de kolom '${board.agent_column || "-"}'.`
-          : `Agent gestart op ${result.started.map((s) => s.ticket_key).join(", ")}.`,
-      );
+      // De hele kolom als één planning: hij werkt hem van boven naar beneden
+      // af, in de volgorde die op het bord staat.
+      const plan = await boardApi.planFromColumn(id, {});
+      setNotice(`Planning '${plan.name}' gestart met ${plan.total} ticket(s).`);
+      laadPlans();
       refresh().catch(() => {});
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : "Oppakken mislukt");
     } finally {
       setBusy(false);
     }
+  }
+
+  function toggleSelectie(ticketId: number) {
+    setSelectie((cur) =>
+      cur.includes(ticketId) ? cur.filter((x) => x !== ticketId) : [...cur, ticketId],
+    );
   }
 
   async function sync() {
@@ -147,9 +194,22 @@ export function BoardPage() {
           )}
 
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="secondary" className="text-xs" onClick={pickUp} disabled={busy || !board.lab_id}>
-              <Bot size={13} /> Pak werk op
-            </Button>
+            {selectie.length > 0 ? (
+              <>
+                <span className="text-xs text-muted-foreground">{selectie.length} geselecteerd</span>
+                <Button className="text-xs" onClick={() => setPlanOpen(true)} disabled={!board.lab_id}>
+                  <ListOrdered size={13} /> Inplannen
+                </Button>
+                <Button variant="ghost" className="text-xs" onClick={() => setSelectie([])}>
+                  Selectie wissen
+                </Button>
+              </>
+            ) : (
+              <Button variant="secondary" className="text-xs" onClick={pakKolomOp}
+                      disabled={busy || !board.lab_id}>
+                <Bot size={13} /> Pak hele kolom op
+              </Button>
+            )}
             {board.provider !== "local" && (
               <Button variant="secondary" className="text-xs" onClick={sync} disabled={busy}>
                 <RefreshCw size={13} className={busy ? "animate-spin" : ""} /> Sync
@@ -174,6 +234,15 @@ export function BoardPage() {
             Laatste sync mislukte: {board.last_sync_error}
           </div>
         )}
+
+        <PlanBalk
+          boardId={id}
+          plans={plans}
+          onChanged={() => {
+            laadPlans();
+            refresh().catch(() => {});
+          }}
+        />
 
         <div className="flex flex-1 gap-3 overflow-x-auto p-4">
           {board.columns.map((col) => {
@@ -204,13 +273,29 @@ export function BoardPage() {
                       key={t.id}
                       draggable
                       onDragStart={() => (dragged.current = t.id)}
+                      onDragOver={(e) => e.preventDefault()}
+                      // Loslaten óp een kaart betekent "hierboven invoegen" —
+                      // zo bepaal je met slepen de volgorde binnen de kolom.
+                      onDrop={(e) => {
+                        e.stopPropagation();
+                        onDrop(col.key, t.id);
+                      }}
                       onClick={() => setSelected(t.id)}
                       className={`cursor-pointer p-2 transition hover:border-primary/50 ${
                         selected === t.id ? "border-primary" : ""
-                      }`}
+                      } ${selectie.includes(t.id) ? "ring-1 ring-primary" : ""}`}
                     >
                       <div className="flex items-center justify-between gap-1">
-                        <span className="font-mono text-[11px] text-muted-foreground">{t.key}</span>
+                        <span className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={selectie.includes(t.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleSelectie(t.id)}
+                            title="Meenemen in een planning"
+                          />
+                          <span className="font-mono text-[11px] text-muted-foreground">{t.key}</span>
+                        </span>
                         <div className="flex items-center gap-1">
                           {t.agent_state === "running" && <Badge tone="yellow">agent</Badge>}
                           {t.agent_state === "failed" && <Badge tone="red">mislukt</Badge>}
@@ -220,6 +305,11 @@ export function BoardPage() {
                         </div>
                       </div>
                       <div className="mt-1 text-sm">{t.title}</div>
+                      {t.depends_on?.length > 0 && (
+                        <div className="mt-1 text-[10px] text-muted-foreground">
+                          wacht op {t.depends_on.join(", ")}
+                        </div>
+                      )}
                       {(t.labels?.length > 0 || t.external_key) && (
                         <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
                           {t.external_key && <span className="font-mono">{t.external_key}</span>}
@@ -261,6 +351,27 @@ export function BoardPage() {
           onClose={() => setCreatingIn(null)}
           onCreated={() => {
             setCreatingIn(null);
+            refresh().catch(() => {});
+          }}
+        />
+      )}
+
+      {planOpen && (
+        <PlanVenster
+          boardId={id}
+          tickets={selectie
+            .map((tid) => tickets.find((t) => t.id === tid))
+            .filter((t): t is TicketDto => Boolean(t))}
+          onClose={() => setPlanOpen(false)}
+          onCreated={(plan) => {
+            setPlanOpen(false);
+            setSelectie([]);
+            setNotice(
+              plan.state === "scheduled"
+                ? `Planning '${plan.name}' staat klaar voor ${new Date(plan.start_at || "").toLocaleString()}.`
+                : `Planning '${plan.name}' gestart met ${plan.total} ticket(s).`,
+            );
+            laadPlans();
             refresh().catch(() => {});
           }}
         />
@@ -350,6 +461,220 @@ function NewTicketModal({
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button className="w-full" onClick={submit} disabled={!title.trim()}>
           Aanmaken
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+const PLAN_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
+  running: "yellow", paused: "red", scheduled: "violet", done: "green",
+  cancelled: "neutral", draft: "neutral",
+};
+
+/** De lopende en wachtende planningen van dit bord, met de knoppen om ze te sturen. */
+function PlanBalk({ boardId, plans, onChanged }: {
+  boardId: number;
+  plans: PlanDto[];
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState<number | null>(null);
+  const actief = plans.filter((p) => ["running", "paused", "scheduled", "draft"].includes(p.state));
+  if (actief.length === 0) return null;
+
+  async function actie(fn: Promise<unknown>) {
+    try {
+      await fn;
+    } finally {
+      onChanged();
+    }
+  }
+
+  return (
+    <div className="border-b border-border bg-secondary/20 px-4 py-2">
+      <div className="flex flex-wrap gap-2">
+        {actief.map((p) => (
+          <div key={p.id} className="rounded-md border border-border bg-background px-2 py-1 text-xs">
+            <div className="flex items-center gap-2">
+              <Badge tone={PLAN_TOON[p.state] || "neutral"}>{p.state}</Badge>
+              <button className="font-medium hover:underline"
+                      onClick={() => setOpen(open === p.id ? null : p.id)}>
+                {p.name}
+              </button>
+              <span className="text-muted-foreground">
+                {(p.counts.done || 0) + (p.counts.failed || 0)}/{p.total}
+                {p.start_at && p.state === "scheduled" && ` · ${new Date(p.start_at).toLocaleString()}`}
+              </span>
+              {p.state === "running" && (
+                <button title="Pauzeren" onClick={() => actie(boardApi.pausePlan(boardId, p.id))}>
+                  <Pause size={12} />
+                </button>
+              )}
+              {(p.state === "paused" || p.state === "draft" || p.state === "scheduled") && (
+                <button title="Starten / hervatten"
+                        onClick={() => actie(boardApi.resumePlan(boardId, p.id))}>
+                  <Play size={12} />
+                </button>
+              )}
+              <button title="Afbreken" onClick={() => actie(boardApi.cancelPlan(boardId, p.id))}>
+                <X size={12} />
+              </button>
+            </div>
+            {p.note && <div className="mt-0.5 max-w-md text-[11px] text-destructive">{p.note}</div>}
+            {open === p.id && <PlanRegels boardId={boardId} planId={p.id} onChanged={onChanged} />}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const ITEM_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
+  running: "yellow", failed: "red", done: "green", blocked: "red",
+  waiting: "neutral", skipped: "neutral",
+};
+
+function PlanRegels({ boardId, planId, onChanged }: {
+  boardId: number; planId: number; onChanged: () => void;
+}) {
+  const [plan, setPlan] = useState<PlanDto | null>(null);
+  useEffect(() => {
+    boardApi.plan(boardId, planId).then(setPlan).catch(() => {});
+  }, [boardId, planId]);
+  if (!plan?.items) return null;
+  return (
+    <div className="mt-1 space-y-0.5 border-t border-border pt-1">
+      {plan.items.map((it) => (
+        <div key={it.id} className="flex items-center gap-2">
+          <Badge tone={ITEM_TOON[it.state] || "neutral"}>{it.state}</Badge>
+          <span className="font-mono">{it.ticket_key}</span>
+          <span className="max-w-[16rem] truncate text-muted-foreground">{it.ticket_title}</span>
+          {["waiting", "blocked"].includes(it.state) && (
+            <button
+              title="Uit de planning halen"
+              onClick={() =>
+                boardApi.removePlanItem(boardId, planId, it.id).then((p) => {
+                  setPlan(p);
+                  onChanged();
+                })
+              }
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Een selectie inplannen: volgorde bepalen, en kiezen of hij meteen begint of
+ * op een tijdstip. De volgorde in deze lijst is wat de agent aanhoudt — niet
+ * de volgorde op het bord.
+ */
+function PlanVenster({ boardId, tickets, onClose, onCreated }: {
+  boardId: number;
+  tickets: TicketDto[];
+  onClose: () => void;
+  onCreated: (plan: PlanDto) => void;
+}) {
+  const [rij, setRij] = useState<TicketDto[]>(tickets);
+  const [naam, setNaam] = useState("");
+  const [wanneer, setWanneer] = useState<"nu" | "later" | "klaarzetten">("nu");
+  const [tijdstip, setTijdstip] = useState("");
+  const [instructie, setInstructie] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+
+  function verplaats(index: number, richting: -1 | 1) {
+    const doel = index + richting;
+    if (doel < 0 || doel >= rij.length) return;
+    const kopie = [...rij];
+    [kopie[index], kopie[doel]] = [kopie[doel], kopie[index]];
+    setRij(kopie);
+  }
+
+  async function opslaan() {
+    setBusy(true);
+    setFout(null);
+    try {
+      const plan = await boardApi.createPlan(boardId, {
+        name: naam.trim() || undefined,
+        ticket_ids: rij.map((t) => t.id),
+        // datetime-local levert lokale tijd zonder zone; als ISO doorgeven is
+        // hier goed genoeg omdat server en gebruiker dezelfde zone delen.
+        start_at: wanneer === "later" && tijdstip ? new Date(tijdstip).toISOString() : undefined,
+        start_now: wanneer === "nu",
+        instruction: instructie.trim() || undefined,
+      });
+      onCreated(plan);
+    } catch (err) {
+      setFout(err instanceof ApiError ? err.message : "Inplannen mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`${rij.length} ticket(s) inplannen`} wide>
+      <div className="space-y-3">
+        <div>
+          <Label>Volgorde</Label>
+          <p className="mb-1 text-xs text-muted-foreground">
+            Van boven naar beneden. De agent doet er één tegelijk; wacht een ticket op een ander
+            ticket dat nog niet klaar is, dan pauzeert de planning daar.
+          </p>
+          <div className="divide-y divide-border rounded-md border border-border">
+            {rij.map((t, i) => (
+              <div key={t.id} className="flex items-center gap-2 px-2 py-1 text-sm">
+                <span className="w-5 text-right text-xs text-muted-foreground">{i + 1}</span>
+                <span className="font-mono text-xs">{t.key}</span>
+                <span className="flex-1 truncate">{t.title}</span>
+                {t.depends_on?.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground">wacht op {t.depends_on.join(", ")}</span>
+                )}
+                <button className="px-1 text-xs" onClick={() => verplaats(i, -1)} disabled={i === 0}>↑</button>
+                <button className="px-1 text-xs" onClick={() => verplaats(i, 1)}
+                        disabled={i === rij.length - 1}>↓</button>
+                <button className="px-1 text-xs"
+                        onClick={() => setRij(rij.filter((x) => x.id !== t.id))}>×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Naam</Label>
+            <Input value={naam} onChange={(e) => setNaam(e.target.value)}
+                   placeholder="bv. Silver-herstel TST" />
+          </div>
+          <div>
+            <Label>Starten</Label>
+            <Select value={wanneer} onChange={(e) => setWanneer(e.target.value as typeof wanneer)}>
+              <option value="nu">Meteen</option>
+              <option value="later">Op een tijdstip</option>
+              <option value="klaarzetten">Alleen klaarzetten</option>
+            </Select>
+          </div>
+        </div>
+        {wanneer === "later" && (
+          <div>
+            <Label>Tijdstip</Label>
+            <Input type="datetime-local" value={tijdstip} onChange={(e) => setTijdstip(e.target.value)} />
+          </div>
+        )}
+        <div>
+          <Label>Extra instructie voor deze planning (optioneel)</Label>
+          <TextArea rows={2} value={instructie} onChange={(e) => setInstructie(e.target.value)}
+                    placeholder="Geldt voor elk ticket in deze planning, bovenop de vaste werkafspraken van het bord." />
+        </div>
+
+        {fout && <p className="text-sm text-destructive">{fout}</p>}
+        <Button className="w-full" onClick={opslaan}
+                disabled={busy || rij.length === 0 || (wanneer === "later" && !tijdstip)}>
+          {busy ? "Bezig…" : wanneer === "later" ? "Inplannen" : wanneer === "nu" ? "Starten" : "Klaarzetten"}
         </Button>
       </div>
     </Modal>

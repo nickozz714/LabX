@@ -8,15 +8,15 @@ import { useAuth } from "@/contexts/AuthContext";
 import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
-import {
-  Boxes, MessageSquare, Settings, Wrench, Workflow, CalendarClock, KeyRound, LogOut,
-  KanbanSquare,
-} from "lucide-react";
+import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, LogOut, MessageSquare, Settings, Workflow, Wrench } from "lucide-react";
 import { chatApi } from "@/lib/chat";
 
 const WIZARD_DISMISSED_KEY = "labx_wizard_dismissed";
 
 const NAV = [
+  // Vooraan: dit is het scherm waarmee je de dag begint — wat draait er, wat
+  // wacht er, en hoe liep het laatste af.
+  { to: "/overzicht", label: "Overzicht", icon: LayoutDashboard },
   { to: "/labs", label: "Labs", icon: Boxes },
   { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/boards", label: "Boards", icon: KanbanSquare },

@@ -284,24 +284,30 @@ def reconcile_on_start(db: Session) -> int:
 
 async def pick_up_column(db: Session, board_id: int, *, column: Optional[str] = None,
                          max_tickets: int = 1, trigger: str = "schedule") -> List[Dict[str, Any]]:
-    """Pak de bovenste N tickets uit een kolom op. Dit is wat een board-
-    schedule doet: werk dat klaarstaat wordt vanzelf door de AI opgepakt.
-    Tickets waar de agent al aan werkt worden overgeslagen."""
-    svc = BoardService(db)
-    board = svc.get_board(board_id)
-    col = column or board.agent_column
-    if not col:
-        raise HTTPException(status_code=400, detail="Dit board heeft geen agent-kolom ingesteld")
+    """Pak werk uit een kolom op — als PLANNING, niet als losse runs.
 
-    started: List[Dict[str, Any]] = []
-    for ticket in svc.list_tickets(board_id, status=col):
-        if len(started) >= max(1, int(max_tickets or 1)):
-            break
-        if ticket.agent_state == "running":
-            continue
-        try:
-            started.append(await start_ticket_run(db, ticket.id, trigger=trigger))
-        except HTTPException as exc:
-            log.warningx("Ticket oppakken mislukt", ticket=ticket.key, error=str(exc.detail))
-            started.append({"ticket_key": ticket.key, "status": "failed", "error": str(exc.detail)})
-    return started
+    Dit startte vroeger N agent-runs achter elkaar, die vervolgens tegelijk in
+    hetzelfde lab aan het werk gingen. Dat is precies wat je niet wilt: ze
+    delen één container, één bestandssysteem en één `az`-sessie, en de
+    volgorde die op het bord zichtbaar was zei niets meer over de volgorde
+    waarin het werk gebeurde. Nu gaat de hele kolom als één geordende planning
+    naar binnen die zichzelf ticket voor ticket afwerkt — te volgen, te
+    pauzeren en te herschikken, en met dezelfde afhankelijkheden als elders.
+
+    `max_tickets=0` betekent: de hele kolom.
+    """
+    from services.boards.plan_service import PlanService
+
+    svc = PlanService(db)
+    limiet = int(max_tickets or 0) or None
+    plan = svc.create_from_column(board_id, column=column, limit=limiet,
+                                  name=f"Opgepakt ({trigger})")
+    res = await svc.advance(plan.id)
+    items = svc.items(plan.id)
+    tickets = {t.id: t for t in db.query(Ticket).filter(
+        Ticket.id.in_([i.ticket_id for i in items] or [0])).all()}
+    return [{"plan_id": plan.id, "ticket_key": (tickets.get(i.ticket_id).key
+                                                if tickets.get(i.ticket_id) else None),
+             "status": i.state, "run_id": i.run_id,
+             "error": i.error or (res.get("fout") if i.state == "failed" else None)}
+            for i in items]

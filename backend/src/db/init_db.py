@@ -74,6 +74,7 @@ _ADDITIVE_COLUMNS = {
     ],
     "tickets": [
         ("acceptance_criteria", "TEXT"),
+        ("depends_on", "TEXT"),
     ],
     "background_runs": [
         ("mode", "VARCHAR(16) NOT NULL DEFAULT 'background'"),
@@ -138,6 +139,7 @@ def init_db() -> None:
         lab_extra,
         mcp_server,
         message,
+        plan,
         schedule,
         skill,
         skill_tool,

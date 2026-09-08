@@ -326,6 +326,75 @@ export interface BoardDto {
 export type TicketAgentState = "idle" | "queued" | "running" | "done" | "failed";
 export type TicketPriority = "low" | "normal" | "high" | "urgent";
 
+/** Een planning: een geordende set tickets die de agent achter elkaar afwerkt. */
+export interface PlanDto {
+  id: number;
+  board_id: number;
+  name: string;
+  state: "draft" | "scheduled" | "running" | "paused" | "done" | "cancelled";
+  start_at: string | null;
+  source: string;
+  instruction: string | null;
+  /** Waarom hij stilstaat, of wat er is overgeslagen. */
+  note: string | null;
+  counts: Record<string, number>;
+  total: number;
+  items?: PlanItemDto[];
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface PlanItemDto {
+  id: number;
+  ticket_id: number;
+  ticket_key: string | null;
+  ticket_title: string;
+  depends_on: string[];
+  position: number;
+  state: "waiting" | "blocked" | "running" | "done" | "failed" | "skipped";
+  run_id: string | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface BoardOverviewDto {
+  id: number;
+  name: string;
+  key_prefix: string;
+  lab_id: string | null;
+  lab_name: string | null;
+  lab_status: string | null;
+  agent_column: string | null;
+  columns: { key: string; name: string; is_done?: boolean }[];
+  ticket_counts: Record<string, number>;
+  ticket_total: number;
+  wachtend_in_agentkolom: number;
+  provider: string;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+  plans: PlanDto[];
+}
+
+export interface OverviewDto {
+  boards: BoardOverviewDto[];
+  recent: {
+    board_id: number;
+    board_name: string | null;
+    plan_id: number;
+    plan_name: string;
+    ticket_key: string;
+    ticket_title: string;
+    state: string;
+    run_id: string | null;
+    error: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+  }[];
+}
+
 export interface TicketDto {
   id: number;
   board_id: number;
@@ -339,7 +408,10 @@ export interface TicketDto {
   priority: TicketPriority;
   assignee: string | null;
   labels: string[];
+  /** Volgorde binnen de kolom — hoger = eerder aan de beurt. Dit IS de prioriteit. */
   position: number;
+  /** Keys van tickets op ditzelfde bord die eerst klaar moeten zijn. */
+  depends_on: string[];
   agent_state: TicketAgentState;
   agent_run_id: string | null;
   agent_thread_id: string | null;

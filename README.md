@@ -78,6 +78,8 @@ zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
 | **Skills** | Wizard met tool-picker (gegroepeerd per MCP-server), per tool instructies + input-schema-preview; installeerbaar in een lab (incl. bestanden) |
 | **Workflows & schedules** | Markdown-stappen met visuele editor; cron-schedules draaien een prompt, een workflow, of board-werk tegen een lab |
 | **Agent boards** | Kanban gekoppeld aan een lab; de agent pakt tickets op, werkt in het lab en doet verslag op het ticket (`board__*`-tools). Opdracht, acceptatiecriteria en tijdlijn staan gescheiden. Two-way sync met Azure DevOps / Jira, of alleen lezen |
+| **Planningen** | Een geordende set tickets die de agent achter elkaar afwerkt — als een pipeline-run. Volgorde op het bord ís de prioriteit (sleep ze omhoog), of stel zelf een selectie samen met een eigen volgorde. Start meteen, op een tijdstip, of zet 'm klaar. Een ticket kan aangeven op welke tickets het wacht; de planning pauzeert daar dan met vermelding waarom. Pauzeren, hervatten, herschikken en afbreken kan onderweg |
+| **Overzicht** | Eén scherm over alle boards heen: wat draait er nu, wat wacht of staat stil, hoeveel werk er per board klaarstaat, en wat er gelopen heeft met afloop en duur |
 | **Azure-profielen** | Meerdere versleutelde identiteiten, syncbaar naar host of lab |
 | **Hooks** | Meerdere automatische hooks per gebeurtenis, zichtbaar als ⚙️-stappen in de chat |
 

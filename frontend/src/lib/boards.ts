@@ -7,8 +7,8 @@
  */
 import { api } from "@/lib/api";
 import type {
-  AgentRunStart, BoardDto, BoardSyncStats, ExternalBoardColumn, ProviderSpec, TicketCommentDto,
-  TicketDto,
+  AgentRunStart, BoardDto, BoardSyncStats, ExternalBoardColumn, OverviewDto, PlanDto,
+  ProviderSpec, TicketCommentDto, TicketDto,
 } from "@/lib/types";
 
 export const boardApi = {
@@ -37,6 +37,25 @@ export const boardApi = {
     api.delete<{ ok: boolean }>(`/boards/${boardId}/tickets/${ticketId}`),
   moveTicket: (boardId: number, ticketId: number, status: string, position?: number) =>
     api.post<TicketDto>(`/boards/${boardId}/tickets/${ticketId}/move`, { status, position }),
+
+  // ── planningen: geordende werkrijen ──
+  overview: () => api.get<OverviewDto>("/boards/overview"),
+  plans: (boardId: number) => api.get<PlanDto[]>(`/boards/${boardId}/plans`),
+  plan: (boardId: number, planId: number) => api.get<PlanDto>(`/boards/${boardId}/plans/${planId}`),
+  createPlan: (boardId: number, payload: Record<string, unknown>) =>
+    api.post<PlanDto>(`/boards/${boardId}/plans`, payload),
+  planFromColumn: (boardId: number, payload: Record<string, unknown> = {}) =>
+    api.post<PlanDto>(`/boards/${boardId}/plans/from-column`, payload),
+  pausePlan: (boardId: number, planId: number) =>
+    api.post<PlanDto>(`/boards/${boardId}/plans/${planId}/pause`),
+  resumePlan: (boardId: number, planId: number) =>
+    api.post<PlanDto>(`/boards/${boardId}/plans/${planId}/resume`),
+  cancelPlan: (boardId: number, planId: number) =>
+    api.post<PlanDto>(`/boards/${boardId}/plans/${planId}/cancel`),
+  reorderPlan: (boardId: number, planId: number, itemIds: number[]) =>
+    api.post<PlanDto>(`/boards/${boardId}/plans/${planId}/reorder`, { item_ids: itemIds }),
+  removePlanItem: (boardId: number, planId: number, itemId: number) =>
+    api.delete<PlanDto>(`/boards/${boardId}/plans/${planId}/items/${itemId}`),
 
   comments: (boardId: number, ticketId: number) =>
     api.get<TicketCommentDto[]>(`/boards/${boardId}/tickets/${ticketId}/comments`),

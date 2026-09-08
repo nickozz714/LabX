@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from authentication import require_user
@@ -109,6 +109,75 @@ def list_boards(db: Session = Depends(get_db)):
 def create_board(payload: Dict[str, Any], db: Session = Depends(get_db)):
     svc = _svc(db)
     return svc.board_to_dict(svc.create_board(payload), with_counts=True)
+
+
+
+@router.get("/overview")
+def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db)):
+    """Eén beeld over álle borden: wat draait er nu, wat staat er te wachten,
+    en hoe liepen de laatste dingen af.
+
+    Bewust één antwoord en niet vijf losse endpoints die de UI zelf moet
+    samenvoegen: de vraag "hoe staat het ervoor" is één vraag, en het antwoord
+    moet in één oogopslag kloppen — niet uit drie verzoeken die elk een
+    fractie later zijn opgehaald.
+
+    LET OP: deze route staat vóór /{board_id}, anders leest FastAPI "overview"
+    als board-id."""
+    from models.board import Ticket
+    from models.lab import Lab
+    from models.plan import TicketPlan, TicketPlanItem
+    from services.boards.plan_service import PlanService
+
+    svc = _svc(db)
+    plan_svc = PlanService(db)
+    boards = svc.list_boards()
+    labs = {l.id: l for l in db.query(Lab).all()}
+
+    borden = []
+    for b in boards:
+        tickets = db.query(Ticket).filter(Ticket.board_id == b.id).all()
+        per_kolom: Dict[str, int] = {}
+        for t in tickets:
+            per_kolom[t.status] = per_kolom.get(t.status, 0) + 1
+        lab = labs.get(b.lab_id) if b.lab_id else None
+        actief = [p for p in db.query(TicketPlan)
+                  .filter(TicketPlan.board_id == b.id,
+                          TicketPlan.state.in_(("running", "paused", "scheduled"))).all()]
+        borden.append({
+            "id": b.id, "name": b.name, "key_prefix": b.key_prefix,
+            "lab_id": b.lab_id,
+            "lab_name": lab.name if lab else None,
+            "lab_status": lab.status if lab else None,
+            "agent_column": b.agent_column,
+            "columns": b.columns or [],
+            "ticket_counts": per_kolom,
+            "ticket_total": len(tickets),
+            "wachtend_in_agentkolom": per_kolom.get(b.agent_column or "", 0),
+            "provider": b.provider,
+            "last_sync_at": b.last_sync_at,
+            "last_sync_error": b.last_sync_error,
+            "plans": [plan_svc.to_dict(p, with_items=False) for p in actief],
+        })
+
+    # Het verloop: de laatste regels over alle borden heen, nieuwste eerst.
+    q = (db.query(TicketPlanItem, TicketPlan, Ticket)
+         .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
+         .join(Ticket, Ticket.id == TicketPlanItem.ticket_id)
+         .filter(TicketPlanItem.state.in_(("running", "done", "failed")))
+         .order_by(TicketPlanItem.started_at.desc().nullslast(),
+                   TicketPlanItem.id.desc())
+         .limit(runs).all())
+    board_namen = {b.id: b.name for b in boards}
+    verloop = [{
+        "board_id": plan.board_id, "board_name": board_namen.get(plan.board_id),
+        "plan_id": plan.id, "plan_name": plan.name,
+        "ticket_key": ticket.key, "ticket_title": ticket.title,
+        "state": item.state, "run_id": item.run_id, "error": item.error,
+        "started_at": item.started_at, "finished_at": item.finished_at,
+    } for item, plan, ticket in q]
+
+    return {"boards": borden, "recent": verloop}
 
 
 @router.get("/{board_id}")
@@ -265,6 +334,100 @@ async def pick_up(board_id: int, payload: Optional[Dict[str, Any]] = None,
                                    max_tickets=int(body.get("max_tickets") or 1),
                                    trigger="handmatig")
     return {"started": started, "count": len(started)}
+
+
+
+# ── planningen (geordende werkrijen) ────────────────────────────────────────
+
+def _plan_svc(db: Session):
+    from services.boards.plan_service import PlanService
+    return PlanService(db)
+
+
+@router.get("/{board_id}/plans")
+def list_plans(board_id: int, limit: int = Query(default=25, le=200),
+               db: Session = Depends(get_db)):
+    from models.plan import TicketPlan
+    svc = _plan_svc(db)
+    rows = (db.query(TicketPlan).filter(TicketPlan.board_id == board_id)
+            .order_by(TicketPlan.id.desc()).limit(limit).all())
+    return [svc.to_dict(p) for p in rows]
+
+
+@router.post("/{board_id}/plans")
+async def create_plan(board_id: int, payload: Dict[str, Any], db: Session = Depends(get_db)):
+    """Een eigen selectie inplannen. `ticket_ids` is de VOLGORDE waarin ze
+    gedaan worden. Zonder `start_at` begint hij meteen; met `start_at` (ISO)
+    wacht hij op dat moment. `start_now=false` zet hem klaar zonder te starten."""
+    svc = _plan_svc(db)
+    plan = svc.create(
+        board_id,
+        name=str(payload.get("name") or ""),
+        ticket_ids=payload.get("ticket_ids") or [],
+        start_at=(payload.get("start_at") or None),
+        instruction=payload.get("instruction"),
+        start_now=bool(payload.get("start_now", True)),
+    )
+    if plan.state == "running":
+        await svc.advance(plan.id)
+    return svc.to_dict(svc.get(plan.id))
+
+
+@router.post("/{board_id}/plans/from-column")
+async def create_plan_from_column(board_id: int, payload: Optional[Dict[str, Any]] = None,
+                                  db: Session = Depends(get_db)):
+    """De hele kolom als planning — "pak alles op", maar dan te volgen en te
+    sturen. `limit` leeg = alles."""
+    body = payload or {}
+    svc = _plan_svc(db)
+    plan = svc.create_from_column(board_id, column=body.get("column"),
+                                  name=body.get("name"),
+                                  limit=body.get("limit"),
+                                  instruction=body.get("instruction"),
+                                  start_at=body.get("start_at") or None)
+    if plan.state == "running":
+        await svc.advance(plan.id)
+    return svc.to_dict(svc.get(plan.id))
+
+
+@router.get("/{board_id}/plans/{plan_id}")
+def get_plan(board_id: int, plan_id: int, db: Session = Depends(get_db)):
+    svc = _plan_svc(db)
+    return svc.to_dict(svc.get(plan_id))
+
+
+@router.post("/{board_id}/plans/{plan_id}/pause")
+def pause_plan(board_id: int, plan_id: int, db: Session = Depends(get_db)):
+    svc = _plan_svc(db)
+    return svc.to_dict(svc.pause(plan_id))
+
+
+@router.post("/{board_id}/plans/{plan_id}/resume")
+async def resume_plan(board_id: int, plan_id: int, db: Session = Depends(get_db)):
+    svc = _plan_svc(db)
+    await svc.resume(plan_id)
+    return svc.to_dict(svc.get(plan_id))
+
+
+@router.post("/{board_id}/plans/{plan_id}/cancel")
+def cancel_plan(board_id: int, plan_id: int, db: Session = Depends(get_db)):
+    svc = _plan_svc(db)
+    return svc.to_dict(svc.cancel(plan_id))
+
+
+@router.post("/{board_id}/plans/{plan_id}/reorder")
+def reorder_plan(board_id: int, plan_id: int, payload: Dict[str, Any],
+                 db: Session = Depends(get_db)):
+    svc = _plan_svc(db)
+    svc.reorder(plan_id, [int(x) for x in (payload.get("item_ids") or [])])
+    return svc.to_dict(svc.get(plan_id))
+
+
+@router.delete("/{board_id}/plans/{plan_id}/items/{item_id}")
+def remove_plan_item(board_id: int, plan_id: int, item_id: int, db: Session = Depends(get_db)):
+    svc = _plan_svc(db)
+    svc.remove_item(plan_id, item_id)
+    return svc.to_dict(svc.get(plan_id))
 
 
 # ── synchronisatie ──────────────────────────────────────────────────────────

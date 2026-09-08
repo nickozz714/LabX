@@ -237,6 +237,7 @@ class BoardService:
             priority=payload.get("priority") or "normal",
             assignee=payload.get("assignee"),
             labels=payload.get("labels") or [],
+            depends_on=[str(x) for x in (payload.get("depends_on") or [])],
             position=self.next_position(board_id, status),
             # Een lokaal ticket op een gekoppeld bord is per definitie nog niet
             # bij de bron bekend — de push maakt het daar aan.
@@ -257,6 +258,11 @@ class BoardService:
         changed_synced = False
         old_status = t.status
 
+        # `depends_on` is bewust GEEN gesynchroniseerd veld: het is een
+        # LabX-begrip (wat de planning tegenhoudt), niet iets wat Jira of
+        # DevOps van ons hoeft te horen.
+        if "depends_on" in payload:
+            t.depends_on = [str(x).strip() for x in (payload.get("depends_on") or []) if str(x).strip()]
         for field in ("title", "description", "acceptance_criteria", "priority",
                       "assignee", "labels"):
             if field in payload:
@@ -398,6 +404,7 @@ class BoardService:
             "description": t.description, "acceptance_criteria": t.acceptance_criteria,
             "status": t.status, "priority": t.priority,
             "assignee": t.assignee, "labels": t.labels or [], "position": t.position,
+            "depends_on": list(getattr(t, "depends_on", None) or []),
             "agent_state": t.agent_state, "agent_run_id": t.agent_run_id,
             "agent_thread_id": t.agent_thread_id, "agent_last_error": t.agent_last_error,
             "external_provider": t.external_provider, "external_id": t.external_id,

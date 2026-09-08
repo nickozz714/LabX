@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Shell } from "@/components/Shell";
 import { LoginPage } from "@/pages/LoginPage";
+import { OverviewPage } from "@/pages/OverviewPage";
 import { LabsPage } from "@/pages/LabsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -34,6 +35,7 @@ function AppRoutes() {
         }
       >
         <Route index element={<Navigate to="/labs" replace />} />
+        <Route path="overzicht" element={<OverviewPage />} />
         <Route path="labs" element={<LabsPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="skills" element={<SkillsPage />} />
