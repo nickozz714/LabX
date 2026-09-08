@@ -392,27 +392,38 @@ export interface BoardOverviewDto {
   ticket_counts: Record<string, number>;
   ticket_total: number;
   wachtend_in_agentkolom: number;
+  running_tickets: number;
   provider: string;
   last_sync_at: string | null;
   last_sync_error: string | null;
   plans: PlanDto[];
 }
 
+/** Eén agent-run op een ticket, ongeacht of hij uit een planning kwam. */
+export interface OverviewRunDto {
+  run_id: string;
+  status: string;
+  board_id: number;
+  board_name: string | null;
+  ticket_key: string;
+  ticket_title: string;
+  /** De chatsessie van deze run — hier kun je in doorpraten. */
+  thread_id: string | null;
+  lab_name: string | null;
+  lab_status: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  steps: number;
+  plan_id: number | null;
+  plan_name: string | null;
+}
+
 export interface OverviewDto {
   boards: BoardOverviewDto[];
-  recent: {
-    board_id: number;
-    board_name: string | null;
-    plan_id: number;
-    plan_name: string;
-    ticket_key: string;
-    ticket_title: string;
-    state: string;
-    run_id: string | null;
-    error: string | null;
-    started_at: string | null;
-    finished_at: string | null;
-  }[];
+  /** Wat er nu draait — de bron is de run zelf, niet de planning. */
+  running: OverviewRunDto[];
+  recent: OverviewRunDto[];
 }
 
 export interface TicketDto {

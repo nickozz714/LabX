@@ -440,11 +440,21 @@ export function TicketDrawer({
               <Badge tone={runStatus === "completed" ? "green" : runStatus === "running" ? "yellow" : "red"}>
                 {runStatus}
               </Badge>
+              {/* Tools én afwegingen. Alleen de toolnamen tonen leest als een
+                  logbestand: je ziet wát er gebeurde en nergens waarom. */}
               {runSteps.length > 0 && (
-                <div className="max-h-32 space-y-0.5 overflow-y-auto rounded border border-border p-2 text-[11px] text-muted-foreground">
-                  {runSteps.map((s, i) => (
-                    <div key={i}>{s.kind === "tool" ? `🔧 ${(s as any).name}` : (s as any).text}</div>
-                  ))}
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-border p-2 text-[11px]">
+                  {runSteps.map((s, i) =>
+                    s.kind === "tool" ? (
+                      <div key={i} className="font-mono text-muted-foreground">
+                        🔧 {(s as any).name}
+                      </div>
+                    ) : (s as any).text ? (
+                      <div key={i} className="whitespace-pre-wrap border-l-2 border-border pl-2">
+                        {(s as any).text}
+                      </div>
+                    ) : null,
+                  )}
                 </div>
               )}
             </div>

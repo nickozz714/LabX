@@ -180,6 +180,11 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
                 session_id = ev.get("id")
             elif kind == "answer":
                 answer = ev.get("text") or ""
+                # Het eindantwoord kwam ook als laatste tussentekst voorbij;
+                # die eruit halen, anders staat hij twee keer in het verslag.
+                while steps and steps[-1].get("kind") == "thinking" \
+                        and (steps[-1].get("text") or "").strip() == answer.strip():
+                    steps.pop()
             elif kind in ("thinking", "tool", "usage"):
                 steps.append(ev)
             # delta events are fanned out live but not persisted per-chunk —

@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
-import type { OverviewDto, PlanDto } from "@/lib/types";
+import type { OverviewDto, OverviewRunDto, PlanDto } from "@/lib/types";
 import { Badge, Button, Card, EmptyState } from "@/components/ui";
 import { Bot, Pause, Play, RefreshCw, X } from "lucide-react";
 
@@ -19,7 +19,8 @@ const PLAN_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet
   cancelled: "neutral", draft: "neutral",
 };
 const ITEM_TOON: Record<string, "green" | "red" | "yellow" | "neutral"> = {
-  running: "yellow", failed: "red", done: "green",
+  running: "yellow", failed: "red", done: "green", completed: "green",
+  cancelled: "neutral", interrupted: "red",
 };
 
 function tijd(waarde: string | null): string {
@@ -66,11 +67,12 @@ export function OverviewPage() {
     );
   }
 
-  const lopend = data.boards.flatMap((b) =>
-    b.plans.filter((p) => p.state === "running").map((p) => ({ board: b, plan: p })),
-  );
-  const wachtend = data.boards.flatMap((b) =>
-    b.plans.filter((p) => p.state !== "running").map((p) => ({ board: b, plan: p })),
+  // Wat er draait komt uit de RUNS zelf. Het meeste werk begint met "Agent
+  // starten" op een ticket en hoort bij geen enkele planning — dit scherm
+  // stond leeg zolang het alleen naar planningen keek.
+  const lopend = data.running;
+  const planningen = data.boards.flatMap((b) =>
+    b.plans.map((p) => ({ board: b, plan: p })),
   );
 
   async function actie(fn: Promise<unknown>) {
@@ -124,6 +126,40 @@ export function OverviewPage() {
     );
   }
 
+  /** Eén agent-run: welk ticket, waar, hoe lang, en hoe het afliep. */
+  function RunRegel({ run, nu }: { run: OverviewRunDto; nu?: boolean }) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm last:border-0">
+        <Badge tone={ITEM_TOON[run.status] || "neutral"}>{run.status}</Badge>
+        <Link to={`/boards/${run.board_id}`} className="font-mono text-xs hover:underline">
+          {run.ticket_key}
+        </Link>
+        <span className="max-w-[22rem] truncate">{run.ticket_title}</span>
+        <span className="text-xs text-muted-foreground">
+          {run.board_name}
+          {run.lab_name ? ` · lab ${run.lab_name}` : ""}
+          {run.plan_name ? ` · planning ${run.plan_name}` : ""}
+          {" · "}
+          {tijd(run.started_at)}
+          {run.started_at ? ` · ${duur(run.started_at, run.finished_at)}` : ""}
+          {nu && run.steps ? ` · ${run.steps} stappen` : ""}
+        </span>
+        {run.thread_id && (
+          <Link to={`/chat?thread=${run.thread_id}`}
+                className="ml-auto whitespace-nowrap text-xs underline"
+                title="Open de sessie van deze run als chat">
+            meekijken
+          </Link>
+        )}
+        {run.error && (
+          <span className="w-full truncate text-xs text-destructive" title={run.error}>
+            {run.error}
+          </span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex items-center justify-between">
@@ -140,16 +176,16 @@ export function OverviewPage() {
         {lopend.length === 0 ? (
           <p className="px-3 py-2 text-sm text-muted-foreground">Er draait niets.</p>
         ) : (
-          lopend.map(({ board, plan }) => <PlanRegel key={plan.id} board={board} plan={plan} />)
+          lopend.map((r) => <RunRegel key={r.run_id} run={r} nu />)
         )}
       </Card>
 
-      {wachtend.length > 0 && (
+      {planningen.length > 0 && (
         <Card className="p-0">
           <div className="border-b border-border px-3 py-2 text-sm font-semibold">
-            Wacht of staat stil ({wachtend.length})
+            Planningen ({planningen.length})
           </div>
-          {wachtend.map(({ board, plan }) => <PlanRegel key={plan.id} board={board} plan={plan} />)}
+          {planningen.map(({ board, plan }) => <PlanRegel key={plan.id} board={board} plan={plan} />)}
         </Card>
       )}
 
@@ -205,25 +241,7 @@ export function OverviewPage() {
             <p className="px-3 py-2 text-sm text-muted-foreground">Nog niets gedraaid.</p>
           ) : (
             <div className="divide-y divide-border">
-              {data.recent.map((r, i) => (
-                <div key={`${r.plan_id}-${r.ticket_key}-${i}`}
-                     className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm">
-                  <Badge tone={ITEM_TOON[r.state] || "neutral"}>{r.state}</Badge>
-                  <Link to={`/boards/${r.board_id}`} className="font-mono text-xs hover:underline">
-                    {r.ticket_key}
-                  </Link>
-                  <span className="max-w-[24rem] truncate">{r.ticket_title}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {r.board_name} · {r.plan_name} · {tijd(r.started_at)}
-                    {r.started_at ? ` · ${duur(r.started_at, r.finished_at)}` : ""}
-                  </span>
-                  {r.error && (
-                    <span className="w-full truncate text-xs text-destructive" title={r.error}>
-                      {r.error}
-                    </span>
-                  )}
-                </div>
-              ))}
+              {data.recent.map((r) => <RunRegel key={r.run_id} run={r} />)}
             </div>
           )}
         </Card>

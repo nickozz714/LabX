@@ -6,7 +6,7 @@ onder /boards/{board_id}/tickets zodat een bord altijd de context is — er
 bestaat geen ticket zonder bord."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -113,17 +113,22 @@ def create_board(payload: Dict[str, Any], db: Session = Depends(get_db)):
 
 
 @router.get("/overview")
-def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db)):
-    """Eén beeld over álle borden: wat draait er nu, wat staat er te wachten,
-    en hoe liepen de laatste dingen af.
+def overview(runs: int = Query(default=30, le=200), db: Session = Depends(get_db)):
+    """Eén beeld over álle borden: wat draait er nu, wat wacht, en hoe liepen
+    de laatste dingen af.
 
-    Bewust één antwoord en niet vijf losse endpoints die de UI zelf moet
-    samenvoegen: de vraag "hoe staat het ervoor" is één vraag, en het antwoord
-    moet in één oogopslag kloppen — niet uit drie verzoeken die elk een
-    fractie later zijn opgehaald.
+    Dit werd eerst volledig uit PLANNINGEN opgebouwd, en dat was een
+    denkfout: verreweg het meeste werk begint met "Agent starten" op een
+    ticket, en dat maakt geen planning. Het overzicht stond dus leeg terwijl er
+    een agent aan het werk was. De bron is nu wat er feitelijk draait — de
+    agent-runs zelf — met planningen als extra laag eromheen.
+
+    Bewust één antwoord en niet vijf losse endpoints: "hoe staat het ervoor" is
+    één vraag, en het antwoord moet in één oogopslag kloppen.
 
     LET OP: deze route staat vóór /{board_id}, anders leest FastAPI "overview"
     als board-id."""
+    from models.background_run import BackgroundRun
     from models.board import Ticket
     from models.lab import Lab
     from models.plan import TicketPlan, TicketPlanItem
@@ -132,7 +137,47 @@ def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db
     svc = _svc(db)
     plan_svc = PlanService(db)
     boards = svc.list_boards()
+    board_namen = {b.id: b.name for b in boards}
     labs = {l.id: l for l in db.query(Lab).all()}
+
+    # Runs koppelen aan tickets via de thread van het ticket: dat is de enige
+    # verbinding die er is, en hij geldt voor élke run — handmatig gestart of
+    # uit een planning.
+    def _runs(*statussen: str, limiet: int) -> List[Any]:
+        q = (db.query(BackgroundRun, Ticket)
+             .join(Ticket, Ticket.agent_thread_id == BackgroundRun.thread_id))
+        if statussen:
+            q = q.filter(BackgroundRun.status.in_(statussen))
+        return q.order_by(BackgroundRun.created_at.desc()).limit(limiet).all()
+
+    # Bij welke planning hoort een lopende run (als hij ergens bij hoort)?
+    plan_per_run = {}
+    for item, plan in (db.query(TicketPlanItem, TicketPlan)
+                       .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
+                       .filter(TicketPlanItem.run_id.isnot(None)).all()):
+        plan_per_run[item.run_id] = {"plan_id": plan.id, "plan_name": plan.name,
+                                     "worker_id": item.worker_id}
+
+    def _regel(run, ticket) -> Dict[str, Any]:
+        board = next((b for b in boards if b.id == ticket.board_id), None)
+        lab = labs.get(board.lab_id) if board and board.lab_id else None
+        extra = plan_per_run.get(run.id) or {}
+        return {
+            "run_id": run.id, "status": run.status,
+            "board_id": ticket.board_id, "board_name": board_namen.get(ticket.board_id),
+            "ticket_key": ticket.key, "ticket_title": ticket.title,
+            "thread_id": run.thread_id,
+            "lab_name": lab.name if lab else None,
+            "lab_status": lab.status if lab else None,
+            "started_at": run.started_at or run.created_at,
+            "finished_at": run.finished_at,
+            "error": (run.error or None),
+            "steps": len(run.steps or []),
+            "plan_id": extra.get("plan_id"), "plan_name": extra.get("plan_name"),
+        }
+
+    lopend = [_regel(r, t) for r, t in _runs("running", limiet=50)]
+    verloop = [_regel(r, t) for r, t in _runs(limiet=runs)]
 
     borden = []
     for b in boards:
@@ -145,12 +190,11 @@ def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db
         if lab is not None:
             from services.lab.lab_service import LabService
             lab_svc = LabService(db)
-            alle = lab_svc.ensure_workers(lab)
-            werkers_totaal = len(alle)
+            werkers_totaal = len(lab_svc.ensure_workers(lab))
             werkers_bezet = len(lab_svc._bezette_werkers(lab.id))
-        actief = [p for p in db.query(TicketPlan)
-                  .filter(TicketPlan.board_id == b.id,
-                          TicketPlan.state.in_(("running", "paused", "scheduled"))).all()]
+        actief = db.query(TicketPlan).filter(
+            TicketPlan.board_id == b.id,
+            TicketPlan.state.in_(("running", "paused", "scheduled"))).all()
         borden.append({
             "id": b.id, "name": b.name, "key_prefix": b.key_prefix,
             "lab_id": b.lab_id,
@@ -162,6 +206,7 @@ def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db
             "columns": b.columns or [],
             "ticket_counts": per_kolom,
             "ticket_total": len(tickets),
+            "running_tickets": len([r for r in lopend if r["board_id"] == b.id]),
             "wachtend_in_agentkolom": per_kolom.get(b.agent_column or "", 0),
             "provider": b.provider,
             "last_sync_at": b.last_sync_at,
@@ -169,25 +214,7 @@ def overview(runs: int = Query(default=25, le=200), db: Session = Depends(get_db
             "plans": [plan_svc.to_dict(p, with_items=False) for p in actief],
         })
 
-    # Het verloop: de laatste regels over alle borden heen, nieuwste eerst.
-    q = (db.query(TicketPlanItem, TicketPlan, Ticket)
-         .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
-         .join(Ticket, Ticket.id == TicketPlanItem.ticket_id)
-         .filter(TicketPlanItem.state.in_(("running", "done", "failed")))
-         .order_by(TicketPlanItem.started_at.desc().nullslast(),
-                   TicketPlanItem.id.desc())
-         .limit(runs).all())
-    board_namen = {b.id: b.name for b in boards}
-    verloop = [{
-        "board_id": plan.board_id, "board_name": board_namen.get(plan.board_id),
-        "plan_id": plan.id, "plan_name": plan.name,
-        "ticket_key": ticket.key, "ticket_title": ticket.title,
-        "state": item.state, "run_id": item.run_id, "error": item.error,
-        "started_at": item.started_at, "finished_at": item.finished_at,
-    } for item, plan, ticket in q]
-
-    return {"boards": borden, "recent": verloop}
-
+    return {"boards": borden, "running": lopend, "recent": verloop}
 
 @router.get("/{board_id}")
 def get_board(board_id: int, db: Session = Depends(get_db)):

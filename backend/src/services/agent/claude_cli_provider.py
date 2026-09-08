@@ -366,9 +366,19 @@ class ClaudeCliProvider:
                             text = b.get("text") or ""
                             if not text:
                                 continue
-                            if has_tool:
-                                yield {"kind": "thinking", "text": text}
-                            else:
+                            # ALLE tussentekst bewaren, niet alleen die in een
+                            # boodschap die ook een tool aanroept. De agent zet
+                            # zijn afweging meestal in een eigen boodschap
+                            # ("eerst controleren of de load echt gedraaid
+                            # heeft, want de status zei dat eerder ten
+                            # onrechte"), en die viel hier stilzwijgend weg —
+                            # wie het verslag las zag 133 tool-aanroepen en geen
+                            # enkele reden waarom. De laatste tekst is meestal
+                            # het eindantwoord; die wordt er in
+                            # background_runs weer afgehaald zodat hij niet
+                            # dubbel verschijnt.
+                            yield {"kind": "thinking", "text": text}
+                            if not has_tool:
                                 answer_fallback.append(text)
                         elif b.get("type") == "tool_use":
                             yield {"kind": "tool", "name": b.get("name"), "input": b.get("input")}
