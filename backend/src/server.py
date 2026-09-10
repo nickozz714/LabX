@@ -60,6 +60,21 @@ async def _plan_tick() -> None:
     await _tick()
 
 
+async def _notify_inbox_tick() -> None:
+    """Antwoorden op meldingen ophalen.
+
+    HALEN en niet ontvangen: deze opstelling staat op een prive server zonder
+    domein en zonder open poort, dus een webhook kan hier niet aankomen.
+    Telegram (getUpdates) en mail (IMAP) laten zich prima bevragen, en dat is
+    hier de robuustere kant — niets dat stukgaat als het IP verandert.
+
+    Elke 30 seconden: snel genoeg dat een antwoord op je telefoon voelt als een
+    gesprek, rustig genoeg om geen enkele API-limiet te raken.
+    """
+    from services.notify.notify_service import tick as _tick
+    await _tick()
+
+
 async def _worker_reaper_tick() -> None:
     """Extra werkers die een tijd niets deden weer opruimen (de andere kant van
     de autoscaler). Nooit onder de ondergrens van het lab."""
@@ -127,6 +142,8 @@ async def lifespan(_app: FastAPI):
                        run_immediately=False)
     scheduler.register(name="mcp_lab_sessions", interval_seconds=300, fn=_mcp_session_tick,
                        run_immediately=False)
+    scheduler.register(name="notify_inbox", interval_seconds=30, fn=_notify_inbox_tick,
+                       run_immediately=False)
     scheduler.register(name="worker_reaper", interval_seconds=300, fn=_worker_reaper_tick,
                        run_immediately=False)
     await scheduler.start()
@@ -154,7 +171,7 @@ app.add_middleware(
 from routers import (  # noqa: E402
     auth_router, system_router, lab_router, chat_router, internal_router, settings_router,
     skill_router, tool_router, mcp_router, workflow_router, schedule_router, azure_profile_router,
-    board_router,
+    board_router, notify_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -174,3 +191,4 @@ app.include_router(workflow_router.router, prefix="/api")
 app.include_router(schedule_router.router, prefix="/api")
 app.include_router(azure_profile_router.router, prefix="/api")
 app.include_router(board_router.router, prefix="/api")
+app.include_router(notify_router.router, prefix="/api")

@@ -245,6 +245,50 @@ class PlanService:
         _SCHAAL_BEZIG.add(lab_id)
         loop.create_task(_schaal_worker(lab_id))
 
+    # ── naar buiten melden ──────────────────────────────────────────────────
+    #
+    # Een planning is precies het soort werk waarbij je niet voor het scherm
+    # blijft zitten: je zet er acht tickets in en gaat wat anders doen. De twee
+    # momenten die er dan toe doen zijn "alles is af" en "hij staat stil en
+    # wacht op jou" — de rest is ruis.
+
+    def _meld_planning(self, plan, items) -> None:
+        from services.notify.notify_service import meld
+
+        board = self.db.get(Board, plan.board_id)
+        mislukt = [i for i in items if i.state == "failed"]
+        klaar = [i for i in items if i.state == "done"]
+        regels = [f"{len(klaar)} van de {len(items)} ticket(s) afgerond."]
+        if mislukt:
+            sleutels = []
+            for i in mislukt:
+                t = self.db.get(Ticket, i.ticket_id)
+                sleutels.append(f"{t.key if t else i.ticket_id}: {(i.error or 'onbekend')[:120]}")
+            regels.append("Niet gelukt:\n" + "\n".join(f"- {x}" for x in sleutels))
+        meld("planning_klaar",
+             f"Planning '{plan.name}' klaar" + (f" ({len(mislukt)} mislukt)" if mislukt else ""),
+             "\n\n".join(regels),
+             {"board_id": plan.board_id, "board_name": board.name if board else None,
+              "plan_id": plan.id, "lab_id": board.lab_id if board else None})
+
+    def _meld_pauze(self, plan, ticket) -> None:
+        """Een gepauzeerde planning is het geval waar terugpraten het meest
+        oplevert: er wacht werk op een beslissing van jou, en zolang die niet
+        komt gebeurt er niets. Het gesprek van het ticket gaat mee in de
+        context, zodat een antwoord rechtstreeks bij de agent uitkomt."""
+        from services.notify.notify_service import meld
+
+        board = self.db.get(Board, plan.board_id)
+        meld("aandacht_nodig",
+             f"Planning '{plan.name}' staat stil bij {ticket.key if ticket else '?'}",
+             (plan.note or "De planning is gepauzeerd.")
+             + (f"\n\nTicket: {ticket.title}" if ticket else ""),
+             {"board_id": plan.board_id, "board_name": board.name if board else None,
+              "plan_id": plan.id, "lab_id": board.lab_id if board else None,
+              "ticket_id": ticket.id if ticket else None,
+              "ticket_key": ticket.key if ticket else None,
+              "thread_id": ticket.agent_thread_id if ticket else None})
+
     async def advance(self, plan_id: int) -> Dict[str, Any]:
         """Zet het volgende ticket in gang, als dat kan."""
         from services.agent import background_runs
@@ -275,6 +319,7 @@ class PlanService:
             plan.note = None
             self.db.commit()
             log.infox("Planning klaar", plan=plan.id)
+            self._meld_planning(plan, items)
             return {"plan": plan.id, "state": "done", "gestart": None}
 
         ticket = self.db.get(Ticket, volgende.ticket_id)
@@ -293,6 +338,7 @@ class PlanService:
                          f"Zet die eerst klaar, of haal het ticket uit de planning.")
             plan.updated_at = _now_iso()
             self.db.commit()
+            self._meld_pauze(plan, ticket)
             log.infox("Planning gepauzeerd door een afhankelijkheid",
                       plan=plan.id, ticket=ticket.key, wacht_op=open_keys)
             return {"plan": plan.id, "state": "paused", "gestart": None,
@@ -331,6 +377,7 @@ class PlanService:
             plan.note = f"{ticket.key} kon niet starten: {str(exc.detail)[:300]}"
             plan.updated_at = _now_iso()
             self.db.commit()
+            self._meld_pauze(plan, ticket)
             log.warningx("Ticket uit planning kon niet starten", plan=plan.id,
                          ticket=ticket.key, error=str(exc.detail)[:200])
             return {"plan": plan.id, "state": "paused", "gestart": None,

@@ -288,11 +288,20 @@ class BoardSyncService:
             await self._pull(board, adapter, stats)
             board.last_sync_error = None
         except Exception as exc:  # noqa: BLE001 — de fout hoort op het board, leesbaar
+            # Alleen melden bij de OVERGANG van goed naar fout. Een bord
+            # synchroniseert elke minuut; zonder deze toets krijg je bij een
+            # verlopen token elke minuut hetzelfde bericht, en dan zet je
+            # meldingen uit — precies op het moment dat je ze nodig hebt.
+            was_goed = not board.last_sync_error
             board.last_sync_error = str(exc)[:1000]
             board.last_sync_at = _now_iso()
             board.updated_at = _now_iso()
             self.db.commit()
             log.warningx("Board-sync mislukt", board=board.name, error=str(exc)[:300])
+            if was_goed:
+                from services.notify.notify_service import meld
+                meld("storing", f"Synchronisatie van bord '{board.name}' mislukt",
+                     str(exc)[:800], {"board_id": board.id, "board_name": board.name})
             raise
         board.last_sync_at = _now_iso()
         board.updated_at = _now_iso()

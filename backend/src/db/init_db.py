@@ -158,6 +158,7 @@ def init_db() -> None:
         lab_worker,
         mcp_server,
         message,
+        notification,
         plan,
         schedule,
         skill,

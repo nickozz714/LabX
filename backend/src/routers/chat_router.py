@@ -86,14 +86,6 @@ def create_thread(payload: Dict[str, Any], db: Session = Depends(get_db)):
     return _thread_dict(t)
 
 
-@router.get("/threads/{thread_id}")
-def get_thread(thread_id: str, db: Session = Depends(get_db)):
-    t = db.get(Thread, thread_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Thread niet gevonden")
-    return _thread_dict(t)
-
-
 @router.patch("/threads/{thread_id}")
 def update_thread(thread_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     t = db.get(Thread, thread_id)

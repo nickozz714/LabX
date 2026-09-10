@@ -349,7 +349,45 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
                                   f"afhing is dus niet gebeurd."))
         ticket.updated_at = _now_iso()
         db.commit()
+
+        # Naar buiten melden. Dit is bewust het LAATSTE wat de hook doet: alles
+        # wat het ticket aangaat is dan al vastgelegd, dus een melding kan nooit
+        # de reden zijn dat er iets niet bijgewerkt is.
+        _meld_over_ticket(ticket, board, run, status)
     return _hook
+
+
+def _meld_over_ticket(ticket: Ticket, board: Optional[Board], run, status: str) -> None:
+    """Eén melding per afgelopen agent-run, met de samenvatting erin.
+
+    De DRIE afloopsoorten krijgen elk een eigen gebeurtenis, want je wilt ze
+    verschillend kunnen aanzetten: een run die goed ging is een fijn bericht,
+    een run die je aandacht nodig heeft is er een waar je iets mee moet.
+    """
+    from services.notify.notify_service import meld
+
+    context = {
+        "thread_id": ticket.agent_thread_id,
+        "ticket_id": ticket.id,
+        "ticket_key": ticket.key,
+        "board_id": ticket.board_id,
+        "board_name": board.name if board else None,
+        "run_id": getattr(run, "id", None),
+        "lab_id": board.lab_id if board else None,
+    }
+    samenvatting = (getattr(run, "answer", None) or "").strip()
+    if status == "completed":
+        meld("run_klaar", f"{ticket.key} klaar — {ticket.title}"[:200],
+             samenvatting or "De agent is klaar maar liet geen samenvatting achter.",
+             context)
+    elif status == "onafgemaakt":
+        meld("aandacht_nodig", f"{ticket.key} NIET afgerond — {ticket.title}"[:200],
+             (ticket.agent_last_error or "De run stopte zonder het werk af te maken.")
+             + (f"\n\nWat de run meldde:\n{samenvatting}" if samenvatting else ""),
+             context)
+    else:
+        meld("run_mislukt", f"{ticket.key} mislukt — {ticket.title}"[:200],
+             ticket.agent_last_error or f"Run eindigde als '{status}'.", context)
 
 
 def reconcile_on_start(db: Session) -> int:

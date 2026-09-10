@@ -271,7 +271,47 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
         finally:
             db.close()
         _run_finish_hooks(run_id)
+        _meld_achtergrondtaak(run_id, mode, status, answer, error)
         _publish(run_id, {"kind": "run_status", "status": status})
+
+
+def _meld_achtergrondtaak(run_id: str, mode: str, status: str,
+                          answer: Optional[str], error: Optional[str]) -> None:
+    """Melden dat een ACHTERGRONDtaak klaar is.
+
+    Alleen achtergrondtaken: een gewone chatbeurt kijk je zelf aan, en daar een
+    duwtje op je telefoon voor krijgen is ruis. Een ticket-run meldt zichzelf al
+    via zijn eigen afloop-hook (agent_work), met de ticketsleutel erbij — die
+    slaan we hier over om niet twee berichten voor hetzelfde werk te sturen.
+    """
+    if mode != "background" or status == "cancelled":
+        return
+    from db.database import SessionLocal
+    from models.thread import Thread
+
+    db = SessionLocal()
+    try:
+        run = db.get(BackgroundRun, run_id)
+        if run is None:
+            return
+        thread = db.get(Thread, run.thread_id)
+        if thread is not None and getattr(thread, "source", "chat") == "board":
+            return  # het ticket meldt dit zelf, met meer context
+        from services.notify.notify_service import meld
+        titel = (thread.title if thread else None) or "Achtergrondtaak"
+        context = {"thread_id": run.thread_id, "run_id": run.id,
+                   "lab_id": thread.lab_id if thread else None}
+        if status == "completed":
+            meld("run_klaar", f"Klaar: {titel}"[:200],
+                 (answer or "").strip() or "Geen samenvatting.", context)
+        else:
+            meld("run_mislukt", f"Mislukt: {titel}"[:200],
+                 (error or f"Run eindigde als '{status}'.")[:2000], context)
+    except Exception as exc:  # noqa: BLE001 — melden mag nooit de run alsnog laten vallen
+        log.warningx("Melding over achtergrondtaak mislukt", run_id=run_id,
+                     error=str(exc)[:300])
+    finally:
+        db.close()
 
 
 def active_foreground_run(db: Session, thread_id: str) -> Optional[BackgroundRun]:

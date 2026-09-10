@@ -1123,6 +1123,15 @@ exec ssh -N \\
             p.updated_at = _now_iso()
             self.db.commit()
             log.warningx("Lab-container bestaat niet meer", lab_id=p.id, error=tekst[:200])
+            # Een lab dat weg is, is niet iets wat je pas wilt merken als je
+            # toevallig het scherm opent: elke agent-run erop loopt tot die tijd
+            # stuk. Melden gebeurt alleen HIER, in de overgang naar 'error' —
+            # niet bij elke aanroep die daarna faalt.
+            from services.notify.notify_service import meld
+            meld("storing", f"Lab '{p.name}' is weg",
+                 (p.error or "De container bestaat niet meer.")
+                 + "\n\nAlles op /workspace staat er nog; het lab moet opnieuw opgebouwd worden.",
+                 {"lab_id": p.id, "lab_name": p.name})
             return HTTPException(status_code=409, detail=p.error)
         return HTTPException(status_code=502, detail=f"Lab starten mislukt: {tekst[:500]}")
 

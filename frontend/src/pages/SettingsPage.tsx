@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { api, ApiError } from "@/lib/api";
 import type { AppSettingsDto, GuardModelStatus, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/components/ui";
+import { NotificationsCard } from "@/components/NotificationsCard";
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettingsDto | null>(null);
@@ -300,6 +301,8 @@ export function SettingsPage() {
       </Card>
 
       <LabExtrasCard />
+
+      <NotificationsCard />
 
       <AccountCard />
 
