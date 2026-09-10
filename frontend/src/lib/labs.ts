@@ -5,6 +5,17 @@ import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from 
  *  een lab-image waarvan de `ls` geen groottes kan geven. */
 export type LabFileEntry = { name: string; is_dir: boolean; bytes: number | null };
 
+/** De toestand van de zichtbare browser van een lab. `browser_draait` is het
+ *  veld waar het om gaat: het VNC-scherm kan prima werken terwijl er niets in
+ *  staat, en dan kijk je naar een leeg bureaublad. */
+export type BrowserStatus = {
+  pakket: boolean;
+  lab_draait: boolean;
+  vnc: boolean;
+  browser_draait: boolean;
+  server: string | null;
+};
+
 /** Wat een upload teruggeeft. `skipped` is er met opzet: een bestand dat te
  *  groot of leeg was moet je zien, niet stil verdwijnen. */
 export type Bijlage = { name: string; path: string; bytes: number };
@@ -68,6 +79,11 @@ export const labsApi = {
     api.get<{ path: string; content: string; truncated: boolean }>(`/labs/${id}/file?path=${encodeURIComponent(path)}`),
   writeFile: (id: string, path: string, content: string) =>
     api.put<{ ok: boolean }>(`/labs/${id}/file`, { path, content }),
+  browserStatus: (id: string) => api.get<BrowserStatus>(`/labs/${id}/browser-status`),
+  browserStart: (id: string, url?: string) =>
+    api.post<BrowserStatus & { ok: boolean; url: string }>(`/labs/${id}/browser-start`, { url }),
+  browserStop: (id: string) =>
+    api.post<{ ok: boolean; sessies_gesloten: number }>(`/labs/${id}/browser-stop`),
   upload: (id: string, files: File[], dir = "/workspace") => {
     const form = new FormData();
     files.forEach((f) => form.append("files", f, f.name));

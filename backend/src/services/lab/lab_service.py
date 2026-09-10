@@ -1520,6 +1520,113 @@ exec ssh -N \\
                 detail="; ".join(f"{o['name']}: {o['reden']}" for o in overgeslagen)[:500])
         return {"dir": doelmap, "files": geschreven, "skipped": overgeslagen}
 
+    # ── de zichtbare browser van een lab ────────────────────────────────────
+    #
+    # Het pakket `browser-vnc` zet een X-scherm, een vensterbeheerder en een
+    # VNC-brug klaar. Wat het NIET doet is een browser starten: die kwam pas in
+    # beeld zodra de agent zijn eerste `browser_*`-tool aanriep. Wie het tabblad
+    # opende om zelf ergens in te loggen — en dat is waar dit pakket voor is —
+    # keek dus naar een leeg bureaublad, zonder aanwijzing wat eraan te doen.
+    #
+    # De browser starten gebeurt via dezelfde MCP-sessie die de agent gebruikt,
+    # en niet met een eigen `chromium &`. Dat is geen omweg: twee Chromiums op
+    # hetzelfde `--user-data-dir` weigert Chrome ("profile appears to be in
+    # use"), dus een eigen exemplaar zou de agent later precies blokkeren.
+    # Via de sessiepool is het één browser die jullie allebei gebruiken — en
+    # dat is ook de bedoeling: jij logt in, de agent werkt verder in die sessie.
+
+    BROWSER_EXTRA = "browser-vnc"
+    BROWSER_MCP_SLUG = "playwright-lab"
+
+    async def browser_status(self, lab_id: str) -> Dict[str, Any]:
+        """Draait er een browser, en zo nee: kan er een gestart worden?"""
+        p = self.get(lab_id)
+        heeft_pakket = self.BROWSER_EXTRA in [str(x) for x in (p.extras or [])]
+        uit: Dict[str, Any] = {
+            "pakket": heeft_pakket,
+            "lab_draait": p.status == "running",
+            "vnc": False,
+            "browser_draait": False,
+            "server": None,
+        }
+        if not (heeft_pakket and p.status == "running"):
+            return uit
+        server = self._browser_server()
+        uit["server"] = server.slug if server is not None else None
+        try:
+            cid = self._require_running(p)
+        except HTTPException:
+            return uit
+        # De [c]-truc: zonder de blokhaken vindt grep zijn eigen commandoregel
+        # en meldt hij altijd dat er een browser draait.
+        res = await self.runtime.exec(cid, ["sh", "-c",
+            "curl -sf -o /dev/null http://127.0.0.1:6080/vnc.html && echo VNC; "
+            "ps -eo args 2>/dev/null | grep -qE '[c]hrome|[c]hromium' && echo BROWSER; "
+            "true"], timeout=20)
+        uitvoer = res.get("output") or ""
+        uit["vnc"] = "VNC" in uitvoer
+        uit["browser_draait"] = "BROWSER" in uitvoer
+        return uit
+
+    def _browser_server(self):
+        """De MCP-server die de ZICHTBARE browser draait. Op slug en niet op
+        naam: de naam is voor mensen en mag wijzigen."""
+        from models.mcp_server import MCPServer
+        return (self.db.query(MCPServer)
+                .filter(MCPServer.slug == self.BROWSER_MCP_SLUG,
+                        MCPServer.location == "lab",
+                        MCPServer.is_enabled == True)  # noqa: E712
+                .first())
+
+    async def start_browser(self, lab_id: str, *, url: Optional[str] = None) -> Dict[str, Any]:
+        """Start een browser in het lab (of stuur een al draaiende naar `url`).
+
+        Draait er al een, dan navigeert deze aanroep hem gewoon — dat is precies
+        wat je wilt als je het tabblad opnieuw opent: geen tweede venster, wel
+        de pagina die je vroeg.
+        """
+        p = self.get(lab_id)
+        if self.BROWSER_EXTRA not in [str(x) for x in (p.extras or [])]:
+            raise HTTPException(
+                status_code=409,
+                detail="Dit lab heeft het pakket 'Zelf inloggen in de browser van het lab' "
+                       "niet aan staan — vink het aan bij Inrichting.")
+        cid = self._require_running(p)
+        server = self._browser_server()
+        if server is None:
+            raise HTTPException(
+                status_code=409,
+                detail=("De MCP-server voor de zichtbare browser bestaat niet of staat uit. "
+                        "Richt het lab opnieuw in (Inrichting → Uitvoeren); het pakket zet "
+                        "hem dan terug."))
+
+        from services.mcp import mcp_client
+        doel = (url or "").strip() or "about:blank"
+        try:
+            await mcp_client.call_tool(server, "browser_navigate", {"url": doel},
+                                       lab_container_id=cid, db=self.db, lab_id=lab_id)
+        except Exception as exc:  # noqa: BLE001 — een MCP-fout is hier een toestand
+            raise HTTPException(
+                status_code=502,
+                detail=f"De browser kon niet gestart worden: {str(exc)[:400]}")
+        self._touch(p)
+        return {"ok": True, "url": doel, **(await self.browser_status(lab_id))}
+
+    async def stop_browser(self, lab_id: str) -> Dict[str, Any]:
+        """De browser (en zijn MCP-proces) afsluiten. Het profiel op /workspace
+        blijft staan, dus een login die je net gedaan hebt gaat niet verloren —
+        dit is de knop voor 'hij hangt, begin opnieuw'."""
+        p = self.get(lab_id)
+        cid = self._require_running(p)
+        from services.mcp.lab_session_pool import close_for_container
+        gesloten = await close_for_container(cid)
+        # Wat de sessiepool niet opruimt (een browser die zijn ouder overleefde)
+        # alsnog: anders blijft het profiel op slot en start de volgende niet.
+        await self.runtime.exec(cid, ["sh", "-c",
+            "pkill -f '[c]hrome' >/dev/null 2>&1; pkill -f '[c]hromium' >/dev/null 2>&1; true"],
+            timeout=20)
+        return {"ok": True, "sessies_gesloten": gesloten}
+
     async def read_lab_file_raw(self, lab_id: str, path: str, *,
                                 worker_id: Optional[int] = None,
                                 max_bytes: int = 4_000_000) -> Optional[str]:

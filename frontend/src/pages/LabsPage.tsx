@@ -6,11 +6,12 @@
  * one-shot exec, interactive terminal, guard-audit). The Docker diagnostic
  * banner is the direct fix for issue 1 ("geen Docker aanwezig").
  */
-import { useEffect, useRef, useState } from "react";
-import { dockerStatus, labsApi, type LabFileEntry } from "@/lib/labs";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { dockerStatus, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
+import { RefreshCw } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
@@ -761,9 +762,56 @@ function ProvisioningPanel({ lab, onChanged }: { lab: Lab; onChanged: () => void
  * De VNC-poort van het lab wordt niet op de host gepubliceerd; dit gaat door
  * een proxy in LabX, dus achter dezelfde login als de rest.
  */
+/**
+ * Het Browser-tabblad van een lab.
+ *
+ * Het VNC-scherm laat het BUREAUBLAD van het lab zien, niet een browser. Die
+ * twee werden makkelijk verward: het pakket stond aan, het scherm werkte, en
+ * toch keek je naar niets — want de browser startte pas zodra de agent zijn
+ * eerste `browser_*`-tool aanriep. Voor iemand die het tabblad juist opent om
+ * ZELF ergens in te loggen is dat de verkeerde volgorde.
+ *
+ * Nu start LabX er zelf een zodra je het tabblad opent en er nog geen draait.
+ * Dat gebeurt via dezelfde MCP-sessie die de agent gebruikt — één browser voor
+ * jullie samen, want twee Chromiums op hetzelfde profiel weigert Chrome — dus
+ * de sessie waarin jij inlogt is de sessie waarin hij verder werkt.
+ */
 function BrowserPanel({ lab }: { lab: Lab }) {
   const heeftPakket = (lab.extras || []).includes("browser-vnc");
   const url = `/api/labs/${lab.id}/browser?token=${encodeURIComponent(getToken() || "")}`;
+  const [status, setStatus] = useState<BrowserStatus | null>(null);
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+  const [adres, setAdres] = useState("");
+  // Eén automatische start per keer dat je het tabblad opent. Zonder deze rem
+  // zou een mislukte start zichzelf bij elke herrender opnieuw proberen.
+  const geprobeerd = useRef(false);
+
+  const starten = useCallback(async (naarUrl?: string) => {
+    setBezig(true);
+    setFout(null);
+    try {
+      setStatus(await labsApi.browserStart(lab.id, naarUrl));
+    } catch (err) {
+      setFout(err instanceof ApiError ? err.message : "Browser starten mislukt");
+    } finally {
+      setBezig(false);
+    }
+  }, [lab.id]);
+
+  useEffect(() => {
+    if (!heeftPakket || lab.status !== "running") return;
+    let afgebroken = false;
+    labsApi.browserStatus(lab.id).then((s) => {
+      if (afgebroken) return;
+      setStatus(s);
+      if (!s.browser_draait && !geprobeerd.current) {
+        geprobeerd.current = true;
+        starten();
+      }
+    }).catch(() => undefined);
+    return () => { afgebroken = true; };
+  }, [lab.id, lab.status, heeftPakket, starten]);
 
   return (
     <div className="space-y-4">
@@ -787,7 +835,7 @@ function BrowserPanel({ lab }: { lab: Lab }) {
         ) : (
           <>
             <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span>Je kijkt naar de browser van de agent; het profiel staat op /workspace.</span>
+              <span>Je kijkt naar het bureaublad van het lab.</span>
               <a className="ml-auto whitespace-nowrap underline" href={url} target="_blank" rel="noreferrer">
                 In een nieuw tabblad
               </a>
@@ -797,8 +845,44 @@ function BrowserPanel({ lab }: { lab: Lab }) {
               src={url}
               className="h-[60vh] w-full rounded-md border border-border bg-black"
             />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Input
+                className="max-w-xs text-xs"
+                placeholder="https://… openen in het lab"
+                value={adres}
+                onChange={(e) => setAdres(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && adres.trim()) starten(adres.trim()); }}
+              />
+              <Button variant="secondary" className="text-xs" disabled={bezig || !adres.trim()}
+                      onClick={() => starten(adres.trim())}>
+                Openen
+              </Button>
+              <Button variant="ghost" className="text-xs" disabled={bezig}
+                      title="Sluit de browser en start een verse. Je profiel op /workspace blijft staan, dus een login gaat niet verloren."
+                      onClick={async () => {
+                        setBezig(true);
+                        setFout(null);
+                        try {
+                          await labsApi.browserStop(lab.id);
+                          await starten(adres.trim() || undefined);
+                        } catch (err) {
+                          setFout(err instanceof ApiError ? err.message : "Herstarten mislukt");
+                        } finally {
+                          setBezig(false);
+                        }
+                      }}>
+                <RefreshCw size={12} /> Herstarten
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {bezig ? "Browser wordt gestart…"
+                  : status?.browser_draait ? "Browser draait."
+                  : status ? "Geen browser — klik op Herstarten." : "…"}
+              </span>
+            </div>
+            {fout && <p className="mt-1 text-xs text-destructive">{fout}</p>}
             <p className="mt-1 text-xs text-muted-foreground">
-              Nog geen venster? De browser start pas zodra de agent hem gebruikt.
+              Dit is dezelfde browser als die van de agent: log jij hier in, dan werkt hij
+              verder in jouw sessie. Het profiel staat op /workspace en blijft bewaard.
             </p>
           </>
         )}

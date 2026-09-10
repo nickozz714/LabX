@@ -449,6 +449,25 @@ async def upload_to_lab(lab_id: str,
                                            worker_id=worker_id)
 
 
+@router.get("/{lab_id}/browser-status")
+async def browser_status(lab_id: str, db: Session = Depends(get_db)):
+    """Draait er een browser in dit lab? De UI heeft dit nodig om te kunnen
+    zeggen 'ik start er een' in plaats van een leeg bureaublad te tonen."""
+    return await _service(db).browser_status(lab_id)
+
+
+@router.post("/{lab_id}/browser-start")
+async def browser_start(lab_id: str, payload: Optional[Dict[str, Any]] = None,
+                        db: Session = Depends(get_db)):
+    """Start een browser in het lab, of stuur een draaiende naar `url`."""
+    return await _service(db).start_browser(lab_id, url=(payload or {}).get("url"))
+
+
+@router.post("/{lab_id}/browser-stop")
+async def browser_stop(lab_id: str, db: Session = Depends(get_db)):
+    return await _service(db).stop_browser(lab_id)
+
+
 @router.post("/{lab_id}/publish")
 async def publish_lab_repo(lab_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     return await _service(db).publish(
