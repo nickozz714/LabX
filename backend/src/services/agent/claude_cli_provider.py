@@ -90,6 +90,43 @@ def onverwachte_native_tools(steps) -> list:
             gezien.append(naam)
     return gezien
 
+def achtergrond_subagents(steps) -> list:
+    """Subagents die op de achtergrond zijn gestart en de run niet overleven.
+
+    `Agent`/`Task` mag hier: een subagent erft de --disallowedTools van de
+    sessie en is nuttig om parallel iets uit te zoeken. Maar `run_in_background`
+    is een ander verhaal. In een gewone CLI-sessie blijft zo'n subagent draaien
+    en meldt zich later; hier bestaat "later" niet. De run is één headless
+    aanroep, en zodra het eindantwoord er staat, valt het proces om — mét de
+    subagent erin.
+
+    Zo verdween het echte werk van SWI-88: de agent gaf de hele opruimtaak
+    (TST -> ACC -> PRD) aan een achtergrond-subagent, deed er zelf een
+    hive-klusje naast, en meldde "de opruimtaak loopt nog op de achtergrond".
+    Die liep niet meer. De run stond op `completed` en het ticket zag er
+    afgehandeld uit.
+
+    Geeft de omschrijvingen terug van wat er op de achtergrond gezet is, zodat
+    de afloop-hook er een leesbare waarschuwing van kan maken.
+    """
+    gevonden = []
+    for stap in (steps or []):
+        stap = stap or {}
+        naam = str(stap.get("name") or stap.get("tool") or "").strip()
+        if naam not in ("Agent", "Task"):
+            continue
+        invoer = stap.get("input") or {}
+        if not isinstance(invoer, dict):
+            continue
+        if invoer.get("run_in_background") is not True:
+            continue
+        omschrijving = str(invoer.get("description")
+                           or invoer.get("subagent_type") or "subagent").strip()
+        if omschrijving not in gevonden:
+            gevonden.append(omschrijving)
+    return gevonden
+
+
 _STDOUT_LIMIT = 64 * 1024 * 1024  # a stream-json line can carry a big tool result
 
 

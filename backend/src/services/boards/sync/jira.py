@@ -32,8 +32,14 @@ op `"pull"`.
 
 Twee Jira-eigenaardigheden die dit bestand afhandelt:
 - **ADF**: v3 wil `description` en opmerkingen als Atlassian Document Format
-  (een JSON-document), niet als tekst. `_adf_to_text` / `_text_to_adf` doen de
-  vertaling heen en terug.
+  (een JSON-document), niet als tekst. De vertaling van en naar Markdown zit in
+  `sync/adf.py` — bewust een eigen module, want hij moet rondgang-vast zijn en
+  dat vraagt om echte tests.
+- **Assignee is een accountId, geen naam.** Jira Cloud accepteert
+  `{"displayName": ...}` zonder te klagen en zet het veld vervolgens op
+  niemand. Zo raakten in dit project vier tickets hun uitvoerder kwijt.
+  `_account_id` zoekt de naam op en er wordt niets verstuurd als dat niet lukt
+  — een leeg veld is erger dan een mislukte push, want die laatste zie je.
 - **Status is geen veld**: je zet een issue niet op "Done" met een PUT, je
   voert een *transition* uit. `_transition_to` zoekt de transitie op naam op.
 """
@@ -45,6 +51,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from component_logging import get_logger
+from services.boards.sync.adf import to_adf, to_markdown
 from services.boards.sync.base import (ExternalBoardColumn, ExternalComment, ExternalItem,
                                        SyncAdapter)
 
@@ -60,41 +67,13 @@ _PRIORITY_TO_JIRA = {"urgent": "Highest", "high": "High", "normal": "Medium", "l
 
 
 def _adf_to_text(node: Any) -> str:
-    """Plat een ADF-document tot leesbare tekst. Bewust simpel: koppen,
-    alinea's, lijsten en code komen als regels terug — genoeg om een ticket te
-    lezen en in een prompt te zetten."""
-    if node is None:
-        return ""
-    if isinstance(node, str):
-        return node
-    if isinstance(node, list):
-        return "".join(_adf_to_text(n) for n in node)
-    if not isinstance(node, dict):
-        return ""
-    node_type = node.get("type")
-    if node_type == "text":
-        return str(node.get("text") or "")
-    if node_type == "hardBreak":
-        return "\n"
-    inner = _adf_to_text(node.get("content"))
-    if node_type in ("paragraph", "heading", "codeBlock", "blockquote"):
-        return inner + "\n"
-    if node_type == "listItem":
-        return "- " + inner.lstrip()
-    return inner
+    """ADF -> Markdown. Naam behouden omdat de rest van dit bestand hem zo
+    noemt; de vertaling zelf zit in sync/adf.py."""
+    return to_markdown(node)
 
 
 def _text_to_adf(text: Optional[str]) -> Dict[str, Any]:
-    paragraphs = (text or "").split("\n")
-    return {
-        "type": "doc",
-        "version": 1,
-        "content": [
-            {"type": "paragraph",
-             "content": ([{"type": "text", "text": line}] if line else [])}
-            for line in paragraphs
-        ],
-    }
+    return to_adf(text)
 
 
 class JiraAdapter(SyncAdapter):
@@ -337,10 +316,62 @@ class JiraAdapter(SyncAdapter):
 
     # ── schrijven ───────────────────────────────────────────────────────────
 
-    def _fields_payload(self, *, title: Optional[str], description: Optional[str],
-                        priority: Optional[str], assignee: Optional[str],
-                        labels: Optional[List[str]],
-                        acceptance_criteria: Optional[str] = None) -> Dict[str, Any]:
+    async def _account_id(self, client: httpx.AsyncClient, naam: str,
+                          issue_key: Optional[str] = None) -> Optional[str]:
+        """Naam of e-mailadres -> Jira accountId.
+
+        Nodig omdat `assignee` een gebruikersveld is: Jira wil een accountId.
+        Stuur je een naam, dan neemt Jira de PUT aan en zet het veld op
+        niemand — de stilste manier om een uitvoerder kwijt te raken.
+
+        Eerst de lijst mensen die dit issue toegewezen mogen krijgen (dat is de
+        lijst die Jira zelf in het toewijzingsveld toont), anders de algemene
+        gebruikerszoekopdracht. Geen treffer of meerdere gelijke treffers ->
+        None, en dan sturen we het veld niet mee.
+        """
+        zoek = (naam or "").strip()
+        if not zoek:
+            return None
+        pogingen = []
+        if issue_key:
+            pogingen.append((f"{self.base_url}/rest/api/3/user/assignable/search",
+                             {"issueKey": issue_key, "query": zoek, "maxResults": 50}))
+        pogingen.append((f"{self.base_url}/rest/api/3/user/search",
+                         {"query": zoek, "maxResults": 50}))
+        for url, params in pogingen:
+            try:
+                resp = await client.get(url, headers=self._headers(), params=params)
+            except Exception as exc:  # noqa: BLE001
+                log.warningx("Jira-gebruiker zoeken mislukt", naam=zoek, error=str(exc)[:200])
+                continue
+            if resp.status_code >= 400:
+                continue
+            mensen = [u for u in (resp.json() or []) if u.get("accountId")]
+            laag = zoek.lower()
+            exact = [u for u in mensen
+                     if str(u.get("displayName") or "").strip().lower() == laag
+                     or str(u.get("emailAddress") or "").strip().lower() == laag]
+            if len(exact) == 1:
+                return str(exact[0]["accountId"])
+            if len(mensen) == 1 and not exact:
+                return str(mensen[0]["accountId"])
+            if len(exact) > 1:
+                # Twee mensen met dezelfde naam: raden is erger dan niets doen.
+                log.warningx("Jira: naam is niet uniek, assignee niet meegestuurd",
+                             naam=zoek, treffers=len(exact))
+                return None
+        return None
+
+    async def _fields_payload(self, client: httpx.AsyncClient, *,
+                              title: Optional[str], description: Optional[str],
+                              priority: Optional[str], assignee: Optional[str],
+                              labels: Optional[List[str]],
+                              acceptance_criteria: Optional[str] = None,
+                              issue_key: Optional[str] = None) -> Dict[str, Any]:
+        """None betekent overal "niet aanraken". Dat is geen detail maar de
+        hele afspraak met sync_service: die stuurt alleen de velden mee die in
+        LabX daadwerkelijk zijn gewijzigd, zodat een sync nooit een veld
+        overschrijft dat niemand heeft aangeraakt."""
         fields: Dict[str, Any] = {}
         if title is not None:
             fields["summary"] = title
@@ -352,7 +383,14 @@ class JiraAdapter(SyncAdapter):
             # Jira-labels mogen geen spaties bevatten.
             fields["labels"] = [str(x).replace(" ", "-") for x in labels]
         if assignee:
-            fields["assignee"] = {"displayName": assignee}
+            account = await self._account_id(client, assignee, issue_key)
+            if account:
+                fields["assignee"] = {"accountId": account}
+            else:
+                raise RuntimeError(
+                    f"Jira kent geen gebruiker '{assignee}' in dit project — de "
+                    f"toewijzing is NIET meegestuurd. Zonder deze stop zou Jira "
+                    f"het veld leegmaken.")
         if acceptance_criteria is not None and self._acceptance_field:
             fields[self._acceptance_field] = _text_to_adf(acceptance_criteria)
         return fields
@@ -361,18 +399,27 @@ class JiraAdapter(SyncAdapter):
                           priority: Optional[str], assignee: Optional[str],
                           labels: List[str],
                           acceptance_criteria: Optional[str] = None) -> ExternalItem:
-        fields = self._fields_payload(title=title, description=description, priority=priority,
-                                      assignee=None, labels=labels,
-                                      acceptance_criteria=acceptance_criteria)
-        fields["project"] = {"key": self._require("project_key")}
-        fields["issuetype"] = {"name": str(self.config.get("issue_type") or "Task")}
         async with httpx.AsyncClient(timeout=60.0) as client:
+            fields = await self._fields_payload(
+                client, title=title, description=description, priority=priority,
+                assignee=None, labels=labels, acceptance_criteria=acceptance_criteria)
+            fields["project"] = {"key": self._require("project_key")}
+            fields["issuetype"] = {"name": str(self.config.get("issue_type") or "Task")}
             resp = await client.post(f"{self.base_url}/rest/api/3/issue",
                                      headers=self._headers(), json={"fields": fields})
             self._raise_for(resp, "issue aanmaken")
             key = (resp.json() or {}).get("key")
             if state:
                 await self._transition_to(client, key, state)
+            if assignee:
+                # Pas na het aanmaken: de assignable-lijst hangt aan een
+                # bestaand issue, en die geeft betere treffers dan de algemene
+                # gebruikerszoekopdracht.
+                toewijzing = await self._fields_payload(client, title=None, description=None,
+                                                        priority=None, assignee=assignee,
+                                                        labels=None, issue_key=key)
+                await client.put(f"{self.base_url}/rest/api/3/issue/{key}",
+                                 headers=self._headers(), json={"fields": toewijzing})
             return await self._reload(client, key)
 
     async def update_item(self, *, external_id: str, title: Optional[str],
@@ -380,10 +427,11 @@ class JiraAdapter(SyncAdapter):
                           priority: Optional[str], assignee: Optional[str],
                           labels: Optional[List[str]],
                           acceptance_criteria: Optional[str] = None) -> ExternalItem:
-        fields = self._fields_payload(title=title, description=description, priority=priority,
-                                      assignee=assignee, labels=labels,
-                                      acceptance_criteria=acceptance_criteria)
         async with httpx.AsyncClient(timeout=60.0) as client:
+            fields = await self._fields_payload(
+                client, title=title, description=description, priority=priority,
+                assignee=assignee, labels=labels,
+                acceptance_criteria=acceptance_criteria, issue_key=external_id)
             if fields:
                 resp = await client.put(f"{self.base_url}/rest/api/3/issue/{external_id}",
                                         headers=self._headers(), json={"fields": fields})
@@ -393,6 +441,17 @@ class JiraAdapter(SyncAdapter):
             return await self._reload(client, external_id)
 
     async def _transition_to(self, client: httpx.AsyncClient, key: str, state: str) -> None:
+        # Al op de gevraagde status? Dan niets doen. Jira accepteert een
+        # transitie naar dezelfde status en schrijft er een changelog-regel
+        # voor ("In Progress -> In Progress"); dat is ruis in andermans
+        # systeem en maakt de geschiedenis onleesbaar.
+        huidig = await client.get(f"{self.base_url}/rest/api/3/issue/{key}",
+                                  headers=self._headers(), params={"fields": "status"})
+        if huidig.status_code < 400:
+            nu = (((huidig.json().get("fields") or {}).get("status") or {}).get("name") or "")
+            if nu.strip().lower() == state.strip().lower():
+                return
+
         resp = await client.get(f"{self.base_url}/rest/api/3/issue/{key}/transitions",
                                 headers=self._headers())
         self._raise_for(resp, f"transities van {key} ophalen")

@@ -129,6 +129,15 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
         " opgepakt. Blijf niet wachten of pollen in het lab: dat houdt een werker"
         " bezet en verbrandt je context. Zet wél eerst in een opmerking waar je"
         " gebleven bent; bij het hervatten is dat je enige context.",
+        "- **Zet nooit werk op de achtergrond en meld dan dat je klaar bent.**"
+        " Deze run is één aanroep: zodra jij je eindantwoord geeft, valt het"
+        " proces om. Een subagent met `run_in_background` sterft daar mee, een"
+        " `nohup`-commando in het lab ook, en het bericht dat je belooft komt"
+        " nooit. Dat is geen theorie — precies zo is het opruimwerk van een"
+        " eerder ticket verdampt terwijl het ticket er afgehandeld uitzag. Doe"
+        " het werk in deze run, of zet met `board__wait_until` de planning stil"
+        " tot het af is. Een subagent op de VOORGROND (gewoon `Agent` zonder"
+        " achtergrondvlag) mag wel: daar wacht je op.",
         f"- **Houd een opmerking onder de {MAX_COMMENT_CHARS} tekens.** Zoveel wordt er"
         " later ook teruggelezen — wie hier overheen schrijft, ziet zijn eigen staart"
         " niet terug bij een volgende run, en dat is nu juist het deel met wat er nog"
@@ -144,6 +153,14 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
         " ze dan zelf op en zet ze met `board__update_ticket(acceptance_criteria=...)`"
         " als korte, toetsbare lijst (Markdown) — dat is een aanscherping van de"
         " opdracht, geen verslag.",
+        "",
+        "**Eén ticket, één opdracht.** Komt er onderweg ander werk voorbij — een"
+        " onderhoudstaak uit de hive (een Pollen), een openstaand klusje in een"
+        " ander systeem, iets dat je toevallig kapot ziet — dan is dat niet van"
+        f" jou. Je mag de hive raadplegen om {ticket.key} beter te doen, maar het"
+        " aannemen van hive-onderhoud hoort niet bij deze run: het kost de tijd"
+        " en de context die voor dit ticket bedoeld waren. Zie je iets dat"
+        " aandacht verdient, noem het in je eindantwoord en laat het liggen.",
         "",
         "Kom je er niet uit of ontbreekt informatie? Zet dat als opmerking op het"
         " ticket en zeg het expliciet in je eindantwoord — een half afgemaakt ticket"
@@ -249,6 +266,14 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
         board = db.get(Board, ticket.board_id)
         status = getattr(run, "status", None) or "failed"
 
+        # Werk dat op de achtergrond is gezet, is met deze run meegestorven.
+        # Dat moet vóór de afhandeling bekend zijn: een run die zijn opdracht
+        # aan een achtergrond-subagent gaf, is niet klaar — hij is gestopt.
+        from services.agent.claude_cli_provider import achtergrond_subagents
+        verloren = achtergrond_subagents(getattr(run, "steps", None))
+        if verloren and status == "completed":
+            status = "onafgemaakt"
+
         if status == "completed":
             answer = (getattr(run, "answer", None) or "").strip()
             ticket.agent_state = "done"
@@ -268,6 +293,24 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
                 except HTTPException as exc:
                     log.warningx("Ticket verplaatsen na agent-run mislukt",
                                  ticket=ticket.key, error=str(exc.detail))
+        elif status == "onafgemaakt":
+            # Het eindantwoord van zo'n run klinkt als een afronding ("loopt nog
+            # op de achtergrond, je hoort ervan"). Dat bericht komt nooit. Het
+            # ticket blijft daarom in zijn kolom staan en gaat op `failed`, zodat
+            # het opnieuw opgepakt kan worden in plaats van klaar te lijken.
+            ticket.agent_state = "failed"
+            ticket.agent_last_error = (
+                "Run zette werk op de achtergrond (" + "; ".join(verloren)
+                + ") en eindigde; die subagents zijn met het proces gestopt.")[:2000]
+            antwoord = (getattr(run, "answer", None) or "").strip()
+            svc.add_comment(
+                ticket.id, kind="activity", author="agent",
+                body=("Deze run is NIET afgerond. Het werk is gedelegeerd aan een "
+                      "subagent op de achtergrond (" + "; ".join(verloren) + "), en "
+                      "die stopt zodra de run zijn antwoord geeft — een headless run "
+                      "kent geen 'later'. Wat die subagent zou doen, is dus niet "
+                      "gebeurd; pak het ticket opnieuw op."
+                      + (f"\n\nWat de run zelf meldde:\n{antwoord[:1500]}" if antwoord else "")))
         else:
             ticket.agent_state = "failed"
             ticket.agent_last_error = (getattr(run, "error", None)

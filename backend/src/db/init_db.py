@@ -87,6 +87,10 @@ _ADDITIVE_COLUMNS = {
     "tickets": [
         ("acceptance_criteria", "TEXT"),
         ("depends_on", "TEXT"),
+        # Wat de bron als laatste zei; het ijkpunt voor "welk veld is hier
+        # veranderd". NULL voor bestaande rijen: de eerste sync vult hem, en
+        # tot dat moment gedraagt de push zich als vroeger (alles mee).
+        ("external_snapshot", "TEXT"),
     ],
     "background_runs": [
         ("mode", "VARCHAR(16) NOT NULL DEFAULT 'background'"),

@@ -132,6 +132,20 @@ class Ticket(Base):
     # waarmee de pull ziet of er extern iets veranderd is.
     external_rev: Mapped[str | None] = mapped_column(String(64), nullable=True)
     external_synced_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Wat de BRON als laatste zei: {title, description, acceptance_criteria,
+    # priority, assignee, labels, state}. Dit is het ijkpunt waarmee de sync
+    # bepaalt wélk veld in LabX is veranderd.
+    #
+    # Zonder ijkpunt kon de sync dat niet weten en stuurde hij bij elke lokale
+    # wijziging ALLE velden terug. Eén ticket naar een andere kolom slepen
+    # herschreef dus ook de omschrijving — met de tekst zoals LabX hem toevallig
+    # had staan. Stond er in Jira intussen een nieuwere versie, dan werd die
+    # overschreven met een oudere. Precies dat gebeurde op BICC-7148.
+    #
+    # Het werkt twee kanten op: een veld dat lokaal niet is aangeraakt wordt
+    # nooit gepusht, en een veld dat extern niet is veranderd wordt nooit
+    # over de lokale waarde heen getrokken.
+    external_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Lokale wijziging die nog niet is teruggeschreven (alleen relevant bij
     # sync_direction="two_way").
     dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

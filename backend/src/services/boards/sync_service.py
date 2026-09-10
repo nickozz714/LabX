@@ -7,9 +7,31 @@ Volgorde is bewust **push vóór pull**: eerst wat LabX lokaal veranderde naar d
 bron sturen, dan de bron als waarheid terugtrekken. Andersom zou de pull de nog
 niet gepushte lokale wijziging overschrijven en die stilletjes weggooien.
 
-Conflictregel: de bron wint, behalve voor een ticket dat nog `dirty` is (de
-push is mislukt) — dat blijft lokaal staan zodat de wijziging niet verdampt en
-zichtbaar blijft als openstaand verschil.
+**Conflictregel: per VELD, en de nieuwste wint.** Dat vraagt om een ijkpunt, en
+dat is `Ticket.external_snapshot`: wat de bron als laatste zei. Daarmee is voor
+elk veld te zien wie het veranderd heeft — LabX (waarde wijkt af van het
+ijkpunt) of de bron (nieuwe waarde wijkt af van het ijkpunt) — in plaats van
+alleen dát ze verschillen.
+
+Zonder dat ijkpunt stuurde de push bij elke lokale wijziging ALLE velden mee.
+Eén ticket naar een andere kolom slepen herschreef dus ook de omschrijving, met
+de tekst zoals LabX hem toevallig had staan. Dat kostte in dit project drie
+dingen tegelijk: opmaak (de omschrijving ging door een platte vertaling heen),
+de toewijzing (assignee werd op niemand gezet) en soms de inhoud zelf — op
+BICC-7148 werd op 10-09 een versie van een dag oud over de nieuwere heen gezet.
+
+Wat er nu geldt:
+- Een veld dat in LabX niet is aangeraakt, wordt NOOIT gepusht.
+- Een veld dat in de bron niet is veranderd, wordt NOOIT over de lokale waarde
+  getrokken.
+- Veranderen ze allebei, dan wint de bron — die is gedeeld, LabX is de kopie.
+- Een ticket dat nog `dirty` is (de push is mislukt) blijft lokaal staan, zodat
+  de wijziging niet verdampt en zichtbaar blijft als openstaand verschil.
+
+**Een kolom zonder externe status is van LabX alleen.** De agent-kolom is daar
+het voorbeeld van: die bestaat in Jira niet. Een ticket dat daar staat, hoort
+er te blijven staan zolang de bron zijn status niet verandert — anders sleept
+elke sync het terug naar de eerste kolom, en dat is precies wat er gebeurde.
 
 Statusmapping zit in `provider_config["state_map"]`: {kolom-key: [externe
 statussen]}. Ontbreekt een kolom in de map, dan blijft het ticket in de kolom
@@ -44,6 +66,32 @@ log = get_logger(__name__)
 # Ruim genoeg voor een normaal board, en het houdt een bord met duizenden oude
 # tickets ervan af elke sync de bron plat te bellen.
 _RECONCILE_LIMIT = 500
+
+# De velden die heen en weer gaan. `state` zit er niet bij: die is geen veld
+# maar een kolom, en heeft zijn eigen mapping.
+_GESYNCTE_VELDEN = ("title", "description", "acceptance_criteria",
+                    "priority", "assignee", "labels")
+
+# Velden waarbij een leeg antwoord van de bron "ik ken dit veld niet" betekent
+# in plaats van "dit veld is leeg". Alleen acceptatiecriteria: Jira heeft er
+# geen standaardveld voor, dus zonder `acceptance_field` weet de bron er niets
+# van en mag hij de lokale criteria niet wissen — en mag LabX ze ook niet als
+# "hier gewijzigd" beschouwen, want er is niets om mee te vergelijken.
+#
+# Voor de rest is leeg een échte waarde. Dat is geen haarkloverij: een ticket
+# dat in Jira op niemand staat, MOET in LabX ook op niemand komen te staan.
+# Deed je dat niet, dan bleef de oude naam in LabX staan, verschilde hij
+# eeuwig van de bron, en duwde elke sync hem opnieuw naar Jira.
+_VELDEN_ZONDER_MENING = ("acceptance_criteria",)
+
+
+def _gelijk(a: Any, b: Any) -> bool:
+    """Vergelijking die niet struikelt over de vormverschillen tussen LabX en
+    een bron: None en "" zijn hetzelfde niets, lijsten worden per element
+    vergeleken, en witruimte aan de randen telt niet mee."""
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        return [str(x) for x in (a or [])] == [str(x) for x in (b or [])]
+    return str(a if a is not None else "").strip() == str(b if b is not None else "").strip()
 
 
 def _now_iso() -> str:
@@ -212,6 +260,10 @@ class BoardSyncService:
             "pushed": 0, "created_external": 0, "comments_pushed": 0,
             "pulled": 0, "created_local": 0, "updated_local": 0,
             "comments_pulled": 0, "skipped_dirty": 0, "reconciled": 0, "errors": [],
+            # Per gepusht ticket: welke velden er meegingen. Zonder dit is
+            # "pushed: 3" niet te controleren, en juist het ONGEVRAAGD
+            # meesturen van velden was hier het probleem.
+            "velden_gepusht": [],
             # Wat _auto_map aan de mapping veranderde (leeg = niets te doen).
             "mapping": [],
             # Statussen uit de bron die op geen enkele kolom gemapt zijn. Zonder
@@ -251,29 +303,82 @@ class BoardSyncService:
 
     # ── push ────────────────────────────────────────────────────────────────
 
+    def _lokale_wijzigingen(self, ticket: Ticket) -> Dict[str, Any]:
+        """Welke velden zijn in LabX veranderd sinds de bron ze aanleverde.
+
+        Geen ijkpunt (een ticket van vóór deze werkwijze) betekent: we weten
+        het niet, en dan is niets versturen het enige veilige antwoord. Raden
+        is hoe de omschrijvingen sneuvelden."""
+        snapshot = ticket.external_snapshot or {}
+        if not snapshot:
+            return {}
+        return {veld: getattr(ticket, veld) for veld in _GESYNCTE_VELDEN
+                if not (snapshot.get(veld) is None and veld in _VELDEN_ZONDER_MENING)
+                and not _gelijk(getattr(ticket, veld), snapshot.get(veld))}
+
+    def _te_pushen_status(self, board: Board, ticket: Ticket) -> Optional[str]:
+        """De externe status die mee moet, of None.
+
+        None in drie gevallen, en alle drie met opzet:
+        - de kolom heeft geen externe status (agent-kolom: bestaat in Jira niet)
+        - het ticket staat nog in dezelfde kolom als bij de laatste sync
+        - er is geen ijkpunt, dus we weten niet of er iets verschoven is
+
+        Dat tweede geval scheelt meer dan het lijkt: zonder die toets voerde
+        LabX een transitie uit naar de status die er al stond, en dat levert in
+        Jira een changelog-regel "In Progress -> In Progress" op bij elke sync.
+        """
+        state = self._state_for_column(board, ticket.status)
+        if not state:
+            return None
+        snapshot = ticket.external_snapshot or {}
+        if not snapshot:
+            return None
+        vorige_kolom = self._column_for_state(board, snapshot.get("state"))
+        return state if ticket.status != vorige_kolom else None
+
     async def _push(self, board: Board, adapter, stats: Dict[str, Any]) -> None:
         dirty = (self.db.query(Ticket)
                  .filter(Ticket.board_id == board.id, Ticket.dirty == True)  # noqa: E712
                  .all())
         for ticket in dirty:
-            state = self._state_for_column(board, ticket.status)
             try:
                 if ticket.external_id:
+                    velden = self._lokale_wijzigingen(ticket)
+                    state = self._te_pushen_status(board, ticket)
+                    if not velden and not state:
+                        # Niets om te melden: het ticket is lokaal gewijzigd in
+                        # iets dat de bron niet kent (kolomvolgorde, depends_on,
+                        # agent-status), of het ijkpunt ontbreekt nog.
+                        ticket.dirty = False
+                        ticket.updated_at = _now_iso()
+                        self.db.commit()
+                        continue
                     item = await adapter.update_item(
-                        external_id=ticket.external_id, title=ticket.title,
-                        description=ticket.description, state=state,
-                        priority=ticket.priority, assignee=ticket.assignee,
-                        labels=list(ticket.labels or []),
-                        acceptance_criteria=ticket.acceptance_criteria)
+                        external_id=ticket.external_id,
+                        title=velden.get("title"),
+                        description=velden.get("description"),
+                        state=state,
+                        priority=velden.get("priority"),
+                        assignee=velden.get("assignee"),
+                        labels=velden.get("labels"),
+                        acceptance_criteria=velden.get("acceptance_criteria"))
                     stats["pushed"] += 1
+                    stats.setdefault("velden_gepusht", []).append(
+                        f"{ticket.key}: {', '.join(sorted(velden) + (['status'] if state else []))}")
                 else:
+                    # Nieuw in LabX: dan is er nog niets in de bron om te
+                    # ontzien en gaat alles mee.
                     item = await adapter.create_item(
-                        title=ticket.title, description=ticket.description, state=state,
+                        title=ticket.title, description=ticket.description,
+                        state=self._state_for_column(board, ticket.status),
                         priority=ticket.priority, assignee=ticket.assignee,
                         labels=list(ticket.labels or []),
                         acceptance_criteria=ticket.acceptance_criteria)
                     stats["created_external"] += 1
                 self._apply_external_identity(ticket, board, item)
+                # De bron heeft nu onze waarden: dat is het nieuwe ijkpunt.
+                ticket.external_snapshot = self._snapshot(item)
                 ticket.dirty = False
                 ticket.updated_at = _now_iso()
                 self.db.commit()
@@ -362,7 +467,7 @@ class BoardSyncService:
                     # wijziging is nog het enige exemplaar. Niet overschrijven.
                     stats["skipped_dirty"] += 1
                     continue
-                if self._apply_external_fields(ticket, item, column):
+                if self._apply_external_fields(board, ticket, item, column):
                     stats["updated_local"] += 1
             self._apply_external_identity(ticket, board, item)
             ticket.external_synced_at = _now_iso()
@@ -409,7 +514,7 @@ class BoardSyncService:
             column = self._column_for_state(board, item.state)
             if item.state and not column and item.state not in stats["unmapped_states"]:
                 stats["unmapped_states"].append(item.state)
-            if self._apply_external_fields(ticket, item, column):
+            if self._apply_external_fields(board, ticket, item, column):
                 stats["reconciled"] += 1
             self._apply_external_identity(ticket, board, item)
             ticket.external_synced_at = _now_iso()
@@ -430,6 +535,7 @@ class BoardSyncService:
             labels=list(item.labels or []),
             position=self.boards.next_position(board.id, column),
             dirty=False,
+            external_snapshot=self._snapshot(item),
             created_at=now, updated_at=now,
         )
         self.db.add(ticket)
@@ -438,31 +544,76 @@ class BoardSyncService:
         return ticket
 
     @staticmethod
-    def _apply_external_fields(ticket: Ticket, item: ExternalItem,
+    def _snapshot(item: ExternalItem) -> Dict[str, Any]:
+        """Het ijkpunt: precies wat de bron zei, in de vorm waarin wij het
+        opslaan. Wordt gezet zodra we de bron geloven (pull) of zodra de bron
+        onze waarden heeft overgenomen (push)."""
+        return {
+            "title": (item.title or "")[:512],
+            "description": item.description,
+            "acceptance_criteria": item.acceptance_criteria,
+            "priority": item.priority,
+            "assignee": item.assignee,
+            "labels": list(item.labels or []),
+            "state": item.state,
+        }
+
+    def _apply_external_fields(self, board: Board, ticket: Ticket, item: ExternalItem,
                                column: Optional[str]) -> bool:
+        """De bron toepassen — maar alleen wat de bron ook echt veranderd heeft.
+
+        Het ijkpunt maakt het verschil tussen "deze waarden verschillen" en
+        "de bron heeft dit veld gewijzigd". Alleen het tweede is een reden om
+        de lokale waarde te overschrijven. Zonder dat onderscheid trok elke
+        pull alles terug, ook velden waar niemand aan gezeten had.
+        """
+        snapshot = ticket.external_snapshot or {}
+        nieuw = self._snapshot(item)
         changed = False
-        # acceptance_criteria alleen als de bron het veld kent (None = niet
-        # ondersteund/niet opgevraagd) — anders zou een Jira zonder ingesteld
-        # custom field de lokale criteria bij elke pull wissen.
-        for attr, value in (("title", item.title[:512]),
-                            ("description", item.description),
-                            ("acceptance_criteria", item.acceptance_criteria),
-                            ("assignee", item.assignee)):
-            if value is not None and getattr(ticket, attr) != value:
-                setattr(ticket, attr, value)
+
+        for attr in _GESYNCTE_VELDEN:
+            waarde = nieuw.get(attr)
+            if waarde is None and attr in _VELDEN_ZONDER_MENING:
+                continue  # de bron kent dit veld niet; lokale waarde met rust laten
+            if attr == "priority" and not waarde:
+                continue  # geen prioriteit in de bron = geen uitspraak
+            if snapshot and _gelijk(waarde, snapshot.get(attr)):
+                continue  # bron ongewijzigd -> lokale waarde is de jongste
+            if not _gelijk(getattr(ticket, attr), waarde):
+                setattr(ticket, attr, waarde)
                 changed = True
-        if item.priority and ticket.priority != item.priority:
-            ticket.priority = item.priority
-            changed = True
-        if item.labels is not None and list(ticket.labels or []) != list(item.labels):
-            ticket.labels = list(item.labels)
-            changed = True
-        if column and ticket.status != column:
+
+        if self._mag_verplaatsen(board, ticket, item, column, snapshot):
             ticket.status = column
+            ticket.position = self.boards.next_position(ticket.board_id, column)
             changed = True
+
+        ticket.external_snapshot = nieuw
         if changed:
             ticket.updated_at = _now_iso()
         return changed
+
+    def _mag_verplaatsen(self, board: Board, ticket: Ticket, item: ExternalItem,
+                         column: Optional[str], snapshot: Dict[str, Any]) -> bool:
+        """Mag de pull dit ticket naar een andere kolom zetten?
+
+        Ja als de bron zijn status daadwerkelijk heeft gewijzigd. Nee zolang
+        de bron hetzelfde zegt als de vorige keer — anders sleept elke sync een
+        ticket terug uit een kolom waar iemand het bewust heen heeft gezet.
+
+        Het geval zonder ijkpunt is de reden dat dit een eigen methode is. Dan
+        weten we niet of er iets veranderd is, en telt waar het ticket nú staat:
+        in een kolom die aan de bron gekoppeld is, is de bron leidend; in een
+        LabX-eigen kolom (de agent-kolom heeft geen Jira-status) laten we het
+        staan. Anders zou de eerste sync na deze wijziging alsnog alles wat
+        klaarstond voor de agent naar de eerste kolom trekken.
+        """
+        if not column or ticket.status == column:
+            return False
+        if snapshot:
+            return not _gelijk(item.state, snapshot.get("state"))
+        eigen_kolom = not (self._state_map(board).get(ticket.status) or [])
+        return not eigen_kolom
 
     @staticmethod
     def _apply_external_identity(ticket: Ticket, board: Board, item: ExternalItem) -> None:
