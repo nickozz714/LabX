@@ -262,6 +262,21 @@ class ClaudeCliProvider:
                 "@anthropic-ai/claude-code of zet cli_path in Instellingen."
             ) from exc
 
+    def _timeout_uitleg(self) -> str:
+        """Wat er is gebeurd én wat er nog staat. Een run die hier eindigt heeft
+        meestal uren gewerkt: alles in het lab staat er nog, en de opmerkingen
+        die de agent onderweg op het ticket zette ook. Dat hoort in de melding,
+        anders lijkt het of het werk weg is."""
+        uren = self._timeout / 3600.0
+        return (
+            f"De agent is gestopt op de tijdslimiet van {self._timeout:.0f}s "
+            f"({uren:.1f} uur). Het werk in het lab en de opmerkingen op het ticket "
+            f"staan er nog — start het ticket opnieuw om verder te gaan waar hij "
+            f"gebleven was. Duurt dit soort werk vaker langer, zet de limiet dan "
+            f"hoger bij Instellingen (Timeout), of laat de agent met "
+            f"`board__wait_until` wachten in plaats van in het lab te pollen: "
+            f"dat laatste verbruikt de limiet zonder iets te doen.")
+
     @staticmethod
     async def _kill(proc: asyncio.subprocess.Process) -> None:
         try:
@@ -302,7 +317,7 @@ class ClaudeCliProvider:
                 proc.communicate(prompt.encode("utf-8")), timeout=self._timeout)
         except asyncio.TimeoutError:
             await self._kill(proc)
-            raise RuntimeError(f"Claude Code run overschreed de timeout ({self._timeout:.0f}s)")
+            raise RuntimeError(self._timeout_uitleg())
         if proc.returncode != 0:
             err = (stderr or b"").decode("utf-8", errors="replace").strip()
             try:
@@ -356,8 +371,17 @@ class ClaudeCliProvider:
             while True:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
-                    raise RuntimeError(f"Claude Code stream overschreed de timeout ({self._timeout:.0f}s)")
-                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+                    raise RuntimeError(self._timeout_uitleg())
+                try:
+                    raw = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+                except (asyncio.TimeoutError, TimeoutError):
+                    # DIT is hoe een run in de praktijk zijn tijd opmaakt: niet
+                    # bovenaan de lus, maar wachtend op de volgende regel. En
+                    # `str(TimeoutError())` is LEEG, dus zonder deze vangst
+                    # eindigde zo'n run als "failed" met een lege foutmelding —
+                    # twee uur werk en niets dat verklapt wat er gebeurd is.
+                    # Precies dat overkwam SWI-88 op 2026-09-10.
+                    raise RuntimeError(self._timeout_uitleg()) from None
                 if not raw:
                     break
                 line = raw.decode("utf-8", errors="replace").strip()

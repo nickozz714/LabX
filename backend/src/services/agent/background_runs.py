@@ -203,8 +203,13 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
         status = "cancelled"
     except Exception as exc:  # noqa: BLE001 — a background run must record, not raise
         status = "failed"
-        error = str(exc)[:2000]
-        log.warningx("achtergrondtaak mislukt", run_id=run_id, error=str(exc)[:300])
+        # `str()` van een uitzondering kan LEEG zijn — `TimeoutError()` is het
+        # bekendste geval. Zo eindigde een run van twee uur als "failed" met
+        # niets erbij, en dan is er geen beginnen aan uitzoeken wat er gebeurd
+        # is. De soort erbij is het minste wat er altijd staat.
+        error = (str(exc) or f"{type(exc).__name__} zonder toelichting")[:2000]
+        log.warningx("achtergrondtaak mislukt", run_id=run_id,
+                     soort=type(exc).__name__, error=error[:300])
     finally:
         try:
             run = db.get(BackgroundRun, run_id)
