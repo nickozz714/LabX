@@ -6,6 +6,13 @@
  * context in plaats van een los id dat je erbij moet onthouden.
  */
 import { api } from "@/lib/api";
+import type { Bijlage } from "@/lib/labs";
+
+/** De map in het lab waar bijlagen bij een ticket terechtkomen. De
+ *  ticketsleutel als naam, want dat is het label dat ook op het bord en in de
+ *  bron staat — zo weet je in de bestandsbrowser waar iets bij hoort. */
+export const ticketBijlageMap = (ticketKey: string) =>
+  `/workspace/uploads/${(ticketKey || "ticket").replace(/[^A-Za-z0-9._-]+/g, "_")}`;
 import type {
   AgentRunStart, BoardDto, BoardSyncStats, ExternalBoardColumn, OverviewDto, PlanDto,
   ProviderSpec, TicketCommentDto, TicketDto,
@@ -68,8 +75,9 @@ export const boardApi = {
       {},
     ),
 
-  runAgent: (boardId: number, ticketId: number, instruction?: string) =>
-    api.post<AgentRunStart>(`/boards/${boardId}/tickets/${ticketId}/agent-run`, { instruction }),
+  runAgent: (boardId: number, ticketId: number, instruction?: string, attachments?: Bijlage[]) =>
+    api.post<AgentRunStart>(`/boards/${boardId}/tickets/${ticketId}/agent-run`,
+                            { instruction, attachments }),
   pickUp: (boardId: number, payload?: { column?: string; max_tickets?: number }) =>
     api.post<{ started: AgentRunStart[]; count: number }>(`/boards/${boardId}/pick-up`, payload || {}),
 

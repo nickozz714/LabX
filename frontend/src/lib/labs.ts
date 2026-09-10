@@ -1,6 +1,19 @@
 import { api } from "@/lib/api";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
 
+/** Eén regel uit de bestandsbrowser. `bytes` is null voor mappen, en ook voor
+ *  een lab-image waarvan de `ls` geen groottes kan geven. */
+export type LabFileEntry = { name: string; is_dir: boolean; bytes: number | null };
+
+/** Wat een upload teruggeeft. `skipped` is er met opzet: een bestand dat te
+ *  groot of leeg was moet je zien, niet stil verdwijnen. */
+export type Bijlage = { name: string; path: string; bytes: number };
+export type UploadResultaat = {
+  dir: string;
+  files: Bijlage[];
+  skipped: { name: string; reden: string }[];
+};
+
 export const labsApi = {
   list: () => api.get<Lab[]>("/labs"),
   get: (id: string) => api.get<Lab>(`/labs/${id}`),
@@ -48,13 +61,19 @@ export const labsApi = {
       { command, timeout },
     ),
   files: (id: string, path = "/workspace") =>
-    api.get<{ path: string; entries: { name: string; is_dir: boolean }[] }>(
+    api.get<{ path: string; entries: LabFileEntry[] }>(
       `/labs/${id}/files?path=${encodeURIComponent(path)}`,
     ),
   readFile: (id: string, path: string) =>
     api.get<{ path: string; content: string; truncated: boolean }>(`/labs/${id}/file?path=${encodeURIComponent(path)}`),
   writeFile: (id: string, path: string, content: string) =>
     api.put<{ ok: boolean }>(`/labs/${id}/file`, { path, content }),
+  upload: (id: string, files: File[], dir = "/workspace") => {
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f, f.name));
+    form.append("dir", dir);
+    return api.upload<UploadResultaat>(`/labs/${id}/upload`, form);
+  },
   publish: (id: string, payload: Record<string, any>) => api.post(`/labs/${id}/publish`, payload),
   azLogin: (id: string, payload: Record<string, any>) => api.post(`/labs/${id}/az-login`, payload),
   guardAudit: (id: string, limit = 200) =>

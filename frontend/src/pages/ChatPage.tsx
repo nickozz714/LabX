@@ -23,14 +23,15 @@ import { useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { chatApi } from "@/lib/chat";
-import { labsApi } from "@/lib/labs";
+import { chatApi, chatBijlageMap } from "@/lib/chat";
+import { labsApi, type Bijlage } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import type { BackgroundRunDto, ChatEvent, Lab, Message, Thread } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { LabTerminal } from "@/components/LabTerminal";
 import { RunDetailModal, runDuration } from "@/components/BackgroundRunDetail";
+import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import { getToken, ApiError } from "@/lib/api";
 
 // Chat-standaarden leven HIER, niet op de Instellingen-pagina: elk gesprek
@@ -66,6 +67,9 @@ export function ChatPage() {
   const [activeThread, setActiveThread] = useState<Thread | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  // Bijlagen van het bericht dat je nu typt. Ze staan al in het lab (zie
+  // components/Bijlagen.tsx); dit is alleen de lijst die meegaat.
+  const [bijlagen, setBijlagen] = useState<Bijlage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [liveSteps, setLiveSteps] = useState<ChatEvent[]>([]);
   const [liveAnswer, setLiveAnswer] = useState("");
@@ -190,6 +194,9 @@ export function ChatPage() {
     setLiveSteps([]);
     setLiveAnswer("");
     setActiveThread(t);
+    // Bijlagen horen bij het bericht dat je aan het typen was, niet bij het
+    // gesprek waar je naartoe gaat.
+    setBijlagen([]);
     setMessages(await chatApi.listMessages(t.id));
   }
 
@@ -261,15 +268,17 @@ export function ChatPage() {
   }
 
   async function sendBackground() {
-    if (!activeThread || !input.trim() || streaming) return;
+    if (!activeThread || (!input.trim() && !bijlagen.length) || streaming) return;
     const text = input;
+    const mee = bijlagen;
     setInput("");
+    setBijlagen([]);
     setMessages((prev) => [
       ...prev,
       { id: `tmp-user-${Date.now()}`, thread_id: activeThread.id, role: "user", content: text, steps: [], created_at: new Date().toISOString() },
     ]);
     try {
-      const run = await chatApi.startBackground(activeThread.id, text);
+      const run = await chatApi.startBackground(activeThread.id, text, mee);
       pushLocalNotice(activeThread.id,
         `Gestart als achtergrondtaak \`${run.id.slice(0, 8)}\` — de voortgang verschijnt hieronder bij het invoerveld en het resultaat landt vanzelf in dit gesprek.`);
     } catch (err) {
@@ -301,15 +310,23 @@ export function ChatPage() {
     const keepLocal = prev.filter((m) => {
       if (!m.id.startsWith("tmp-")) return false;
       if (m.id.startsWith("tmp-notice-")) return true;
-      return !server.some((s) => s.role === m.role && s.content === m.content);
+      // StartsWith en niet gelijkheid: bij een bericht met bijlagen zet de
+      // server er een blok met de bestandspaden achter. Op gelijkheid zou de
+      // optimistische bubbel dan niet herkend worden en naast de echte blijven
+      // staan — hetzelfde bericht twee keer.
+      return !server.some((s) => s.role === m.role && s.content.startsWith(m.content));
     });
     return [...server, ...keepLocal];
   }
 
   async function send() {
-    if (!activeThread || !input.trim() || streaming) return;
+    if (!activeThread || (!input.trim() && !bijlagen.length) || streaming) return;
     const text = input;
+    // De bijlagen van dít bericht vastpakken vóór het invoerveld leeggaat:
+    // de gebruiker mag tijdens het streamen alweer een volgende bijlage kiezen.
+    const mee = bijlagen;
     setInput("");
+    setBijlagen([]);
 
     // `/model <naam>` and `/effort <niveau>` are local LabX affordances, not
     // sent to the agent — each turn is its own CLI subprocess (no live REPL
@@ -347,6 +364,7 @@ export function ChatPage() {
       await chatApi.ask(
         threadId,
         text,
+        mee,
         (ev) => {
           if (ev.kind === "thinking" || ev.kind === "tool") setLiveSteps((prev) => [...prev, ev]);
           if (ev.kind === "delta") setLiveAnswer((prev) => prev + ev.text);
@@ -619,6 +637,9 @@ export function ChatPage() {
               )}
             </div>
             <div className="border-t border-border p-3">
+              <BijlageLijst bijlagen={bijlagen}
+                            onVerwijder={(path) =>
+                              setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
               <div className="flex gap-2">
                 <TextArea
                   rows={2}
@@ -635,17 +656,28 @@ export function ChatPage() {
                   className="resize-none"
                 />
                 <div className="flex flex-col justify-end gap-1">
-                  <Button onClick={send} disabled={inputDisabled || !input.trim()}>
+                  <Button onClick={send} disabled={inputDisabled || (!input.trim() && !bijlagen.length)}>
                     Stuur
                   </Button>
                   <Button
                     variant="secondary"
                     onClick={sendBackground}
-                    disabled={!activeThread || !lab || lab.status !== "running" || !input.trim()}
+                    disabled={!activeThread || !lab || lab.status !== "running" || (!input.trim() && !bijlagen.length)}
                     title="Start dit als achtergrondtaak: de chat blijft direct bruikbaar en je volgt de voortgang op het tabblad Achtergrondtaken"
                   >
                     Op de achtergrond
                   </Button>
+                  <BijlageKnop
+                    labId={activeThread ? lab?.id : null}
+                    dir={chatBijlageMap(activeThread?.id || "")}
+                    disabled={inputDisabled}
+                    compact
+                    onToegevoegd={(nieuwe) =>
+                      setBijlagen((prev) => [
+                        ...prev,
+                        ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
+                      ])}
+                  />
                 </div>
               </div>
             </div>

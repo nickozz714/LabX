@@ -55,8 +55,35 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+/**
+ * Multipart upload. Bewust NIET via `request`: die zet altijd een JSON
+ * content-type, en bij een FormData moet de browser die header zelf zetten —
+ * inclusief de `boundary=` die hij genereert. Zet je hem zelf, dan kan de
+ * server de delen niet meer scheiden en komt er een lege upload aan.
+ */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    setToken(null);
+    window.location.href = "/login";
+    throw new ApiError(401, "Niet ingelogd");
+  }
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    const detail = (data && (data.detail || data.error)) || res.statusText;
+    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return data as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
+  upload,
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),

@@ -16,6 +16,8 @@ import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
 import { ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, X } from "lucide-react";
+import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
+import type { Bijlage } from "@/lib/labs";
 
 const PRIORITY_TONE = {
   urgent: "red", high: "yellow", normal: "neutral", low: "neutral",
@@ -359,6 +361,7 @@ export function BoardPage() {
       {planOpen && (
         <PlanVenster
           boardId={id}
+          labId={board?.lab_id ?? null}
           tickets={selectie
             .map((tid) => tickets.find((t) => t.id === tid))
             .filter((t): t is TicketDto => Boolean(t))}
@@ -573,8 +576,10 @@ function PlanRegels({ boardId, planId, onChanged }: {
  * op een tijdstip. De volgorde in deze lijst is wat de agent aanhoudt — niet
  * de volgorde op het bord.
  */
-function PlanVenster({ boardId, tickets, onClose, onCreated }: {
+function PlanVenster({ boardId, labId, tickets, onClose, onCreated }: {
   boardId: number;
+  /** Het lab van dit bord — nodig om bijlagen te kunnen neerzetten. */
+  labId: string | null;
   tickets: TicketDto[];
   onClose: () => void;
   onCreated: (plan: PlanDto) => void;
@@ -584,6 +589,9 @@ function PlanVenster({ boardId, tickets, onClose, onCreated }: {
   const [wanneer, setWanneer] = useState<"nu" | "later" | "klaarzetten">("nu");
   const [tijdstip, setTijdstip] = useState("");
   const [instructie, setInstructie] = useState("");
+  // Bijlagen bij de PLANNING: ze gelden voor elk ticket erin. Handig bij één
+  // specificatie die voor de hele reeks geldt.
+  const [bijlagen, setBijlagen] = useState<Bijlage[]>([]);
   const [busy, setBusy] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
 
@@ -607,6 +615,7 @@ function PlanVenster({ boardId, tickets, onClose, onCreated }: {
         start_at: wanneer === "later" && tijdstip ? new Date(tijdstip).toISOString() : undefined,
         start_now: wanneer === "nu",
         instruction: instructie.trim() || undefined,
+        attachments: bijlagen,
       });
       onCreated(plan);
     } catch (err) {
@@ -669,6 +678,21 @@ function PlanVenster({ boardId, tickets, onClose, onCreated }: {
           <Label>Extra instructie voor deze planning (optioneel)</Label>
           <TextArea rows={2} value={instructie} onChange={(e) => setInstructie(e.target.value)}
                     placeholder="Geldt voor elk ticket in deze planning, bovenop de vaste werkafspraken van het bord." />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <BijlageKnop
+              labId={labId}
+              dir={`/workspace/uploads/planning`}
+              compact
+              onToegevoegd={(nieuwe) =>
+                setBijlagen((prev) => [
+                  ...prev,
+                  ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
+                ])}
+            />
+            <BijlageLijst bijlagen={bijlagen}
+                          onVerwijder={(path) =>
+                            setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
+          </div>
         </div>
 
         {fout && <p className="text-sm text-destructive">{fout}</p>}

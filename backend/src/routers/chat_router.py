@@ -140,6 +140,20 @@ def _history_for_prompt(db: Session, thread_id: str, *, limit: int = 20) -> List
     return [{"role": m.role, "content": m.content} for m in rows if m.role in ("user", "assistant")]
 
 
+def _met_bijlagen(tekst: str, payload: Dict[str, Any]) -> str:
+    """Het bericht zoals het wordt opgeslagen én verstuurd.
+
+    Bijlagen staan al in het lab (de client heeft ze daar neergezet via
+    /labs/{id}/upload); wat hier bijkomt is de verwijzing ernaar. Bewust in de
+    OPGESLAGEN tekst en niet alleen in de prompt: anders staat er in de
+    tijdlijn een bericht over "het bijgevoegde bestand" waar niemand later nog
+    kan zien welk bestand dat was.
+    """
+    from services.lab.uploads import beschrijf
+    blok = beschrijf(payload.get("attachments"))
+    return f"{tekst}\n{blok}" if blok else tekst
+
+
 @router.post("/threads/{thread_id}/background")
 async def start_background(thread_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     """Non-blocking variant of ask: fires the same agent run via
@@ -152,8 +166,9 @@ async def start_background(thread_id: str, payload: Dict[str, Any], db: Session 
     if not lab or lab.status != "running":
         raise HTTPException(status_code=409, detail="Het gekoppelde lab draait niet — start het eerst")
     text = str(payload.get("message") or "").strip()
-    if not text:
+    if not text and not payload.get("attachments"):
         raise HTTPException(status_code=400, detail="Leeg bericht")
+    text = _met_bijlagen(text, payload)
 
     now = _now_iso()
     user_msg = Message(id=str(uuid4()), thread_id=thread_id, role="user",
@@ -280,8 +295,9 @@ async def ask(thread_id: str, payload: Dict[str, Any], db: Session = Depends(get
         raise HTTPException(status_code=409, detail="Het gekoppelde lab draait niet — start het eerst")
 
     text = str(payload.get("message") or "").strip()
-    if not text:
+    if not text and not payload.get("attachments"):
         raise HTTPException(status_code=400, detail="Leeg bericht")
+    text = _met_bijlagen(text, payload)
 
     from services.agent import background_runs
     if background_runs.active_foreground_run(db, thread_id) is not None:

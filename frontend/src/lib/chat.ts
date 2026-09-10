@@ -1,5 +1,12 @@
 import { api, streamSSE } from "@/lib/api";
+import type { Bijlage } from "@/lib/labs";
 import type { BackgroundRunDto, ChatEvent, Message, Thread } from "@/lib/types";
+
+/** De map in het lab waar de bijlagen van dit gesprek terechtkomen. Kort
+ *  thread-id in de naam zodat je ze in de bestandsbrowser terugvindt zonder
+ *  dat de map onleesbaar lang wordt. */
+export const chatBijlageMap = (threadId: string) =>
+  `/workspace/uploads/chat-${(threadId || "").slice(0, 8)}`;
 
 export const chatApi = {
   listThreads: (includeBoard = false) =>
@@ -11,10 +18,13 @@ export const chatApi = {
   setThreadEffort: (id: string, effort: string | null) => api.patch<Thread>(`/chat/threads/${id}`, { effort }),
   deleteThread: (id: string) => api.delete<{ ok: boolean }>(`/chat/threads/${id}`),
   listMessages: (threadId: string) => api.get<Message[]>(`/chat/threads/${threadId}/messages`),
-  ask: (threadId: string, message: string, onEvent: (ev: ChatEvent) => void, signal?: AbortSignal) =>
-    streamSSE(`/chat/threads/${threadId}/ask`, { message }, onEvent as any, signal),
-  startBackground: (threadId: string, message: string) =>
-    api.post<BackgroundRunDto>(`/chat/threads/${threadId}/background`, { message }),
+  // `attachments` zijn paden van bestanden die al in het lab staan; de server
+  // plakt er een blok over aan het bericht. De inhoud gaat niet mee.
+  ask: (threadId: string, message: string, attachments: Bijlage[] | undefined,
+        onEvent: (ev: ChatEvent) => void, signal?: AbortSignal) =>
+    streamSSE(`/chat/threads/${threadId}/ask`, { message, attachments }, onEvent as any, signal),
+  startBackground: (threadId: string, message: string, attachments?: Bijlage[]) =>
+    api.post<BackgroundRunDto>(`/chat/threads/${threadId}/background`, { message, attachments }),
   listBackgroundRuns: (params?: { thread_id?: string; status?: string; mode?: string }) => {
     const qs = new URLSearchParams();
     if (params?.thread_id) qs.set("thread_id", params.thread_id);

@@ -7,13 +7,14 @@
  * banner is the direct fix for issue 1 ("geen Docker aanwezig").
  */
 import { useEffect, useRef, useState } from "react";
-import { dockerStatus, labsApi } from "@/lib/labs";
+import { dockerStatus, labsApi, type LabFileEntry } from "@/lib/labs";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
+import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { getToken } from "@/lib/api";
 
 function statusTone(status: Lab["status"]) {
@@ -964,11 +965,19 @@ function PublishPanel({ lab }: { lab: Lab }) {
   );
 }
 
+/**
+ * De bestandsbrowser van een lab. Behalve kijken kun je hier ook bestanden
+ * NEERZETTEN — slepen of kiezen — in de map waar je op dat moment staat. Dat
+ * is de weg voor alles wat de agent nodig heeft maar niet zelf kan ophalen:
+ * een export, een specificatie, een screenshot van wat er misgaat.
+ */
 function FileBrowser({ lab }: { lab: Lab }) {
   const [path, setPath] = useState("/workspace");
-  const [entries, setEntries] = useState<{ name: string; is_dir: boolean }[]>([]);
+  const [entries, setEntries] = useState<LabFileEntry[]>([]);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [melding, setMelding] = useState<string | null>(null);
+  const [sleep, setSleep] = useState(false);
 
   async function load(p: string) {
     setError(null);
@@ -989,9 +998,41 @@ function FileBrowser({ lab }: { lab: Lab }) {
 
   return (
     <div>
-      <div className="mb-2 text-xs text-muted-foreground">{path}</div>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">{path}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <BijlageKnop
+            labId={lab.status === "running" ? lab.id : null}
+            dir={path}
+            onToegevoegd={(nieuwe) => {
+              setMelding(`${nieuwe.length} bestand(en) in ${path} gezet.`);
+              load(path);
+            }}
+          />
+        </div>
+      </div>
       {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
-      <ul className="mb-3 max-h-48 divide-y divide-border overflow-y-auto rounded border border-border text-sm">
+      {melding && <p className="mb-2 text-xs text-muted-foreground">{melding}</p>}
+      <ul
+        onDragOver={(e) => { e.preventDefault(); setSleep(true); }}
+        onDragLeave={() => setSleep(false)}
+        onDrop={async (e) => {
+          e.preventDefault();
+          setSleep(false);
+          const files = Array.from(e.dataTransfer.files || []);
+          if (!files.length || lab.status !== "running") return;
+          try {
+            const r = await labsApi.upload(lab.id, files, path);
+            setMelding(`${r.files.length} bestand(en) in ${path} gezet.`
+              + (r.skipped.length ? ` Overgeslagen: ${r.skipped.map((s) => `${s.name} (${s.reden})`).join(", ")}` : ""));
+            load(path);
+          } catch (err) {
+            setError(err instanceof ApiError ? err.message : "Uploaden mislukt");
+          }
+        }}
+        className={`mb-3 max-h-48 divide-y divide-border overflow-y-auto rounded border text-sm
+          ${sleep ? "border-primary bg-secondary" : "border-border"}`}
+      >
         {path !== "/workspace" && (
           <li className="cursor-pointer px-3 py-1.5 hover:bg-secondary" onClick={() => load(path.split("/").slice(0, -1).join("/") || "/workspace")}>
             ..
@@ -1000,12 +1041,20 @@ function FileBrowser({ lab }: { lab: Lab }) {
         {entries.map((e) => (
           <li
             key={e.name}
-            className="cursor-pointer px-3 py-1.5 hover:bg-secondary"
+            className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-secondary"
             onClick={() => (e.is_dir ? load(`${path}/${e.name}`) : labsApi.readFile(lab.id, `${path}/${e.name}`).then((r) => setContent(r.content)))}
           >
-            {e.is_dir ? "📁" : "📄"} {e.name}
+            <span>{e.is_dir ? "📁" : "📄"} {e.name}</span>
+            {e.bytes !== null && !e.is_dir && (
+              <span className="ml-auto text-[11px] text-muted-foreground">{leesbareMaat(e.bytes)}</span>
+            )}
           </li>
         ))}
+        {entries.length === 0 && (
+          <li className="px-3 py-2 text-xs text-muted-foreground">
+            Leeg — sleep hier bestanden naartoe of gebruik de knop hierboven.
+          </li>
+        )}
       </ul>
       {content !== null && <pre className="max-h-64 overflow-auto rounded bg-secondary p-3 text-xs whitespace-pre-wrap">{content}</pre>}
     </div>

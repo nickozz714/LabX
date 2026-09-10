@@ -352,10 +352,19 @@ async def start_agent_run(board_id: int, ticket_id: int, payload: Optional[Dict[
     """Laat de agent dit ticket oppakken. Draait non-blocking: het antwoord
     bevat het run-id waarop de UI kan meelezen (/chat/background-runs/{id})."""
     from services.boards.agent_work import start_ticket_run
+    from services.lab.uploads import beschrijf
     svc = _svc(db)
     _ticket_of_board(svc, board_id, ticket_id)
+    body = payload or {}
+    instructie = str(body.get("instruction") or "").strip()
+    # Bijlagen staan al in het lab; wat hier bijkomt is de verwijzing. Ze horen
+    # bij de instructie en niet bij de omschrijving van het ticket: die laatste
+    # is de opdracht zoals de bron hem kent en gaat terug naar Jira.
+    blok = beschrijf(body.get("attachments"))
+    if blok:
+        instructie = f"{instructie}\n{blok}".strip()
     return await start_ticket_run(db, ticket_id,
-                                  extra_instruction=(payload or {}).get("instruction"),
+                                  extra_instruction=instructie or None,
                                   trigger="handmatig")
 
 
@@ -395,13 +404,21 @@ async def create_plan(board_id: int, payload: Dict[str, Any], db: Session = Depe
     """Een eigen selectie inplannen. `ticket_ids` is de VOLGORDE waarin ze
     gedaan worden. Zonder `start_at` begint hij meteen; met `start_at` (ISO)
     wacht hij op dat moment. `start_now=false` zet hem klaar zonder te starten."""
+    from services.lab.uploads import beschrijf
     svc = _plan_svc(db)
+    # Een planning-instructie geldt voor élke run erin, dus een bijlage hier is
+    # een bijlage voor alle tickets van deze planning. Dat is precies wat je
+    # wilt bij bijvoorbeeld één specificatie die voor de hele reeks geldt.
+    instructie = str(payload.get("instruction") or "").strip()
+    blok = beschrijf(payload.get("attachments"))
+    if blok:
+        instructie = f"{instructie}\n{blok}".strip()
     plan = svc.create(
         board_id,
         name=str(payload.get("name") or ""),
         ticket_ids=payload.get("ticket_ids") or [],
         start_at=(payload.get("start_at") or None),
-        instruction=payload.get("instruction"),
+        instruction=instructie or None,
         start_now=bool(payload.get("start_now", True)),
     )
     if plan.state == "running":

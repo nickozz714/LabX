@@ -3,9 +3,10 @@ ND3X-public/src/routers/playground_router.py, single-tenant (no
 require_project/org scoping — require_user is enough)."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile,
+                     WebSocket, WebSocketDisconnect)
 from sqlalchemy.orm import Session
 
 from authentication import require_user
@@ -428,6 +429,24 @@ async def write_lab_file(lab_id: str, payload: Dict[str, Any], db: Session = Dep
     if not path:
         raise HTTPException(status_code=400, detail="path is verplicht")
     return await _service(db).write_file(lab_id, path, str(payload.get("content") or ""))
+
+
+@router.post("/{lab_id}/upload")
+async def upload_to_lab(lab_id: str,
+                        files: List[UploadFile] = File(...),
+                        dir: str = Form(default="/workspace"),
+                        worker_id: Optional[int] = Form(default=None),
+                        db: Session = Depends(get_db)):
+    """Bestanden in het lab zetten (multipart).
+
+    Eén endpoint voor alle drie de ingangen — de bestandsbrowser, een bijlage
+    bij een chatbericht en een bijlage bij een agent-run — omdat het in alle
+    drie de gevallen hetzelfde is: bytes naar /workspace. Wat verschilt is
+    alleen de doelmap, en die bepaalt de aanroeper.
+    """
+    payload = [{"filename": f.filename or "bestand", "data": await f.read()} for f in files]
+    return await _service(db).upload_files(lab_id, payload, directory=dir,
+                                           worker_id=worker_id)
 
 
 @router.post("/{lab_id}/publish")

@@ -1374,15 +1374,44 @@ exec ssh -N \\
         p = self.get(lab_id)
         cid = self._require_running(p, worker_id)
         target = self._safe_path(path)
-        result = await self.runtime.exec(cid, ["ls", "-Ap", "--", target], timeout=20)
-        if result["exit_code"] != 0:
-            raise HTTPException(status_code=404, detail=result["output"][:300])
+        # Grootte erbij: zonder dat is een geüpload bestand niet te
+        # controleren — je ziet de naam staan maar niet of er iets in zit.
+        #
+        # `--time-style=long-iso` maakt de datum twee vaste velden, waardoor er
+        # precies zeven velden vóór de naam staan en een naam met spaties er
+        # heel uitkomt. Dat is GNU-gedrag; een lab-image is instelbaar, dus als
+        # die vlag niet bestaat vallen we terug op de kale lijst zonder
+        # groottes. Liever een bestandsbrowser zonder cijfers dan geen.
+        #
+        # `-A` laat . en .. weg, `-p` zet een / achter mappen, `-L` volgt links
+        # (anders is de grootte die van de link), `--` beschermt tegen een pad
+        # dat met - begint.
+        result = await self.runtime.exec(
+            cid, ["sh", "-c", 'ls -lApL --time-style=long-iso -- "$1"', "sh", target],
+            timeout=20)
+        met_groottes = result["exit_code"] == 0
+        if not met_groottes:
+            result = await self.runtime.exec(
+                cid, ["sh", "-c", 'ls -ApL -- "$1"', "sh", target], timeout=20)
+            if result["exit_code"] != 0:
+                raise HTTPException(status_code=404, detail=result["output"][:300])
+
         entries = []
         for line in result["output"].splitlines():
-            n = line.strip()
-            if not n:
+            regel = line.rstrip()
+            if not regel or regel.startswith("total "):
                 continue
-            entries.append({"name": n.rstrip("/"), "is_dir": n.endswith("/")})
+            naam, grootte = regel.strip(), None
+            if met_groottes:
+                velden = regel.split(None, 7)
+                if len(velden) == 8 and velden[4].isdigit():
+                    naam = velden[7]
+                    grootte = int(velden[4])
+                else:
+                    continue  # geen regel die we begrijpen; niet gokken
+            is_map = naam.endswith("/")
+            entries.append({"name": naam.rstrip("/"), "is_dir": is_map,
+                            "bytes": None if is_map else grootte})
         return {"path": target, "entries": entries}
 
     async def read_file(self, lab_id: str, path: str, *,
@@ -1401,13 +1430,86 @@ exec ssh -N \\
         cid = self._require_running(p, worker_id)
         target = self._safe_path(path)
         parent = target.rsplit("/", 1)[0] or "/workspace"
+        # Pad als ARGUMENT, niet in de tekst van het commando: een naam met een
+        # aanhalingsteken erin zou anders uit de quotes breken en de rest als
+        # commando uitvoeren. Dat pad komt van een client, dus dat kan niet.
         result = await self.runtime.exec(
-            cid, ["sh", "-c", f"mkdir -p '{parent}' && cat > '{target}'"],
+            cid, ["sh", "-c", 'mkdir -p "$1" && cat > "$2"', "sh", parent, target],
             stdin=(content or "").encode("utf-8"), timeout=30)
         if result["exit_code"] != 0:
             raise HTTPException(status_code=500, detail=result["output"][:300])
         self._touch(p)
         return {"ok": True, "path": target, "bytes": len((content or "").encode("utf-8"))}
+
+    async def upload_files(self, lab_id: str, bestanden: List[Dict[str, Any]], *,
+                           directory: str = "/workspace",
+                           worker_id: Optional[int] = None) -> Dict[str, Any]:
+        """Bestanden van buiten in het lab zetten.
+
+        Binair, dus niet via `write_file`: die neemt een str en zou een PNG of
+        een xlsx onderweg stukmaken. De bytes gaan rechtstreeks door de stdin
+        van `cat`, en het doelpad staat als argument in het commando zodat een
+        rare bestandsnaam er niets mee kan.
+
+        Wat er al staat wordt niet overschreven maar krijgt er een volgnummer
+        naast: twee keer `export.csv` uploaden zijn meestal twee verschillende
+        exports, en stil de vorige wissen is de vervelendste manier om daar
+        achter te komen.
+        """
+        from services.lab.uploads import (MAX_BESTAND_BYTES, MAX_TOTAAL_BYTES,
+                                          unieke_naam, veilige_naam)
+
+        p = self.get(lab_id)
+        cid = self._require_running(p, worker_id)
+        doelmap = self._safe_path(directory or "/workspace")
+
+        totaal = sum(len(b.get("data") or b"") for b in bestanden)
+        if totaal > MAX_TOTAAL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Samen te groot ({totaal // (1024*1024)} MB); "
+                       f"maximaal {MAX_TOTAAL_BYTES // (1024*1024)} MB per keer.")
+
+        mk = await self.runtime.exec(cid, ["sh", "-c", 'mkdir -p "$1"', "sh", doelmap],
+                                     timeout=20)
+        if mk["exit_code"] != 0:
+            raise HTTPException(status_code=500, detail=mk["output"][:300])
+
+        bezet = [e["name"] for e in (await self.list_files(
+            lab_id, doelmap, worker_id=worker_id))["entries"]]
+        geschreven: List[Dict[str, Any]] = []
+        overgeslagen: List[Dict[str, str]] = []
+
+        for bestand in bestanden:
+            data: bytes = bestand.get("data") or b""
+            naam = veilige_naam(str(bestand.get("filename") or ""))
+            if not data:
+                overgeslagen.append({"name": naam, "reden": "leeg bestand"})
+                continue
+            if len(data) > MAX_BESTAND_BYTES:
+                overgeslagen.append({
+                    "name": naam,
+                    "reden": f"te groot ({len(data) // (1024*1024)} MB, "
+                             f"maximaal {MAX_BESTAND_BYTES // (1024*1024)} MB)"})
+                continue
+            naam = unieke_naam(naam, bezet)
+            doel = f"{doelmap}/{naam}"
+            res = await self.runtime.exec(
+                cid, ["sh", "-c", 'cat > "$1"', "sh", doel],
+                stdin=data, timeout=120)
+            if res["exit_code"] != 0:
+                overgeslagen.append({"name": naam, "reden": res["output"][:200]})
+                continue
+            bezet.append(naam)
+            geschreven.append({"name": naam, "path": doel, "bytes": len(data)})
+
+        self._touch(p)
+        self.touch_worker(worker_id)
+        if not geschreven and overgeslagen:
+            raise HTTPException(
+                status_code=400,
+                detail="; ".join(f"{o['name']}: {o['reden']}" for o in overgeslagen)[:500])
+        return {"dir": doelmap, "files": geschreven, "skipped": overgeslagen}
 
     async def read_lab_file_raw(self, lab_id: str, path: str, *,
                                 worker_id: Optional[int] = None,

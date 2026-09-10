@@ -25,6 +25,9 @@ import type { BoardDto, ChatEvent, TicketCommentDto, TicketDto } from "@/lib/typ
 import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { Bot, ExternalLink, MessageSquare, Pencil, Trash2, X } from "lucide-react";
+import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
+import { ticketBijlageMap } from "@/lib/boards";
+import type { Bijlage } from "@/lib/labs";
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 
@@ -137,6 +140,8 @@ export function TicketDrawer({
   const [commentBusy, setCommentBusy] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [instruction, setInstruction] = useState("");
+  // Bijlagen bij DEZE run. Ze staan al in het lab; wat meegaat is het pad.
+  const [bijlagen, setBijlagen] = useState<Bijlage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -236,7 +241,8 @@ export function TicketDrawer({
     setBusy(true);
     setError(null);
     try {
-      const started = await boardApi.runAgent(board.id, ticket.id, instruction.trim() || undefined);
+      const started = await boardApi.runAgent(board.id, ticket.id,
+                                              instruction.trim() || undefined, bijlagen);
       setInstruction("");
       attachToRun(started.run_id);
       await load();
@@ -402,7 +408,12 @@ export function TicketDrawer({
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
           />
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2">
+            <BijlageLijst bijlagen={bijlagen}
+                          onVerwijder={(path) =>
+                            setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               className="text-xs"
@@ -411,6 +422,17 @@ export function TicketDrawer({
             >
               {ticket.agent_state === "running" ? "Agent werkt…" : "Agent starten"}
             </Button>
+            <BijlageKnop
+              labId={board.lab_id}
+              dir={ticketBijlageMap(ticket.key)}
+              disabled={busy || ticket.agent_state === "running"}
+              compact
+              onToegevoegd={(nieuwe) =>
+                setBijlagen((prev) => [
+                  ...prev,
+                  ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
+                ])}
+            />
             {ticket.agent_thread_id && (
               <Button
                 variant="ghost"
