@@ -175,6 +175,8 @@ def init_db() -> None:
         azure_profile,
         background_run,
         board,
+        guard_audit,
+        guard_rule,
         lab,
         lab_extra,
         lab_secret,

@@ -60,6 +60,19 @@ async def _plan_tick() -> None:
     await _tick()
 
 
+async def _guard_audit_opruimen() -> None:
+    """Oude guard-auditregels weggooien. Dat spoor bevat per definitie precies
+    de gegevens die de guard tegenhield; zonder opruimen groeit er een archief
+    van klantgegevens dat niemand meer beheert."""
+    from services.lab.guard_audit_service import ruim_op
+
+    db = SessionLocal()
+    try:
+        ruim_op(db)
+    finally:
+        db.close()
+
+
 async def _hervat_limiet_tick() -> None:
     """Werk dat op een gebruikslimiet stilviel weer oppakken zodra de limiet
     opengaat. Alleen voor runs die NIET in een planning zitten; die hervat de
@@ -120,6 +133,10 @@ async def lifespan(_app: FastAPI):
         # neerzetten zodra ze ontbreken; bestaande, aangepaste rijen blijven.
         from services.lab.extras_catalog import seed_builtin_extras
         seed_builtin_extras(db)
+        # De meegeleverde guard-regels. Aanpasbaar door de gebruiker; een
+        # update werkt alleen regels bij die niemand zelf heeft gewijzigd.
+        from services.lab.classifier import seed_standaardregels
+        seed_standaardregels(db)
         fixed = await LabService(db).reconcile_on_start()
         if fixed:
             log.infox("Labs gereconcilieerd bij opstart", fixed=fixed)
@@ -156,6 +173,9 @@ async def lifespan(_app: FastAPI):
     # gebeurt, en het kost niets zolang er geen gepauzeerde runs staan.
     scheduler.register(name="hervat_limiet", interval_seconds=60, fn=_hervat_limiet_tick,
                        run_immediately=True)
+    # Eens per uur is ruim voldoende voor een bewaartermijn in dagen.
+    scheduler.register(name="guard_audit_opruimen", interval_seconds=3600,
+                       fn=_guard_audit_opruimen, run_immediately=True)
     scheduler.register(name="worker_reaper", interval_seconds=300, fn=_worker_reaper_tick,
                        run_immediately=False)
     await scheduler.start()
@@ -183,7 +203,7 @@ app.add_middleware(
 from routers import (  # noqa: E402
     auth_router, system_router, lab_router, chat_router, internal_router, settings_router,
     skill_router, tool_router, mcp_router, workflow_router, schedule_router, azure_profile_router,
-    board_router, notify_router,
+    board_router, notify_router, guard_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -204,3 +224,4 @@ app.include_router(schedule_router.router, prefix="/api")
 app.include_router(azure_profile_router.router, prefix="/api")
 app.include_router(board_router.router, prefix="/api")
 app.include_router(notify_router.router, prefix="/api")
+app.include_router(guard_router.router, prefix="/api")

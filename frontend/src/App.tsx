@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Shell } from "@/components/Shell";
 import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
+import { GuardPage } from "@/pages/GuardPage";
 import { LabsPage } from "@/pages/LabsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -44,6 +45,7 @@ function AppRoutes() {
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="schedules" element={<SchedulesPage />} />
         <Route path="azure-profiles" element={<AzureProfilesPage />} />
+        <Route path="guard" element={<GuardPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/labs" replace />} />

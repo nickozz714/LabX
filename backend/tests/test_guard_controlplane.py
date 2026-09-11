@@ -83,21 +83,40 @@ def test_bestandslezing_is_een_vermoeden_geen_vaststelling(cmd):
     assert classify_command(cmd)[0] == "vermoedelijk"
 
 
-def test_vermoeden_blokkeert_niet_bij_onschuldige_uitvoer():
+def test_een_http_status_komt_gewoon_door(guard_db):
+    """Het geval dat de oude guard 111 keer per dag tegenhield: een commando
+    dat 13 bytes teruggaf, geblokkeerd omdat het commando verdacht oogde."""
     from services.lab.data_guard import guard_lab_output
 
     uit = guard_lab_output({"exit_code": 0, "output": "200\n", "truncated": False},
-                           enabled=True, command="cat /workspace/def.json")
-    assert not uit.get("guarded"), "een HTTP-status is geen klantdata"
+                           enabled=True, command="cat /workspace/def.json",
+                           db=guard_db)
+    assert not uit.get("guarded")
+    assert uit["output"] == "200\n"
 
 
-def test_vermoeden_blokkeert_wel_bij_echte_records():
+def test_persoonsgegevens_worden_gemaskeerd_niet_geblokkeerd(guard_db):
+    """De omslag: je houdt de exitcode en het pad, alleen de gegevens gaan eruit."""
     from services.lab.data_guard import guard_lab_output
 
-    rijen = "\n".join(f"{i},Jansen,Amsterdam,{1000+i},2026-01-{i%28+1:02d}" for i in range(8))
-    uit = guard_lab_output({"exit_code": 0, "output": rijen, "truncated": False},
-                           enabled=True, command="cat /workspace/klanten.json")
-    assert uit.get("guarded"), "records horen dicht te blijven"
+    tekst = "http=200\n/workspace/out.json\nklant 111222333\nexit 0"
+    uit = guard_lab_output({"exit_code": 0, "output": tekst, "truncated": False},
+                           enabled=True, command="cat /workspace/out.json", db=guard_db)
+    assert not uit.get("guarded"), "maskeren, niet blokkeren"
+    assert uit.get("guard_masked")
+    assert "111222333" not in uit["output"]
+    assert "http=200" in uit["output"] and "exit 0" in uit["output"]
+
+
+def test_een_select_wordt_geweigerd_voor_uitvoeren(guard_db):
+    """De enige plek waar `SELECT MAX(bedrag)` te stoppen is."""
+    from services.lab.data_guard import guard_lab_output
+
+    uit = guard_lab_output({"exit_code": 0, "output": "x", "truncated": False},
+                           enabled=True, db=guard_db,
+                           command="python3 -c \"spark.sql('SELECT naam FROM klanten').show()\"")
+    assert uit.get("guarded")
+    assert "geweigerd" in (uit.get("guard_reason") or "")
 
 
 # ── code schrijven is geen data lezen ───────────────────────────────────
@@ -136,16 +155,17 @@ def test_een_select_in_hetzelfde_script_wint_van_de_beheer_api():
     assert classify_command(cmd)[0] == "value_revealing"
 
 
-def test_telling_opent_de_deur_niet_voor_data_plane():
-    """`counting_safe` mag de herkomst op 'control' zetten en daarmee de
-    record-telling overslaan — maar niet als hetzelfde script uit OneLake
-    leest. Anders opent elke COUNT de deur voor de rijen eromheen."""
+def test_de_audit_bewaart_origineel_en_geleverd(guard_db):
+    """Het oude spoor bewaarde alleen een reden en een aantal bytes; daarmee
+    kon je niet nagaan of er terecht iets was tegengehouden."""
     from services.lab.data_guard import guard_lab_output
+    from services.lab import guard_audit_service as audit
 
-    cmd = ('python3 -c "import duckdb; duckdb.sql(\'select count(*) from t\')"\n'
-           'curl https://onelake.dfs.fabric.microsoft.com/ws/lh/Tables/klanten')
-    rijen = "\n".join(f"{i},Jansen,Amsterdam,{1000+i},2026-01-{i%28+1:02d}" for i in range(20))
-    uit = guard_lab_output({"exit_code": 0, "output": rijen, "truncated": False},
-                           enabled=True, command=cmd)
-    assert uit.get("guarded"), "data-plane met recordinhoud moet dicht blijven"
-    assert (uit.get("guard_facts") or {}).get("provenance") == "data"
+    tekst = "klant 111222333 verwerkt"
+    guard_lab_output({"exit_code": 0, "output": tekst, "truncated": False},
+                     enabled=True, command="cat x.json", lab_id="lab-1", db=guard_db)
+    rijen = audit.lijst(guard_db, limit=1)
+    assert rijen and rijen[0]["outcome"] == "gemaskeerd"
+    d = audit.detail(guard_db, rijen[0]["id"])
+    assert "111222333" in d["origineel"], "het origineel hoort bewaard te blijven"
+    assert "111222333" not in d["geleverd"], "en het model kreeg het niet"

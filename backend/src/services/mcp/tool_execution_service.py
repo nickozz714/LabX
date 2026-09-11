@@ -57,22 +57,43 @@ class ToolExecutionService:
         return lab.container_id
 
     async def _second_opinion(self, *, lab, guarded: Dict[str, Any]) -> Dict[str, Any]:
-        """Track B: once the rules ALLOW an output, ask the local guard model
-        for a second opinion (catches derived aggregates the rules can't see —
-        see data_guard_llm.py). Only runs when the rules didn't already block
-        and the lab has llm_guard on."""
+        """De DERDE laag: het lokale model.
+
+        De regels vinden patronen — een BSN, een IBAN, een SELECT. Wat ze
+        principieel niet kunnen zien is een AFGELEID AGGREGAAT: "PostNL 1142
+        zendingen, DHL 738, gemiddeld 19,4 kg" bevat geen enkel patroon en is
+        wél klantdata. Dat is precies waarvoor een klein lokaal model bestaat,
+        en daarom is dit geen optioneel extraatje maar de laag die het gat
+        dekt dat de andere twee openlaten.
+
+        Hij draait pas als de regels de uitvoer hebben doorgelaten — dus op de
+        al GEMASKEERDE tekst, niet op het origineel. Zo ziet het model nooit
+        meer dan het model erna ook zou zien. Het oordeel gaat terug in het
+        audit-spoor, zodat er niet in staat "doorgelaten" terwijl het model het
+        alsnog tegenhield.
+        """
         if not lab or not lab.llm_guard or guarded.get("guarded"):
             return guarded
         from services.lab.data_guard import GUARD_MESSAGE
         from services.lab.data_guard_llm import llm_second_opinion
+        from services.lab import guard_audit_service as audit
+
+        facts = guarded.get("guard_facts") or {}
+        audit_id = facts.get("audit_id")
         opinion = await llm_second_opinion(guarded.get("output") or "")
         if opinion and not opinion.get("allowed"):
+            audit.werk_bij(self.db, audit_id, outcome="geblokkeerd", geleverd="",
+                           llm_verdict=opinion)
             return {
                 **guarded,
                 "output": GUARD_MESSAGE.format(reason=opinion.get("reason") or "lokaal model"),
                 "guarded": True,
                 "guard_reason": opinion.get("reason"),
+                "guard_facts": {**facts, "llm": opinion, "fase": "lokaal model"},
             }
+        if opinion is not None:
+            audit.werk_bij(self.db, audit_id, llm_verdict=opinion)
+            guarded = {**guarded, "guard_facts": {**facts, "llm": opinion}}
         return guarded
 
     def _audit(self, *, lab_id: Optional[str], command: Optional[str],
@@ -123,6 +144,8 @@ class ToolExecutionService:
             {"exit_code": 0, "output": text_result, "truncated": False},
             enabled=bool(lab.data_guard) if lab else True, lab_id=lab_id,
             provenance_override=("control" if provenance == "control" else "data"),
+            db=self.db, lab_name=(lab.name if lab else None),
+            command=f"mcp:{server.slug}:{tool.remote_name}",
         )
         guarded = await self._second_opinion(lab=lab, guarded=guarded)
         self._audit(lab_id=lab_id, command=f"mcp:{server.slug}:{tool.remote_name}", guarded_result=guarded)
@@ -147,7 +170,9 @@ class ToolExecutionService:
         result = await svc.exec_command(lab_id, command, timeout=timeout, worker_id=worker_id)
         lab = self._lab(lab_id)
         guarded = guard_lab_output(result, enabled=bool(lab.data_guard) if lab else True,
-                                   command=command, lab_id=lab_id)
+                                   command=command, lab_id=lab_id, db=self.db,
+                                   lab_name=(lab.name if lab else None),
+                                   worker_id=worker_id)
         guarded = await self._second_opinion(lab=lab, guarded=guarded)
         self._audit(lab_id=lab_id, command=command, guarded_result=guarded)
         return guarded

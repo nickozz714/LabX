@@ -12,3 +12,11 @@ websockets>=13.1
 # streamablehttp_client and Tool.inputSchema — an unpinned bump silently broke
 # every http MCP server's tool sync. Test before widening this range.
 fastmcp>=4.0.0,<5
+
+# PII-herkenning voor de data-guard (namen, plaatsen, telefoonnummers) —
+# de helft die je met patronen niet krijgt. Optioneel in de code: ontbreekt het
+# pakket of het taalmodel, dan werkt de guard door op zijn eigen detectors en
+# zegt de statuspagina dat deze laag uit staat. Het Nederlandse spaCy-model
+# wordt in de Dockerfile opgehaald (~13 MB); zonder dat model start Presidio
+# niet.
+presidio-analyzer>=2.2

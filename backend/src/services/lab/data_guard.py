@@ -265,84 +265,106 @@ def inspect_output(text: str, *, provenance: str = "unknown",
 def guard_lab_output(result: Dict[str, Any], *, enabled: bool,
                      command: Optional[str] = None,
                      lab_id: Optional[str] = None,
-                     provenance_override: Optional[str] = None) -> Dict[str, Any]:
-    """Apply the guard to an exec-style result {exit_code, output, truncated}.
+                     provenance_override: Optional[str] = None,
+                     db: Optional[Any] = None,
+                     lab_name: Optional[str] = None,
+                     worker_id: Optional[int] = None,
+                     run_id: Optional[str] = None) -> Dict[str, Any]:
+    """De guard op een exec-resultaat {exit_code, output, truncated}.
 
-    ``command`` gives the provenance (metadata vs customer data) for shell
-    commands. ``provenance_override`` lets a non-shell origin (an in-lab MCP
-    tool call, which has no command string) supply its own control/data
-    label instead — see services/mcp/lab_stdio_bridge.py, which defaults
-    unlabeled tools to "data" (strict) rather than "unknown"."""
+    **Classifier en guard zijn gescheiden.** Wat er IN de tekst zit, bepaalt
+    services/lab/classifier.py aan de hand van regels die je zelf kunt
+    aanpassen. Wat daarmee gebeurt — maskeren, blokkeren, alleen noteren —
+    staat per regel in diezelfde tabel. Deze functie voert dat uit en legt vast
+    wat er is gebeurd.
+
+    **Maskeren is de standaard, en met reden.** De oude guard verving bij één
+    treffer de HELE uitvoer door een melding. Daarmee raakte je ook de
+    exitcode, het pad en de foutmelding kwijt die je nodig had — en dat is de
+    reden dat de guard het werk in de weg zat in plaats van het te beschermen.
+
+    `db` is optioneel zodat bestaande aanroepers blijven werken; zonder sessie
+    valt hij terug op de regelmatige detectors zonder audit.
+    """
     if not enabled:
         return result
     text = result.get("output") or ""
 
-    try:
-        from services.lab.governed_policy import classify_command as _gov
-        gov_class, gov_reason = _gov(command)
-    except Exception:  # noqa: BLE001 — policy must never break the guard
-        gov_class, gov_reason = ("unknown", "")
-
-    # `counting_safe` mag de herkomst op "control" zetten (en daarmee de
-    # record-telling overslaan) — maar NIET als hetzelfde script aantoonbaar
-    # data-plane werk doet. Een duckdb-script met een COUNT erin is niet
-    # ineens control-plane omdat er geteld wordt; het leest nog steeds uit
-    # OneLake. Zonder deze uitzondering opent elke telling de deur voor de
-    # rijen eromheen.
-    provenance = provenance_override or (
-        "control"
-        if gov_class == "counting_safe" and not _DATA_HARD_RE.search(command or "")
-        else classify_command(command)
-    )
-
-    tainted = False
-    if lab_id:
+    if db is None:
+        # Geen sessie meegekregen: eigen kortlevende sessie. De classifier
+        # heeft de regels uit de database nodig, en die zijn het hele punt.
+        from db.database import SessionLocal
+        eigen = SessionLocal()
         try:
-            from services.lab.execution_context import (
-                is_data_plane_tainted, mark_data_plane_touched)
-            tainted = is_data_plane_tainted(lab_id)
-            if provenance == "data" or gov_class == "value_revealing":
-                mark_data_plane_touched(lab_id)
-        except Exception:  # noqa: BLE001 — taint must never break the guard
-            pass
+            return _guard_met_db(result, text, command=command, lab_id=lab_id,
+                                 provenance_override=provenance_override, db=eigen,
+                                 lab_name=lab_name, worker_id=worker_id, run_id=run_id)
+        finally:
+            eigen.close()
+    return _guard_met_db(result, text, command=command, lab_id=lab_id,
+                         provenance_override=provenance_override, db=db,
+                         lab_name=lab_name, worker_id=worker_id, run_id=run_id)
 
-    facts = {
-        "gov_class": gov_class,
-        "gov_reason": gov_reason,
-        "provenance": provenance,
-        "tainted": tainted,
-        "output_bytes": len(text),
-    }
 
-    # Alleen een opdracht die ZELF waarden onthult (SELECT van kolommen,
-    # MIN/MAX/SUM, GROUP BY) blokkeert zonder naar de uitvoer te kijken. Daar
-    # is het commando het enige betrouwbare signaal: `SELECT MAX(bedrag)`
-    # levert één getal op dat in geen enkele uitvoertelling opvalt en tóch een
-    # echte magnitude is.
-    if gov_class == "value_revealing":
+def _guard_met_db(result: Dict[str, Any], text: str, *, command, lab_id,
+                  provenance_override, db, lab_name, worker_id, run_id) -> Dict[str, Any]:
+    from services.lab import classifier, guard_audit_service as audit
+
+    # 1. De OPDRACHT. Alleen hier kun je `SELECT MAX(bedrag)` tegenhouden: dat
+    #    levert één getal op dat in geen enkele uitvoercontrole opvalt.
+    opdracht = classifier.beoordeel_opdracht(db, command)
+    if opdracht["actie"] == "geweigerd":
+        audit.leg_vast(db, lab_id=lab_id, lab_name=lab_name, worker_id=worker_id,
+                       run_id=run_id, command=command, outcome="geweigerd",
+                       origineel=text, geleverd=None, findings=opdracht["findings"])
         return {
             **result,
-            "output": GUARD_MESSAGE.format(reason=f"waarde-onthullende query ({gov_reason})"),
+            "output": GUARD_MESSAGE.format(reason=opdracht.get("reden") or "opdrachtregel"),
             "guarded": True,
-            "guard_reason": f"value_revealing: {gov_reason}",
-            "guard_facts": facts,
+            "guard_reason": f"opdracht geweigerd: {opdracht.get('reden')}",
+            "guard_facts": {"fase": "opdracht", "findings": opdracht["findings"],
+                            "output_bytes": len(text)},
         }
 
-    # Een VERMOEDEN ("dit ziet eruit als het lezen van een datafile") blokkeert
-    # niet zelf. Het is een gok op een bestandsextensie, en die zat er vaak
-    # naast: commando's met 13 of 63 bytes uitvoer gingen dicht omdat het
-    # commando verdacht oogde. De uitvoer beslist, en wordt wél streng bekeken.
-    verdict = inspect_output(text, provenance=provenance, tainted=tainted,
-                             streng=(gov_class == "vermoedelijk"))
-    if not verdict["allowed"]:
+    # 2. De UITVOER. Maskeren waar het kan, blokkeren waar een regel dat vraagt.
+    uitvoer = classifier.beoordeel_uitvoer(db, text)
+    bevindingen = list(opdracht["findings"]) + list(uitvoer["findings"])
+
+    if uitvoer["actie"] == "geblokkeerd":
+        audit.leg_vast(db, lab_id=lab_id, lab_name=lab_name, worker_id=worker_id,
+                       run_id=run_id, command=command, outcome="geblokkeerd",
+                       origineel=text, geleverd=None, findings=bevindingen)
         return {
             **result,
-            "output": GUARD_MESSAGE.format(reason=verdict["reason"]),
+            "output": GUARD_MESSAGE.format(reason=uitvoer.get("reden") or "uitvoerregel"),
             "guarded": True,
-            "guard_reason": verdict["reason"],
-            "guard_facts": {**facts, "verdict_reason": verdict["reason"]},
+            "guard_reason": uitvoer.get("reden"),
+            "guard_facts": {"fase": "uitvoer", "findings": bevindingen,
+                            "output_bytes": len(text)},
         }
-    if len(text) > MAX_EGRESS_CHARS:
-        return {**result, "output": text[:MAX_EGRESS_CHARS] + "\n… [afgekapt door data-guard]",
-                "truncated": True, "guard_facts": {**facts, "egress_truncated": True}}
-    return {**result, "guard_facts": facts}
+
+    geleverd = uitvoer["tekst"]
+
+    # 3. Het LOKALE MODEL gebeurt HIERNA, in de aanroeper. Die is async en kan
+    #    het netjes afwachten; deze functie is synchroon en zou de hele backend
+    #    stilzetten. Zie tool_execution_service._tweede_mening, die het oordeel
+    #    ophaalt en deze auditregel bijwerkt.
+    afgekapt = False
+    if len(geleverd) > MAX_EGRESS_CHARS:
+        geleverd = geleverd[:MAX_EGRESS_CHARS] + "\n… [afgekapt door data-guard]"
+        afgekapt = True
+
+    audit_id = audit.leg_vast(
+        db, lab_id=lab_id, lab_name=lab_name, worker_id=worker_id, run_id=run_id,
+        command=command,
+        outcome="gemaskeerd" if uitvoer["actie"] == "gemaskeerd" else "doorgelaten",
+        origineel=text, geleverd=geleverd, findings=bevindingen)
+    uit = {**result, "output": geleverd,
+           "guard_facts": {"fase": "uitvoer", "findings": bevindingen,
+                           "output_bytes": len(text), "audit_id": audit_id,
+                           "egress_truncated": afgekapt}}
+    if uitvoer["actie"] == "gemaskeerd":
+        uit["guard_masked"] = True
+    if afgekapt:
+        uit["truncated"] = True
+    return uit

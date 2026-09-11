@@ -56,6 +56,11 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
+    # Het Nederlandse spaCy-model voor Presidio. Presidio's herkenning van
+    # NAMEN, PLAATSEN en telefoonnummers draait op dit model; zonder model
+    # start de analyzer niet en valt die laag van de data-guard weg. ~13 MB,
+    # en de enige manier om PII te vinden die geen vast patroon heeft.
+    && python -m spacy download nl_core_news_sm \
     # `uv`/`uvx` for the MCP catalog's Python-based entries (Fabric RTI,
     # Markitdown) — same pattern as node/npx for the JS-based ones.
     && pip install --no-cache-dir uv \
