@@ -262,6 +262,25 @@ class ClaudeCliProvider:
                 "@anthropic-ai/claude-code of zet cli_path in Instellingen."
             ) from exc
 
+    @staticmethod
+    def _fout_van_result(subtype, result) -> Exception:
+        """De fout die uit een `result`-bericht van de CLI komt.
+
+        Een GEBRUIKSLIMIET krijgt hier een eigen uitzondering. Die ziet er in
+        de uitvoer uit als elke andere fout ("is_error: true, subtype:
+        success"), maar hij betekent iets heel anders: er is niets stuk, het
+        werk kan straks gewoon verder. Behandel je hem als fout, dan komt het
+        ticket in de mislukt-hoek en moet iemand later uitzoeken dat het
+        antwoord "even wachten" was.
+        """
+        from services.agent.limiet import als_limiet
+
+        melding = str(result or "")[:400]
+        limiet = als_limiet(melding)
+        if limiet is not None:
+            return limiet
+        return RuntimeError(f"Claude Code gaf een fout terug ({subtype}): {melding}")
+
     def _timeout_uitleg(self) -> str:
         """Wat er is gebeurd én wat er nog staat. Een run die hier eindigt heeft
         meestal uren gewerkt: alles in het lab staat er nog, en de opmerkingen
@@ -329,8 +348,7 @@ class ClaudeCliProvider:
             raise RuntimeError(f"Claude Code CLI faalde (exit {proc.returncode}): {detail}")
         data = self._parse_result(stdout)
         if data.get("is_error"):
-            raise RuntimeError(f"Claude Code gaf een fout terug ({data.get('subtype')}): "
-                               f"{str(data.get('result') or '')[:400]}")
+            raise self._fout_van_result(data.get("subtype"), data.get("result"))
         return ChatResult(text=str(data.get("result") or ""),
                           session_id=str(data.get("session_id") or ""),
                           raw=data, usage=data.get("usage") or {})
@@ -445,8 +463,7 @@ class ClaudeCliProvider:
                             yield {"kind": "tool", "name": b.get("name"), "input": b.get("input")}
                 elif otype == "result":
                     if obj.get("is_error"):
-                        raise RuntimeError(f"Claude Code gaf een fout terug ({obj.get('subtype')}): "
-                                           f"{str(obj.get('result') or '')[:400]}")
+                        raise self._fout_van_result(obj.get("subtype"), obj.get("result"))
                     sid = obj.get("session_id")
                     if sid:
                         yield {"kind": "session", "id": str(sid)}

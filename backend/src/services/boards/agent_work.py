@@ -303,6 +303,21 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
                 except HTTPException as exc:
                     log.warningx("Ticket verplaatsen na agent-run mislukt",
                                  ticket=ticket.key, error=str(exc.detail))
+        elif status == "limited":
+            # Geen fout: de dienst laat ons even niet werken. Het ticket blijft
+            # staan waar het staat en gaat terug in de wachtstand, zodat het
+            # vanzelf opnieuw opgepakt wordt — niet naar de mislukt-hoek, want
+            # daar gaat iemand naar kijken terwijl er niets te repareren is.
+            hervat = getattr(run, "resume_at", None)
+            ticket.agent_state = "queued"
+            ticket.agent_last_error = None
+            svc.add_comment(
+                ticket.id, kind="activity", author="agent",
+                body=("Gepauzeerd op een gebruikslimiet"
+                      + (f"; gaat automatisch verder om {str(hervat)[11:16]} UTC."
+                         if hervat else ".")
+                      + " Er is niets misgegaan en er is niets verloren: bij het hervatten "
+                        "leest de agent zijn eigen opmerkingen terug."))
         elif status == "onafgemaakt":
             # Het eindantwoord van zo'n run klinkt als een afronding ("loopt nog
             # op de achtergrond, je hoort ervan"). Dat bericht komt nooit. Het
@@ -386,6 +401,13 @@ def _meld_over_ticket(ticket: Ticket, board: Optional[Board], run, status: str) 
         "lab_id": board.lab_id if board else None,
     }
     samenvatting = (getattr(run, "answer", None) or "").strip()
+    if status == "limited":
+        hervat = str(getattr(run, "resume_at", None) or "")
+        meld("storing", f"{ticket.key} gepauzeerd — gebruikslimiet"[:200],
+             (f"Het werk aan {ticket.key} ligt stil tot "
+              f"{hervat[11:16] + ' UTC' if hervat else 'de limiet opengaat'} en gaat daarna "
+              f"vanzelf verder. Er is niets misgegaan."), context)
+        return
     if status == "completed":
         meld("run_klaar", f"{ticket.key} klaar — {ticket.title}"[:200],
              samenvatting or "De agent is klaar maar liet geen samenvatting achter.",

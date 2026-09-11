@@ -60,6 +60,14 @@ async def _plan_tick() -> None:
     await _tick()
 
 
+async def _hervat_limiet_tick() -> None:
+    """Werk dat op een gebruikslimiet stilviel weer oppakken zodra de limiet
+    opengaat. Alleen voor runs die NIET in een planning zitten; die hervat de
+    planning zelf (zie services/agent/hervatten.py)."""
+    from services.agent.hervatten import tick as _tick
+    await _tick()
+
+
 async def _notify_inbox_tick() -> None:
     """Antwoorden op meldingen ophalen.
 
@@ -144,6 +152,10 @@ async def lifespan(_app: FastAPI):
                        run_immediately=False)
     scheduler.register(name="notify_inbox", interval_seconds=30, fn=_notify_inbox_tick,
                        run_immediately=False)
+    # Elke minuut: fijn genoeg dat er na een limiet niet onnodig lang niets
+    # gebeurt, en het kost niets zolang er geen gepauzeerde runs staan.
+    scheduler.register(name="hervat_limiet", interval_seconds=60, fn=_hervat_limiet_tick,
+                       run_immediately=True)
     scheduler.register(name="worker_reaper", interval_seconds=300, fn=_worker_reaper_tick,
                        run_immediately=False)
     await scheduler.start()

@@ -11,7 +11,19 @@ import type { BackgroundRunDto, ChatEvent } from "@/lib/types";
 import { Badge, Button, Modal } from "@/components/ui";
 
 export function statusTone(status: BackgroundRunDto["status"]) {
-  return ({ running: "yellow", completed: "green", failed: "red", cancelled: "neutral", interrupted: "neutral" } as const)[status];
+  // "limited" is bewust GEEN rood: er is niets stuk en niets verloren, het werk
+  // gaat vanzelf verder zodra de gebruikslimiet opengaat.
+  return ({ running: "yellow", completed: "green", failed: "red", cancelled: "neutral",
+            interrupted: "neutral", limited: "violet" } as const)[status];
+}
+
+/** Wat je in de UI leest. "limited" zegt niets tegen wie het niet kent. */
+export function statusLabel(r: Pick<BackgroundRunDto, "status" | "resume_at">): string {
+  if (r.status !== "limited") return r.status;
+  if (!r.resume_at) return "gepauzeerd (limiet)";
+  const tijd = new Date(r.resume_at).toLocaleTimeString(undefined,
+    { hour: "2-digit", minute: "2-digit" });
+  return `gepauzeerd tot ${tijd}`;
 }
 
 export function runDuration(r: Pick<BackgroundRunDto, "started_at" | "finished_at">): string {
@@ -53,7 +65,10 @@ export function RunDetailModal({ run, onClose }: { run: BackgroundRunDto; onClos
     <Modal open onClose={onClose} title="Achtergrondtaak" wide>
       <div className="space-y-3">
         <div className="flex items-center gap-2">
-          <Badge tone={statusTone(status as BackgroundRunDto["status"]) || "neutral"}>{status}</Badge>
+          <Badge tone={statusTone(status as BackgroundRunDto["status"]) || "neutral"}>
+            {statusLabel({ status: status as BackgroundRunDto["status"],
+                           resume_at: run.resume_at })}
+          </Badge>
           <span className="text-xs text-muted-foreground">
             taak {run.id.slice(0, 8)} · {runDuration({ ...run })}
           </span>

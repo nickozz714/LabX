@@ -832,6 +832,22 @@ def _maak_afloop_hook(plan_id: int, item_id: int):
             # stilzwijgend ongedaan maken.
             return
         status = getattr(run, "status", None) or "failed"
+        if status == "limited":
+            # Gebruikslimiet: het ticket is niet mislukt, het mag alleen even
+            # niet. Terug in de rij met de hersteltijd erop — dezelfde weg als
+            # `board__wait_until`, dus de planning gaat ondertussen verder met
+            # de tickets die er niets mee te maken hebben.
+            #
+            # Claims blijven staan, net als bij wachten: het werk is niet af en
+            # niemand anders zou nu in diezelfde pipeline moeten gaan zitten.
+            item.state = "waiting"
+            item.resume_at = getattr(run, "resume_at", None)
+            item.worker_id = None
+            item.error = None
+            item.finished_at = _now_iso()
+            db.commit()
+            _plan_verder(plan_id)
+            return
         item.state = "done" if status == "completed" else "failed"
         if status != "completed":
             item.error = (getattr(run, "error", None) or f"Run eindigde als '{status}'")[:2000]

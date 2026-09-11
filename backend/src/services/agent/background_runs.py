@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from component_logging import get_logger
 from models.background_run import BackgroundRun
+from services.agent.limiet import SessieLimiet
 
 log = get_logger(__name__)
 
@@ -56,6 +57,10 @@ def to_dict(r: BackgroundRun) -> Dict[str, Any]:
         "mode": getattr(r, "mode", "background") or "background",
         "steps": r.steps or [], "answer": r.answer, "error": r.error,
         "message_id": r.message_id,
+        # Alleen gevuld bij status "limited": vanaf dit moment gaat het werk
+        # vanzelf verder. Zonder dit ziet een gepauzeerde run eruit als een
+        # afgebroken run.
+        "resume_at": getattr(r, "resume_at", None),
         "created_at": r.created_at, "started_at": r.started_at, "finished_at": r.finished_at,
     }
 
@@ -157,6 +162,7 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
     session_id: Optional[str] = None
     status = "completed"
     error: Optional[str] = None
+    resume_at: Optional[str] = None
     foreground = mode == "foreground"
     run_row = db.get(BackgroundRun, run_id)
     thread_id_for_run = run_row.thread_id if run_row else None
@@ -201,6 +207,15 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
                     db.commit()
     except asyncio.CancelledError:
         status = "cancelled"
+    except SessieLimiet as limiet:
+        # GEEN fout. Er is niets stuk; de dienst laat ons even niet werken.
+        # De run krijgt een eigen toestand en een tijdstip, zodat hij straks
+        # hervat kan worden in plaats van als mislukt te blijven staan.
+        status = "limited"
+        error = limiet.leesbaar()[:2000]
+        resume_at = limiet.resets_at.isoformat()
+        log.infox("Run gepauzeerd op een gebruikslimiet", run_id=run_id,
+                  hervat_om=resume_at)
     except Exception as exc:  # noqa: BLE001 — a background run must record, not raise
         status = "failed"
         # `str()` van een uitzondering kan LEEG zijn — `TimeoutError()` is het
@@ -228,6 +243,7 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
                 run.steps = list(steps)
                 run.answer = answer or None
                 run.error = error
+                run.resume_at = resume_at
                 if session_id:
                     run.cli_session_id = session_id
                 run.finished_at = _now_iso()

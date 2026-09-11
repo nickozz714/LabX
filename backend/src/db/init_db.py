@@ -103,6 +103,8 @@ _ADDITIVE_COLUMNS = {
         ("mode", "VARCHAR(16) NOT NULL DEFAULT 'background'"),
         # In welke werker (container) van het lab deze run draaide.
         ("lab_worker_id", "INTEGER"),
+        # Gepauzeerd op een gebruikslimiet tot dit moment.
+        ("resume_at", "VARCHAR(64)"),
     ],
 }
 

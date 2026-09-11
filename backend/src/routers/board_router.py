@@ -172,6 +172,11 @@ def overview(runs: int = Query(default=30, le=200), db: Session = Depends(get_db
             "started_at": run.started_at or run.created_at,
             "finished_at": run.finished_at,
             "error": (run.error or None),
+            # Bij status "limited": wanneer het werk vanzelf verdergaat. Zonder
+            # dit ziet een gepauzeerde run er in het overzicht uit als een
+            # afgebroken run, en dat is precies het misverstand dat we willen
+            # voorkomen.
+            "resume_at": getattr(run, "resume_at", None),
             "steps": len(run.steps or []),
             "plan_id": extra.get("plan_id"), "plan_name": extra.get("plan_name"),
         }

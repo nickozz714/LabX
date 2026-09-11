@@ -49,6 +49,11 @@ class BackgroundRun(Base):
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     started_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Gepauzeerd op een gebruikslimiet: hervatten mag vanaf dit moment (ISO).
+    # Alleen gevuld bij status "limited". Een limiet is geen fout — er is niets
+    # stuk, de dienst laat ons even niet werken — dus blijft de run bestaan met
+    # een tijdstip eraan in plaats van in de mislukt-hoek te belanden.
+    resume_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_background_runs_thread", "thread_id"),

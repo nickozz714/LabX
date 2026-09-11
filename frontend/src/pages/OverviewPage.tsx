@@ -18,9 +18,11 @@ const PLAN_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet
   running: "yellow", paused: "red", scheduled: "violet", done: "green",
   cancelled: "neutral", draft: "neutral",
 };
-const ITEM_TOON: Record<string, "green" | "red" | "yellow" | "neutral"> = {
+const ITEM_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
   running: "yellow", failed: "red", done: "green", completed: "green",
   cancelled: "neutral", interrupted: "red",
+  // Geen rood: een gebruikslimiet is geen fout, het werk gaat vanzelf verder.
+  limited: "violet",
 };
 
 function tijd(waarde: string | null): string {
@@ -130,7 +132,9 @@ export function OverviewPage() {
   function RunRegel({ run, nu }: { run: OverviewRunDto; nu?: boolean }) {
     return (
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm last:border-0">
-        <Badge tone={ITEM_TOON[run.status] || "neutral"}>{run.status}</Badge>
+        <Badge tone={ITEM_TOON[run.status] || "neutral"}>
+          {run.status === "limited" ? "gepauzeerd" : run.status}
+        </Badge>
         <Link to={`/boards/${run.board_id}`} className="font-mono text-xs hover:underline">
           {run.ticket_key}
         </Link>
@@ -143,6 +147,10 @@ export function OverviewPage() {
           {tijd(run.started_at)}
           {run.started_at ? ` · ${duur(run.started_at, run.finished_at)}` : ""}
           {nu && run.steps ? ` · ${run.steps} stappen` : ""}
+          {run.status === "limited" && run.resume_at
+            ? ` · gaat verder om ${new Date(run.resume_at).toLocaleTimeString(undefined,
+                { hour: "2-digit", minute: "2-digit" })}`
+            : ""}
         </span>
         {run.thread_id && (
           <Link to={`/chat?thread=${run.thread_id}`}

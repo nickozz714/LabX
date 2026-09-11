@@ -137,7 +137,11 @@ export interface BackgroundRunDto {
   prompt: string;
   model: string | null;
   effort: string | null;
-  status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  /** "limited" = gepauzeerd op een gebruikslimiet; gaat vanzelf verder op
+   *  `resume_at`. Geen fout: er is niets stuk en niets verloren. */
+  status: "running" | "completed" | "failed" | "cancelled" | "interrupted" | "limited";
+  /** Bij "limited": vanaf wanneer het werk vanzelf verdergaat (ISO). */
+  resume_at: string | null;
   mode: "background" | "foreground";
   steps: ChatEvent[];
   answer: string | null;
@@ -424,6 +428,8 @@ export interface OverviewRunDto {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  /** Bij status "limited": wanneer het werk vanzelf verdergaat. */
+  resume_at: string | null;
   steps: number;
   plan_id: number | null;
   plan_name: string | null;
