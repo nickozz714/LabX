@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import time
 import json
 import os
+import re
 import shutil
 import sys
 from typing import Any, Dict, Optional
@@ -182,6 +184,30 @@ def _is_local(url: str) -> bool:
         return False
 
 
+# Geheimen die de agent voor zijn eigen werk ophaalt (access-tokens, JWT's,
+# storage-sleutels) horen niet bij het model en niet in de beoordeling. Ze zijn
+# geen klantdata, dus de guard hoeft er niet OP te beslissen — maar ze zijn wél
+# het gevoeligste wat er door deze pijp gaat, en een tweede mening vragen aan
+# een model over een tekst met een geldig token erin is precies wat je niet
+# wilt. Ze gaan er daarom uit vóór de beoordeling, niet erna.
+_GEHEIMEN = [
+    (re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"), "JWT"),
+    (re.compile(r"\b(?:Bearer|Authorization:\s*Bearer)\s+[A-Za-z0-9._\-]{20,}", re.I), "bearer"),
+    (re.compile(r"\b[A-Za-z0-9+/]{60,}={0,2}\b"), "sleutel"),
+    (re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|client[_-]?secret|password|passwd|pwd)"
+                r"\s*[=:]\s*\S{8,}"), "credential"),
+]
+
+
+def zonder_geheimen(text: str) -> str:
+    """Tokens en sleutels vervangen door een merkteken. Bewust vóór alles wat
+    de tekst verder aanraakt."""
+    uit = text or ""
+    for patroon, soort in _GEHEIMEN:
+        uit = patroon.sub(f"[{soort} verwijderd]", uit)
+    return uit
+
+
 def _sample(text: str, head: int = 8000, tail: int = 2000) -> str:
     if len(text) <= head + tail:
         return text
@@ -206,6 +232,7 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
         log.warningx("data-guard LLM overgeslagen: niet-lokale URL (lek-risico)", url=url)
         return None
     timeout = float(os.getenv("DATA_GUARD_LLM_TIMEOUT") or 2.5)
+    begonnen = time.monotonic()
 
     payload = {
         "model": model,
@@ -214,7 +241,8 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
         "options": {"temperature": 0},
         "messages": [
             {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": "Container-output:\n" + _sample(text)},
+            {"role": "user", "content": "Container-output:\n"
+                                        + zonder_geheimen(_sample(text))},
         ],
     }
     try:
@@ -234,10 +262,20 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
         reason = f"lokaal model: {data.get('category') or 'vertrouwelijke data'}"
         return {"allowed": not confidential, "reason": reason}
     except Exception as exc:  # noqa: BLE001 — availability must never break the lab
+        # `str()` van een uitzondering is soms LEEG — `TimeoutError()` is hét
+        # geval, en dat is precies wat er hier misgaat als het model te traag
+        # is. De melding werd dan `error=''`, en daarmee was maandenlang niet
+        # te zien dát de tweede mening stilviel, laat staan waarom. De soort
+        # en de duur erbij is het minste wat er altijd hoort te staan.
+        detail = (str(exc) or f"{type(exc).__name__} zonder toelichting")[:200]
+        verstreken = f"{time.monotonic() - begonnen:.1f}s van {timeout:.1f}s"
         if _fail_closed():
-            log.warningx("data-guard LLM fout → fail-closed (blokkeer)", error=str(exc)[:200])
+            log.warningx("data-guard LLM fout → fail-closed (blokkeer)",
+                         soort=type(exc).__name__, error=detail, duur=verstreken)
             return {"allowed": False, "reason": "data-guard-model niet bereikbaar (fail-closed)"}
-        log.warningx("data-guard LLM fout → fail-open (regels blijven de vloer)", error=str(exc)[:200])
+        log.warningx("data-guard LLM fout → fail-open (regels blijven de vloer)",
+                     soort=type(exc).__name__, error=detail, duur=verstreken,
+                     model=model, url=url)
         return None
 
 

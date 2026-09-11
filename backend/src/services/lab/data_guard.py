@@ -52,6 +52,15 @@ GUARD_MESSAGE = (
 )
 
 # ── Provenance: control-plane (metadata) vs data-plane (records) ─────────────
+# Eén bestandslezing, gedeeld met governed_policy. `[^|;&\n]*` en niet `[^|]*`:
+# dat laatste liep over REGELGRENZEN heen, en koppelde dus de `cat` van
+# `TOKEN=$(cat /tmp/token.txt)` aan een `.json` tien regels verderop. Zo telde
+# élk script dat een token uitleest en ergens een .json noemt als "leest ruwe
+# bestandsinhoud" — 62 Fabric-commando's op één dag, allemaal onterecht.
+_BESTANDSLEZING = (
+    r"\b(cat|head|tail|less|more|xxd|strings|od)\b[^|;&\n]*"
+    r"\.(csv|parquet|json|jsonl|ndjson|tsv|avro|orc|xlsx?)\b")
+
 _CONTROL_PLANE = [
     r"api\.fabric\.microsoft\.com/v1/[^ ]*(workspaces|items|capacities|connections|gateways)",
     r"api\.powerbi\.com/v1\.0/",
@@ -63,29 +72,46 @@ _CONTROL_PLANE = [
     r"\bLIMIT\s+0\b",
     r"\baz\s+storage\s+fs\s+(file\s+)?list\b",
 ]
-_DATA_PLANE = [
+# HARDE data-plane: hier worden echt records gelezen. Deze winnen altijd, ook
+# van een control-plane-aanwijzing in hetzelfde script.
+_DATA_PLANE_HARD = [
     r"onelake\.dfs\.fabric\.microsoft\.com/[^ ]+/(Tables|Files)/",
     r"\baz\s+storage\s+(fs\s+file|blob)\s+download\b",
     r"\bSELECT\b(?![^;]*\bLIMIT\s+0\b)[^;]*\bFROM\b",
-    r"\b(cat|head|tail|less|more|xxd|strings|od)\b[^|]*\.(csv|parquet|json|jsonl|ndjson|tsv|avro|orc|xlsx?)",
     r"\bpd\.read_\w+|\bpandas\.read_\w+",
     r"\.to_(csv|json|dict|string|markdown|records)\(",
     r"\bvalue_counts\(|\.head\(|\.sample\(|\.describe\(|\.groupby\(",
     r"\b(duckdb|pyarrow|deltalake|polars)\b",
 ]
+# VERMOEDELIJKE data-plane: "iemand leest een bestand dat een datafile kán
+# zijn". Een gok op de extensie, en die gok verliest van een expliciete
+# control-plane-aanwijzing — een pipeline-definitie is óók json.
+_DATA_PLANE_ZACHT = [
+    _BESTANDSLEZING,
+]
 _CONTROL_RE = re.compile("|".join(_CONTROL_PLANE), re.IGNORECASE)
-_DATA_RE = re.compile("|".join(_DATA_PLANE), re.IGNORECASE)
+_DATA_HARD_RE = re.compile("|".join(_DATA_PLANE_HARD), re.IGNORECASE)
+_DATA_ZACHT_RE = re.compile("|".join(_DATA_PLANE_ZACHT), re.IGNORECASE)
 
 
 def classify_command(command: Optional[str]) -> str:
     """Provenance of a shell command: 'data' (reads records), 'control'
-    (metadata/inventory) or 'unknown'. Data wins over control on doubt."""
+    (metadata/inventory) or 'unknown'.
+
+    Harde data wint van alles. Daarna wint CONTROL van de zachte
+    bestandsheuristiek, en niet andersom: een script dat een Fabric-definitie
+    ophaalt en het antwoord uitleest, leest geen klantgegevens — het leest
+    code. Andersom bleef er van de guard niets over, want zo'n script noemt
+    bijna altijd wel een .json.
+    """
     if not command:
         return "unknown"
-    if _DATA_RE.search(command):
+    if _DATA_HARD_RE.search(command):
         return "data"
     if _CONTROL_RE.search(command):
         return "control"
+    if _DATA_ZACHT_RE.search(command):
+        return "data"
     return "unknown"
 
 
@@ -199,9 +225,13 @@ def record_rows(text: str) -> int:
 
 # ── Core inspection ───────────────────────────────────────────────────────────
 def inspect_output(text: str, *, provenance: str = "unknown",
-                   tainted: bool = False) -> Dict[str, Any]:
+                   tainted: bool = False, streng: bool = False) -> Dict[str, Any]:
     """Judge container output before it goes to the model.
-    Returns {allowed, reason} — reason only set on a block."""
+    Returns {allowed, reason} — reason only set on a block.
+
+    `streng` komt van een opdracht die eruitzag alsof hij data leest zonder dat
+    zeker te weten. Dan geldt de strenge drempel en telt één record al — maar
+    het is nog steeds de INHOUD die beslist, niet de vorm van het commando."""
     sample = text[:200_000]
 
     bsn = sum(1 for m in _NINE_DIGITS.finditer(sample) if _is_valid_bsn(m.group()))
@@ -217,17 +247,17 @@ def inspect_output(text: str, *, provenance: str = "unknown",
     if email >= _PII_HIT_THRESHOLD * 3:
         return {"allowed": False, "reason": f"{email} e-mailadressen"}
 
-    if provenance == "control":
+    if provenance == "control" and not streng:
         return {"allowed": True, "reason": None}
 
     rows = record_rows(sample)
     threshold = (_RECORD_ROW_THRESHOLD_STRICT
-                 if provenance == "data" or tainted else _RECORD_ROW_THRESHOLD)
+                 if provenance == "data" or tainted or streng else _RECORD_ROW_THRESHOLD)
     if rows >= threshold:
         return {"allowed": False, "reason": f"~{rows} klant-records (dataset)"}
 
-    if provenance == "data" and rows >= 1:
-        return {"allowed": False, "reason": "data-plane read met recordinhoud"}
+    if (provenance == "data" or streng) and rows >= 1:
+        return {"allowed": False, "reason": "recordinhoud uit een data-lezing"}
 
     return {"allowed": True, "reason": None}
 
@@ -253,8 +283,16 @@ def guard_lab_output(result: Dict[str, Any], *, enabled: bool,
     except Exception:  # noqa: BLE001 — policy must never break the guard
         gov_class, gov_reason = ("unknown", "")
 
+    # `counting_safe` mag de herkomst op "control" zetten (en daarmee de
+    # record-telling overslaan) — maar NIET als hetzelfde script aantoonbaar
+    # data-plane werk doet. Een duckdb-script met een COUNT erin is niet
+    # ineens control-plane omdat er geteld wordt; het leest nog steeds uit
+    # OneLake. Zonder deze uitzondering opent elke telling de deur voor de
+    # rijen eromheen.
     provenance = provenance_override or (
-        "control" if gov_class == "counting_safe" else classify_command(command)
+        "control"
+        if gov_class == "counting_safe" and not _DATA_HARD_RE.search(command or "")
+        else classify_command(command)
     )
 
     tainted = False
@@ -276,6 +314,11 @@ def guard_lab_output(result: Dict[str, Any], *, enabled: bool,
         "output_bytes": len(text),
     }
 
+    # Alleen een opdracht die ZELF waarden onthult (SELECT van kolommen,
+    # MIN/MAX/SUM, GROUP BY) blokkeert zonder naar de uitvoer te kijken. Daar
+    # is het commando het enige betrouwbare signaal: `SELECT MAX(bedrag)`
+    # levert één getal op dat in geen enkele uitvoertelling opvalt en tóch een
+    # echte magnitude is.
     if gov_class == "value_revealing":
         return {
             **result,
@@ -285,7 +328,12 @@ def guard_lab_output(result: Dict[str, Any], *, enabled: bool,
             "guard_facts": facts,
         }
 
-    verdict = inspect_output(text, provenance=provenance, tainted=tainted)
+    # Een VERMOEDEN ("dit ziet eruit als het lezen van een datafile") blokkeert
+    # niet zelf. Het is een gok op een bestandsextensie, en die zat er vaak
+    # naast: commando's met 13 of 63 bytes uitvoer gingen dicht omdat het
+    # commando verdacht oogde. De uitvoer beslist, en wordt wél streng bekeken.
+    verdict = inspect_output(text, provenance=provenance, tainted=tainted,
+                             streng=(gov_class == "vermoedelijk"))
     if not verdict["allowed"]:
         return {
             **result,

@@ -18,6 +18,20 @@ from __future__ import annotations
 import re
 from typing import Tuple
 
+# Gedeeld met data_guard: één plek voor "wat is control-plane", "wat is hard
+# data-plane" en "hoe ziet een bestandslezing eruit". Twee kopieën van deze
+# patronen die uit elkaar lopen is precies hoe een guard onvoorspelbaar wordt.
+from services.lab.data_guard import (_BESTANDSLEZING, _CONTROL_RE,  # noqa: F401
+                                     _DATA_HARD_RE)
+
+_BESTANDSLEZING_RE = re.compile(_BESTANDSLEZING, re.IGNORECASE)
+
+
+def _harde_data(command: str) -> bool:
+    """Leest dit script écht records? Dan wint dat van elke control-plane-
+    aanwijzing in hetzelfde script."""
+    return bool(_DATA_HARD_RE.search(command or ""))
+
 # ── VALUE-REVEALING (block toward the model) ─────────────────────────────────
 _VALUE_PATTERNS = [
     r"\b(MIN|MAX|SUM|AVG|MEAN|MEDIAN|MODE|STDDEV|STDEV|VAR|VARIANCE|PERCENTILE\w*|APPROX_PERCENTILE)\s*\(",
@@ -27,6 +41,7 @@ _VALUE_PATTERNS = [
     r"\.value_counts\s*\(", r"\.unique\s*\(",
     r"\.head\s*\(", r"\.tail\s*\(", r"\.sample\s*\(", r"\.describe\s*\(",
     r"\.mode\s*\(", r"\.nlargest\s*\(", r"\.nsmallest\s*\(",
+    r"\.groupby\s*\(",
     r"\.(min|max|mean|median|sum|std|var|quantile)\s*\(",
     r"\.to_(csv|json|dict|markdown|string|records|numpy|list)\s*\(",
     r"\.tolist\s*\(",
@@ -65,12 +80,48 @@ def _select_returns_values(command: str) -> bool:
     return any(re.match(r"^[A-Za-z_]", t) for t in wo.split())
 
 
+# Een heredoc die naar een BESTAND gaat, is code die geschreven wordt — geen
+# query die draait. `cat > cel4.py << 'EOF' … df.groupBy(…) … EOF` produceert
+# geen enkele rij; het legt een script neer dat later misschien iets doet, en
+# dán wordt dát commando beoordeeld. De inhoud meewegen blokkeerde het
+# SCHRIJVEN van pyspark-code, en dat is precies het werk waar een lab voor is.
+#
+# Let op de grens: een heredoc naar een INTERPRETER (`python3 << 'EOF'`) wordt
+# wél uitgevoerd en blijft dus gewoon meetellen. Daar zit het verschil tussen
+# "ik leg een bestand neer" en "ik draai dit nu".
+_HEREDOC_NAAR_BESTAND = re.compile(
+    r"(?:\bcat\b|\btee\b)[^\n<]*>\s*\S+[^\n<]*<<-?\s*['\"]?(?P<eind>\w+)['\"]?\s*\n"
+    r".*?^(?P=eind)\s*$",
+    re.DOTALL | re.MULTILINE)
+
+
+def _zonder_geschreven_code(command: str) -> str:
+    return _HEREDOC_NAAR_BESTAND.sub("[code weggeschreven]", command or "")
+
+
 def classify_command(command: str | None) -> Tuple[str, str]:
-    """Classify a shell/SQL command: ('counting_safe'|'value_revealing'|
-    'unknown', reason). Value-revealing wins on doubt."""
+    """Classificeer een shell/SQL-commando.
+
+    Vier uitkomsten, en het verschil tussen de laatste twee is de kern van deze
+    module:
+
+    - `counting_safe`   — telling/structuur/beheer-API; mag terug naar het model.
+    - `value_revealing` — de opdracht ZELF onthult waarden: een SELECT van
+      kolommen, MIN/MAX/SUM, GROUP BY. Hier is het commando het enige
+      betrouwbare signaal, want `SELECT MAX(bedrag)` levert één getal op dat in
+      geen enkele uitvoertelling opvalt en tóch een echte magnitude is. Dit
+      blokkeert dus op zichzelf.
+    - `vermoedelijk`    — de opdracht LIJKT data te lezen (een `cat` op een
+      .json), maar dat is een gok op een bestandsextensie. Blokkeert niet zelf;
+      zet de beoordeling van de uitvoer op streng.
+    - `unknown`         — geen data-query herkend.
+
+    Bij twijfel wint de strengere.
+    """
     if not command:
         return ("unknown", "geen commando")
-    cmd = command
+    # Code die wordt WEGGESCHREVEN telt niet mee: die draait nu niets.
+    cmd = _zonder_geschreven_code(command)
 
     if re.search(r"\.(isnull|isna|notnull|notna)\s*\(\s*\)\s*\.sum\s*\(", cmd, re.IGNORECASE):
         return ("counting_safe", "null-telling (.isnull().sum())")
@@ -85,9 +136,32 @@ def classify_command(command: str | None) -> Tuple[str, str]:
     if _select_returns_values(cmd):
         return ("value_revealing", "SELECT geeft kolomwaarden/ruwe rijen terug")
 
-    if re.search(r"\b(cat|head|tail|less|more|xxd|strings|od)\b[^|]*\.(csv|parquet|json|jsonl|ndjson|tsv|avro|orc|xlsx?)",
-                 cmd, re.IGNORECASE):
-        return ("value_revealing", "leest ruwe bestandsinhoud van een datafile")
+    # Control-plane: de beheer-API's van Fabric, Power BI en Azure. Die geven
+    # DEFINITIES en inventaris terug — een notebook, een pipeline, een lijst
+    # workspaces — en dat is code en configuratie, geen klantgegevens. Wie hier
+    # niets door laat, blokkeert precies het werk waar een lab voor bedoeld is:
+    # op één dag sneuvelden 62 van dit soort commando's, allemaal onterecht.
+    #
+    # Deze toets staat NA de waarde-onthullers hierboven: doet hetzelfde script
+    # ook een SELECT of een aggregatie, dan wint die. En vóór de
+    # bestandsheuristiek hieronder, want een definitie is óók een .json.
+    if not _harde_data(cmd) and _CONTROL_RE.search(cmd):
+        return ("counting_safe",
+                "beheer-API (definities/inventaris) — configuratie, geen klantgegevens")
+
+    if _BESTANDSLEZING_RE.search(cmd):
+        # VERMOEDEN, geen vaststelling. "Iemand leest een bestand met een
+        # extensie die een datafile kán zijn" is een gok op basis van de
+        # opdracht, en die gok zat er vaak naast: op één dag sneuvelden er
+        # commando's met 13, 63 en 208 bytes uitvoer — een HTTP-status, een
+        # padnaam. Die blokkeren omdat het cómmando verdacht oogt, terwijl de
+        # uitvoer aantoonbaar geen klantgegevens bevat, is de verkeerde kant op
+        # fout: het belemmert het werk zonder iets te beschermen.
+        #
+        # Daarom blokkeert dit niet meer op zichzelf; het zet de beoordeling
+        # van de UITVOER op streng. Zit er wél data in, dan gaat hij alsnog
+        # dicht — en dan op grond van wat er echt in staat.
+        return ("vermoedelijk", "leest mogelijk een datafile; uitvoer streng beoordelen")
 
     if _COUNT_RE.search(cmd):
         return ("counting_safe", "telling (COUNT-familie)")
