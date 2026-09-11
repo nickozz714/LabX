@@ -58,9 +58,16 @@ _ADDITIVE_COLUMNS = {
     ],
     "ticket_plans": [
         ("resume_at", "VARCHAR(64)"),
+        # Hoeveel tickets tegelijk. NULL = zoveel als er werkers vrij zijn, en
+        # dat is precies hoe bestaande planningen zich moeten blijven gedragen
+        # zolang hun lab één werker heeft.
+        ("max_parallel", "INTEGER"),
+        ("workspace_mode", "VARCHAR(16) NOT NULL DEFAULT 'gedeeld'"),
     ],
     "ticket_plan_items": [
         ("worker_id", "INTEGER"),
+        # Dit ITEM ligt stil tot dit moment; de planning loopt door.
+        ("resume_at", "VARCHAR(64)"),
     ],
     "labs": [
         ("azure_profile_id", "INTEGER"),

@@ -124,11 +124,21 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
         f" {ticket.key}, met `board__comment_ticket`. Dat is het werklogboek en de"
         " enige plek waar verslag hoort.",
         "- **Moet je wachten op iets dat minuten duurt** (een pipeline, een"
-        " notebook-run, een deploy)? Gebruik `board__wait_until` — de planning"
-        " pauzeert, je werker komt vrij en dit ticket wordt op tijd opnieuw"
-        " opgepakt. Blijf niet wachten of pollen in het lab: dat houdt een werker"
-        " bezet en verbrandt je context. Zet wél eerst in een opmerking waar je"
-        " gebleven bent; bij het hervatten is dat je enige context.",
+        " notebook-run, een deploy)? Gebruik `board__wait_until` — alleen dit"
+        " ticket wacht, je werker komt vrij, de planning gaat verder met het"
+        " volgende ticket en dit ticket wordt op tijd opnieuw opgepakt. Blijf"
+        " niet wachten of pollen in het lab: dat houdt een werker bezet,"
+        " verbrandt je context en telt mee voor de tijdslimiet van deze run."
+        " Zet wél eerst in een opmerking waar je gebleven bent; bij het"
+        " hervatten is dat je enige context.",
+        "- **Je bent mogelijk niet de enige.** Een planning kan meerdere tickets"
+        " tegelijk draaien in dit lab: aparte containers, maar één /workspace,"
+        " één az-sessie, één omgeving. Meld daarom met `board__claim` waar je"
+        " aan gaat zitten vóórdat je het wijzigt — een pipeline, een tabel, een"
+        " map. Krijg je te horen dat iemand anders hem heeft, ga er dan niet"
+        " toch in: pak iets anders uit dit ticket op of wacht. Ben je klaar met"
+        " een bron, geef hem vrij met `board__release`, dan kan een wachtend"
+        " ticket door. Lezen mag altijd; claimen is voor wat je VERANDERT.",
         "- **Zet nooit werk op de achtergrond en meld dan dat je klaar bent.**"
         " Deze run is één aanroep: zodra jij je eindantwoord geeft, valt het"
         " proces om. Een subagent met `run_in_background` sterft daar mee, een"

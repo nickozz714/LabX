@@ -357,6 +357,10 @@ export interface PlanDto {
   note: string | null;
   counts: Record<string, number>;
   total: number;
+  /** Hoeveel tickets tegelijk. null = zoveel als er werkers vrij zijn. */
+  max_parallel: number | null;
+  /** "gedeeld" of "apart" — krijgt elk ticket een eigen werkmap. */
+  workspace_mode: string;
   items?: PlanItemDto[];
   created_at: string;
   updated_at: string;
@@ -376,6 +380,12 @@ export interface PlanItemDto {
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Dit ticket ligt stil tot dit moment (de agent wacht op iets langs
+   *  loopends). De planning loopt ondertussen door met andere tickets. */
+  resume_at: string | null;
+  /** Waar dit ticket aan zit; zolang het die vasthoudt start LabX geen ticket
+   *  dat aan hetzelfde zou komen. */
+  claims: string[];
 }
 
 export interface BoardOverviewDto {

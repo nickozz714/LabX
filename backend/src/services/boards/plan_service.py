@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from component_logging import get_logger
 from models.board import Board, Ticket
-from models.plan import TicketPlan, TicketPlanItem
+from models.plan import PlanClaim, TicketPlan, TicketPlanItem
 
 log = get_logger(__name__)
 
@@ -60,7 +60,9 @@ class PlanService:
 
     def create(self, board_id: int, *, name: str, ticket_ids: List[int],
                start_at: Optional[str] = None, instruction: Optional[str] = None,
-               source: str = "handmatig", start_now: bool = True) -> TicketPlan:
+               source: str = "handmatig", start_now: bool = True,
+               max_parallel: Optional[int] = None,
+               workspace_mode: Optional[str] = None) -> TicketPlan:
         board = self.db.get(Board, board_id)
         if board is None:
             raise HTTPException(status_code=404, detail="Board niet gevonden")
@@ -91,6 +93,10 @@ class PlanService:
             state="scheduled" if start_at else ("running" if start_now else "draft"),
             start_at=start_at, source=source,
             instruction=(instruction or "").strip() or None,
+            # 0 of leeg = geen eigen plafond: dan bepalen de vrije werkers van
+            # het lab de breedte. Eén knop om te begrijpen in plaats van twee.
+            max_parallel=(int(max_parallel) if max_parallel else None),
+            workspace_mode=("apart" if str(workspace_mode or "") == "apart" else "gedeeld"),
             created_at=now, updated_at=now)
         self.db.add(plan)
         self.db.flush()
@@ -298,22 +304,27 @@ class PlanService:
         if plan.state not in ("running", "scheduled"):
             return {"plan": plan.id, "state": plan.state, "gestart": None}
         items = self.items(plan.id)
+        self._ruim_dode_runs_op(items)
 
-        # Loopt er nog iets van deze planning? Dan wachten we daarop. Een item
-        # dat "running" heet terwijl de run allang weg is (herstart) telt niet
-        # mee — anders staat de planning voor eeuwig te wachten op een geest.
+        # Items die stilliggen tot hun tijd om is, weer in de rij zetten. Ze
+        # houden hun plek en hun claims; alleen hun werker was vrijgegeven.
+        nu = _now_iso()
         for it in items:
-            if it.state != "running":
-                continue
-            if it.run_id and background_runs.is_active(it.run_id):
-                return {"plan": plan.id, "state": plan.state, "gestart": None, "wacht_op": it.ticket_id}
-            it.state = "failed"
-            it.error = "De run is verdwenen (herstart van de backend?)"
-            it.finished_at = _now_iso()
-            self.db.commit()
+            if it.state == "waiting" and it.resume_at and it.resume_at <= nu:
+                it.resume_at = None
+        self.db.commit()
 
-        volgende = next((i for i in items if i.state in ("waiting", "blocked")), None)
-        if volgende is None:
+        lopend = [i for i in items if i.state == "running"]
+        wachtend = [i for i in items if i.state in ("waiting", "blocked") and not i.resume_at]
+
+        if not lopend and not wachtend:
+            geparkeerd = [i for i in items if i.state == "waiting" and i.resume_at]
+            if geparkeerd:
+                # Alles wat nog moet gebeuren ligt te wachten op een tijdstip.
+                # Niet "klaar", maar ook niets te doen: de scheduler komt terug.
+                vroegste = min(i.resume_at for i in geparkeerd)
+                return {"plan": plan.id, "state": plan.state, "gestart": None,
+                        "wacht_tot": vroegste}
             plan.state = "done"
             plan.finished_at = plan.updated_at = _now_iso()
             plan.note = None
@@ -322,72 +333,295 @@ class PlanService:
             self._meld_planning(plan, items)
             return {"plan": plan.id, "state": "done", "gestart": None}
 
-        ticket = self.db.get(Ticket, volgende.ticket_id)
-        if ticket is None:
-            volgende.state = "skipped"
-            volgende.error = "Ticket bestaat niet meer"
-            volgende.finished_at = _now_iso()
-            self.db.commit()
-            return await self.advance(plan.id)
+        ruimte = self._vrije_ruimte(plan, len(lopend))
+        gestart: List[str] = []
+        uitslag: Dict[str, Any] = {"plan": plan.id, "state": plan.state, "gestart": None}
 
-        open_keys = self.blokkades(ticket)
-        if open_keys:
-            volgende.state = "blocked"
-            plan.state = "paused"
-            plan.note = (f"{ticket.key} wacht op {', '.join(open_keys)}. "
-                         f"Zet die eerst klaar, of haal het ticket uit de planning.")
+        for volgende in wachtend:
+            if ruimte <= 0:
+                break
+            ticket = self.db.get(Ticket, volgende.ticket_id)
+            if ticket is None:
+                volgende.state = "skipped"
+                volgende.error = "Ticket bestaat niet meer"
+                volgende.finished_at = _now_iso()
+                self.db.commit()
+                continue
+
+            open_keys = self.blokkades(ticket)
+            if open_keys:
+                # Blokkades stoppen de planning NIET meer: een ticket dat op een
+                # ander wacht gaat opzij, de rest gaat door. Alleen als er
+                # daarna niets anders te doen is, staat de planning stil — en
+                # dat merk je dan aan de melding, niet aan een lege rij.
+                volgende.state = "blocked"
+                volgende.error = f"wacht op {', '.join(open_keys)}"
+                self.db.commit()
+                uitslag.setdefault("geblokkeerd", []).append(
+                    {"ticket": ticket.key, "wacht_op": open_keys})
+                continue
+
+            botsing = self._claim_botsing(plan, ticket)
+            if botsing:
+                # Dit ticket zat de vorige keer aan iets waar nu iemand anders
+                # aan zit. Overslaan tot die klaar is; hij komt vanzelf terug.
+                uitslag.setdefault("wacht_op_claim", []).append(
+                    {"ticket": ticket.key, **botsing})
+                continue
+
+            werker, bezet_door = self._claim_worker(plan)
+            if werker is None and bezet_door is not None:
+                # Geen werker vrij: geen probleem maar een wachtrij. Zodra er
+                # een vrijkomt — of de autoscaler er een heeft bijgezet en
+                # ingericht — komt deze planning vanzelf aan bod.
+                uitslag["wacht_op_planning"] = None if bezet_door == -1 else bezet_door
+                uitslag["wacht_op_werker"] = bezet_door == -1
+                break
+
+            if plan.state == "scheduled":
+                plan.state = "running"
+            if not plan.started_at:
+                plan.started_at = _now_iso()
+            volgende.state = "running"
+            volgende.error = None
+            volgende.worker_id = werker.id if werker is not None else None
+            volgende.started_at = _now_iso()
+            plan.note = None
             plan.updated_at = _now_iso()
             self.db.commit()
-            self._meld_pauze(plan, ticket)
-            log.infox("Planning gepauzeerd door een afhankelijkheid",
-                      plan=plan.id, ticket=ticket.key, wacht_op=open_keys)
-            return {"plan": plan.id, "state": "paused", "gestart": None,
-                    "geblokkeerd": ticket.key, "wacht_op": open_keys}
 
-        werker, bezet_door = self._claim_worker(plan)
-        if werker is None and bezet_door is not None:
-            # Niet pauzeren: dit is geen probleem maar een wachtrij. Zodra er
-            # een werker vrijkomt — of de autoscaler er een heeft bijgezet en
-            # ingericht — komt deze planning vanzelf aan bod.
-            return {"plan": plan.id, "state": plan.state, "gestart": None,
-                    "wacht_op_planning": None if bezet_door == -1 else bezet_door,
-                    "wacht_op_werker": bezet_door == -1}
+            try:
+                res = await start_ticket_run(
+                    self.db, ticket.id,
+                    extra_instruction=self._instructie_voor(plan, ticket),
+                    trigger=f"planning '{plan.name}'",
+                    lab_worker_id=werker.id if werker is not None else None)
+            except HTTPException as exc:
+                volgende.state = "failed"
+                volgende.error = str(exc.detail)[:2000]
+                volgende.finished_at = _now_iso()
+                self.db.commit()
+                log.warningx("Ticket uit planning kon niet starten", plan=plan.id,
+                             ticket=ticket.key, error=str(exc.detail)[:200])
+                uitslag.setdefault("fouten", []).append(
+                    {"ticket": ticket.key, "fout": str(exc.detail)[:300]})
+                # Eén ticket dat niet start is geen reden om de rest stil te
+                # leggen; dat was het wél toen er maar één tegelijk liep.
+                self._meld_pauze(plan, ticket) if len(wachtend) == 1 else None
+                continue
 
-        if plan.state == "scheduled":
-            plan.state = "running"
-        if not plan.started_at:
-            plan.started_at = _now_iso()
-        volgende.state = "running"
-        volgende.worker_id = werker.id if werker is not None else None
-        volgende.started_at = _now_iso()
-        plan.note = None
-        plan.updated_at = _now_iso()
-        self.db.commit()
-
-        try:
-            res = await start_ticket_run(self.db, ticket.id,
-                                         extra_instruction=plan.instruction,
-                                         trigger=f"planning '{plan.name}'",
-                                         lab_worker_id=werker.id if werker is not None else None)
-        except HTTPException as exc:
-            volgende.state = "failed"
-            volgende.error = str(exc.detail)[:2000]
-            volgende.finished_at = _now_iso()
-            plan.state = "paused"
-            plan.note = f"{ticket.key} kon niet starten: {str(exc.detail)[:300]}"
-            plan.updated_at = _now_iso()
+            volgende.run_id = res.get("run_id")
             self.db.commit()
-            self._meld_pauze(plan, ticket)
-            log.warningx("Ticket uit planning kon niet starten", plan=plan.id,
-                         ticket=ticket.key, error=str(exc.detail)[:200])
-            return {"plan": plan.id, "state": "paused", "gestart": None,
-                    "fout": str(exc.detail)}
+            background_runs.on_finish(res["run_id"], _maak_afloop_hook(plan.id, volgende.id))
+            gestart.append(ticket.key)
+            ruimte -= 1
 
-        volgende.run_id = res.get("run_id")
+        if gestart:
+            uitslag["gestart"] = gestart[0] if len(gestart) == 1 else gestart
+            uitslag["gestart_aantal"] = len(gestart)
+        uitslag["state"] = plan.state
+        return uitslag
+
+    def _ruim_dode_runs_op(self, items: List[TicketPlanItem]) -> None:
+        """Een item dat "running" heet terwijl zijn run allang weg is (herstart
+        van de backend) blokkeert anders voor eeuwig een plek in de rij."""
+        from services.agent import background_runs
+
+        for it in items:
+            if it.state != "running":
+                continue
+            if it.run_id and background_runs.is_active(it.run_id):
+                continue
+            it.state = "failed"
+            it.error = "De run is verdwenen (herstart van de backend?)"
+            it.finished_at = _now_iso()
+            self._geef_claims_vrij(it, reden="run verdwenen")
         self.db.commit()
-        background_runs.on_finish(res["run_id"], _maak_afloop_hook(plan.id, volgende.id))
-        return {"plan": plan.id, "state": plan.state, "gestart": ticket.key,
-                "run_id": res.get("run_id")}
+
+    def _vrije_ruimte(self, plan: TicketPlan, lopend: int) -> int:
+        """Hoeveel tickets er nog bij mogen.
+
+        Zonder eigen plafond is het antwoord "zoveel als er werkers vrij zijn",
+        en dat regelt `_claim_worker` toch al per ticket. Dan is dit alleen een
+        bovengrens tegen een lus die honderd keer probeert: meer dan er werkers
+        kunnen zijn heeft geen zin.
+        """
+        if plan.max_parallel:
+            return max(0, int(plan.max_parallel) - lopend)
+        from models.lab import Lab
+        board = self.db.get(Board, plan.board_id)
+        lab = self.db.get(Lab, board.lab_id) if board and board.lab_id else None
+        plafond = int(getattr(lab, "max_workers", 1) or 1) if lab is not None else 1
+        return max(0, plafond - lopend)
+
+    def _instructie_voor(self, plan: TicketPlan, ticket: Ticket) -> Optional[str]:
+        """De instructie van de planning, plus wat dit ticket over ZIJN plek
+        moet weten als de planning met aparte werkmappen draait."""
+        delen = [ (plan.instruction or "").strip() ]
+        if (plan.workspace_mode or "gedeeld") == "apart":
+            map_ = self.werkmap(plan, ticket)
+            delen.append(
+                f"### Je eigen werkmap\n"
+                f"Deze planning draait meerdere tickets tegelijk in hetzelfde lab, en jullie "
+                f"delen /workspace. Werk daarom in `{map_}` (maak hem aan als hij er niet is) "
+                f"en laat bestanden daarbuiten met rust, tenzij je ze alleen LEEST. Wat je "
+                f"buiten die map wijzigt, wijzig je onder de handen van een collega die op "
+                f"hetzelfde moment aan een ander ticket werkt.")
+        tekst = "\n\n".join(d for d in delen if d)
+        return tekst or None
+
+    @staticmethod
+    def werkmap(plan: TicketPlan, ticket: Ticket) -> str:
+        veilig = "".join(c if c.isalnum() or c in "._-" else "_" for c in (ticket.key or "ticket"))
+        return f"/workspace/.plan-{plan.id}/{veilig}"
+
+    # ── claims: wie zit waaraan ───────────────────────────────────────────
+    #
+    # Zodra tickets naast elkaar draaien, kan LabX niet weten of dat veilig is.
+    # Afhankelijkheden vooraf invullen werkt bij drie tickets en niet bij
+    # twintig; een LLM die het vooraf inschat, gokt. De agent weet het wél —
+    # hij staat op het punt die pipeline aan te passen. Dus meldt hij het.
+    #
+    # Twee kanten:
+    # - RUNTIME: `board__claim` geeft of weigert. Weigeren is geen fout maar
+    #   informatie ("SWI-88 zit erin sinds 19:18"); de agent kan wachten, iets
+    #   anders doen, of afronden met een opmerking.
+    # - PLANNING: een ticket dat eerder iets claimde, wordt niet gestart zolang
+    #   iemand anders dat vasthoudt. Zo botsen ze niet pas halverwege.
+
+    @staticmethod
+    def _normaliseer(resource: str) -> str:
+        return " ".join(str(resource or "").strip().lower().split())[:255]
+
+    def _claims_van(self, plan_item_id: int) -> List[PlanClaim]:
+        return (self.db.query(PlanClaim)
+                .filter(PlanClaim.plan_item_id == plan_item_id,
+                        PlanClaim.released_at.is_(None)).all())
+
+    def _actieve_claims(self, plan: TicketPlan, *, behalve_item: Optional[int] = None) -> Dict[str, PlanClaim]:
+        """Wat er NU vastgehouden wordt binnen dit lab.
+
+        Per lab en niet per planning: twee planningen op hetzelfde lab delen
+        dezelfde containers, dezelfde az-sessie en dezelfde Fabric-omgeving.
+        Een claim die alleen binnen één planning gold, zou precies de botsing
+        missen die het duurst is.
+        """
+        board = self.db.get(Board, plan.board_id)
+        if board is None:
+            return {}
+        borden = [b.id for b in self.db.query(Board).filter(
+            Board.lab_id == board.lab_id).all()] if board.lab_id else [board.id]
+        rijen = (self.db.query(PlanClaim, TicketPlanItem)
+                 .join(TicketPlanItem, TicketPlanItem.id == PlanClaim.plan_item_id)
+                 .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
+                 .filter(TicketPlan.board_id.in_(borden),
+                         PlanClaim.released_at.is_(None),
+                         # Alleen wat bij levend werk hoort: een claim van een
+                         # item dat klaar of mislukt is, houdt niets tegen.
+                         TicketPlanItem.state.in_(("running", "waiting", "blocked"))).all())
+        uit: Dict[str, PlanClaim] = {}
+        for claim, item in rijen:
+            if behalve_item is not None and item.id == behalve_item:
+                continue
+            uit.setdefault(claim.resource, claim)
+        return uit
+
+    def _claim_botsing(self, plan: TicketPlan, ticket: Ticket) -> Optional[Dict[str, Any]]:
+        """Zou dit ticket botsen met iets dat nu draait?
+
+        Gebaseerd op wat het ticket EERDER claimde. Dat is geen voorspelling
+        maar geheugen: een ticket dat de vorige keer aan `PL_RUN_SILVER` zat,
+        doet dat de volgende keer vrijwel zeker weer. Is er geen geschiedenis,
+        dan start hij gewoon en vangt `board__claim` het onderweg af.
+        """
+        eerder = {c.resource for c in self.db.query(PlanClaim)
+                  .filter(PlanClaim.ticket_id == ticket.id).all()}
+        if not eerder:
+            return None
+        actief = self._actieve_claims(plan)
+        overlap = sorted(eerder & set(actief))
+        if not overlap:
+            return None
+        houder = actief[overlap[0]]
+        bezet_ticket = self.db.get(Ticket, houder.ticket_id)
+        return {"resource": overlap[0],
+                "bezet_door": bezet_ticket.key if bezet_ticket else str(houder.ticket_id),
+                "sinds": houder.created_at}
+
+    def _geef_claims_vrij(self, item: TicketPlanItem, *, reden: str = "") -> int:
+        rijen = self._claims_van(item.id)
+        for c in rijen:
+            c.released_at = _now_iso()
+        if rijen:
+            log.infox("Claims vrijgegeven", item=item.id, aantal=len(rijen), reden=reden)
+        return len(rijen)
+
+    def claim(self, *, lab_id: str, worker_id: Optional[int],
+              resources: List[str], reden: str) -> Dict[str, Any]:
+        """De agent meldt waar hij aan zit. Alles-of-niets.
+
+        Deels toekennen zou de agent in een halve toestand achterlaten waarin
+        hij denkt te mogen beginnen: dan heeft hij de pipeline wel en de tabel
+        niet, en komt hij daar halverwege achter.
+        """
+        gevraagd = [self._normaliseer(r) for r in (resources or [])]
+        gevraagd = [r for r in gevraagd if r]
+        if not gevraagd:
+            return {"error": "Geef minstens één bron op, bv. \"fabric:acc:PL_RUN_SILVER\"."}
+        item = self._lopend_item(lab_id, worker_id)
+        if item is None:
+            return {"result": ("Dit ticket draait niet vanuit een planning, dus er is niemand om "
+                               "mee te botsen. Je hoeft niets te claimen.")}
+        plan = self.get(item.plan_id)
+        actief = self._actieve_claims(plan, behalve_item=item.id)
+        botsingen = []
+        for r in gevraagd:
+            houder = actief.get(r)
+            if houder is None:
+                continue
+            bezet = self.db.get(Ticket, houder.ticket_id)
+            botsingen.append({"bron": r,
+                              "bezet_door": bezet.key if bezet else str(houder.ticket_id),
+                              "sinds": houder.created_at})
+        if botsingen:
+            omschrijving = "; ".join(
+                f"{b['bron']} zit bij {b['bezet_door']} (sinds {str(b['sinds'])[11:16]} UTC)"
+                for b in botsingen)
+            return {"result": (
+                f"NIET toegekend — {omschrijving}. Er is niets voor je gereserveerd, dus begin "
+                f"hier niet aan. Kies iets anders uit dit ticket dat wél vrij is, of gebruik "
+                f"`board__wait_until` om het later opnieuw te proberen; zet in een opmerking "
+                f"waar je op wacht."), "conflict": botsingen}
+
+        al = {c.resource for c in self._claims_van(item.id)}
+        nieuw = [r for r in gevraagd if r not in al]
+        for r in nieuw:
+            self.db.add(PlanClaim(plan_item_id=item.id, ticket_id=item.ticket_id,
+                                  run_id=item.run_id, resource=r,
+                                  reason=(reden or "")[:1000] or None,
+                                  created_at=_now_iso()))
+        self.db.commit()
+        return {"result": (
+            f"Toegekend: {', '.join(gevraagd)}. Zolang dit ticket loopt (ook terwijl het met "
+            f"`board__wait_until` wacht) komt er niemand anders aan. De claim gaat vanzelf los "
+            f"als het ticket klaar is; geef hem eerder vrij met `board__release` zodra je klaar "
+            f"bent met een bron, dan kan een wachtend ticket door.")}
+
+    def release(self, *, lab_id: str, worker_id: Optional[int],
+                resources: Optional[List[str]] = None) -> Dict[str, Any]:
+        item = self._lopend_item(lab_id, worker_id)
+        if item is None:
+            return {"result": "Dit ticket draait niet vanuit een planning; er is niets te "
+                              "geven."}
+        gevraagd = {self._normaliseer(r) for r in (resources or []) if self._normaliseer(r)}
+        rijen = self._claims_van(item.id)
+        vrij = [c for c in rijen if not gevraagd or c.resource in gevraagd]
+        for c in vrij:
+            c.released_at = _now_iso()
+        self.db.commit()
+        if not vrij:
+            return {"result": "Je had niets (meer) vastgehouden."}
+        return {"result": f"Vrijgegeven: {', '.join(c.resource for c in vrij)}."}
 
     def wacht_tot(self, *, lab_id: str, worker_id: Optional[int],
                   minuten: int, reden: str) -> Dict[str, Any]:
@@ -412,14 +646,18 @@ class PlanService:
                               "opmerking wat er nog moet gebeuren en rond af.")}
         plan = self.get(item.plan_id)
         tot = (datetime.now(timezone.utc) + timedelta(minutes=minuten)).isoformat()
-        # Terug in de rij op zijn eigen plek, en de werker meteen vrij: daar
-        # zit het verschil met wachten in de run.
+        # Alleen dit ITEM wacht; de planning loopt door. Vroeger ging de hele
+        # planning op pauze, waardoor wachten op een pipeline van een uur ook
+        # de vier tickets stillegde die daar niets mee te maken hadden — en de
+        # vrijgekomen werker naar een ándere planning ging in plaats van naar
+        # het volgende ticket van deze.
         item.state = "waiting"
+        item.resume_at = tot
         item.worker_id = None
         item.finished_at = _now_iso()
-        plan.state = "paused"
-        plan.resume_at = tot
-        plan.note = f"Wacht tot {tot[11:16]} UTC — {reden[:300]}"
+        # Claims blijven staan: wie een uur op een pipeline wacht, wil juist
+        # niet dat er ondertussen iemand anders in zit.
+        plan.note = None
         plan.updated_at = _now_iso()
         self.db.commit()
         ticket = self.db.get(Ticket, item.ticket_id)
@@ -429,12 +667,17 @@ class PlanService:
             BoardService(self.db).add_comment(
                 ticket.id, kind="activity", author="agent",
                 body=f"Wacht tot {tot[11:16]} UTC voordat het werk verdergaat — {reden[:500]}")
-        log.infox("Planning wacht", plan=plan.id, tot=tot, minuten=minuten)
-        return {"result": (f"Genoteerd. De planning '{plan.name}' pauzeert en pakt dit ticket om "
-                           f"{tot[11:16]} UTC opnieuw op; de werker komt nu vrij voor ander werk. "
-                           f"Rond deze run nu af: zet in een OPMERKING wat je hebt gedaan en wat "
-                           f"er na de wachttijd moet gebeuren — die opmerking is straks je enige "
-                           f"context.")}
+        log.infox("Ticket uit planning wacht", plan=plan.id, item=item.id,
+                  tot=tot, minuten=minuten)
+        vastgehouden = [c.resource for c in self._claims_van(item.id)]
+        return {"result": (
+            f"Genoteerd. Dit ticket wordt om {tot[11:16]} UTC opnieuw opgepakt; je werker komt "
+            f"nu vrij en de planning '{plan.name}' gaat ondertussen verder met het volgende "
+            f"ticket. "
+            + (f"Je claim op {', '.join(vastgehouden)} blijft staan, dus daar komt niemand aan. "
+               if vastgehouden else "")
+            + f"Rond deze run nu af: zet in een OPMERKING wat je hebt gedaan en wat er na de "
+              f"wachttijd moet gebeuren — die opmerking is straks je enige context.")}
 
     def _lopend_item(self, lab_id: str, worker_id: Optional[int]) -> Optional[TicketPlanItem]:
         """Het planning-ticket dat nu op deze werker draait. Een werker doet er
@@ -521,6 +764,8 @@ class PlanService:
             "state": plan.state, "start_at": plan.start_at, "source": plan.source,
             "instruction": plan.instruction, "note": plan.note,
             "resume_at": getattr(plan, "resume_at", None),
+            "max_parallel": getattr(plan, "max_parallel", None),
+            "workspace_mode": getattr(plan, "workspace_mode", "gedeeld") or "gedeeld",
             "created_at": plan.created_at, "updated_at": plan.updated_at,
             "started_at": plan.started_at, "finished_at": plan.finished_at,
         }
@@ -544,6 +789,11 @@ class PlanService:
                     "position": it.position, "state": it.state, "run_id": it.run_id,
                     "error": it.error, "started_at": it.started_at,
                     "finished_at": it.finished_at,
+                    # Wacht dit ticket op een tijdstip, en waar zit het aan?
+                    # Zonder die twee lijkt een parallel lopende planning een
+                    # rommeltje: vier regels "waiting" zonder uitleg.
+                    "resume_at": getattr(it, "resume_at", None),
+                    "claims": [c.resource for c in self._claims_van(it.id)],
                 })
         return out
 
@@ -586,6 +836,10 @@ def _maak_afloop_hook(plan_id: int, item_id: int):
         if status != "completed":
             item.error = (getattr(run, "error", None) or f"Run eindigde als '{status}'")[:2000]
         item.finished_at = _now_iso()
+        # Het ticket is klaar (of stuk): wat het vasthield komt vrij, zodat een
+        # ticket dat erop wachtte meteen door kan. Zou dit hier niet gebeuren,
+        # dan blokkeert een afgelopen ticket de rest van de planning voorgoed.
+        PlanService(db)._geef_claims_vrij(item, reden=f"item {status}")
         if item.worker_id:
             from services.lab.lab_service import LabService
             LabService(db).touch_worker(item.worker_id)

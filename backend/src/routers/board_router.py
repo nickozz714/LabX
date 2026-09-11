@@ -419,6 +419,8 @@ async def create_plan(board_id: int, payload: Dict[str, Any], db: Session = Depe
         ticket_ids=payload.get("ticket_ids") or [],
         start_at=(payload.get("start_at") or None),
         instruction=instructie or None,
+        max_parallel=payload.get("max_parallel"),
+        workspace_mode=payload.get("workspace_mode"),
         start_now=bool(payload.get("start_now", True)),
     )
     if plan.state == "running":

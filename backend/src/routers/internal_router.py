@@ -139,6 +139,23 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             return {"result": f"{updated.key} bijgewerkt ({', '.join(payload)}); "
                               f"kolom is nu '{updated.status}'."}
 
+        if tool_name == "board__claim":
+            from services.boards.plan_service import PlanService
+            rauw = args.get("resources")
+            lijst = [rauw] if isinstance(rauw, str) else list(rauw or [])
+            return PlanService(db).claim(
+                lab_id=str(lab_id), worker_id=worker_id,
+                resources=[str(x) for x in lijst],
+                reden=str(args.get("reason") or "").strip())
+
+        if tool_name == "board__release":
+            from services.boards.plan_service import PlanService
+            rauw = args.get("resources")
+            lijst = [rauw] if isinstance(rauw, str) else list(rauw or [])
+            return PlanService(db).release(
+                lab_id=str(lab_id), worker_id=worker_id,
+                resources=[str(x) for x in lijst] or None)
+
         if tool_name == "board__wait_until":
             from services.boards.plan_service import PlanService
             return PlanService(db).wacht_tot(

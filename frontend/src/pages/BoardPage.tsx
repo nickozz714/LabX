@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
 import type { BoardDto, PlanDto, TicketDto } from "@/lib/types";
-import { Badge, Button, Card, Input, Label, Modal, Select, TextArea } from "@/components/ui";
+import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
@@ -548,10 +548,25 @@ function PlanRegels({ boardId, planId, onChanged }: {
   return (
     <div className="mt-1 space-y-0.5 border-t border-border pt-1">
       {plan.items.map((it) => (
-        <div key={it.id} className="flex items-center gap-2">
-          <Badge tone={ITEM_TOON[it.state] || "neutral"}>{it.state}</Badge>
+        <div key={it.id} className="flex flex-wrap items-center gap-2">
+          <Badge tone={it.resume_at ? "violet" : (ITEM_TOON[it.state] || "neutral")}>
+            {it.resume_at ? "wacht" : it.state}
+          </Badge>
           <span className="font-mono">{it.ticket_key}</span>
           <span className="max-w-[16rem] truncate text-muted-foreground">{it.ticket_title}</span>
+          {it.resume_at && (
+            <span className="text-[11px] text-muted-foreground"
+                  title="Dit ticket wacht op iets dat tijd kost; de planning gaat ondertussen verder">
+              tot {new Date(it.resume_at).toLocaleTimeString(undefined,
+                    { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
+          {it.claims?.length > 0 && (
+            <span className="rounded bg-secondary px-1 text-[11px] text-muted-foreground"
+                  title={`Houdt vast: ${it.claims.join(", ")} — andere tickets die hieraan komen wachten`}>
+              🔒 {it.claims.length}
+            </span>
+          )}
           {["waiting", "blocked"].includes(it.state) && (
             <button
               title="Uit de planning halen"
@@ -589,6 +604,10 @@ function PlanVenster({ boardId, labId, tickets, onClose, onCreated }: {
   const [wanneer, setWanneer] = useState<"nu" | "later" | "klaarzetten">("nu");
   const [tijdstip, setTijdstip] = useState("");
   const [instructie, setInstructie] = useState("");
+  // Leeg = zoveel als er werkers vrij zijn. Dat is de standaard omdat het lab
+  // dan de enige knop is die je hoeft te begrijpen.
+  const [parallel, setParallel] = useState<string>("");
+  const [apart, setApart] = useState(false);
   // Bijlagen bij de PLANNING: ze gelden voor elk ticket erin. Handig bij één
   // specificatie die voor de hele reeks geldt.
   const [bijlagen, setBijlagen] = useState<Bijlage[]>([]);
@@ -616,6 +635,8 @@ function PlanVenster({ boardId, labId, tickets, onClose, onCreated }: {
         start_now: wanneer === "nu",
         instruction: instructie.trim() || undefined,
         attachments: bijlagen,
+        max_parallel: parallel ? Number(parallel) : undefined,
+        workspace_mode: apart ? "apart" : "gedeeld",
       });
       onCreated(plan);
     } catch (err) {
@@ -692,6 +713,32 @@ function PlanVenster({ boardId, labId, tickets, onClose, onCreated }: {
             <BijlageLijst bijlagen={bijlagen}
                           onVerwijder={(path) =>
                             setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
+          </div>
+        </div>
+
+        <div className="rounded border border-border p-2">
+          <Label>Tegelijk werken</Label>
+          <div className="mt-1 flex items-center gap-2">
+            <Input type="number" min={1} className="w-24" placeholder="auto"
+                   value={parallel} onChange={(e) => setParallel(e.target.value)} />
+            <span className="text-xs text-muted-foreground">
+              tickets tegelijk. Leeg = zoveel als er werkers vrij zijn in het lab.
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Tickets die niets met elkaar te maken hebben hoeven niet op elkaar te wachten.
+            Een agent meldt met <code>board__claim</code> waar hij aan zit, en LabX start geen
+            ticket dat aan hetzelfde zou komen — dus je hoeft dat niet vooraf uit te zoeken.
+          </p>
+          <div className="mt-2">
+            <Toggle checked={apart} onChange={setApart}
+                    label="Elk ticket een eigen werkmap" />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Werkers delen /workspace. Voor werk dat vooral API's aanroept (Fabric, Azure) is
+              dat prima. Zitten deze tickets in BESTANDEN, zet dit dan aan: elk ticket krijgt
+              dan een eigen map om in te werken. Scheiding, geen isolatie — de agent kán er nog
+              omheen, hij krijgt de instructie het niet te doen.
+            </p>
           </div>
         </div>
 

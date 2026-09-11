@@ -12,11 +12,16 @@
 #    wacht, draait, klaar is of is overgeslagen — en je kunt pauzeren,
 #    hervatten of afbreken zonder de rest kwijt te raken.
 #
-# Meerdere planningen mogen naast elkaar bestaan en tegelijk lopen. Binnen ÉÉN
-# lab draait er voorlopig één tegelijk: alle tickets van een bord werken in
-# dezelfde container, en twee agents die daar tegelijk in graaien vechten om
-# dezelfde bestanden en processen. Zodra een lab meerdere werkers kan hebben,
-# is dat de plek waar die grens opgerekt wordt (zie plan_service).
+# Meerdere planningen mogen naast elkaar bestaan en tegelijk lopen, en sinds
+# een lab meerdere werkers heeft mogen ook de TICKETS BINNEN één planning naast
+# elkaar draaien — één per vrije werker. Dat was de hele reden voor werkers:
+# vijf entiteiten die niets met elkaar te maken hebben, hoeven niet op elkaar
+# te wachten.
+#
+# Wat dat mogelijk maakt zonder dat ze elkaar slopen, is `plan_claims`: een
+# agent meldt waar hij aan zit ("fabric:acc:PL_RUN_SILVER") en LabX houdt een
+# ticket tegen dat hetzelfde wil. Werkers delen namelijk /workspace, en twee
+# agents in dezelfde pipeline of hetzelfde bestand is geen theoretisch risico.
 from __future__ import annotations
 
 from sqlalchemy import Float, ForeignKey, Index, Integer, JSON, String, Text
@@ -61,10 +66,29 @@ class TicketPlan(Base):
     instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Waarom hij stilstaat (geblokkeerd ticket, handmatig gepauzeerd, fout).
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Gepauzeerd tot dit moment (ISO), gezet door de agent die op iets langs
-    # loopends wacht: de scheduler zet de planning dan vanzelf weer aan. De
-    # werker komt ondertussen vrij voor ander werk — daar zit de winst.
+    # Gepauzeerd tot dit moment (ISO). Sinds tickets naast elkaar kunnen lopen
+    # is dit alleen nog voor een planning die ALS GEHEEL stilstaat (handmatig,
+    # of een blokkade); een agent die op een pipeline wacht parkeert tegenwoordig
+    # zijn eigen ITEM (TicketPlanItem.resume_at) en laat de planning doorlopen.
     resume_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Hoeveel tickets van deze planning tegelijk mogen draaien. NULL = zoveel
+    # als er werkers vrij zijn; dan bepaalt het maximum van het lab de breedte
+    # en hoeft er per planning niets ingesteld te worden.
+    max_parallel: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # "gedeeld" (standaard) of "apart".
+    #
+    # Werkers delen /workspace — dat IS een lab: één repo, één az-sessie, één
+    # browserprofiel. Voor werk dat vooral API's aanroept (Fabric, Azure) is
+    # parallel draaien daar prima. Zitten de tickets in BESTANDEN, dan is het
+    # dat niet, en krijgt elk ticket een eigen map onder
+    # /workspace/.plan-<id>/<TICKET> om in te werken.
+    #
+    # Let op wat dat wel en niet is: scheiding, geen isolatie. De agent kan nog
+    # steeds overal bij; hij krijgt een werkmap toegewezen en de instructie er
+    # te blijven. Wie echte isolatie wil, geeft de planningen aparte labs.
+    workspace_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="gedeeld")
 
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -98,10 +122,53 @@ class TicketPlanItem(Base):
     # die werker niet vrij voor een andere planning.
     worker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Dit ticket ligt stil tot dit moment (ISO) omdat de agent op iets langs
+    # loopends wacht. Het ITEM wacht, niet de planning: de werker komt vrij en
+    # het volgende ticket begint meteen. Dat is het verschil met vroeger, toen
+    # wachten op een pipeline de hele rij stillegde.
+    resume_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_plan_items_plan", "plan_id"),
         Index("idx_plan_items_ticket", "ticket_id"),
+    )
+
+
+class PlanClaim(Base):
+    """Waar een draaiend ticket aan zit.
+
+    Het probleem dat dit oplost: zodra tickets naast elkaar draaien, kan LabX
+    niet weten of dat veilig is. Afhankelijkheden vooraf invullen werkt bij drie
+    tickets en niet bij twintig, en een LLM die het vooraf inschat, gokt.
+
+    De agent weet het wel — hij staat op het punt die pipeline aan te passen.
+    Dus meldt hij het: `board__claim(["fabric:acc:PL_RUN_SILVER"])`. Zolang hij
+    hem vasthoudt, start LabX geen ticket dat dezelfde bron eerder claimde, en
+    krijgt een agent die hem alsnog opvraagt te horen wie hem heeft.
+
+    Een claim overleeft `board__wait_until` met opzet: wie een uur op een
+    pipeline wacht, wil juist niet dat er ondertussen iemand anders in zit. Hij
+    gaat pas los als het ticket klaar is, mislukt of wordt overgeslagen.
+    """
+    __tablename__ = "plan_claims"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_item_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ticket_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Vrije tekst, genormaliseerd naar kleine letters. Een afspraak, geen
+    # opsomming: "fabric:acc:PL_RUN_SILVER", "repo:/workspace/silver/product".
+    # Wat het betekent bepaalt de agent; wat het DOET is botsingen zichtbaar
+    # maken, en daarvoor is alleen gelijkheid nodig.
+    resource: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    released_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index("idx_plan_claims_resource", "resource"),
+        Index("idx_plan_claims_item", "plan_item_id"),
+        Index("idx_plan_claims_ticket", "ticket_id"),
     )

@@ -530,10 +530,38 @@ def build_server():
              {"type": "object", "properties": {
                  "key": {"type": "string"}, "body": {"type": "string"},
              }, "required": ["key", "body"]}),
+            ("board__claim",
+             "Meld waar je aan gaat zitten, vóórdat je het wijzigt. Nodig omdat een planning "
+             "meerdere tickets TEGELIJK kan draaien in hetzelfde lab: jullie delen /workspace, "
+             "dezelfde az-sessie en dezelfde omgeving, en twee agents in dezelfde pipeline of "
+             "hetzelfde bestand levert schade op die niemand terugdraait.\n"
+             "Een bron is vrije tekst, maar wees specifiek genoeg dat een collega hem herkent: "
+             "'fabric:acc:PL_RUN_SILVER', 'repo:/workspace/silver/product', 'tabel:dbo.product'. "
+             "Te grof ('fabric') houdt werk tegen dat prima naast elkaar kan.\n"
+             "Alles-of-niets: zit één bron al bij iemand anders, dan krijg je NIETS en hoor je "
+             "wie hem heeft. Dat is geen fout — kies dan iets anders uit dit ticket dat wél vrij "
+             "is, of wacht met `board__wait_until`.\n"
+             "Je claim blijft staan terwijl je met `board__wait_until` wacht (juist dan wil je "
+             "niet dat er iemand in zit) en gaat vanzelf los als dit ticket klaar is.\n"
+             "Args: resources* (array of string), reason (string)",
+             {"type": "object", "properties": {
+                 "resources": {"type": "array", "items": {"type": "string"},
+                               "description": "Wat je gaat aanraken"},
+                 "reason": {"type": "string", "description": "Waarom, kort"},
+             }, "required": ["resources"]}),
+            ("board__release",
+             "Geef bronnen weer vrij zodra je ermee klaar bent, zonder te wachten tot dit ticket "
+             "af is. Een ticket dat erop wacht kan dan meteen door. Zonder argumenten geef je "
+             "alles vrij wat je vasthield.\n"
+             "Args: resources (array of string, leeg = alles)",
+             {"type": "object", "properties": {
+                 "resources": {"type": "array", "items": {"type": "string"}},
+             }}),
             ("board__wait_until",
              "Wacht op iets dat MINUTEN duurt (een pipeline, een notebook-run, een deploy) en "
-             "ga daarna verder. De planning pauzeert, jouw werker komt vrij voor ander werk, en "
-             "dit ticket wordt op het afgesproken moment opnieuw opgepakt.\n"
+             "ga daarna verder. Alleen DIT ticket wacht: je werker komt vrij en de planning gaat "
+             "ondertussen verder met het volgende ticket. Op het afgesproken moment wordt dit "
+             "ticket opnieuw opgepakt.\n"
              "Gebruik dit in plaats van wachten of pollen in het lab: dat houdt een werker bezet "
              "en verbrandt je context. Zet vlak vóór of ná deze aanroep in een OPMERKING wat je "
              "hebt gedaan en wat er na de wachttijd moet gebeuren — bij het hervatten is die "
