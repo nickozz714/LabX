@@ -287,8 +287,17 @@ def _laad_presidio() -> Optional[Any]:
         return _PRESIDIO
     _PRESIDIO_GEPROBEERD = True
     try:
+        import logging
+
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+        # Presidio praat veel bij het opbouwen van zijn register: voor elke
+        # herkenner die niet in het Nederlands bestaat één waarschuwing. Dat is
+        # informatie over Presidio's eigen inrichting, niet over onze guard, en
+        # het maakt het log onleesbaar op het moment dat je er juist iets in
+        # zoekt.
+        logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
     except Exception as exc:  # noqa: BLE001
         _PRESIDIO_REDEN = f"presidio-analyzer niet geïnstalleerd ({str(exc)[:80]})"
         return None
@@ -306,10 +315,17 @@ def _laad_presidio() -> Optional[Any]:
     return _PRESIDIO
 
 
-# Wat we van Presidio gebruiken. Bewust een KORTE lijst: alles aanzetten levert
-# treffers op elke datum en elk getal, en dan is de guard onbruikbaar.
-_PRESIDIO_ENTITEITEN = ["PERSON", "LOCATION", "PHONE_NUMBER", "IBAN_CODE",
-                        "CREDIT_CARD", "EMAIL_ADDRESS"]
+# Wat we van Presidio gebruiken: ALLEEN wat het toevoegt aan wat we zelf al
+# doen. Namen, plaatsen en telefoonnummers hebben geen vast patroon en komen
+# uit het taalmodel — dat is de helft die je met reguliere expressies niet
+# krijgt, en de enige reden dat Presidio hier staat.
+#
+# IBAN, creditcard en e-mail staan er bewust NIET bij. Die doen onze eigen
+# detectors al, mét checksum, en dus beter. Ze tóch opvragen kost twee dingen:
+# een waarschuwing per aanroep ("Entity CREDIT_CARD doesn't have the
+# corresponding recognizer in language: nl" — het Nederlandse register heeft
+# ze niet) en een logbestand waarin de échte waarschuwingen wegvallen.
+_PRESIDIO_ENTITEITEN = ["PERSON", "LOCATION", "PHONE_NUMBER"]
 _PRESIDIO_DREMPEL = 0.6
 
 
