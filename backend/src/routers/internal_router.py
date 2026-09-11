@@ -139,6 +139,34 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             return {"result": f"{updated.key} bijgewerkt ({', '.join(payload)}); "
                               f"kolom is nu '{updated.status}'."}
 
+        if tool_name == "lab__secret_list":
+            from services.lab.secrets import SecretService
+            svc_s = SecretService(db)
+            rijen = [svc_s.to_dict(r) for r in svc_s.lijst(str(lab_id))]
+            if not rijen:
+                return {"result": ("Dit lab heeft nog geen geheimen. Zet er een met "
+                                   "`lab__secret_put` en gebruik hem daarna als "
+                                   "{{secret:naam}} in je commando's.")}
+            return {"result": rijen}
+
+        if tool_name == "lab__secret_put":
+            from services.lab.secrets import SecretService
+            try:
+                rij = SecretService(db).zet(
+                    str(lab_id), naam=str(args.get("name") or "").strip(),
+                    waarde=(str(args.get("value") or "").strip() or None),
+                    commando=(str(args.get("command") or "").strip() or None),
+                    omschrijving=(str(args.get("description") or "").strip() or None),
+                    ttl_minuten=(int(args.get("ttl_minutes")) if args.get("ttl_minutes") else None))
+            except ValueError as exc:
+                return {"error": str(exc)}
+            return {"result": (
+                f"Geheim '{rij.name}' opgeslagen. Gebruik hem als {{{{secret:{rij.name}}}}} "
+                f"in je commando's; de waarde komt daarbij nooit in de tekst van het "
+                f"commando terecht."
+                + (f" Hij wordt elke {rij.ttl_minutes} minuten vers gemaakt."
+                   if rij.kind == "commando" else ""))}
+
         if tool_name == "board__claim":
             from services.boards.plan_service import PlanService
             rauw = args.get("resources")

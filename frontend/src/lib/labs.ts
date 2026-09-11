@@ -16,6 +16,23 @@ export type BrowserStatus = {
   server: string | null;
 };
 
+/** Een geheim van een lab. De WAARDE staat er bewust niet in: die verlaat de
+ *  kluis alleen richting de container, en zelfs daar niet via een
+ *  commandoregel. `has_value` zegt of er een is. */
+export type LabGeheim = {
+  name: string;
+  description: string | null;
+  kind: "waarde" | "commando";
+  has_value: boolean;
+  produce_command: string | null;
+  ttl_minutes: number;
+  refreshed_at: string | null;
+  last_used_at: string | null;
+  last_error: string | null;
+  /** Precies wat je in een commando schrijft. */
+  placeholder: string;
+};
+
 /** Wat een upload teruggeeft. `skipped` is er met opzet: een bestand dat te
  *  groot of leeg was moet je zien, niet stil verdwijnen. */
 export type Bijlage = { name: string; path: string; bytes: number };
@@ -79,6 +96,14 @@ export const labsApi = {
     api.get<{ path: string; content: string; truncated: boolean }>(`/labs/${id}/file?path=${encodeURIComponent(path)}`),
   writeFile: (id: string, path: string, content: string) =>
     api.put<{ ok: boolean }>(`/labs/${id}/file`, { path, content }),
+  secrets: (id: string) => api.get<LabGeheim[]>(`/labs/${id}/secrets`),
+  putSecret: (id: string, naam: string, payload: Record<string, unknown>) =>
+    api.put<LabGeheim>(`/labs/${id}/secrets/${encodeURIComponent(naam)}`, payload),
+  deleteSecret: (id: string, naam: string) =>
+    api.delete<{ ok: boolean }>(`/labs/${id}/secrets/${encodeURIComponent(naam)}`),
+  testSecret: (id: string, naam: string) =>
+    api.post<LabGeheim & { ok: boolean; lengte: number }>(
+      `/labs/${id}/secrets/${encodeURIComponent(naam)}/test`),
   browserStatus: (id: string) => api.get<BrowserStatus>(`/labs/${id}/browser-status`),
   browserStart: (id: string, url?: string) =>
     api.post<BrowserStatus & { ok: boolean; url: string }>(`/labs/${id}/browser-start`, { url }),

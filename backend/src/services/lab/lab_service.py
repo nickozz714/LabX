@@ -1404,11 +1404,33 @@ exec ssh -N \\
         # to sh only when it genuinely doesn't ($0 carries the command).
         wrapper = ('if command -v bash >/dev/null 2>&1; then exec bash -c "$0"; '
                   'else exec sh -c "$0"; fi')
-        result = await self.runtime.exec(cid, ["sh", "-lc", wrapper, command],
+
+        # `{{secret:naam}}` omzetten naar een omgevingsvariabele die IN de
+        # container wordt ingelezen. Het commando dat we hier bewaren en
+        # uitvoeren bevat dus nooit de waarde zelf — zie services/lab/secrets.py.
+        from services.lab.secrets import SecretService
+
+        geheimen = SecretService(self.db)
+        uitvoerbaar, gebruikt, onbekend = await geheimen.bereid_voor(
+            lab_id, command, runtime=self.runtime, container_id=cid)
+        if onbekend:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Onbekend geheim: {', '.join(onbekend)}. Zet hem eerst met "
+                        f"`lab__secret_put`, of kijk met `lab__secret_list` welke er zijn."))
+
+        result = await self.runtime.exec(cid, ["sh", "-lc", wrapper, uitvoerbaar],
                                          timeout=max(5.0, min(timeout, 600.0)))
+        # En de andere kant op: een geheim dat tóch in de uitvoer belandt
+        # (geëchood, in een header, in een foutmelding) gaat er hier uit.
+        if result.get("output"):
+            result["output"] = geheimen.maskeer_in(lab_id, result["output"])
         self._touch(p)
         self.touch_worker(worker_id)
-        return self._duid_proces_tabel(result)
+        uit = self._duid_proces_tabel(result)
+        if gebruikt:
+            uit["secrets_used"] = gebruikt
+        return uit
 
     @staticmethod
     def _duid_proces_tabel(result: Dict[str, Any]) -> Dict[str, Any]:

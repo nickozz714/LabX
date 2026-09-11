@@ -16,6 +16,7 @@ import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
+import { LabGeheimen } from "@/components/LabGeheimen";
 import { getToken } from "@/lib/api";
 
 function statusTone(status: Lab["status"]) {
@@ -365,7 +366,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
 }
 
 function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
-  const [tab, setTab] = useState<"settings" | "inrichting" | "browser" | "toegang" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
+  const [tab, setTab] = useState<"settings" | "inrichting" | "browser" | "toegang" | "geheimen" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
 
   useEffect(() => {
@@ -401,13 +402,14 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1 border-b border-border text-sm">
-        {(["settings", "inrichting", "browser", "toegang", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
+        {(["settings", "inrichting", "browser", "toegang", "geheimen", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 ${tab === t ? "border-b-2 border-primary font-medium" : "text-muted-foreground"}`}
           >
             {{ settings: "Instellingen", inrichting: "Inrichting", browser: "Browser", toegang: "Toegang",
+               geheimen: "Geheimen",
                git: "Git", files: "Bestanden", exec: "Commando", terminal: "Terminal",
                audit: "Guard-audit" }[t]}
           </button>
@@ -464,6 +466,7 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       {tab === "browser" && <BrowserPanel lab={lab} />}
       {tab === "toegang" && <LabAllowlist lab={lab} onSaved={() => onChanged()} />}
       {tab === "git" && <PublishPanel lab={lab} />}
+      {tab === "geheimen" && <LabGeheimen lab={lab} />}
       {tab === "files" && <FileBrowser lab={lab} />}
       {tab === "exec" && <ExecPanel lab={lab} />}
       {tab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}

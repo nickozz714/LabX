@@ -449,6 +449,57 @@ async def upload_to_lab(lab_id: str,
                                            worker_id=worker_id)
 
 
+@router.get("/{lab_id}/secrets")
+def list_secrets(lab_id: str, db: Session = Depends(get_db)):
+    """Namen en versheid. Nooit waarden — die verlaten de kluis alleen richting
+    de container, en zelfs daar niet via een commandoregel."""
+    from services.lab.secrets import SecretService
+    svc = SecretService(db)
+    return [svc.to_dict(r) for r in svc.lijst(lab_id)]
+
+
+@router.put("/{lab_id}/secrets/{naam}")
+def put_secret(lab_id: str, naam: str, payload: Dict[str, Any],
+               db: Session = Depends(get_db)):
+    from services.lab.secrets import SecretService
+    svc = SecretService(db)
+    try:
+        rij = svc.zet(lab_id, naam=naam,
+                      waarde=(str(payload.get("value") or "").strip() or None),
+                      commando=(str(payload.get("command") or "").strip() or None),
+                      omschrijving=payload.get("description"),
+                      ttl_minuten=(int(payload["ttl_minutes"])
+                                   if payload.get("ttl_minutes") else None))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return svc.to_dict(rij)
+
+
+@router.delete("/{lab_id}/secrets/{naam}")
+def delete_secret(lab_id: str, naam: str, db: Session = Depends(get_db)):
+    from services.lab.secrets import SecretService
+    if not SecretService(db).verwijder(lab_id, naam):
+        raise HTTPException(status_code=404, detail="Geheim niet gevonden")
+    return {"ok": True}
+
+
+@router.post("/{lab_id}/secrets/{naam}/test")
+async def test_secret(lab_id: str, naam: str, db: Session = Depends(get_db)):
+    """Werkt dit geheim? Draait bij een commando-geheim het commando en meldt
+    of er een waarde uitkwam — zonder die waarde te tonen."""
+    from services.lab.secrets import SecretService
+    svc_lab = _service(db)
+    svc = SecretService(db)
+    rij = svc.haal(lab_id, naam)
+    if rij is None:
+        raise HTTPException(status_code=404, detail="Geheim niet gevonden")
+    p = svc_lab.get(lab_id)
+    cid = svc_lab._require_running(p)
+    waarde = await svc.waarde(rij, runtime=svc_lab.runtime, container_id=cid)
+    return {"ok": bool(waarde), "lengte": len(waarde or ""),
+            "last_error": rij.last_error, **svc.to_dict(rij)}
+
+
 @router.get("/{lab_id}/browser-status")
 async def browser_status(lab_id: str, db: Session = Depends(get_db)):
     """Draait er een browser in dit lab? De UI heeft dit nodig om te kunnen

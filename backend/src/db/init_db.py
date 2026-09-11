@@ -177,6 +177,7 @@ def init_db() -> None:
         board,
         lab,
         lab_extra,
+        lab_secret,
         lab_worker,
         mcp_server,
         message,

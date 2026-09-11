@@ -208,7 +208,12 @@ def zonder_geheimen(text: str) -> str:
     return uit
 
 
-def _sample(text: str, head: int = 8000, tail: int = 2000) -> str:
+def _sample(text: str, head: int = 3000, tail: int = 1000) -> str:
+    """Het stuk dat het model te zien krijgt.
+
+    Kleiner dan vroeger (was 8000/2000). De beoordelingstijd schaalt met de
+    promptlengte, en 4 kB is ruim genoeg om te zien of iets een dataset is —
+    dat zie je aan de eerste twintig regels, niet aan de tienduizendste."""
     if len(text) <= head + tail:
         return text
     return text[:head] + "\n…\n" + text[-tail:]
@@ -231,7 +236,13 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
     if not _is_local(url):
         log.warningx("data-guard LLM overgeslagen: niet-lokale URL (lek-risico)", url=url)
         return None
-    timeout = float(os.getenv("DATA_GUARD_LLM_TIMEOUT") or 2.5)
+    # 10 seconden, niet 2,5. Gemeten op de huidige server (i5-3570, geen GPU)
+    # doet qwen2.5:1.5b er ~10s over een mediaan-uitvoer; met 2,5s liep élke
+    # aanroep in een time-out en viel de tweede mening stil zónder dat iemand
+    # dat kon zien. Liever traag en werkend dan snel en afwezig. Op een machine
+    # met een GPU is dit ruim overbemeten, en dat kost niets: hij stopt zodra
+    # het antwoord er is.
+    timeout = float(os.getenv("DATA_GUARD_LLM_TIMEOUT") or 10.0)
     begonnen = time.monotonic()
 
     payload = {

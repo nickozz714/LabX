@@ -429,7 +429,18 @@ def build_server():
             description=("Voer een bash-commando uit IN de gekoppelde lab-container "
                          "(werkmap /workspace). Output gaat door de LabX data-egress-guard. "
                          "Dit is het enige uitvoeringspad in het lab. Staat het lab uit, dan "
-                         "wordt het automatisch gestart."),
+                         "wordt het automatisch gestart.\n\n"
+                         "GEHEIMEN: zet een token of sleutel NOOIT letterlijk in je commando. "
+                         "Een commando is tekst — het staat in het audit-spoor, het komt als "
+                         "tool-invoer bij jou terug, en het lekt zodra een script iets echoot. "
+                         "Schrijf in plaats daarvan `{{secret:naam}}`; LabX vervangt dat pas in "
+                         "de container door een omgevingsvariabele, dus de waarde staat nergens "
+                         "op een commandoregel. Zet zo'n verwijzing wél tussen DUBBELE "
+                         "aanhalingstekens of kaal, niet tussen enkele — binnen '...' wordt een "
+                         "variabele niet ingevuld. Met `lab__secret_list` zie je welke er zijn en "
+                         "met `lab__secret_put` zet je er een bij — voor iets dat verloopt (een "
+                         "Azure-token) geef je het COMMANDO mee dat hem maakt, dan wordt hij "
+                         "vanzelf ververst en hoef je er nooit meer aan te denken."),
             parameters={
                 "type": "object",
                 "properties": {
@@ -440,6 +451,63 @@ def build_server():
             },
             fn=_shell_handler,
             meta={"labx_builtin": "lab__shell_exec"},
+        ))
+
+        # Geheimen. Bewust GEEN tool om een waarde te LEZEN: het hele punt is
+        # dat de waarde nooit in de context van het model komt. Zetten en
+        # opsommen kan; uitlezen kan alleen de container, en alleen indirect.
+        async def _secret_tool(tool_name: str, **kwargs: Any) -> Any:
+            url = os.environ.get("LABX_INTERNAL_URL")
+            token = os.environ.get("LABX_INTERNAL_TOKEN")
+            return await _delegate_execute(url, token, tool_name=tool_name,
+                                           args=kwargs or {}, lab_id=lab_id)
+
+        async def _secret_list_handler() -> Any:
+            return await _secret_tool("lab__secret_list")
+
+        async def _secret_put_handler(name: str, value: str = "", command: str = "",
+                                      description: str = "",
+                                      ttl_minutes: int = 0) -> Any:
+            return await _secret_tool("lab__secret_put", name=name, value=value,
+                                      command=command, description=description,
+                                      ttl_minutes=ttl_minutes)
+
+        mcp.add_tool(FunctionTool(
+            name="lab__secret_list",
+            description=("Welke geheimen kent dit lab? Geeft namen, soort en versheid — "
+                         "NOOIT de waarde. Gebruik de naam als `{{secret:naam}}` in "
+                         "`lab__shell_exec`."),
+            parameters={"type": "object", "properties": {}},
+            fn=_secret_list_handler,
+            meta={"labx_builtin": "lab__secret_list"},
+        ))
+        mcp.add_tool(FunctionTool(
+            name="lab__secret_put",
+            description=(
+                "Leg een geheim vast onder een naam, zodat je het daarna als "
+                "`{{secret:naam}}` kunt gebruiken zonder de waarde ooit in een commando "
+                "te zetten.\n"
+                "Geef ÓF `value` (een sleutel die niet verloopt) ÓF `command` (een "
+                "commando dat in dit lab de waarde maakt). Dat tweede is de goede vorm "
+                "voor alles wat verloopt, bijvoorbeeld:\n"
+                "  command = \"az account get-access-token --resource "
+                "https://api.fabric.microsoft.com --query accessToken -o tsv\"\n"
+                "LabX draait dat commando opnieuw zodra de waarde te oud is "
+                "(`ttl_minutes`, standaard 50), dus je hoeft er daarna nooit meer aan "
+                "te denken.\n"
+                "Args: name* (string), value (string), command (string), "
+                "description (string), ttl_minutes (number)"),
+            parameters={"type": "object", "properties": {
+                "name": {"type": "string", "description": "Letters, cijfers, - en _"},
+                "value": {"type": "string", "description": "De waarde zelf (niet-verlopend)"},
+                "command": {"type": "string",
+                            "description": "Commando dat de waarde maakt (verlopend)"},
+                "description": {"type": "string"},
+                "ttl_minutes": {"type": "number",
+                                "description": "Hoe lang een gemaakte waarde meegaat"},
+            }, "required": ["name"]},
+            fn=_secret_put_handler,
+            meta={"labx_builtin": "lab__secret_put"},
         ))
 
     # Board-tools — alleen als er een agent board aan dit lab hangt. Dit is
