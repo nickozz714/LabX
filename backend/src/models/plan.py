@@ -127,6 +127,11 @@ class TicketPlanItem(Base):
     # het volgende ticket begint meteen. Dat is het verschil met vroeger, toen
     # wachten op een pipeline de hele rij stillegde.
     resume_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # WAAROM dit ticket stilligt, in de woorden van de agent ("wacht op
+    # pipeline X", "gebruikslimiet tot 13:40"). Zonder dit staat er in de UI
+    # alleen "waiting" bij vier tickets tegelijk, en is niet te zien of er iets
+    # loopt, iets stukzit, of er gewoon niets gebeurt.
+    wait_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

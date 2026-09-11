@@ -68,6 +68,8 @@ _ADDITIVE_COLUMNS = {
         ("worker_id", "INTEGER"),
         # Dit ITEM ligt stil tot dit moment; de planning loopt door.
         ("resume_at", "VARCHAR(64)"),
+        # En waaróm het stilligt, in de woorden van de agent.
+        ("wait_reason", "TEXT"),
     ],
     "labs": [
         ("azure_profile_id", "INTEGER"),
@@ -90,6 +92,10 @@ _ADDITIVE_COLUMNS = {
         ("model", "VARCHAR(128)"),
         ("effort", "VARCHAR(16)"),
         ("source", "VARCHAR(16) NOT NULL DEFAULT 'chat'"),
+    ],
+    "boards": [
+        # Kolom waar een ticket heen gaat zodra de agent eraan begint.
+        ("agent_busy_column", "VARCHAR(64)"),
     ],
     "tickets": [
         ("acceptance_criteria", "TEXT"),
@@ -141,6 +147,13 @@ _BACKFILLS = [
     ("threads", "source",
      "UPDATE threads SET source = 'board' WHERE id IN "
      "(SELECT agent_thread_id FROM tickets WHERE agent_thread_id IS NOT NULL)"),
+    # Bestaande borden hebben bijna allemaal een kolom die "bezig" betekent.
+    # Zonder deze backfill blijft de nieuwe instelling leeg en verandert er
+    # voor precies die borden niets, terwijl dit juist de borden zijn waar het
+    # probleem zich voordeed. Alleen invullen waar de kolom ook echt bestaat.
+    ("boards", "agent_busy_column",
+     "UPDATE boards SET agent_busy_column = 'in_progress' "
+     "WHERE agent_busy_column IS NULL AND columns LIKE '%\"in_progress\"%'"),
 ]
 
 

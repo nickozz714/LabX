@@ -183,6 +183,44 @@ def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
     return "\n".join(lines)
 
 
+# Kolommen waar een ticket nog "niet begonnen" is. Staat het daar en gaat de
+# agent ermee aan de slag, dan hoort het bord dat te laten zien.
+def _niet_begonnen_kolommen(board: Board) -> set:
+    uit = {str(board.agent_column or "")} - {""}
+    # De eerste kolom van een bord is per conventie de instroom ("Te doen").
+    eerste = (board.columns or [{}])[0].get("key")
+    if eerste:
+        uit.add(str(eerste))
+    return uit
+
+
+def _zet_op_bezig(db: Session, svc: BoardService, board: Board, ticket: Ticket) -> None:
+    """Het ticket naar de werk-kolom zodra de agent begint.
+
+    Waarom dit nodig was: de enige verplaatsing die LabX deed, gebeurde aan het
+    EIND van een run en alleen vanuit de oppak-kolom. Een ticket dat je zelf in
+    "Te doen" had staan en met een planning liet oppakken, bleef daar dus staan
+    terwijl er een uur aan gewerkt werd — en bleef er ook na afloop staan. Het
+    bord zag er onaangeroerd uit terwijl het werk allang liep.
+
+    Alleen vanuit een kolom waar het ticket nog niet begonnen was: heeft iemand
+    (of de agent zelf) het bewust ergens anders neergezet, dan is dat een
+    uitspraak die we niet overschrijven.
+    """
+    doel = str(getattr(board, "agent_busy_column", None) or "").strip()
+    if not doel or ticket.status == doel:
+        return
+    if ticket.status not in _niet_begonnen_kolommen(board):
+        return
+    if doel not in {str(c.get("key")) for c in (board.columns or [])}:
+        return
+    try:
+        svc.move_ticket(ticket.id, doel, author="agent")
+    except HTTPException as exc:
+        log.warningx("Ticket op 'bezig' zetten mislukt", ticket=ticket.key,
+                     error=str(exc.detail)[:200])
+
+
 def _thread_for_ticket(db: Session, board: Board, ticket: Ticket) -> Thread:
     if ticket.agent_thread_id:
         existing = db.get(Thread, ticket.agent_thread_id)
@@ -229,6 +267,7 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
 
     thread = _thread_for_ticket(db, board, ticket)
     prompt = _ticket_prompt(board, ticket, svc.list_comments(ticket.id), extra_instruction)
+    _zet_op_bezig(db, svc, board, ticket)
 
     run = background_runs.start(
         db, thread_id=thread.id, lab_id=board.lab_id,
@@ -294,10 +333,14 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
             if answer and not _agent_commented_since(db, ticket.id, started_at):
                 svc.add_comment(ticket.id, kind="comment", author="agent",
                                 body=answer[:_MAX_ANSWER_IN_COMMENT])
-            # Verplaats alleen vanuit de oppak-kolom: een agent die het ticket
-            # zelf al ergens anders heeft neergezet weet beter dan deze hook.
+            # Verplaats alleen vanuit een kolom waar WIJ het ticket hebben
+            # neergezet (de oppak-kolom, of de werk-kolom van het starten). Een
+            # agent die het zelf ergens anders heeft neergezet — review,
+            # blocked, klaar — weet beter dan deze hook.
             done_col = (board.agent_done_column if board else None)
-            if done_col and board and ticket.status == (board.agent_column or ""):
+            vanzelf = {str(board.agent_column or ""),
+                       str(getattr(board, "agent_busy_column", None) or "")} - {""} if board else set()
+            if done_col and board and ticket.status in vanzelf:
                 try:
                     svc.move_ticket(ticket.id, done_col, author="agent")
                 except HTTPException as exc:

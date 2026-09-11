@@ -40,6 +40,7 @@ export function BoardSettings({
   const [labId, setLabId] = useState(board.lab_id || "");
   const [columns, setColumns] = useState<BoardColumnDto[]>(board.columns);
   const [agentColumn, setAgentColumn] = useState(board.agent_column || "");
+  const [agentBusyColumn, setAgentBusyColumn] = useState(board.agent_busy_column || "");
   const [agentDoneColumn, setAgentDoneColumn] = useState(board.agent_done_column || "");
   const [agentInstruction, setAgentInstruction] = useState(board.agent_instruction || "");
   const [provider, setProvider] = useState(board.provider);
@@ -124,6 +125,7 @@ export function BoardSettings({
         lab_id: labId || null,
         columns,
         agent_column: agentColumn || null,
+        agent_busy_column: agentBusyColumn || null,
         agent_done_column: agentDoneColumn || null,
         agent_instruction: agentInstruction.trim() || null,
         provider,
@@ -266,6 +268,21 @@ export function BoardSettings({
                   </option>
                 ))}
               </Select>
+            </div>
+            <div>
+              <Label>Zet werk-in-uitvoering in</Label>
+              <Select value={agentBusyColumn} onChange={(e) => setAgentBusyColumn(e.target.value)}>
+                <option value="">—</option>
+                {columns.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Zodra de agent aan een ticket begint, gaat het hierheen. Leeg = niet verplaatsen;
+                dan blijft een ticket in Te doen staan terwijl eraan gewerkt wordt.
+              </p>
             </div>
             <div>
               <Label>Zet klaar werk in</Label>

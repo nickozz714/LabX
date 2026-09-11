@@ -58,6 +58,11 @@ class Board(Base):
     # Kolom waaruit een board-schedule werk oppakt, en waar de agent het
     # ticket naartoe zet als hij klaar is.
     agent_column: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Waar een ticket heen gaat zodra de agent ERAAN BEGINT. Zonder deze kolom
+    # bleef een bord er onaangeroerd uitzien terwijl er een uur aan gewerkt
+    # werd: de agent verplaatste pas aan het eind, en alleen vanuit de
+    # oppak-kolom. Leeg = niet verplaatsen bij het starten.
+    agent_busy_column: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_done_column: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Standaardinstructie die bovenop élke agent-run op dit bord komt
     # (bv. "werk in /workspace/repo, schrijf tests, push niet").

@@ -126,3 +126,121 @@ def test_lege_instructie_levert_none_op():
     svc = _svc()
     plan = SimpleNamespace(id=1, instruction=None, workspace_mode="gedeeld")
     assert svc._instructie_voor(plan, SimpleNamespace(key="SWI-1")) is None
+
+
+# ── eigen claims mogen je niet blokkeren ────────────────────────────────────
+#
+# Op 11-09-2026 legde dit een planning van acht tickets volledig stil. Alle
+# acht hadden `board__wait_until` aangeroepen, alle acht hielden hun claims
+# vast (juist de bedoeling: wie een uur op een pipeline wacht, wil niet dat er
+# iemand anders in zit), en alle acht botsten daardoor bij het hervatten met
+# zichzelf. `bezet_door` was het ticket zélf.
+
+BORD = SimpleNamespace(id=1, lab_id="lab-1", columns=[], agent_done_column=None)
+
+
+class ClaimDb:
+    """Genoeg database om _claim_botsing te laten lopen. Drie soorten vragen:
+    het bord opzoeken, de borden van hetzelfde lab, en de claims."""
+    def __init__(self, claims, items=None):
+        self.claims, self.items = claims, items or []
+    def get(self, model, _id):
+        # _claim_botsing zoekt het bord op, en daarna het ticket dat de
+        # botsende claim vasthoudt (om zijn sleutel te kunnen noemen).
+        if getattr(model, "__name__", "") == "Ticket":
+            return SimpleNamespace(id=_id, key=f"KRI-{_id}")
+        return BORD
+    def query(self, *models):
+        return ClaimQuery(self.claims, self.items, models)
+
+
+class ClaimQuery:
+    def __init__(self, claims, items, models):
+        self.claims, self.items, self.models = claims, items, models
+    def filter(self, *a, **k): return self
+    def join(self, *a, **k): return self
+    def all(self):
+        naam = getattr(self.models[0], "__name__", "")
+        if naam == "Board":
+            return [BORD]
+        # _actieve_claims vraagt (PlanClaim, TicketPlanItem); _claim_botsing
+        # vraagt alleen PlanClaim.
+        if len(self.models) > 1:
+            return list(zip(self.claims, self.items))
+        return self.claims
+
+
+def _claim(bron, ticket_id, item_id):
+    return SimpleNamespace(resource=bron, ticket_id=ticket_id, plan_item_id=item_id,
+                           created_at="2026-09-11T18:00:00+00:00")
+
+
+def test_eigen_claim_blokkeert_niet():
+    svc = _svc()
+    eigen = _claim("fabric:acc:pl_run_silver", ticket_id=20, item_id=36)
+    item = SimpleNamespace(id=36, state="waiting")
+    svc.db = ClaimDb([eigen], [item])
+    ticket = SimpleNamespace(id=20, key="KRI-20")
+    assert svc._claim_botsing(SimpleNamespace(board_id=1), ticket, item) is None
+
+
+def test_claim_van_een_ander_blokkeert_wel():
+    svc = _svc()
+    vreemd = _claim("fabric:acc:pl_run_silver", ticket_id=12, item_id=30)
+    eigen = _claim("fabric:acc:pl_run_silver", ticket_id=20, item_id=36)
+    item = SimpleNamespace(id=36, state="running")
+    # De geschiedenis van dit ticket bevat de bron; de actieve claim ligt bij
+    # een ander item.
+    svc.db = ClaimDb([eigen, vreemd],
+                     [SimpleNamespace(id=36, state="running"),
+                      SimpleNamespace(id=30, state="waiting")])
+    ticket = SimpleNamespace(id=20, key="KRI-20")
+    botsing = svc._claim_botsing(SimpleNamespace(board_id=1), ticket, item)
+    assert botsing is not None
+    assert botsing["resource"] == "fabric:acc:pl_run_silver"
+
+
+def test_zonder_geschiedenis_geen_botsing():
+    svc = _svc()
+    svc.db = ClaimDb([], [])
+    assert svc._claim_botsing(SimpleNamespace(board_id=1),
+                              SimpleNamespace(id=99, key="X"), None) is None
+
+
+# ── eindpunten: de planning kijkt ook naar het TICKET ───────────────────────
+
+def test_klaar_kolommen_komen_uit_het_bord():
+    svc = _svc()
+    board = SimpleNamespace(
+        columns=[{"key": "todo"}, {"key": "review"}, {"key": "done", "is_done": True}],
+        agent_done_column="review")
+    assert svc._klaar_kolommen(board) == {"done", "review"}
+
+
+def test_geen_bord_geen_klaar_kolommen():
+    assert _svc()._klaar_kolommen(None) == set()
+
+
+def test_ticket_in_een_klaar_kolom_telt_als_afgerond():
+    """De reden dat een planning eeuwig bleef lopen: de agent zette het ticket
+    zelf op Klaar, maar de planning wist dat alleen via haar eigen afloop-hook
+    — en die deed niets voor een item dat geparkeerd stond."""
+    svc = _svc()
+    board = SimpleNamespace(columns=[{"key": "done", "is_done": True}], agent_done_column=None)
+    svc.db = SimpleNamespace(get=lambda model, _id: board)
+    ticket = SimpleNamespace(status="done", key="KRI-20")
+    assert svc._afgerond_buitenom(SimpleNamespace(board_id=1), SimpleNamespace(), ticket) is True
+
+
+def test_ticket_dat_nog_loopt_telt_niet_als_afgerond():
+    svc = _svc()
+    board = SimpleNamespace(columns=[{"key": "done", "is_done": True}], agent_done_column=None)
+    svc.db = SimpleNamespace(get=lambda model, _id: board)
+    for kolom in ("todo", "in_progress", "review", "blocked"):
+        ticket = SimpleNamespace(status=kolom, key="X")
+        assert svc._afgerond_buitenom(SimpleNamespace(board_id=1),
+                                      SimpleNamespace(), ticket) is False
+
+
+def test_verdwenen_ticket_is_niet_afgerond():
+    assert _svc()._afgerond_buitenom(SimpleNamespace(board_id=1), SimpleNamespace(), None) is False

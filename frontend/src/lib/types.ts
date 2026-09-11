@@ -330,6 +330,8 @@ export interface BoardDto {
   lab_status?: string | null;
   columns: BoardColumnDto[];
   agent_column: string | null;
+  /** Waar een ticket heen gaat zodra de agent eraan begint. */
+  agent_busy_column: string | null;
   agent_done_column: string | null;
   agent_instruction: string | null;
   provider: BoardProvider;
@@ -387,6 +389,8 @@ export interface PlanItemDto {
   /** Dit ticket ligt stil tot dit moment (de agent wacht op iets langs
    *  loopends). De planning loopt ondertussen door met andere tickets. */
   resume_at: string | null;
+  /** WAAROM het stilligt, in de woorden van de agent. */
+  wait_reason: string | null;
   /** Waar dit ticket aan zit; zolang het die vasthoudt start LabX geen ticket
    *  dat aan hetzelfde zou komen. */
   claims: string[];

@@ -70,6 +70,8 @@ class BoardService:
             lab_id=payload.get("lab_id") or None,
             columns=columns,
             agent_column=payload.get("agent_column") or self._default_agent_column(columns),
+            agent_busy_column=(payload.get("agent_busy_column")
+                               or self._default_busy_column(columns)),
             agent_done_column=payload.get("agent_done_column") or self._default_done_column(columns),
             agent_instruction=payload.get("agent_instruction"),
             provider=provider,
@@ -93,8 +95,8 @@ class BoardService:
             if not name:
                 raise HTTPException(status_code=400, detail="name mag niet leeg zijn")
             b.name = name
-        for field in ("description", "lab_id", "agent_column", "agent_done_column",
-                      "agent_instruction", "provider_config"):
+        for field in ("description", "lab_id", "agent_column", "agent_busy_column",
+                      "agent_done_column", "agent_instruction", "provider_config"):
             if field in payload:
                 setattr(b, field, payload[field] or (None if field != "provider_config" else {}))
         if "key_prefix" in payload and payload["key_prefix"]:
@@ -179,6 +181,20 @@ class BoardService:
             if col.get("key") == "agent":
                 return "agent"
         return columns[0].get("key") if columns else None
+
+    @staticmethod
+    def _default_busy_column(columns: List[Dict[str, Any]]) -> Optional[str]:
+        """De kolom waar werk-in-uitvoering hoort te staan. Op naam én sleutel
+        raden, want een bord dat uit Jira komt heeft Nederlandse kolomnamen en
+        een bord dat hier is gemaakt Engelse sleutels. Niets gevonden = niet
+        verplaatsen bij het starten; dat is beter dan een gok."""
+        for col in columns:
+            sleutel = str(col.get("key") or "").lower()
+            naam = str(col.get("name") or "").lower()
+            if sleutel in ("in_progress", "doing", "bezig") or naam in (
+                    "bezig", "in progress", "in uitvoering", "doing", "actief"):
+                return col.get("key")
+        return None
 
     @staticmethod
     def _default_done_column(columns: List[Dict[str, Any]]) -> Optional[str]:
@@ -375,7 +391,9 @@ class BoardService:
         out: Dict[str, Any] = {
             "id": b.id, "name": b.name, "description": b.description,
             "key_prefix": b.key_prefix, "lab_id": b.lab_id, "columns": b.columns or [],
-            "agent_column": b.agent_column, "agent_done_column": b.agent_done_column,
+            "agent_column": b.agent_column,
+            "agent_busy_column": getattr(b, "agent_busy_column", None),
+            "agent_done_column": b.agent_done_column,
             "agent_instruction": b.agent_instruction,
             "provider": b.provider, "provider_config": b.provider_config or {},
             # Het geheim zelf verlaat de backend nooit — alleen of het er is.

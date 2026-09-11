@@ -306,16 +306,25 @@ class PlanService:
         items = self.items(plan.id)
         self._ruim_dode_runs_op(items)
 
-        # Items die stilliggen tot hun tijd om is, weer in de rij zetten. Ze
-        # houden hun plek en hun claims; alleen hun werker was vrijgegeven.
+        # Items die stilliggen tot hun tijd om is, mogen weer mee. `resume_at`
+        # blijft staan tot het item ECHT start: hem hier wissen maakte in de UI
+        # onzichtbaar waar een wachtend ticket op wachtte, en dat is precies
+        # het tasten in het duister dat we wilden wegnemen.
         nu = _now_iso()
+
+        # Items die buiten de planning om zijn afgerond (de agent zette het
+        # ticket op Klaar, of jij sleepte het erheen) alsnog afvinken. Zonder
+        # dit blijft de planning eeuwig lopen met tickets die al af zijn — en
+        # zou ze de agent opnieuw op afgerond werk zetten.
         for it in items:
-            if it.state == "waiting" and it.resume_at and it.resume_at <= nu:
-                it.resume_at = None
-        self.db.commit()
+            if it.state in ("waiting", "blocked"):
+                t = self.db.get(Ticket, it.ticket_id)
+                if self._afgerond_buitenom(plan, it, t):
+                    self._rond_af_buitenom(plan, it, t)
 
         lopend = [i for i in items if i.state == "running"]
-        wachtend = [i for i in items if i.state in ("waiting", "blocked") and not i.resume_at]
+        wachtend = [i for i in items if i.state in ("waiting", "blocked")
+                    and (not i.resume_at or i.resume_at <= nu)]
 
         if not lopend and not wachtend:
             geparkeerd = [i for i in items if i.state == "waiting" and i.resume_at]
@@ -355,16 +364,20 @@ class PlanService:
                 # daarna niets anders te doen is, staat de planning stil — en
                 # dat merk je dan aan de melding, niet aan een lege rij.
                 volgende.state = "blocked"
-                volgende.error = f"wacht op {', '.join(open_keys)}"
+                volgende.wait_reason = f"wacht op {', '.join(open_keys)}"
+                volgende.error = None
                 self.db.commit()
                 uitslag.setdefault("geblokkeerd", []).append(
                     {"ticket": ticket.key, "wacht_op": open_keys})
                 continue
 
-            botsing = self._claim_botsing(plan, ticket)
+            botsing = self._claim_botsing(plan, ticket, volgende)
             if botsing:
                 # Dit ticket zat de vorige keer aan iets waar nu iemand anders
                 # aan zit. Overslaan tot die klaar is; hij komt vanzelf terug.
+                volgende.wait_reason = (
+                    f"{botsing['resource']} is in gebruik door {botsing['bezet_door']}")
+                self.db.commit()
                 uitslag.setdefault("wacht_op_claim", []).append(
                     {"ticket": ticket.key, **botsing})
                 continue
@@ -384,6 +397,8 @@ class PlanService:
                 plan.started_at = _now_iso()
             volgende.state = "running"
             volgende.error = None
+            volgende.resume_at = None
+            volgende.wait_reason = None
             volgende.worker_id = werker.id if werker is not None else None
             volgende.started_at = _now_iso()
             plan.note = None
@@ -421,6 +436,55 @@ class PlanService:
             uitslag["gestart_aantal"] = len(gestart)
         uitslag["state"] = plan.state
         return uitslag
+
+    # ── eindpunten ──────────────────────────────────────────────────────────
+    #
+    # Een planning wist tot nu toe alleen via haar eigen afloop-hook dat een
+    # ticket klaar was. Alles wat daarbuiten valt bleef eeuwig hangen: een
+    # ticket dat met `board__wait_until` parkeerde en daarna door de agent
+    # werd afgerond, een ticket dat iemand met de hand naar Klaar sleepte, een
+    # run waarvan de hook verdween bij een herstart. De planning bleef dan
+    # "running" met items op "waiting" — en zou bij het hervatten de agent
+    # opnieuw op een al afgerond ticket zetten.
+    #
+    # Daarom kijkt de planning nu ook naar het TICKET zelf. Dat is de plek waar
+    # "af" zichtbaar is voor iedereen: de kolom.
+
+    def _klaar_kolommen(self, board: Optional[Board]) -> set:
+        """Kolommen die 'af' betekenen: de kolom waar de agent zijn werk in
+        neerzet, plus alles wat op het bord als klaar-kolom gemarkeerd staat."""
+        if board is None:
+            return set()
+        uit = {str(c.get("key")) for c in (board.columns or []) if c.get("is_done")}
+        if board.agent_done_column:
+            uit.add(str(board.agent_done_column))
+        return uit
+
+    def _afgerond_buitenom(self, plan: TicketPlan, item: TicketPlanItem,
+                           ticket: Optional[Ticket]) -> bool:
+        """Is dit ticket klaar zonder dat de planning dat meekreeg?
+
+        Alleen de kolom telt, en met opzet niet `agent_state`: die zegt hoe de
+        laatste RUN afliep, niet of het werk af is. Een ticket dat drie keer
+        gedeeltelijk is opgepakt heeft ook drie keer `agent_state=done` gehad.
+        De kolom is de uitspraak van de agent (of van jou) dát het klaar is.
+        """
+        if ticket is None:
+            return False
+        board = self.db.get(Board, plan.board_id)
+        return ticket.status in self._klaar_kolommen(board)
+
+    def _rond_af_buitenom(self, plan: TicketPlan, item: TicketPlanItem,
+                          ticket: Ticket) -> None:
+        item.state = "done"
+        item.finished_at = item.finished_at or _now_iso()
+        item.resume_at = None
+        item.worker_id = None
+        item.error = None
+        self._geef_claims_vrij(item, reden="ticket staat in een klaar-kolom")
+        self.db.commit()
+        log.infox("Planning-item afgerond op de kolom van het ticket",
+                  plan=plan.id, ticket=ticket.key, kolom=ticket.status)
 
     def _ruim_dode_runs_op(self, items: List[TicketPlanItem]) -> None:
         """Een item dat "running" heet terwijl zijn run allang weg is (herstart
@@ -526,19 +590,29 @@ class PlanService:
             uit.setdefault(claim.resource, claim)
         return uit
 
-    def _claim_botsing(self, plan: TicketPlan, ticket: Ticket) -> Optional[Dict[str, Any]]:
-        """Zou dit ticket botsen met iets dat nu draait?
+    def _claim_botsing(self, plan: TicketPlan, ticket: Ticket,
+                       item: Optional[TicketPlanItem] = None) -> Optional[Dict[str, Any]]:
+        """Zou dit ticket botsen met iets dat een ANDER ticket vasthoudt?
 
         Gebaseerd op wat het ticket EERDER claimde. Dat is geen voorspelling
         maar geheugen: een ticket dat de vorige keer aan `PL_RUN_SILVER` zat,
         doet dat de volgende keer vrijwel zeker weer. Is er geen geschiedenis,
         dan start hij gewoon en vangt `board__claim` het onderweg af.
+
+        Zijn EIGEN claims tellen niet mee, en dat is geen detail: een ticket
+        houdt zijn claims vast terwijl het met `board__wait_until` staat te
+        wachten (juist dan wil je dat niemand anders in die pipeline zit).
+        Telden ze wél mee, dan botst het ticket bij het hervatten met zichzelf
+        en start het nooit meer. Precies dat legde op 11-09 een planning van
+        acht tickets volledig stil: alle acht wachtten, alle acht hielden hun
+        claims vast, en alle acht blokkeerden zichzelf.
         """
         eerder = {c.resource for c in self.db.query(PlanClaim)
                   .filter(PlanClaim.ticket_id == ticket.id).all()}
         if not eerder:
             return None
-        actief = self._actieve_claims(plan)
+        actief = self._actieve_claims(
+            plan, behalve_item=(item.id if item is not None else None))
         overlap = sorted(eerder & set(actief))
         if not overlap:
             return None
@@ -653,6 +727,7 @@ class PlanService:
         # het volgende ticket van deze.
         item.state = "waiting"
         item.resume_at = tot
+        item.wait_reason = reden[:1000]
         item.worker_id = None
         item.finished_at = _now_iso()
         # Claims blijven staan: wie een uur op een pipeline wacht, wil juist
@@ -793,6 +868,7 @@ class PlanService:
                     # Zonder die twee lijkt een parallel lopende planning een
                     # rommeltje: vier regels "waiting" zonder uitleg.
                     "resume_at": getattr(it, "resume_at", None),
+                    "wait_reason": getattr(it, "wait_reason", None),
                     "claims": [c.resource for c in self._claims_van(it.id)],
                 })
         return out
@@ -842,6 +918,7 @@ def _maak_afloop_hook(plan_id: int, item_id: int):
             # niemand anders zou nu in diezelfde pipeline moeten gaan zitten.
             item.state = "waiting"
             item.resume_at = getattr(run, "resume_at", None)
+            item.wait_reason = "gebruikslimiet bereikt"
             item.worker_id = None
             item.error = None
             item.finished_at = _now_iso()

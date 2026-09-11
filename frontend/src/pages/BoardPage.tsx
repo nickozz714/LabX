@@ -557,8 +557,16 @@ function PlanRegels({ boardId, planId, onChanged }: {
           {it.resume_at && (
             <span className="text-[11px] text-muted-foreground"
                   title="Dit ticket wacht op iets dat tijd kost; de planning gaat ondertussen verder">
-              tot {new Date(it.resume_at).toLocaleTimeString(undefined,
-                    { hour: "2-digit", minute: "2-digit" })}
+              {new Date(it.resume_at) > new Date()
+                ? `wacht tot ${new Date(it.resume_at).toLocaleTimeString(undefined,
+                    { hour: "2-digit", minute: "2-digit" })}`
+                : "aan de beurt"}
+            </span>
+          )}
+          {it.wait_reason && (
+            <span className="w-full truncate text-[11px] text-muted-foreground"
+                  title={it.wait_reason}>
+              ↳ {it.wait_reason}
             </span>
           )}
           {it.claims?.length > 0 && (
