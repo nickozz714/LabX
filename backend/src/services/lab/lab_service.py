@@ -446,13 +446,39 @@ class LabService:
         for w in werkers:
             eigen = [e for e in entries if str(e.get("key", "")).endswith(f"@w{w.index}")] \
                 if len(werkers) > 1 else entries
+            was_bezig = w.provision_status == "pending"
             w.provision_status = "error" if any(e["status"] == "error" for e in eigen) else "ok"
             w.provision_log = eigen
+            if was_bezig:
+                # De ongebruikt-klok begint NU, niet bij het aanmaken. Inrichten
+                # duurt voor een lab met Playwright een halfuur, en al die tijd
+                # doet de werker per definitie geen werk — met de oude telling
+                # was hij dus "30 minuten ongebruikt" op het moment dat hij
+                # eindelijk bruikbaar werd, en ruimde de reaper hem meteen op.
+                # Daarna zette de autoscaler er weer een bij: een halfuur
+                # downloaden per ronde, eindeloos.
+                w.last_used_at = _now_iso()
             w.updated_at = _now_iso()
         p.updated_at = _now_iso()
         self.db.commit()
         log.infox("Lab ingericht", lab_id=p.id, werkers=len(werkers),
                   stappen=len(entries), mislukt=failed)
+        # Een extra werker die zijn pakketten niet kreeg, krijgt geen werk meer
+        # en wordt zo opgeruimd. Zonder melding merk je daar niets van: je ziet
+        # alleen dat er minder parallel loopt dan je dacht.
+        kapot = [w.index for w in werkers
+                 if w.index > 1 and w.provision_status not in ("ok", "skipped")]
+        if kapot:
+            from services.notify.notify_service import meld
+            namen = ", ".join(str(x) for x in kapot)
+            meld("storing", f"Lab '{p.name}': werker {namen} kon niet ingericht worden",
+                 (f"Werker {namen} mist pakketten en krijgt daarom geen werk; hij wordt "
+                  f"opgeruimd en bij de volgende keer opnieuw geprobeerd. Daardoor draait "
+                  f"er minder parallel dan ingesteld.\n\nMislukte stappen:\n"
+                  + "\n".join(f"- {e.get('label') or e.get('key')}: "
+                               f"{str(e.get('output'))[:200]}"
+                               for e in entries if e.get("status") == "error")),
+                 {"lab_id": p.id, "lab_name": p.name})
         return {"ok": failed == 0, "status": p.provision_status, "steps": entries}
 
     # ── werkers (de containers van dit lab) ──────────────────────────────────
@@ -642,14 +668,21 @@ exec ssh -N \\
     def claimbare_werkers(self, p: Lab) -> List[Any]:
         """Werkers waar nu werk op mag starten.
 
-        Een NIEUWE werker die nog wordt ingericht telt niet mee: daar zou een
-        run zijn pakketten missen. Werker 1 doet altijd mee, ook als hij nog
-        aan het inrichten is — dat is de container van het lab zelf, en zo
-        werkte het altijd al; hem uitsluiten zou elk vers lab minutenlang
-        blokkeren voor werk dat prima kan beginnen."""
+        Een EXTRA werker doet pas mee als zijn inrichting GESLAAGD is. Niet
+        alleen "niet meer bezig": een werker waarvan pakketten mislukten mist
+        precies het gereedschap waarvoor hij bestaat, en een agent die daarop
+        landt meldt dat hij zijn tools kwijt is — zonder dat ergens staat
+        waarom. Zo'n werker blijft staan (de fout is te zien bij het lab) maar
+        krijgt geen werk.
+
+        Werker 1 doet altijd mee, ook als hij nog aan het inrichten is of iets
+        misging: dat is de container van het lab zelf, en zo werkte het altijd
+        al. Hem uitsluiten zou elk vers lab minutenlang blokkeren voor werk dat
+        prima kan beginnen, en een lab met één mislukt pakket helemaal
+        onbruikbaar maken."""
         return [w for w in self.ensure_workers(p)
                 if w.status == "running" and w.container_id
-                and (w.index == 1 or w.provision_status != "pending")]
+                and (w.index == 1 or w.provision_status in ("ok", "skipped"))]
 
     async def reap_idle_workers(self, idle_minutes: int = 30) -> int:
         """Extra werkers opruimen die een tijd niets deden.
@@ -673,23 +706,46 @@ exec ssh -N \\
                     break
                 if w.index <= 1 or w.id in bezet:
                     continue
+                if w.provision_status == "pending":
+                    # Nog aan het inrichten. Die is per definitie ongebruikt —
+                    # hem daarom opruimen betekent het halve uur downloaden
+                    # weggooien en meteen opnieuw beginnen.
+                    continue
+                if w.provision_status not in ("ok", "skipped"):
+                    # Mislukt ingericht: hij krijgt geen werk meer (zie
+                    # claimbare_werkers) maar telt wél mee voor het plafond, en
+                    # blokkeert daarmee het bijzetten van een werker die het
+                    # wél doet. Meteen weg, niet pas na het stille halfuur —
+                    # de volgende keer dat er werk is, probeert de autoscaler
+                    # het gewoon opnieuw.
+                    log.warningx("Werker met mislukte inrichting opgeruimd",
+                                 lab_id=p.id, werker=w.index)
+                    await self._verwijder_werker(p, w)
+                    opgeruimd += 1
+                    continue
                 if (w.last_used_at or w.created_at) > grens:
                     continue
-                await self._close_lab_mcp_sessions(w.container_id)
-                if w.container_id:
-                    try:
-                        await self.runtime.remove(w.container_id, timeout=120)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warningx("Ongebruikte werker opruimen mislukt", lab_id=p.id,
-                                     werker=w.index, error=str(exc)[:200])
-                self.db.delete(w)
-                self.db.commit()
+                await self._verwijder_werker(p, w)
                 opgeruimd += 1
                 log.infox("Ongebruikte werker opgeruimd", lab_id=p.id, werker=w.index)
             p.worker_count = len(self.workers(p.id))
             p.updated_at = _now_iso()
             self.db.commit()
         return opgeruimd
+
+    async def _verwijder_werker(self, p: Lab, w) -> None:
+        """Een werker weghalen: eerst zijn MCP-sessies netjes sluiten (anders
+        blijft er een proces hangen dat in een verdwenen container praat), dan
+        de container, dan de rij."""
+        await self._close_lab_mcp_sessions(w.container_id)
+        if w.container_id:
+            try:
+                await self.runtime.remove(w.container_id, timeout=120)
+            except Exception as exc:  # noqa: BLE001
+                log.warningx("Werker opruimen mislukt", lab_id=p.id,
+                             werker=w.index, error=str(exc)[:200])
+        self.db.delete(w)
+        self.db.commit()
 
     def touch_worker(self, worker_id: Optional[int]) -> None:
         """Deze werker is in gebruik — houdt hem uit handen van de opruimer."""
@@ -1767,6 +1823,11 @@ exec ssh -N \\
 _PROVISION_TASKS: Dict[str, Any] = {}
 
 
+# Labs waarvoor tijdens een lopende inrichtronde opnieuw om inrichten is
+# gevraagd. Zie _na_inrichten.
+_PROVISION_NOGMAALS: set = set()
+
+
 def provision_in_background(lab_id: str, *, force: bool = False) -> bool:
     """Inrichten kan minuten duren — Playwright haalt een browser van honderden
     megabytes binnen — en een verzoek dat daarop wacht laat het scherm net zo
@@ -1782,17 +1843,34 @@ def provision_in_background(lab_id: str, *, force: bool = False) -> bool:
 
     running = _PROVISION_TASKS.get(lab_id)
     if running is not None and not running.done():
-        log.infox("Inrichten loopt al", lab_id=lab_id)
+        # Niet zomaar weggooien: een werker die tijdens een lopende ronde wordt
+        # bijgezet staat niet in de lijst die díé ronde afwerkt, en bleef dus
+        # voorgoed op "pending" staan. Hij is dan niet claimbaar, dus de
+        # autoscaler leek op te schalen terwijl er niets bij kwam.
+        _PROVISION_NOGMAALS.add(lab_id)
+        log.infox("Inrichten loopt al; ronde erachteraan ingepland", lab_id=lab_id)
         return False
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # geen draaiende loop (script/test) — dan niet
         log.warningx("Inrichten niet gestart: geen event loop", lab_id=lab_id)
         return False
+    _PROVISION_NOGMAALS.discard(lab_id)
     task = loop.create_task(_provision_worker(lab_id, force=force))
     _PROVISION_TASKS[lab_id] = task
-    task.add_done_callback(lambda _t: _PROVISION_TASKS.pop(lab_id, None))
+    task.add_done_callback(lambda _t: _na_inrichten(lab_id))
     return True
+
+
+def _na_inrichten(lab_id: str) -> None:
+    """Is er tijdens deze ronde nog om inrichten gevraagd, doe dan meteen een
+    tweede. Zonder dit blijft een werker die halverwege bijkwam ongeprovisioneerd
+    achter — en die wordt nooit claimbaar, dus het opschalen levert niets op."""
+    _PROVISION_TASKS.pop(lab_id, None)
+    if lab_id in _PROVISION_NOGMAALS:
+        _PROVISION_NOGMAALS.discard(lab_id)
+        log.infox("Nog een inrichtronde: er kwam onderweg een werker bij", lab_id=lab_id)
+        provision_in_background(lab_id)
 
 
 def rebuild_in_background(lab_id: str, *, image: Optional[str] = None,

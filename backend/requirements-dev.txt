@@ -1,0 +1,6 @@
+# Wat je nodig hebt om de tests te draaien; de applicatie zelf heeft dit niet.
+# Draaien doe je het makkelijkst in het backend-image zelf:
+#   docker run --rm -v "$PWD":/w -w /w ghcr.io/nickozz714/labx-backend:latest \
+#     sh -c "pip install -q -r requirements-dev.txt && python -m pytest tests -q"
+-r requirements.txt
+pytest>=8.0
