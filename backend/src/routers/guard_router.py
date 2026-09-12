@@ -179,11 +179,42 @@ def probeer_alles(payload: Dict[str, Any], db: Session = Depends(get_db)):
 
     doel = str(payload.get("target") or "uitvoer")
     voorbeeld = str(payload.get("sample") or "")
+    # Profiel en intentie horen hierbij: zonder ze zou het proefscherm iets
+    # anders laten zien dan wat er in een echt lab gebeurt, en dat is precies
+    # het soort verrassing waar dit scherm voor bestaat.
+    profiel_key = payload.get("profile")
+    intent = payload.get("intent")
     if doel == "opdracht":
-        return beoordeel_opdracht(db, voorbeeld)
-    uit = beoordeel_uitvoer(db, voorbeeld)
+        return beoordeel_opdracht(db, voorbeeld, profiel_key=profiel_key, intent=intent)
+    uit = beoordeel_uitvoer(db, voorbeeld, profiel_key=profiel_key, intent=intent)
     return {"actie": uit["actie"], "findings": uit["findings"],
-            "resultaat": uit.get("tekst"), "reden": uit.get("reden")}
+            "resultaat": uit.get("tekst"), "reden": uit.get("reden"),
+            "intent_mismatch": uit.get("intent_mismatch")}
+
+
+@router.get("/profielen")
+def profielen_lijst():
+    """De beveiligingsprofielen die je aan een lab kunt hangen.
+
+    Een lab dat in Fabric werkt produceert de hele dag technische uitvoer; een
+    guard die dat niet weet, blokkeert precies het werk waarvoor het lab er is.
+    Een profiel verschuift wat als NORMAAL geldt — niet wat er beschermd wordt.
+    """
+    from services.lab.profielen import lijst
+
+    return lijst()
+
+
+@router.get("/intenties")
+def intenties_lijst():
+    """Wat een agent kan verklaren op te halen, en wat dat verruimt.
+
+    De verklaring is geen vrijbrief: de uitvoer wordt eraan getoetst en een
+    afwijking staat als mismatch in de audit.
+    """
+    from services.lab.intent import lijst
+
+    return lijst()
 
 
 @router.get("/status")

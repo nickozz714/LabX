@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { dockerStatus, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea, Toggle } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { RefreshCw } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
@@ -17,6 +17,7 @@ import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { LabGeheimen } from "@/components/LabGeheimen";
+import { guardApi, type GuardProfiel } from "@/lib/guard";
 import { getToken } from "@/lib/api";
 
 function statusTone(status: Lab["status"]) {
@@ -79,6 +80,12 @@ export function LabsPage() {
               <div className="text-xs text-muted-foreground">{lab.image}</div>
               <div className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">
                 {lab.data_guard && <Badge tone="violet">data-guard</Badge>}
+                {/* Het profiel staat naast de guard omdat het bepaalt hoe die
+                    zich gedraagt; een lab met een ander profiel dan je denkt is
+                    precies het soort verrassing dat je hier wilt zien. */}
+                {lab.data_guard && lab.security_profile && lab.security_profile !== "generiek" && (
+                  <Badge tone="violet">{lab.security_profile}</Badge>
+                )}
                 {lab.llm_guard && <Badge tone="violet">llm-guard</Badge>}
                 {/* Het lab draait al terwijl de pakketten nog binnenkomen —
                     zonder dit zou je op "running" afgaan en je afvragen waarom
@@ -130,6 +137,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [maxWerkers, setMaxWerkers] = useState(1);
   const [allowNetwork, setAllowNetwork] = useState(true);
   const [dataGuard, setDataGuard] = useState(true);
+  const [profiel, setProfiel] = useState("generiek");
   const [llmGuard, setLlmGuard] = useState(true);
   const [repoUrl, setRepoUrl] = useState("");
   const [repoToken, setRepoToken] = useState("");
@@ -185,6 +193,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         repos, ports: portList.length ? portList : undefined,
         extras, setup_script: setupScript.trim() || undefined,
         min_workers: minWerkers, max_workers: Math.max(minWerkers, maxWerkers),
+        security_profile: profiel,
       });
       onCreated();
     } catch (err) {
@@ -318,6 +327,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <Toggle checked={allowNetwork} onChange={setAllowNetwork} label="Netwerktoegang" />
           <Toggle checked={dataGuard} onChange={setDataGuard} label="Data-egress-guard (regels)" />
           <Toggle checked={llmGuard} onChange={setLlmGuard} label="Lokaal model als extra check (spoor B)" />
+          {dataGuard && <ProfielKeuze waarde={profiel} onChange={setProfiel} />}
         </div>
         <details className="rounded-md border border-border p-3 text-sm">
           <summary className="cursor-pointer font-medium text-muted-foreground">Repo clonen &amp; poorten (optioneel)</summary>
@@ -365,6 +375,34 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   );
 }
 
+
+/**
+ * De profielkeuze. Staat naast de guard-schakelaars omdat het geen aparte
+ * beveiliging is maar de context ervan: een lab dat in Fabric werkt, ziet de
+ * hele dag kolomlijsten en job-status langskomen. Weet de guard dat niet, dan
+ * houdt hij precies het werk tegen waarvoor het lab er is — dat gebeurde, en
+ * daarom staat dit hier.
+ */
+function ProfielKeuze({ waarde, onChange }: { waarde: string; onChange: (v: string) => void }) {
+  const [profielen, setProfielen] = useState<GuardProfiel[]>([]);
+  useEffect(() => {
+    guardApi.profielen().then(setProfielen).catch(() => {});
+  }, []);
+  const gekozen = profielen.find((p) => p.key === waarde);
+  return (
+    <div>
+      <Label>Beveiligingsprofiel</Label>
+      <Select value={waarde} onChange={(e) => onChange(e.target.value)}>
+        {profielen.length === 0 && <option value={waarde}>{waarde}</option>}
+        {profielen.map((p) => (
+          <option key={p.key} value={p.key}>{p.label}</option>
+        ))}
+      </Select>
+      {gekozen && <p className="mt-1 text-xs text-muted-foreground">{gekozen.uitleg}</p>}
+    </div>
+  );
+}
+
 function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
   const [tab, setTab] = useState<"settings" | "inrichting" | "browser" | "toegang" | "geheimen" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
@@ -383,6 +421,11 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
 
   async function toggle(field: "data_guard" | "llm_guard", value: boolean) {
     await labsApi.update(lab.id, { [field]: value });
+    onChanged();
+  }
+
+  async function kiesProfiel(key: string) {
+    await labsApi.update(lab.id, { security_profile: key });
     onChanged();
   }
 
@@ -420,6 +463,9 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
         <div className="space-y-3">
           <Toggle checked={lab.data_guard} onChange={(v) => toggle("data_guard", v)} label="Data-egress-guard (regels)" />
           <Toggle checked={lab.llm_guard} onChange={(v) => toggle("llm_guard", v)} label="Lokaal model als extra check (spoor B)" />
+          {lab.data_guard && (
+            <ProfielKeuze waarde={lab.security_profile || "generiek"} onChange={kiesProfiel} />
+          )}
           {lab.llm_guard && guardStatus && (
             <div className="text-xs text-muted-foreground">
               Model {guardStatus.model}: <Badge tone={guardStatus.state === "ready" ? "green" : "yellow"}>{guardStatus.state}</Badge>

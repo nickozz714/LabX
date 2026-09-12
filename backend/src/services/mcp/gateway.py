@@ -81,20 +81,23 @@ async def _execute_tool(tool_id: int, args: Dict[str, Any]) -> Any:
         return await ToolExecutionService(db).execute_tool(tool_id, args, lab_id=lab_id)
 
 
-async def _execute_shell(command: str, timeout: float = 60) -> Any:
+async def _execute_shell(command: str, timeout: float = 60,
+                         intent: str = "") -> Any:
     url = os.environ.get("LABX_INTERNAL_URL")
     token = os.environ.get("LABX_INTERNAL_TOKEN")
     lab_id = os.environ.get("LABX_GATEWAY_LAB")
     if not lab_id:
         raise RuntimeError("Geen lab gebonden aan deze chat-run")
     if url and token:
-        return await _delegate_execute(url, token, tool_name="lab__shell_exec",
-                                       args={"command": command, "timeout": timeout}, lab_id=lab_id)
+        return await _delegate_execute(
+            url, token, tool_name="lab__shell_exec",
+            args={"command": command, "timeout": timeout, "intent": intent},
+            lab_id=lab_id)
     from db.database import SessionLocal
     from services.mcp.tool_execution_service import ToolExecutionService
     with SessionLocal() as db:
         return await ToolExecutionService(db).execute_builtin_shell(
-            lab_id=lab_id, command=command, timeout=timeout)
+            lab_id=lab_id, command=command, timeout=timeout, intent=intent)
 
 
 def _tool_to_schema(argument: Any) -> Dict[str, Any]:
@@ -281,8 +284,9 @@ def build_server():
     # The one always-on tool once a lab is bound: the guarded container shell.
     # A stripped-down CLI (no native Bash) has no other way to work in the lab.
     if lab_id:
-        async def _shell_handler(command: str, timeout: float = 60) -> Any:
-            return await _execute_shell(command, timeout)
+        async def _shell_handler(command: str, timeout: float = 60,
+                                 intent: str = "") -> Any:
+            return await _execute_shell(command, timeout, intent=intent)
 
         async def _write_file_handler(path: str, content: str) -> Any:
             url = os.environ.get("LABX_INTERNAL_URL")
@@ -440,12 +444,32 @@ def build_server():
                          "variabele niet ingevuld. Met `lab__secret_list` zie je welke er zijn en "
                          "met `lab__secret_put` zet je er een bij — voor iets dat verloopt (een "
                          "Azure-token) geef je het COMMANDO mee dat hem maakt, dan wordt hij "
-                         "vanzelf ververst en hoef je er nooit meer aan te denken."),
+                         "vanzelf ververst en hoef je er nooit meer aan te denken.\n\n"
+                         "INTENTIE: geef bij `intent` aan wat je ophaalt — metadata, "
+                         "telling, code of klantdata. Dat verruimt wat er op je commando "
+                         "mag (een SELECT op information_schema gaat er met "
+                         "intent=metadata gewoon doorheen). Het is geen vrijbrief: de "
+                         "uitvoer wordt aan je verklaring getoetst, en komen er tóch "
+                         "klantrijen uit iets dat je 'metadata' noemde, dan gaat het "
+                         "alsnog dicht en staat het als afwijking in de audit. Verklaar "
+                         "dus eerlijk — 'klantdata' wordt netjes afgehandeld, een "
+                         "verkeerde verklaring kost je het antwoord."),
             parameters={
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "Het bash-commando"},
                     "timeout": {"type": "number", "description": "Timeout in seconden (standaard 60)"},
+                    "intent": {
+                        "type": "string",
+                        "enum": ["metadata", "telling", "code", "klantdata"],
+                        "description": (
+                            "Wat dit commando ophaalt. 'metadata' = structuur, namen, "
+                            "definities, job-status. 'telling' = aantallen, nulls, "
+                            "duplicaten. 'code' = een script of configuratie schrijven "
+                            "of lezen. 'klantdata' = er komen echte gegevens uit. "
+                            "Verklaren verruimt de controle op het commando; de UITVOER "
+                            "wordt aan je verklaring getoetst."),
+                    },
                 },
                 "required": ["command"],
             },

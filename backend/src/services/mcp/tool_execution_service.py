@@ -144,6 +144,10 @@ class ToolExecutionService:
             {"exit_code": 0, "output": text_result, "truncated": False},
             enabled=bool(lab.data_guard) if lab else True, lab_id=lab_id,
             provenance_override=("control" if provenance == "control" else "data"),
+            # Een tool die als control-plane is aangemerkt, verklaart daarmee
+            # metadata op te halen. Dezelfde toets geldt: komt er een dataset
+            # uit, dan gaat het alsnog dicht.
+            intent=("metadata" if provenance == "control" else None),
             db=self.db, lab_name=(lab.name if lab else None),
             command=f"mcp:{server.slug}:{tool.remote_name}",
         )
@@ -155,7 +159,8 @@ class ToolExecutionService:
 
     async def execute_builtin_shell(self, *, lab_id: str, command: str,
                                     timeout: float = 60.0,
-                                    worker_id: Optional[int] = None) -> Dict[str, Any]:
+                                    worker_id: Optional[int] = None,
+                                    intent: Optional[str] = None) -> Dict[str, Any]:
         """The one always-available in-lab tool: run a shell command in the
         bound lab, guarded. This is the chokepoint the chat agent's
         `lab__shell_exec` gateway tool routes through."""
@@ -172,7 +177,7 @@ class ToolExecutionService:
         guarded = guard_lab_output(result, enabled=bool(lab.data_guard) if lab else True,
                                    command=command, lab_id=lab_id, db=self.db,
                                    lab_name=(lab.name if lab else None),
-                                   worker_id=worker_id)
+                                   worker_id=worker_id, intent=intent)
         guarded = await self._second_opinion(lab=lab, guarded=guarded)
         self._audit(lab_id=lab_id, command=command, guarded_result=guarded)
         return guarded

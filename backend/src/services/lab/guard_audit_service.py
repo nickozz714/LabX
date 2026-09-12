@@ -66,7 +66,9 @@ def leg_vast(db: Session, *, lab_id: Optional[str], lab_name: Optional[str] = No
              command: Optional[str], outcome: str,
              origineel: Optional[str], geleverd: Optional[str],
              findings: Optional[List[Dict[str, Any]]] = None,
-             llm_verdict: Optional[Dict[str, Any]] = None) -> Optional[int]:
+             llm_verdict: Optional[Dict[str, Any]] = None,
+             intent: Optional[str] = None,
+             intent_mismatch: Optional[Dict[str, Any]] = None) -> Optional[int]:
     """Eén regel in het spoor. Faalt nooit hard: een audit die de uitvoering
     laat struikelen is erger dan een ontbrekende regel."""
     try:
@@ -74,6 +76,7 @@ def leg_vast(db: Session, *, lab_id: Optional[str], lab_name: Optional[str] = No
             ts=_now_iso(), lab_id=lab_id, lab_name=lab_name, worker_id=worker_id,
             run_id=run_id, command=(command or "")[:20000] or None,
             outcome=outcome, findings=list(findings or []), llm_verdict=llm_verdict,
+            intent=intent, intent_mismatch=intent_mismatch,
             original_encrypted=_sleutel(origineel),
             delivered_encrypted=_sleutel(geleverd),
             bytes_original=len(origineel or ""), bytes_delivered=len(geleverd or ""))
@@ -131,6 +134,7 @@ def lijst(db: Session, *, lab_id: Optional[str] = None, outcome: Optional[str] =
         "command": (r.command or "")[:400],
         "outcome": r.outcome, "findings": r.findings or [],
         "llm_verdict": r.llm_verdict,
+        "intent": r.intent, "intent_mismatch": r.intent_mismatch,
         "bytes_original": r.bytes_original, "bytes_delivered": r.bytes_delivered,
         "heeft_tekst": bool(r.original_encrypted),
     } for r in rijen]
@@ -148,6 +152,7 @@ def detail(db: Session, audit_id: int) -> Optional[Dict[str, Any]]:
         "worker_id": r.worker_id, "run_id": r.run_id, "command": r.command,
         "outcome": r.outcome, "findings": r.findings or [],
         "llm_verdict": r.llm_verdict,
+        "intent": r.intent, "intent_mismatch": r.intent_mismatch,
         "bytes_original": r.bytes_original, "bytes_delivered": r.bytes_delivered,
         "origineel": _ontsleutel(r.original_encrypted),
         "geleverd": _ontsleutel(r.delivered_encrypted),

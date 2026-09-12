@@ -80,6 +80,7 @@ _ADDITIVE_COLUMNS = {
         ("worker_count", "INTEGER NOT NULL DEFAULT 1"),
         ("min_workers", "INTEGER NOT NULL DEFAULT 1"),
         ("max_workers", "INTEGER NOT NULL DEFAULT 1"),
+        ("security_profile", "VARCHAR(32) NOT NULL DEFAULT 'generiek'"),
     ],
     "schedules": [
         ("json_schema", "TEXT"),
@@ -104,6 +105,10 @@ _ADDITIVE_COLUMNS = {
         # veranderd". NULL voor bestaande rijen: de eerste sync vult hem, en
         # tot dat moment gedraagt de push zich als vroeger (alles mee).
         ("external_snapshot", "TEXT"),
+    ],
+    "guard_audit": [
+        ("intent", "VARCHAR(32)"),
+        ("intent_mismatch", "JSON"),
     ],
     "background_runs": [
         ("mode", "VARCHAR(16) NOT NULL DEFAULT 'background'"),

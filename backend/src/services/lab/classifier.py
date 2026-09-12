@@ -59,8 +59,21 @@ def _now_iso() -> str:
 _NEGEN = re.compile(r"\b\d{9}\b")
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}")
-_KAART = re.compile(r"\b\d{13,19}\b|\b\d{4}(?:[ -]\d{4}){3}\b")
-_TELEFOON_NL = re.compile(r"\b(?:\+31|0)\s?6[\s-]?\d{4}[\s-]?\d{4}\b|\b0\d{2,3}[\s-]?\d{6,7}\b")
+# Kaartnummers beginnen met het cijfer van de kaartuitgever: 2-6 (Visa 4,
+# Mastercard 2/5, Amex 3, Discover 6). Zonder die eis haalde deze detector op
+# 12-09-2026 vier keer een Windows-FILETIME uit een OneLake-antwoord binnen —
+# "creationTime":"134287667140513372" is achttien cijfers die toevallig door de
+# Luhn-formule komen. De kans daarop is een op tien, en zulke tijdstempels staan
+# in élk bestandsoverzicht. Een uitgever die met 1, 7, 8 of 9 begint bestaat
+# niet, dus dit kost geen enkel echt kaartnummer.
+_KAART = re.compile(r"\b[2-6]\d{12,18}\b|\b[2-6]\d{3}(?:[ -]\d{4}){3}\b")
+# Let op de grens vóór `+31`: `\b` werkt daar NIET, want een woordgrens vraagt
+# een woordteken en `+` is dat niet. Met `\b` ervoor werd "+31612345678" nooit
+# gevonden — precies het nummer dat je wél wilt vinden. Vandaar `(?<![\w+])`:
+# geen letter, cijfer of plus ervoor.
+_TELEFOON_NL = re.compile(
+    r"(?<![\w+])(?:\+31\s?\(?0?\)?|0)\s?6[\s-]?\d{4}[\s-]?\d{4}(?!\d)"
+    r"|(?<![\w+])0\d{2,3}[\s-]?\d{6,7}(?!\d)")
 
 
 def _bsn_geldig(waarde: str) -> bool:
@@ -113,7 +126,15 @@ def _kaal(patroon: re.Pattern):
     return _zoek
 
 
-def _dataset(tekst: str) -> List[Tuple[int, int, str]]:
+def _dataset_streng(tekst: str) -> List[Tuple[int, int, str]]:
+    """Dezelfde detector, met een lagere lat. Wordt gebruikt zodra de agent een
+    intentie heeft verklaard die de opdrachtregels verruimde: wie ruimte krijgt
+    op zijn woord, wordt op zijn uitvoer scherper nagekeken. Drie recordregels
+    is dan genoeg — bij 'ik haal metadata op' hoort geen enkele klantrij."""
+    return _dataset(tekst, drempel=DATASET_DREMPEL_STRENG)
+
+
+def _dataset(tekst: str, drempel: Optional[int] = None) -> List[Tuple[int, int, str]]:
     """Ziet deze uitvoer eruit als een DATASET in plaats van als een resultaat?
 
     Dit is de detector die geen patroon heeft. Veertig regels met komma's en
@@ -128,7 +149,7 @@ def _dataset(tekst: str) -> List[Tuple[int, int, str]]:
     from services.lab.data_guard import record_rows
 
     rijen = record_rows(tekst[:200_000])
-    if rijen < DATASET_DREMPEL:
+    if rijen < (drempel or DATASET_DREMPEL):
         return []
     return [(0, len(tekst), f"{rijen} records")]
 
@@ -137,6 +158,8 @@ def _dataset(tekst: str) -> List[Tuple[int, int, str]]:
 # praktijk een voorbeeld of een foutmelding met wat velden erin, en daar wil je
 # niet op blokkeren.
 DATASET_DREMPEL = 10
+# En wat er geldt als de agent zelf verklaarde dat er geen gegevens uit komen.
+DATASET_DREMPEL_STRENG = 3
 
 
 INGEBOUWD: Dict[str, Callable[[str], List[Tuple[int, int, str]]]] = {
@@ -195,11 +218,21 @@ STANDAARDREGELS: List[Dict[str, Any]] = [
     {"key": "aggregaties", "target": "opdracht", "name": "Aggregaties over echte waarden",
      "kind": "regex", "category": "klantgegevens", "action": "blokkeren",
      "sort_order": 20,
-     "pattern": r"\b(MIN|MAX|SUM|AVG|MEAN|MEDIAN|STDDEV|STDEV|VAR|PERCENTILE\w*)\s*\("
+     # Het losse MAX( is hoofdlettergevoelig (`(?-i:…)`), en dat is geen
+     # nettigheid: `content[max(0, idx-400):]` is doodgewone Python-slicing en
+     # werd op 12-09-2026 geweigerd als aggregatie over klantwaarden. SQL-
+     # aggregaties schrijf je in hoofdletters; staan ze toch klein, dan pakt de
+     # tweede tak ze via het SELECT ervoor. De methodevorm (`df.max()`) blijft
+     # ongevoelig — daar is de punt ervoor al het bewijs dat het om een kolom gaat.
+     "pattern": r"(?-i:\b(?:MIN|MAX|SUM|AVG|MEAN|MEDIAN|STDDEV|STDEV|VAR|PERCENTILE\w*)\s*\()"
+                r"|\bSELECT\b[^;\n]{0,200}?\b(?:MIN|MAX|SUM|AVG|MEAN|MEDIAN|STDDEV|STDEV|VAR|"
+                r"PERCENTILE\w*)\s*\("
                 r"|\.(min|max|mean|median|sum|std|var|quantile)\s*\(",
      "description": "Een magnitude is klantdata, ook zonder rijen eromheen. Dit is "
                     "het enige moment waarop je dat kunt zien: `SELECT MAX(bedrag)` "
-                    "levert één getal op dat in geen enkele uitvoercontrole opvalt."},
+                    "levert één getal op dat in geen enkele uitvoercontrole opvalt. "
+                    "Python's eigen max()/min() vallen erbuiten: dat is slicing, "
+                    "geen aggregatie."},
     {"key": "sample_rijen", "target": "opdracht", "name": "Voorbeeldrijen opvragen",
      "kind": "regex", "category": "klantgegevens", "action": "blokkeren",
      "sort_order": 30,
@@ -207,9 +240,30 @@ STANDAARDREGELS: List[Dict[str, Any]] = [
                 r"\.value_counts\s*\(|\.unique\s*\(|\.groupby\s*\(|\bGROUP\s+BY\b",
      "description": "head/sample/value_counts/GROUP BY tonen echte waarden en "
                     "groepslabels."},
+    # — opdracht: de uitzonderingen. Deze staan met een LAGE sort_order zodat
+    #   ze vóór de blokkeerregels gelezen worden; `toelaten` wint sowieso, maar
+    #   zo staan ze in de UI ook bovenaan waar ze thuishoren.
+    {"key": "structuur", "target": "opdracht", "name": "Structuur en metadata (uitzondering)",
+     "kind": "regex", "category": "metadata", "action": "toelaten",
+     "sort_order": 1,
+     "pattern": r"\binformation_schema\b|\bDESCRIBE\b|"
+                r"\bSHOW\s+(TABLES|COLUMNS|SCHEMAS|DATABASES|PARTITIONS|TBLPROPERTIES)\b|"
+                r"\bLIMIT\s+0\b|\bEXPLAIN\b|_delta_log|\.dtypes\b|\.columns\b",
+     "description": "Kolomnamen, datatypes, partities, tabeleigenschappen. Dit is het "
+                    "gereedschap van datakwaliteitswerk en het onthult geen enkele "
+                    "waarde — een SELECT op INFORMATION_SCHEMA geeft de namen van "
+                    "kolommen terug, niet wat erin staat."},
+    {"key": "tellingen", "target": "opdracht", "name": "Tellingen (uitzondering)",
+     "kind": "regex", "category": "metadata", "action": "toelaten",
+     "sort_order": 2,
+     "pattern": r"\bCOUNT\s*\(|\.count\s*\(|\bnumRecords\b|\.nunique\s*\(|"
+                r"\.isnull\s*\(\s*\)\s*\.sum|\.isna\s*\(\s*\)\s*\.sum",
+     "description": "Aantallen zeggen hoeveel er is, niet wat het is. Null-tellingen, "
+                    "duplicaat-tellingen en rijtellingen zijn de kern van profileren "
+                    "zonder de gegevens te zien."},
     {"key": "beheer_api", "target": "opdracht", "name": "Beheer-API's (uitzondering)",
      "kind": "regex", "category": "configuratie", "action": "toelaten",
-     "sort_order": 5,
+     "sort_order": 3,
      "pattern": r"api\.fabric\.microsoft\.com/v1/|api\.powerbi\.com/v1\.0/|"
                 r"management\.azure\.com/|\baz\s+\S+(\s+\S+)?\s+(list|show)\b",
      "description": "Definities en inventaris zijn code en configuratie, geen "
@@ -326,13 +380,44 @@ def _laad_presidio() -> Optional[Any]:
 # corresponding recognizer in language: nl" — het Nederlandse register heeft
 # ze niet) en een logbestand waarin de échte waarschuwingen wegvallen.
 _PRESIDIO_ENTITEITEN = ["PERSON", "LOCATION", "PHONE_NUMBER"]
-_PRESIDIO_DREMPEL = 0.6
+
+# 0.85 en niet 0.6. Op TECHNISCHE tekst hallucineert een NER-model vrolijk:
+# gemeten op een gewone procestabel markeerde het "PID" en "python3" als
+# plaatsnaam — 35 treffers in één `ps`-uitvoer, waarmee de uitvoer onbruikbaar
+# werd. Een naam of plaats die er écht staat haalt die drempel wel; losse
+# technische woorden niet.
+_PRESIDIO_DREMPEL = 0.85
+
+# En een tweede rem: op tekst die duidelijk GEEN proza is, draait Presidio
+# helemaal niet. Een procestabel, een kolomlijst, een JSON-dump — daar zit geen
+# naam in en het model maakt er alleen rommel van. Dit is geen fijnafstelling
+# maar het verschil tussen bruikbaar en niet.
+_PROZA_WOORD = re.compile(r"^[A-Za-zÀ-ÿ]{3,}$")
+
+
+def _is_proza(tekst: str) -> bool:
+    """Ziet dit eruit als lopende tekst waar een naam in kan staan?
+
+    Gemeten aan het aandeel gewone woorden. Een procestabel, een kolomlijst of
+    een JSON-antwoord haalt dat niet: die bestaan uit cijfers, paden, ID's en
+    afkortingen. Bij twijfel: niet — een gemiste naam in technische uitvoer is
+    minder erg dan een uitvoer waarin "PID" is weggelakt.
+    """
+    monster = (tekst or "")[:4000]
+    woorden = re.split(r"[\s,;:|/\\()\[\]{}=]+", monster)
+    woorden = [w for w in woorden if w]
+    if len(woorden) < 8:
+        return False
+    proza = sum(1 for w in woorden if _PROZA_WOORD.match(w))
+    return (proza / len(woorden)) >= 0.45
 
 
 def _presidio_treffers(tekst: str) -> List[Tuple[int, int, str, str]]:
     """(start, eind, treffer, categorie) volgens Presidio, of niets."""
     motor = _laad_presidio()
     if motor is None:
+        return []
+    if not _is_proza(tekst):
         return []
     try:
         uit = motor.analyze(text=tekst, language="nl", entities=_PRESIDIO_ENTITEITEN)
@@ -351,9 +436,13 @@ def regels(db: Session, doel: str) -> List[GuardRule]:
             .order_by(GuardRule.sort_order, GuardRule.id).all())
 
 
-def _treffers_van(rij: GuardRule, tekst: str) -> List[Tuple[int, int, str]]:
+def _treffers_van(rij: GuardRule, tekst: str, *,
+                  streng: bool = False) -> List[Tuple[int, int, str]]:
     if rij.kind == "ingebouwd":
-        zoeker = INGEBOUWD.get(str(rij.key or ""))
+        sleutel = str(rij.key or "")
+        zoeker = INGEBOUWD.get(sleutel)
+        if streng and sleutel == "dataset":
+            zoeker = _dataset_streng
         return zoeker(tekst) if zoeker else []
     if not rij.pattern:
         return []
@@ -366,16 +455,49 @@ def _treffers_van(rij: GuardRule, tekst: str) -> List[Tuple[int, int, str]]:
     return [(m.start(), m.end(), m.group()) for m in patroon.finditer(tekst)]
 
 
-def beoordeel_opdracht(db: Session, command: Optional[str]) -> Dict[str, Any]:
+def _profiel_uitzondering(prof: Dict[str, Any], tekst: str) -> Optional[str]:
+    """Geldt dit commando in deze wereld als gewoon beheerwerk?
+
+    Een lab weet waar het voor is (zie services/lab/profielen.py). In een
+    Fabric-omgeving is `DESCRIBE HISTORY` of een job-status ophalen geen poging
+    klantdata te lezen maar de normale gang van zaken; in een generiek lab
+    weten we dat niet en blijven de regels gelden zoals ze staan.
+    """
+    for patroon in prof.get("toelaten_extra") or []:
+        try:
+            if re.search(patroon, tekst, re.IGNORECASE):
+                return patroon
+        except re.error:
+            continue
+    return None
+
+
+def beoordeel_opdracht(db: Session, command: Optional[str], *,
+                       profiel_key: Optional[str] = None,
+                       intent: Optional[str] = None) -> Dict[str, Any]:
     """Mag dit commando draaien?
 
     `toelaten` wint van alles: dat is hoe je een uitzondering maakt zonder de
     onderliggende regel te moeten wissen. Daarna wint de strengste actie.
+
+    Twee dingen kunnen dat oordeel verruimen, en allebei met een spoor. Het
+    PROFIEL van het lab kent de wereld waarin het werkt. De INTENTIE is wat de
+    agent verklaart op te halen; die verruiming is geen vrijbrief, want
+    beoordeel_uitvoer toetst de uitvoer aan diezelfde verklaring.
     """
+    from services.lab import intent as intents, profielen
+
     tekst = command or ""
+    prof = profielen.profiel(profiel_key)
+    verruimd = set(intents.verruimt(intent))
     bevindingen: List[Dict[str, Any]] = []
     if not tekst.strip():
         return {"actie": "doorgelaten", "findings": []}
+
+    patroon = _profiel_uitzondering(prof, tekst)
+    if patroon:
+        return {"actie": "doorgelaten", "findings": [],
+                "reden": f"beheerwerk in profiel '{prof['label']}'"}
 
     vrijgesteld = None
     streng = None
@@ -383,12 +505,21 @@ def beoordeel_opdracht(db: Session, command: Optional[str]) -> Dict[str, Any]:
         treffers = _treffers_van(rij, tekst)
         if not treffers:
             continue
+        actie = prof.get("acties", {}).get(str(rij.key or ""), rij.action)
+        # Verklaarde intentie: een blokkade op de OPDRACHT zakt tot een
+        # aantekening. De uitvoer moet dan wel bij de verklaring passen.
+        if actie == "blokkeren" and rij.category in verruimd:
+            bevindingen.append({"regel": rij.name, "categorie": rij.category,
+                                "actie": "verruimd", "aantal": len(treffers),
+                                "voorbeeld": treffers[0][2][:80],
+                                "intent": intent})
+            continue
         bevindingen.append({"regel": rij.name, "categorie": rij.category,
-                            "actie": rij.action, "aantal": len(treffers),
+                            "actie": actie, "aantal": len(treffers),
                             "voorbeeld": treffers[0][2][:80]})
-        if rij.action == "toelaten" and vrijgesteld is None:
+        if actie == "toelaten" and vrijgesteld is None:
             vrijgesteld = rij
-        elif rij.action == "blokkeren" and streng is None:
+        elif actie == "blokkeren" and streng is None:
             streng = rij
 
     if vrijgesteld is not None:
@@ -402,7 +533,9 @@ def beoordeel_opdracht(db: Session, command: Optional[str]) -> Dict[str, Any]:
 
 
 def beoordeel_uitvoer(db: Session, tekst: Optional[str], *,
-                      met_presidio: bool = True) -> Dict[str, Any]:
+                      met_presidio: bool = True,
+                      profiel_key: Optional[str] = None,
+                      intent: Optional[str] = None) -> Dict[str, Any]:
     """Wat mag er van deze uitvoer naar het model?
 
     Geeft de (eventueel gemaskeerde) tekst terug plus wat er gevonden is.
@@ -410,7 +543,14 @@ def beoordeel_uitvoer(db: Session, tekst: Optional[str], *,
     één BSN in staat, kost je ook de exitcode, het pad en de foutmelding die je
     nodig had.
     """
+    from services.lab import intent as intents, profielen
+
     origineel = tekst or ""
+    prof = profielen.profiel(profiel_key)
+    # Een profiel kan de namenherkenning uitzetten. In een Fabric-lab is
+    # technische uitvoer de norm en maakt NER er rommel van: op een gewone
+    # `ps`-tabel markeerde het "PID" en "python3" 35 keer als plaatsnaam.
+    met_presidio = met_presidio and bool(prof.get("presidio", True))
     if not origineel:
         return {"actie": "doorgelaten", "tekst": origineel, "findings": []}
 
@@ -420,15 +560,17 @@ def beoordeel_uitvoer(db: Session, tekst: Optional[str], *,
     bevindingen: List[Dict[str, Any]] = []
     blokkeer: Optional[GuardRule] = None
 
+    streng = intents.streng_op_uitvoer(intent)
     for rij in regels(db, "uitvoer"):
-        treffers = _treffers_van(rij, origineel)
+        treffers = _treffers_van(rij, origineel, streng=streng)
         if not treffers:
             continue
+        actie = prof.get("acties", {}).get(str(rij.key or ""), rij.action)
         bevindingen.append({"regel": rij.name, "categorie": rij.category,
-                            "actie": rij.action, "aantal": len(treffers)})
-        if rij.action == "blokkeren" and blokkeer is None:
+                            "actie": actie, "aantal": len(treffers)})
+        if actie == "blokkeren" and blokkeer is None:
             blokkeer = rij
-        elif rij.action == "maskeren":
+        elif actie == "maskeren":
             for start, eind, _ in treffers:
                 te_maskeren.append((start, eind, rij.category))
 
@@ -442,15 +584,30 @@ def beoordeel_uitvoer(db: Session, tekst: Optional[str], *,
                                 "categorie": "persoonsgegeven",
                                 "actie": "maskeren", "aantal": len(presidio)})
 
+    # De toets op de verklaring. Zeg je "metadata" en er komt een dataset of
+    # een geldig BSN uit, dan gaat het dicht — ook als de regel zelf alleen
+    # maskeren vroeg. De verruiming op de opdracht is daarmee betaald: wie
+    # verkeerd verklaart, verliest de uitvoer én staat als mismatch in de audit.
+    mismatch = intents.toets(intent, bevindingen)
+    if mismatch is not None and mismatch["blokkeren"]:
+        return {"actie": "geblokkeerd", "tekst": None, "findings": bevindingen,
+                "reden": mismatch["uitleg"], "intent_mismatch": mismatch}
+
     if blokkeer is not None:
         return {"actie": "geblokkeerd", "tekst": None, "findings": bevindingen,
                 "reden": f"{blokkeer.name} ({blokkeer.category})"}
 
+    # Een mismatch die niet blokkeert (een e-mailadres in een logregel bij een
+    # als "code" verklaard commando) gaat wél mee naar de audit: daar hoort
+    # zichtbaar te zijn dat de verklaring niet helemaal klopte.
+    extra = {"intent_mismatch": mismatch} if mismatch is not None else {}
+
     if not te_maskeren:
-        return {"actie": "doorgelaten", "tekst": origineel, "findings": bevindingen}
+        return {"actie": "doorgelaten", "tekst": origineel,
+                "findings": bevindingen, **extra}
 
     uit = maskeer(origineel, te_maskeren)
-    return {"actie": "gemaskeerd", "tekst": uit, "findings": bevindingen}
+    return {"actie": "gemaskeerd", "tekst": uit, "findings": bevindingen, **extra}
 
 
 def maskeer(tekst: str, plekken: List[Tuple[int, int, str]]) -> str:

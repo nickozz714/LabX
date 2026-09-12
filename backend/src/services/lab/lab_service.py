@@ -84,6 +84,16 @@ _AZ_STEP: Dict[str, Any] = {
 }
 
 
+
+def _profielsleutel(waarde: Optional[str]) -> str:
+    """Een onbekend profiel valt terug op 'generiek' in plaats van te falen:
+    de guard hoort nooit uit te vallen op een typefout in een instelling."""
+    from services.lab.profielen import PROFIELEN, STANDAARD
+
+    sleutel = (waarde or "").strip().lower()
+    return sleutel if sleutel in PROFIELEN else STANDAARD
+
+
 class LabService:
     def __init__(self, db: Session, runtime: Optional[DockerRuntime] = None) -> None:
         self.db = db
@@ -859,6 +869,7 @@ exec ssh -N \\
         setup_script: Optional[str] = None,
         min_workers: int = 1,
         max_workers: int = 1,
+        security_profile: Optional[str] = None,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -904,6 +915,9 @@ exec ssh -N \\
             min_workers=max(1, min(int(min_workers or 1), 8)),
             max_workers=max(1, min(int(max_workers or 1), 8)),
             worker_count=1,
+            # Wat dit lab over zijn eigen wereld weet; bepaalt welke guard-regels
+            # zinnig zijn. Zie services/lab/profielen.py.
+            security_profile=_profielsleutel(security_profile),
             created_at=now, updated_at=now,
         )
         self.db.add(p)
@@ -1220,6 +1234,7 @@ exec ssh -N \\
                               allowed_skills: Optional[List[str]] = None,
                               extras: Optional[List[str]] = None,
                               setup_script: Any = "__unset__",
+                              security_profile: Optional[str] = None,
                               azure_profile_id: Any = "__unset__") -> Dict[str, Any]:
         p = self.get(lab_id)
         if data_guard is not None:
@@ -1232,6 +1247,8 @@ exec ssh -N \\
             p.allowed_tools = [str(x) for x in allowed_tools]
         if allowed_skills is not None:
             p.allowed_skills = [str(x) for x in allowed_skills]
+        if security_profile is not None:
+            p.security_profile = _profielsleutel(security_profile)
         inrichting_changed = False
         if extras is not None:
             new_extras = [str(x) for x in extras]
@@ -1822,6 +1839,7 @@ exec ssh -N \\
             "worker_count": int(getattr(p, "worker_count", 1) or 1),
             "min_workers": int(getattr(p, "min_workers", 1) or 1),
             "max_workers": int(getattr(p, "max_workers", 1) or 1),
+            "security_profile": getattr(p, "security_profile", None) or "generiek",
             "workers": [{"id": w.id, "index": w.index, "status": w.status,
                          "container_id": (w.container_id or "")[:12] or None,
                          "network_alias": w.network_alias,

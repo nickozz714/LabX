@@ -391,6 +391,14 @@ function AuditLijst() {
           {rijen.map((r) => (
             <div key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
               <Badge tone={UITKOMST_TOON[r.outcome] || "neutral"}>{r.outcome}</Badge>
+              {r.intent && (
+                <span title={r.intent_mismatch ? r.intent_mismatch.uitleg
+                                               : `De agent verklaarde: ${r.intent}`}>
+                  <Badge tone={r.intent_mismatch ? "red" : "neutral"}>
+                    {r.intent_mismatch ? `${r.intent} ✗` : r.intent}
+                  </Badge>
+                </span>
+              )}
               <span className="text-xs text-muted-foreground">{tijd(r.ts)}</span>
               <code className="max-w-[28rem] truncate text-xs">{r.command}</code>
               {r.findings.length > 0 && (
@@ -426,6 +434,26 @@ function AuditLijst() {
                 {open.command}
               </pre>
             </div>
+            {open.intent && (
+              <div className={`rounded-md border p-2 text-xs ${
+                open.intent_mismatch ? "border-destructive/50 bg-destructive/5"
+                                     : "border-border bg-secondary/40"}`}>
+                <span className="font-medium">Verklaard: {open.intent}</span>
+                {open.intent_mismatch ? (
+                  <p className="mt-1 text-muted-foreground">
+                    Kwam niet uit: {open.intent_mismatch.uitleg}. Aangeslagen op{" "}
+                    {open.intent_mismatch.regels.join(", ")}.{" "}
+                    {open.intent_mismatch.blokkeren
+                      ? "Daarom is de uitvoer alsnog tegengehouden."
+                      : "De treffers zijn gemaskeerd; de rest is doorgegaan."}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-muted-foreground">
+                    De uitvoer paste bij wat de agent zei op te halen.
+                  </p>
+                )}
+              </div>
+            )}
             {open.findings.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {open.findings.map((f, i) => (

@@ -379,7 +379,8 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             try:
                 result = await svc.execute_builtin_shell(
                     lab_id=lab_id, command=str(args.get("command") or ""),
-                    timeout=float(args.get("timeout") or 60), worker_id=worker_id)
+                    timeout=float(args.get("timeout") or 60), worker_id=worker_id,
+                    intent=str(args.get("intent") or ""))
             except HTTPException as exc:
                 return {"error": f"lab__shell_exec kan niet: {exc.detail}"}
             except RuntimeError as exc:

@@ -57,6 +57,14 @@ class GuardAudit(Base):
     # Het oordeel van het lokale model, als dat gedraaid heeft.
     llm_verdict: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Wat de agent verklaarde op te halen (metadata / telling / code /
+    # klantdata), en of de uitvoer daarbij paste. Een verklaring verruimt wat
+    # er op de opdracht mag; deze twee kolommen zijn wat die verruiming
+    # controleerbaar maakt. Zonder ze zou "ik haalde alleen metadata op" een
+    # bewering blijven die niemand kan nakijken.
+    intent: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    intent_mismatch: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Beide Fernet-versleuteld. Zie de kop van dit bestand.
     original_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivered_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)

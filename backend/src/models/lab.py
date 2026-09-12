@@ -96,6 +96,12 @@ class Lab(Base):
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
     last_used_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Wat dit lab over zijn eigen wereld weet; zie services/lab/profielen.py.
+    # Een lab dat in Fabric werkt produceert de hele dag technische uitvoer, en
+    # een guard die dat niet weet blokkeert precies het werk waarvoor het lab
+    # bestaat. Verschuift wat als NORMAAL geldt, niet wat er beschermd wordt.
+    security_profile: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="generiek")
 
     __table_args__ = (
         Index("idx_labs_status", "status"),

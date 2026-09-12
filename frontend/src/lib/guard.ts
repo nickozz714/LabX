@@ -30,6 +30,25 @@ export type GuardRegel = {
 
 export type GuardDetector = { key: string; label: string; uitleg: string };
 
+/**
+ * Het beveiligingsprofiel van een lab: wat het over zijn eigen wereld weet.
+ * Een lab in Fabric produceert de hele dag technische uitvoer; een guard die
+ * dat niet weet, blokkeert precies het werk waarvoor het lab er is. Een
+ * profiel verschuift wat als NORMAAL geldt, niet wat er beschermd wordt.
+ */
+export type GuardProfiel = {
+  key: string; label: string; uitleg: string; presidio: boolean;
+};
+
+/** Wat een agent kan verklaren op te halen. Geen vrijbrief: de uitvoer wordt
+ *  eraan getoetst en een afwijking staat als mismatch in de audit. */
+export type GuardIntentie = { key: string; label: string; uitleg: string };
+
+export type GuardMismatch = {
+  intent: string; verklaard: string; gevonden: string[]; regels: string[];
+  blokkeren: boolean; uitleg: string;
+};
+
 export type GuardBevinding = {
   regel: string; categorie: string; actie: string; aantal: number; voorbeeld?: string;
 };
@@ -40,6 +59,8 @@ export type GuardAuditRegel = {
   outcome: "doorgelaten" | "gemaskeerd" | "geblokkeerd" | "geweigerd";
   findings: GuardBevinding[];
   llm_verdict: Record<string, unknown> | null;
+  intent: string | null;
+  intent_mismatch: GuardMismatch | null;
   bytes_original: number; bytes_delivered: number; heeft_tekst: boolean;
 };
 
@@ -61,6 +82,8 @@ export const guardApi = {
   status: () => api.get<GuardStatus>("/guard/status"),
   rules: () => api.get<GuardRegel[]>("/guard/rules"),
   detectors: () => api.get<GuardDetector[]>("/guard/detectors"),
+  profielen: () => api.get<GuardProfiel[]>("/guard/profielen"),
+  intenties: () => api.get<GuardIntentie[]>("/guard/intenties"),
   create: (payload: Record<string, unknown>) => api.post<GuardRegel>("/guard/rules", payload),
   update: (id: number, payload: Record<string, unknown>) =>
     api.patch<GuardRegel>(`/guard/rules/${id}`, payload),
@@ -68,9 +91,9 @@ export const guardApi = {
   test: (payload: Record<string, unknown>) =>
     api.post<{ ok: boolean; fout?: string; aantal?: number; treffers?: string[];
                voorbeeld_gemaskeerd?: string; waarschuwing?: string }>("/guard/test", payload),
-  probeer: (payload: { target: GuardDoel; sample: string }) =>
+  probeer: (payload: { target: GuardDoel; sample: string; profile?: string; intent?: string }) =>
     api.post<{ actie: string; findings: GuardBevinding[]; resultaat?: string | null;
-               reden?: string }>("/guard/probeer", payload),
+               reden?: string; intent_mismatch?: GuardMismatch | null }>("/guard/probeer", payload),
   audit: (params: { lab_id?: string; outcome?: string; limit?: number } = {}) => {
     const qs = new URLSearchParams();
     if (params.lab_id) qs.set("lab_id", params.lab_id);

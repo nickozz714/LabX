@@ -13,6 +13,9 @@ export interface Lab {
   ports: number[];
   data_guard: boolean;
   llm_guard: boolean;
+  /** Wat dit lab over zijn eigen wereld weet — bepaalt welke guard-regels
+   *  zinnig zijn. "generiek" | "fabric" | "streng". */
+  security_profile: string;
   allowed_mcp: string[];
   allowed_tools: string[];
   allowed_skills: string[];

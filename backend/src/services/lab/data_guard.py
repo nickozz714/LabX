@@ -51,6 +51,21 @@ GUARD_MESSAGE = (
     "geaggregeerde resultaten alleen als die geen klantgegevens prijsgeven."
 )
 
+# Wat de agent hoort te lezen als zijn COMMANDO is geweigerd. Het verschil met
+# de melding hierboven is de uitweg: een weigering op de opdracht kan berusten
+# op de vorm van het commando, en daar is een verklaring het antwoord op. Zonder
+# deze zin blijft de agent varianten proberen tot hij het opgeeft — dat gebeurde,
+# en het kostte meer werk dan de blokkade zelf voorkwam.
+OPDRACHT_MESSAGE = (
+    "[Lab data-guard] Dit COMMANDO is niet uitgevoerd: {reason}. "
+    "Haal je hier geen klantgegevens op maar structuur, een aantal, een "
+    "definitie of code? Voer het dan opnieuw uit met `intent` op 'metadata', "
+    "'telling' of 'code'. Dat verruimt deze controle. Let op: de UITVOER wordt "
+    "aan je verklaring getoetst — komen er tóch klantrijen uit, dan gaat het "
+    "alsnog dicht en staat de afwijking in de audit. Gaat het wél om echte "
+    "gegevens, verzin dan geen omweg: rapporteer aantallen en structuur."
+)
+
 # ── Provenance: control-plane (metadata) vs data-plane (records) ─────────────
 # Eén bestandslezing, gedeeld met governed_policy. `[^|;&\n]*` en niet `[^|]*`:
 # dat laatste liep over REGELGRENZEN heen, en koppelde dus de `cat` van
@@ -269,7 +284,8 @@ def guard_lab_output(result: Dict[str, Any], *, enabled: bool,
                      db: Optional[Any] = None,
                      lab_name: Optional[str] = None,
                      worker_id: Optional[int] = None,
-                     run_id: Optional[str] = None) -> Dict[str, Any]:
+                     run_id: Optional[str] = None,
+                     intent: Optional[str] = None) -> Dict[str, Any]:
     """De guard op een exec-resultaat {exit_code, output, truncated}.
 
     **Classifier en guard zijn gescheiden.** Wat er IN de tekst zit, bepaalt
@@ -298,28 +314,53 @@ def guard_lab_output(result: Dict[str, Any], *, enabled: bool,
         try:
             return _guard_met_db(result, text, command=command, lab_id=lab_id,
                                  provenance_override=provenance_override, db=eigen,
-                                 lab_name=lab_name, worker_id=worker_id, run_id=run_id)
+                                 lab_name=lab_name, worker_id=worker_id, run_id=run_id,
+                                 intent=intent)
         finally:
             eigen.close()
     return _guard_met_db(result, text, command=command, lab_id=lab_id,
                          provenance_override=provenance_override, db=db,
-                         lab_name=lab_name, worker_id=worker_id, run_id=run_id)
+                         lab_name=lab_name, worker_id=worker_id, run_id=run_id,
+                         intent=intent)
+
+
+def _profiel_van(db, lab_id) -> Optional[str]:
+    """Welk beveiligingsprofiel hoort bij dit lab? Zie services/lab/profielen.py."""
+    if not lab_id:
+        return None
+    try:
+        from models.lab import Lab
+        lab = db.get(Lab, lab_id)
+        return getattr(lab, "security_profile", None) if lab else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _guard_met_db(result: Dict[str, Any], text: str, *, command, lab_id,
-                  provenance_override, db, lab_name, worker_id, run_id) -> Dict[str, Any]:
+                  provenance_override, db, lab_name, worker_id, run_id,
+                  intent=None) -> Dict[str, Any]:
     from services.lab import classifier, guard_audit_service as audit
+    from services.lab import intent as intents
+
+    intent = intents.normaliseer(intent)
+    profiel_key = _profiel_van(db, lab_id)
 
     # 1. De OPDRACHT. Alleen hier kun je `SELECT MAX(bedrag)` tegenhouden: dat
     #    levert één getal op dat in geen enkele uitvoercontrole opvalt.
-    opdracht = classifier.beoordeel_opdracht(db, command)
+    opdracht = classifier.beoordeel_opdracht(db, command, profiel_key=profiel_key,
+                                             intent=intent)
     if opdracht["actie"] == "geweigerd":
         audit.leg_vast(db, lab_id=lab_id, lab_name=lab_name, worker_id=worker_id,
                        run_id=run_id, command=command, outcome="geweigerd",
-                       origineel=text, geleverd=None, findings=opdracht["findings"])
+                       origineel=text, geleverd=None, findings=opdracht["findings"],
+                       intent=intent)
         return {
             **result,
-            "output": GUARD_MESSAGE.format(reason=opdracht.get("reden") or "opdrachtregel"),
+            # De uitweg alleen aanbieden als hij er nog is: wie al verklaard
+            # heeft en toch geweigerd wordt, heeft niets aan het advies om te
+            # verklaren.
+            "output": (OPDRACHT_MESSAGE if not intent else GUARD_MESSAGE).format(
+                reason=opdracht.get("reden") or "opdrachtregel"),
             "guarded": True,
             "guard_reason": f"opdracht geweigerd: {opdracht.get('reden')}",
             "guard_facts": {"fase": "opdracht", "findings": opdracht["findings"],
@@ -327,13 +368,15 @@ def _guard_met_db(result: Dict[str, Any], text: str, *, command, lab_id,
         }
 
     # 2. De UITVOER. Maskeren waar het kan, blokkeren waar een regel dat vraagt.
-    uitvoer = classifier.beoordeel_uitvoer(db, text)
+    uitvoer = classifier.beoordeel_uitvoer(db, text, profiel_key=profiel_key,
+                                           intent=intent)
     bevindingen = list(opdracht["findings"]) + list(uitvoer["findings"])
 
     if uitvoer["actie"] == "geblokkeerd":
         audit.leg_vast(db, lab_id=lab_id, lab_name=lab_name, worker_id=worker_id,
                        run_id=run_id, command=command, outcome="geblokkeerd",
-                       origineel=text, geleverd=None, findings=bevindingen)
+                       origineel=text, geleverd=None, findings=bevindingen,
+                       intent=intent, intent_mismatch=uitvoer.get("intent_mismatch"))
         return {
             **result,
             "output": GUARD_MESSAGE.format(reason=uitvoer.get("reden") or "uitvoerregel"),
@@ -358,7 +401,8 @@ def _guard_met_db(result: Dict[str, Any], text: str, *, command, lab_id,
         db, lab_id=lab_id, lab_name=lab_name, worker_id=worker_id, run_id=run_id,
         command=command,
         outcome="gemaskeerd" if uitvoer["actie"] == "gemaskeerd" else "doorgelaten",
-        origineel=text, geleverd=geleverd, findings=bevindingen)
+        origineel=text, geleverd=geleverd, findings=bevindingen,
+        intent=intent, intent_mismatch=uitvoer.get("intent_mismatch"))
     uit = {**result, "output": geleverd,
            "guard_facts": {"fase": "uitvoer", "findings": bevindingen,
                            "output_bytes": len(text), "audit_id": audit_id,
