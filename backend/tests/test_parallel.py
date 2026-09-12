@@ -221,6 +221,11 @@ def test_geen_bord_geen_klaar_kolommen():
     assert _svc()._klaar_kolommen(None) == set()
 
 
+# Een item dat in deze planning heeft gedraaid; zie de tests onderaan voor
+# waarom dat onderscheid ertoe doet.
+GEDRAAID = SimpleNamespace(started_at="2026-09-11T18:47:50+00:00", run_id="r1")
+
+
 def test_ticket_in_een_klaar_kolom_telt_als_afgerond():
     """De reden dat een planning eeuwig bleef lopen: de agent zette het ticket
     zelf op Klaar, maar de planning wist dat alleen via haar eigen afloop-hook
@@ -229,7 +234,7 @@ def test_ticket_in_een_klaar_kolom_telt_als_afgerond():
     board = SimpleNamespace(columns=[{"key": "done", "is_done": True}], agent_done_column=None)
     svc.db = SimpleNamespace(get=lambda model, _id: board)
     ticket = SimpleNamespace(status="done", key="KRI-20")
-    assert svc._afgerond_buitenom(SimpleNamespace(board_id=1), SimpleNamespace(), ticket) is True
+    assert svc._afgerond_buitenom(SimpleNamespace(board_id=1), GEDRAAID, ticket) is True
 
 
 def test_ticket_dat_nog_loopt_telt_niet_als_afgerond():
@@ -238,9 +243,52 @@ def test_ticket_dat_nog_loopt_telt_niet_als_afgerond():
     svc.db = SimpleNamespace(get=lambda model, _id: board)
     for kolom in ("todo", "in_progress", "review", "blocked"):
         ticket = SimpleNamespace(status=kolom, key="X")
-        assert svc._afgerond_buitenom(SimpleNamespace(board_id=1),
-                                      SimpleNamespace(), ticket) is False
+        assert svc._afgerond_buitenom(SimpleNamespace(board_id=1), GEDRAAID, ticket) is False
 
 
 def test_verdwenen_ticket_is_niet_afgerond():
-    assert _svc()._afgerond_buitenom(SimpleNamespace(board_id=1), SimpleNamespace(), None) is False
+    assert _svc()._afgerond_buitenom(SimpleNamespace(board_id=1), GEDRAAID, None) is False
+
+
+# ── een nieuwe planning vinkt niet meteen alles af ──────────────────────────
+#
+# Een planning kan buiten zichzelf om te weten komen dat een ticket klaar is:
+# de agent parkeerde met `board__wait_until`, rondde daarna af en zette het
+# ticket op Klaar. Dat kreeg de planning niet mee en bleef eeuwig hangen.
+#
+# Maar die toets sloeg te breed toe. Wie acht AFGERONDE tickets inplant om ze
+# te laten controleren, kreeg ze meteen alle acht op 'done' — precies het
+# tegenovergestelde van wat hij vroeg. Het verschil: heeft dit item in DEZE
+# planning gedraaid?
+
+def _bord_met_klaarkolom():
+    return SimpleNamespace(columns=[{"key": "todo"}, {"key": "done", "is_done": True}],
+                           agent_done_column=None)
+
+
+def test_nieuw_ticket_op_klaar_wordt_niet_afgevinkt():
+    """Acht afgeronde tickets inplannen om ze te controleren: die moeten
+    gewoon draaien."""
+    svc = _svc()
+    svc.db = SimpleNamespace(get=lambda model, _id: _bord_met_klaarkolom())
+    item = SimpleNamespace(started_at=None, run_id=None)
+    ticket = SimpleNamespace(status="done", key="KRI-20")
+    assert svc._afgerond_buitenom(SimpleNamespace(board_id=1), item, ticket) is False
+
+
+def test_gedraaid_ticket_op_klaar_wordt_wel_afgevinkt():
+    """Het geval waarvoor de toets bestaat: gestart, geparkeerd, en daarna door
+    de agent zelf afgerond."""
+    svc = _svc()
+    svc.db = SimpleNamespace(get=lambda model, _id: _bord_met_klaarkolom())
+    item = SimpleNamespace(started_at="2026-09-11T18:47:50+00:00", run_id="r1")
+    ticket = SimpleNamespace(status="done", key="KRI-20")
+    assert svc._afgerond_buitenom(SimpleNamespace(board_id=1), item, ticket) is True
+
+
+def test_gedraaid_ticket_dat_nog_niet_klaar_is_blijft_lopen():
+    svc = _svc()
+    svc.db = SimpleNamespace(get=lambda model, _id: _bord_met_klaarkolom())
+    item = SimpleNamespace(started_at="2026-09-11T18:47:50+00:00", run_id="r1")
+    assert svc._afgerond_buitenom(SimpleNamespace(board_id=1), item,
+                                  SimpleNamespace(status="todo", key="X")) is False

@@ -1024,6 +1024,18 @@ function UsageFooter({ steps }: { steps: ChatEvent[] }) {
   return <div className="mt-1.5 text-[10px] text-muted-foreground/70">{parts.join(" · ")}</div>;
 }
 
+/** Tijd bij een bericht: alleen het uur als het van vandaag is, anders met de
+ *  datum erbij. Volledige tijdstempel staat in de tooltip. */
+function berichtTijd(waarde: string): string {
+  const d = new Date(waarde);
+  if (Number.isNaN(d.getTime())) return "";
+  const klok = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const vandaag = new Date();
+  if (d.toDateString() === vandaag.toDateString()) return klok;
+  return `${d.toLocaleDateString(undefined, { day: "2-digit", month: "2-digit" })} ${klok}`;
+}
+
+
 function ChatBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
   const visibleSteps = (message.steps || []).filter((s) => (s as any).kind !== "usage");
@@ -1053,6 +1065,14 @@ function ChatBubble({ message }: { message: Message }) {
         )}
         <div className={isUser ? "markdown-body markdown-body-invert" : "markdown-body"}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{escapeRawHtml(message.content)}</ReactMarkdown>
+        </div>
+        {/* Wannéér iets gezegd is, is in een gesprek met een agent geen detail:
+            runs lopen uren, een antwoord kan van vanmorgen zijn, en zonder tijd
+            is een draad niet te volgen. De datum staat er alleen bij als het
+            bericht niet van vandaag is — anders is het ruis. */}
+        <div className={`mt-1 text-[10px] ${isUser ? "text-primary-foreground/60" : "text-muted-foreground"}`}
+             title={new Date(message.created_at).toLocaleString()}>
+          {berichtTijd(message.created_at)}
         </div>
         {!isUser && <UsageFooter steps={message.steps || []} />}
       </div>

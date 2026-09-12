@@ -464,12 +464,26 @@ class PlanService:
                            ticket: Optional[Ticket]) -> bool:
         """Is dit ticket klaar zonder dat de planning dat meekreeg?
 
-        Alleen de kolom telt, en met opzet niet `agent_state`: die zegt hoe de
-        laatste RUN afliep, niet of het werk af is. Een ticket dat drie keer
-        gedeeltelijk is opgepakt heeft ook drie keer `agent_state=done` gehad.
-        De kolom is de uitspraak van de agent (of van jou) dát het klaar is.
+        Twee voorwaarden, en de tweede is er omdat de eerste alleen te weinig
+        was.
+
+        1. Het ticket staat in een klaar-kolom. Alleen de kolom telt, en met
+           opzet niet `agent_state`: die zegt hoe de laatste RUN afliep, niet of
+           het werk af is. De kolom is de uitspraak van de agent (of van jou)
+           dát het klaar is.
+        2. Het item heeft in DEZE planning gedraaid. Zonder die eis vinkte een
+           nieuwe planning meteen alles af wat al op Klaar stond — en dat is
+           precies wat je NIET bedoelt als je acht afgeronde tickets inplant om
+           ze te laten controleren. Een ticket dat nog niet gedraaid heeft,
+           start gewoon, in welke kolom het ook staat.
+
+        Wat deze toets moet vangen is het andere geval: een ticket dat wél is
+        gestart, met `board__wait_until` parkeerde, en daarna door de agent zelf
+        is afgerond. Dat kreeg de planning niet mee en bleef eeuwig hangen.
         """
         if ticket is None:
+            return False
+        if not (item.started_at or item.run_id):
             return False
         board = self.db.get(Board, plan.board_id)
         return ticket.status in self._klaar_kolommen(board)
