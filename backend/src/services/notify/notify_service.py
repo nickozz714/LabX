@@ -27,6 +27,7 @@ is klaar — ook als de mailserver plat ligt.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -247,18 +248,60 @@ async def _inbox_telegram(db: Session, kanaal: NotificationChannel) -> tuple:
     return gelezen, verwerkt
 
 
+_ADRES = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}")
+
+
+def _adres(waarde: str) -> str:
+    """Het kale mailadres uit een From-kop ("Naam <a@b.nl>" -> "a@b.nl")."""
+    m = _ADRES.search(waarde or "")
+    return m.group(0).lower() if m else ""
+
+
 async def _inbox_mail(db: Session, kanaal: NotificationChannel) -> tuple:
     from services.notify import mail
 
     config = dict(kanaal.config or {})
+
+    # Een pas ingesteld kanaal begint BIJ NU, niet bij het begin van de
+    # postbus. Zonder dit las LabX op 12-09-2026 de laatste vijftig berichten
+    # van een bestaande mailbox als antwoorden en stuurde op elk daarvan een
+    # bevestiging — vijftig mails in een paar minuten. Een postbus die er al
+    # was, heeft geen enkel bericht dat over ons gaat: alles wat ouder is dan
+    # de eerste melding kan per definitie geen antwoord erop zijn.
+    if config.get("last_uid") is None:
+        config["last_uid"] = await mail.hoogste_uid(config=config, wachtwoord=_geheim(kanaal))
+        kanaal.config = config
+        log.infox("Mailkanaal begint bij nu", kanaal=kanaal.name,
+                  vanaf_uid=config["last_uid"])
+        return 0, 0
+
     berichten = await mail.haal_antwoorden(config=config, wachtwoord=_geheim(kanaal),
                                            laatste_uid=int(config.get("last_uid") or 0))
     gelezen = verwerkt = 0
+    # Hoeveel bevestigingen deze ronde nog mogen. Een bevestiging is zelf een
+    # mail en kan zelf bouncen; zonder plafond voedt één ongelukkige postbus een
+    # lus die zichzelf in stand houdt. Drie is ruim voor een mens die snel
+    # achter elkaar antwoordt, en klein genoeg om nooit een stapel te worden.
+    bevestigingen_over = 3
     hoogste = int(config.get("last_uid") or 0)
+    # Van wie we een antwoord ACCEPTEREN. Dit is geen formaliteit: het
+    # mailkanaal kan op een postbus staan die met anderen gedeeld wordt (dat was
+    # hier zo — er kwam gewoon post van een heel ander systeem binnen). Zonder
+    # deze toets kan iedereen die het adres kent een agent aan het werk zetten,
+    # want een antwoord zonder verwijzing gaat naar de LAATSTE melding. Het
+    # spiegelbeeld van de Telegram-regel een stuk hierboven.
+    geadresseerden = {a.strip().lower() for a in
+                      str(config.get("to") or "").replace(";", ",").split(",") if a.strip()}
+
     for bericht in berichten:
         hoogste = max(hoogste, int(bericht["uid"]))
         tekst = (bericht.get("tekst") or "").strip()
         if not tekst:
+            continue
+        van = _adres(bericht.get("van") or "")
+        if geadresseerden and van not in geadresseerden:
+            log.warningx("Mail van een onbekende afzender genegeerd",
+                         kanaal=kanaal.name, van=van or "(leeg)")
             continue
         gelezen += 1
         # Eerst op In-Reply-To (de afspraak uit RFC 5322), dan op het merkteken
@@ -270,8 +313,10 @@ async def _inbox_mail(db: Session, kanaal: NotificationChannel) -> tuple:
                 regel = db.get(NotificationLog, int(sleutel, 16))
                 if regel is not None and regel.channel_id != kanaal.id:
                     regel = None
-        if await _verwerk_antwoord(db, kanaal, regel, tekst):
+        if await _verwerk_antwoord(db, kanaal, regel, tekst,
+                                   mag_terugmelden=bevestigingen_over > 0):
             verwerkt += 1
+        bevestigingen_over -= 1
     if hoogste:
         config["last_uid"] = hoogste
         kanaal.config = config
@@ -303,7 +348,8 @@ def _zoek_melding(db: Session, kanaal: NotificationChannel,
 
 
 async def _verwerk_antwoord(db: Session, kanaal: NotificationChannel,
-                            regel: Optional[NotificationLog], tekst: str) -> bool:
+                            regel: Optional[NotificationLog], tekst: str,
+                            *, mag_terugmelden: bool = True) -> bool:
     """Een antwoord terug de sessie in.
 
     Het wordt de volgende beurt in het gesprek van die run — de agent pakt het
@@ -318,15 +364,18 @@ async def _verwerk_antwoord(db: Session, kanaal: NotificationChannel,
     from uuid import uuid4
 
     if regel is None:
-        await _terugmelden(kanaal, "Ik weet niet bij welke melding dit hoort — er is nog "
-                                   "niets verstuurd via dit kanaal.")
+        if mag_terugmelden:
+            await _terugmelden(kanaal, "Ik weet niet bij welke melding dit hoort — er is nog "
+                                       "niets verstuurd via dit kanaal.")
         return False
     context = regel.context or {}
     thread_id = context.get("thread_id")
     thread = db.get(Thread, thread_id) if thread_id else None
     if thread is None:
-        await _terugmelden(kanaal, "Dit ging over iets zonder gesprek, dus ik kan je "
-                                   "antwoord nergens naartoe sturen. Open LabX om verder te gaan.")
+        if mag_terugmelden:
+            await _terugmelden(kanaal, "Dit ging over iets zonder gesprek, dus ik kan je "
+                                       "antwoord nergens naartoe sturen. Open LabX om verder "
+                                       "te gaan.")
         return False
 
     # Het antwoord altijd eerst vastleggen. Wat er daarna ook misgaat, het is

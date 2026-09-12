@@ -63,6 +63,11 @@ def _stuur_blokkerend(*, host: str, port: int, gebruiker: str, wachtwoord: str,
     # Antwoorden op deze mail komen terug in dezelfde mailbox; dat is de
     # bedoeling en niet iets wat de gebruiker hoeft in te stellen.
     bericht["Reply-To"] = afzender
+    # Ons eigen merk op de mail. Komt hij ooit in onze eigen postbus terecht —
+    # een kopie, een doorstuurregel, een lijst die terugkaatst — dan herkennen
+    # we hem en laten we hem liggen in plaats van er een "antwoord" van te maken.
+    bericht["X-LabX"] = "melding"
+    bericht["Auto-Submitted"] = "auto-generated"
     bericht.set_content(tekst)
 
     context = ssl.create_default_context()
@@ -165,6 +170,46 @@ def _kop(waarde: Any) -> str:
         return str(waarde)
 
 
+# Afzenders die per definitie een machine zijn. Een antwoord van dit adres
+# bestaat niet; wat er binnenkomt is een rapport over wat wij zelf stuurden.
+_MACHINE_AFZENDER = re.compile(
+    r"mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounce|automat", re.IGNORECASE)
+
+
+def _is_automatisch(bericht: Any, *, eigen_adres: str = "") -> bool:
+    """Komt dit van een mens, of van een mailserver?
+
+    Dit onderscheid moest er komen na 12-09-2026. Het mailkanaal werd
+    ingesteld op een BESTAANDE postbus met zeshonderd berichten erin, waaronder
+    een stapel bounces van een heel ander systeem. LabX las de laatste vijftig
+    als antwoorden, kon ze nergens aan koppelen, en stuurde op elk daarvan een
+    bevestiging terug: vijftig mails in een paar minuten. Elk van die
+    bevestigingen kon zelf weer bouncen — een lus die zichzelf voedt.
+
+    De controles staan op volgorde van hardheid. Een leeg Return-Path (`<>`) is
+    de afspraak uit RFC 3834 waarmee een mailserver zegt "beantwoord dit niet";
+    `Auto-Submitted` zegt hetzelfde met zoveel woorden; een `multipart/report`
+    is per definitie een rapport. Pas daarna kijken we naar de afzender, want
+    dat is de enige heuristiek in de rij.
+    """
+    retour = (bericht.get("Return-Path") or "").strip()
+    if retour in ("<>", "<MAILER-DAEMON>"):
+        return True
+    auto = (bericht.get("Auto-Submitted") or "").strip().lower()
+    if auto and auto != "no":
+        return True
+    if (bericht.get_content_type() or "").lower() == "multipart/report":
+        return True
+    if (bericht.get("X-LabX") or "").strip():
+        return True          # onze eigen melding, teruggekomen
+    afzender = (bericht.get("From") or "")
+    if eigen_adres and eigen_adres.lower() in afzender.lower():
+        return True          # wijzelf
+    if _MACHINE_AFZENDER.search(afzender):
+        return True
+    return False
+
+
 def _haal_blokkerend(*, host: str, port: int, gebruiker: str, wachtwoord: str,
                      map_naam: str, ssl_aan: bool, laatste_uid: int) -> List[Dict[str, Any]]:
     if ssl_aan:
@@ -193,6 +238,11 @@ def _haal_blokkerend(*, host: str, port: int, gebruiker: str, wachtwoord: str,
             if status != "OK" or not ruw or not ruw[0]:
                 continue
             bericht = email.message_from_bytes(ruw[0][1])
+            if _is_automatisch(bericht, eigen_adres=gebruiker):
+                # Wel de UID bijwerken (dat gebeurt bij de aanroeper op grond
+                # van `hoogste`), maar niet verwerken: een bounce is geen
+                # antwoord van een mens.
+                continue
             uit.append({
                 "uid": nummer,
                 "van": _kop(bericht.get("From")),
@@ -230,6 +280,44 @@ async def haal_antwoorden(*, config: Dict[str, Any], wachtwoord: str,
         map_naam=str(config.get("imap_folder") or "INBOX"),
         ssl_aan=bool(config.get("imap_ssl", True)),
         laatste_uid=int(laatste_uid or 0))
+
+
+async def hoogste_uid(*, config: Dict[str, Any], wachtwoord: str) -> int:
+    """Waar staat de postbus NU? Het ijkpunt voor een pas ingesteld kanaal.
+
+    Alles wat er al ligt, ligt er buiten ons om: een postbus die al bestond kan
+    geen antwoorden bevatten op meldingen die nog niet verstuurd zijn. Beginnen
+    bij nul betekent die hele geschiedenis als antwoorden lezen, en dat kostte
+    op 12-09-2026 vijftig mails.
+    """
+    host = str(config.get("imap_host") or "").strip()
+    if not host:
+        return 0
+
+    def _laatste() -> int:
+        verbinding = (imaplib.IMAP4_SSL(host, int(config.get("imap_port") or 993), timeout=30)
+                      if config.get("imap_ssl", True)
+                      else imaplib.IMAP4(host, int(config.get("imap_port") or 143), timeout=30))
+        try:
+            verbinding.login(str(config.get("imap_user") or config.get("smtp_user") or ""),
+                             wachtwoord or "")
+            verbinding.select(str(config.get("imap_folder") or "INBOX"))
+            status, data = verbinding.uid("search", None, "ALL")
+            if status != "OK":
+                return 0
+            uids = [int(u) for u in (data[0] or b"").split() if u]
+            return max(uids) if uids else 0
+        finally:
+            try:
+                verbinding.logout()
+            except Exception:  # noqa: BLE001
+                pass
+
+    try:
+        return await asyncio.to_thread(_laatste)
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Kon het ijkpunt van de postbus niet bepalen", error=str(exc)[:200])
+        return 0
 
 
 async def controleer(*, config: Dict[str, Any], wachtwoord: str) -> Dict[str, Any]:

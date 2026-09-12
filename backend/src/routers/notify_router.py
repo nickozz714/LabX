@@ -58,6 +58,13 @@ def _dict(c: NotificationChannel) -> Dict[str, Any]:
     }
 
 
+# Wijzigt een van deze velden, dan wijst het kanaal naar een ANDERE postbus en
+# is de leespositie van de vorige niets meer waard. Hem laten staan zou de
+# nieuwe postbus vanaf een willekeurig punt lezen; hem wissen laat het kanaal
+# bij de volgende ronde opnieuw "begin bij nu" bepalen.
+_POSTBUS_VELDEN = ("imap_host", "imap_port", "imap_user", "imap_folder")
+
+
 def _schoon_config(kind: str, binnen: Any, bestaand: Dict[str, Any]) -> Dict[str, Any]:
     toegestaan = _CONFIG_VELDEN.get(kind, ())
     uit = {k: v for k, v in (bestaand or {}).items() if k in _INTERN}
@@ -66,6 +73,8 @@ def _schoon_config(kind: str, binnen: Any, bestaand: Dict[str, Any]) -> Dict[str
             uit[veld] = binnen[veld]
         elif veld in (bestaand or {}):
             uit[veld] = bestaand[veld]
+    if any(uit.get(v) != (bestaand or {}).get(v) for v in _POSTBUS_VELDEN):
+        uit.pop("last_uid", None)
     return uit
 
 
