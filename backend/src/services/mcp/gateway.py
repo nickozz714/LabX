@@ -699,7 +699,14 @@ def build_server():
                          "achtergrondtaak weg, zodat de chat direct bruikbaar blijft. De taak "
                          "draait als zelfstandige agent met dezelfde tools en gesprekscontext. "
                          "Geef de gebruiker meteen antwoord met wat er gestart is en het "
-                         "taak-id. NIET gebruiken voor werk dat binnen een minuut klaar is.\n"
+                         "taak-id. NIET gebruiken voor werk dat binnen een minuut klaar is.\n\n"
+                         "MODEL: een achtergrondtaak draait op het standaardmodel, ook als dit "
+                         "lab een zwaarder model gebruikt. Dat is bewust — achtergrondwerk is "
+                         "volghouden en verzamelen, en dat uren op het duurste model laten lopen "
+                         "kost veel en levert niets. Zet er dus werk in dat op het standaardmodel "
+                         "af kan: wachten, ophalen, tellen, doorlopen. Het redeneerwerk — de "
+                         "analyse, het ontwerp, de conclusie — doe je zelf, hier, met het "
+                         "resultaat dat de taak terugbrengt.\n"
                          "Args: prompt* (string)"),
             parameters={
                 "type": "object",

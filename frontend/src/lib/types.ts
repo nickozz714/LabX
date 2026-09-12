@@ -13,6 +13,9 @@ export interface Lab {
   ports: number[];
   data_guard: boolean;
   llm_guard: boolean;
+  /** Het model waarmee in dit lab gewerkt wordt; leeg = de standaard uit de
+   *  instellingen. Achtergrondtaken draaien altijd op de standaard. */
+  model: string | null;
   /** Wat dit lab over zijn eigen wereld weet — bepaalt welke guard-regels
    *  zinnig zijn. "generiek" | "fabric" | "streng". */
   security_profile: string;

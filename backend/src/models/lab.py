@@ -96,6 +96,12 @@ class Lab(Base):
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
     last_used_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Het model waarmee in dit lab gewerkt wordt. Leeg = de standaard uit de
+    # instellingen. Per lab en niet alleen per chat, omdat het werk aan een lab
+    # hangt en niet aan een gesprek: een board-agent die tickets van dit lab
+    # oppakt hoort hetzelfde model te gebruiken als de chat ernaast.
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     # Wat dit lab over zijn eigen wereld weet; zie services/lab/profielen.py.
     # Een lab dat in Fabric werkt produceert de hele dag technische uitvoer, en
     # een guard die dat niet weet blokkeert precies het werk waarvoor het lab

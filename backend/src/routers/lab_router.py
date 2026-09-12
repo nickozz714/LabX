@@ -283,6 +283,7 @@ async def create_lab(payload: Dict[str, Any], db: Session = Depends(get_db)):
         min_workers=int(payload.get("min_workers") or 1),
         max_workers=int(payload.get("max_workers") or payload.get("min_workers") or 1),
         security_profile=payload.get("security_profile"),
+        model=payload.get("model"),
     )
 
 
@@ -303,6 +304,7 @@ async def update_lab(lab_id: str, payload: Dict[str, Any], db: Session = Depends
         extras=payload.get("extras") if "extras" in payload else None,
         setup_script=payload.get("setup_script") if "setup_script" in payload else "__unset__",
         security_profile=payload.get("security_profile") if "security_profile" in payload else None,
+        model=payload.get("model") if "model" in payload else "__unset__",
         azure_profile_id=payload.get("azure_profile_id") if "azure_profile_id" in payload else "__unset__",
     )
 

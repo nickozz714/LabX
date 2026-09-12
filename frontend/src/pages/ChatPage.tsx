@@ -33,20 +33,13 @@ import { LabTerminal } from "@/components/LabTerminal";
 import { RunDetailModal, runDuration } from "@/components/BackgroundRunDetail";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import { getToken, ApiError } from "@/lib/api";
+import { MODEL_OPTIONS } from "@/lib/modellen";
 
 // Chat-standaarden leven HIER, niet op de Instellingen-pagina: elk gesprek
 // kan zijn eigen model/effort kiezen via deze dropdowns of de /model en
 // /effort slash-commands hieronder, en de pin-knop maakt de huidige keuze de
 // standaard voor NIEUWE chats (schrijft naar /api/settings — Instellingen
 // blijft puur infrastructuur: CLI-pad, auth, budget, subagents).
-const MODEL_OPTIONS = [
-  { value: "", label: "Standaard (instellingen)" },
-  { value: "sonnet", label: "Sonnet" },
-  { value: "opus", label: "Opus" },
-  { value: "fable", label: "Fable" },
-  { value: "haiku", label: "Haiku" },
-];
-
 const EFFORT_OPTIONS = [
   { value: "", label: "Standaard (instellingen)" },
   { value: "low", label: "Low" },

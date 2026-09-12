@@ -145,6 +145,22 @@ class ChatAgent:
             head += "\n(Some skills' guidance was omitted to stay within budget.)"
         return head + "\n\n" + "\n\n".join(parts)
 
+    def _lab_model(self, lab_id: Optional[str]) -> Optional[str]:
+        """Het model dat bij dit lab hoort, als er een gekozen is.
+
+        Per lab en niet alleen per chat, omdat het werk aan het lab hangt: de
+        board-agent die tickets van dit lab oppakt hoort op hetzelfde model te
+        draaien als de chat ernaast, zonder dat je dat bij elke run opnieuw moet
+        instellen. Een expliciete keuze (een thread die zelf een model koos)
+        wint hier nog steeds van — die staat dichter bij wat de gebruiker net
+        deed.
+        """
+        if not lab_id:
+            return None
+        from models.lab import Lab
+        lab = self.db.get(Lab, lab_id)
+        return (getattr(lab, "model", None) or None) if lab else None
+
     def _build_provider(self, model: Optional[str], mcp_config_path: Optional[str], settings) -> ClaudeCliProvider:
         cc_model = claude_code_model(model or settings.default_model, default=settings.default_model)
         return ClaudeCliProvider(
@@ -256,7 +272,8 @@ class ChatAgent:
                                                      lab_worker_id=lab_worker_id)
         from services.settings_service import get_settings
         settings = get_settings(self.db)
-        provider, cc_model = self._build_provider(model, mcp_config_path, settings)
+        provider, cc_model = self._build_provider(model or self._lab_model(lab_id),
+                                                  mcp_config_path, settings)
         effort = settings.default_effort
         instructions = AGENT_PREAMBLE
         from services.lab.governed_policy import PLANNER_POLICY

@@ -870,6 +870,7 @@ exec ssh -N \\
         min_workers: int = 1,
         max_workers: int = 1,
         security_profile: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -918,6 +919,7 @@ exec ssh -N \\
             # Wat dit lab over zijn eigen wereld weet; bepaalt welke guard-regels
             # zinnig zijn. Zie services/lab/profielen.py.
             security_profile=_profielsleutel(security_profile),
+            model=(model or "").strip() or None,
             created_at=now, updated_at=now,
         )
         self.db.add(p)
@@ -1235,6 +1237,7 @@ exec ssh -N \\
                               extras: Optional[List[str]] = None,
                               setup_script: Any = "__unset__",
                               security_profile: Optional[str] = None,
+                              model: Any = "__unset__",
                               azure_profile_id: Any = "__unset__") -> Dict[str, Any]:
         p = self.get(lab_id)
         if data_guard is not None:
@@ -1249,6 +1252,10 @@ exec ssh -N \\
             p.allowed_skills = [str(x) for x in allowed_skills]
         if security_profile is not None:
             p.security_profile = _profielsleutel(security_profile)
+        if model != "__unset__":
+            # Leeg betekent "de standaard uit de instellingen", niet "geen
+            # model": daarom NULL en geen lege string.
+            p.model = (model or "").strip() or None
         inrichting_changed = False
         if extras is not None:
             new_extras = [str(x) for x in extras]
@@ -1840,6 +1847,7 @@ exec ssh -N \\
             "min_workers": int(getattr(p, "min_workers", 1) or 1),
             "max_workers": int(getattr(p, "max_workers", 1) or 1),
             "security_profile": getattr(p, "security_profile", None) or "generiek",
+            "model": getattr(p, "model", None),
             "workers": [{"id": w.id, "index": w.index, "status": w.status,
                          "container_id": (w.container_id or "")[:12] or None,
                          "network_alias": w.network_alias,

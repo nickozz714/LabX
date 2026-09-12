@@ -81,6 +81,7 @@ _ADDITIVE_COLUMNS = {
         ("min_workers", "INTEGER NOT NULL DEFAULT 1"),
         ("max_workers", "INTEGER NOT NULL DEFAULT 1"),
         ("security_profile", "VARCHAR(32) NOT NULL DEFAULT 'generiek'"),
+        ("model", "VARCHAR(128)"),
     ],
     "schedules": [
         ("json_schema", "TEXT"),

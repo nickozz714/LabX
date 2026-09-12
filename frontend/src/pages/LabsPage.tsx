@@ -18,6 +18,7 @@ import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { LabGeheimen } from "@/components/LabGeheimen";
 import { guardApi, type GuardProfiel } from "@/lib/guard";
+import { MODEL_OPTIONS, modelLabel } from "@/lib/modellen";
 import { getToken } from "@/lib/api";
 
 function statusTone(status: Lab["status"]) {
@@ -86,6 +87,7 @@ export function LabsPage() {
                 {lab.data_guard && lab.security_profile && lab.security_profile !== "generiek" && (
                   <Badge tone="violet">{lab.security_profile}</Badge>
                 )}
+                {lab.model && <Badge tone="neutral">{modelLabel(lab.model)}</Badge>}
                 {lab.llm_guard && <Badge tone="violet">llm-guard</Badge>}
                 {/* Het lab draait al terwijl de pakketten nog binnenkomen —
                     zonder dit zou je op "running" afgaan en je afvragen waarom
@@ -138,6 +140,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [allowNetwork, setAllowNetwork] = useState(true);
   const [dataGuard, setDataGuard] = useState(true);
   const [profiel, setProfiel] = useState("generiek");
+  const [model, setModel] = useState("");
   const [llmGuard, setLlmGuard] = useState(true);
   const [repoUrl, setRepoUrl] = useState("");
   const [repoToken, setRepoToken] = useState("");
@@ -194,6 +197,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         extras, setup_script: setupScript.trim() || undefined,
         min_workers: minWerkers, max_workers: Math.max(minWerkers, maxWerkers),
         security_profile: profiel,
+        model: model || undefined,
       });
       onCreated();
     } catch (err) {
@@ -329,6 +333,9 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <Toggle checked={llmGuard} onChange={setLlmGuard} label="Lokaal model als extra check (spoor B)" />
           {dataGuard && <ProfielKeuze waarde={profiel} onChange={setProfiel} />}
         </div>
+        <div className="rounded-md border border-border p-3">
+          <ModelKeuze waarde={model} onChange={setModel} />
+        </div>
         <details className="rounded-md border border-border p-3 text-sm">
           <summary className="cursor-pointer font-medium text-muted-foreground">Repo clonen &amp; poorten (optioneel)</summary>
           <div className="mt-2 space-y-2">
@@ -383,6 +390,31 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
  * houdt hij precies het werk tegen waarvoor het lab er is — dat gebeurde, en
  * daarom staat dit hier.
  */
+
+/**
+ * Het model voor dit lab. Per lab en niet alleen per chat, omdat het werk aan
+ * het lab hangt: de board-agent die tickets van dit lab oppakt hoort op
+ * hetzelfde model te draaien als de chat ernaast.
+ */
+function ModelKeuze({ waarde, onChange }: { waarde: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <Label>Model</Label>
+      <Select value={waarde} onChange={(e) => onChange(e.target.value)}>
+        {MODEL_OPTIONS.map((m) => (
+          <option key={m.value} value={m.value}>{m.label}</option>
+        ))}
+      </Select>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Geldt voor de chat én voor board-agents die in dit lab werken. Een chat die
+        zelf een model koos, houdt die keuze. Achtergrondtaken draaien altijd op de
+        standaard — dat is volghouden en verzamelen, en dat uren op het duurste
+        model laten lopen kost veel en levert niets.
+      </p>
+    </div>
+  );
+}
+
 function ProfielKeuze({ waarde, onChange }: { waarde: string; onChange: (v: string) => void }) {
   const [profielen, setProfielen] = useState<GuardProfiel[]>([]);
   useEffect(() => {
@@ -429,6 +461,11 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
     onChanged();
   }
 
+  async function kiesModel(waarde: string) {
+    await labsApi.update(lab.id, { model: waarde });
+    onChanged();
+  }
+
   return (
     <Modal open onClose={onClose} title={lab.name} wide>
       <div className="mb-3 flex items-center gap-2 text-sm">
@@ -466,6 +503,7 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
           {lab.data_guard && (
             <ProfielKeuze waarde={lab.security_profile || "generiek"} onChange={kiesProfiel} />
           )}
+          <ModelKeuze waarde={lab.model || ""} onChange={kiesModel} />
           {lab.llm_guard && guardStatus && (
             <div className="text-xs text-muted-foreground">
               Model {guardStatus.model}: <Badge tone={guardStatus.state === "ready" ? "green" : "yellow"}>{guardStatus.state}</Badge>

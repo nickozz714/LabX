@@ -38,11 +38,21 @@ async def _task_start_background(db: Session, payload: Dict[str, Any],
         return {"error": f"Thread {thread_id} niet gevonden."}
     history = _history_for_prompt(db, thread_id)
     history.append({"role": "user", "content": prompt})
+    # Een achtergrondtaak draait op het STANDAARDMODEL, niet op dat van het
+    # lab. Een lab dat op Opus staat, staat daar voor het denkwerk in de chat en
+    # aan de tickets; achtergrondwerk is bijna altijd volghouden en verzamelen —
+    # een pipeline in de gaten houden, een lange scan uitzitten — en dat uren
+    # lang op het duurste model laten lopen kost veel en levert niets. Koos de
+    # gebruiker voor DEZE chat expliciet een model, dan telt die keuze wel: dat
+    # is een bewuste handeling van vlak ervoor.
+    from services.settings_service import get_settings
     run = background_runs.start(db, thread_id=thread_id, lab_id=lab_id,
                                 history=history, prompt=prompt,
-                                model=t.model, effort=t.effort)
-    return {"result": (f"Achtergrondtaak gestart (id {run.id[:8]}). De taak draait zelfstandig "
-                       f"verder; controleer de voortgang later met task__check_background.")}
+                                model=t.model or get_settings(db).default_model,
+                                effort=t.effort)
+    return {"result": (f"Achtergrondtaak gestart (id {run.id[:8]}) op model {run.model or 'standaard'}. "
+                       f"De taak draait zelfstandig verder; controleer de voortgang later met "
+                       f"task__check_background.")}
 
 
 def _task_check_background(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
