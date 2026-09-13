@@ -155,3 +155,25 @@ def test_de_server_bepaalt_voor_welke_api_het_token_geldt():
     bron = inspect.getsource(mcp_client._resolve_auth_headers)
     assert "server.token_scope" in bron
     assert "management.azure.com" in bron, "zonder lab-server blijft ARM de standaard"
+
+
+# ── verdwenen tools (de tweede helft van KRI-44) ────────────────────────────
+
+def test_een_sync_zet_verdwenen_tools_uit():
+    """Microsoft hernoemde in de Fabric MCP-server alle `onelake_*`-tools van
+    underscores naar streepjes (`onelake_list_tables` → `onelake_list-tables`).
+    De sync voegde de nieuwe namen toe en liet de oude staan, dus LabX bleef 35
+    tools aanbieden die niet meer bestonden: de agent kreeg ze in zijn lijst en
+    daarna "The tool was not found". `datafactory_*` en `core_*` werkten in
+    dezelfde sessie wél — die waren niet hernoemd, en juist dat maakte het
+    raadselachtig.
+
+    De `seen`-verzameling bestond al; er werd alleen nooit iets mee gedaan."""
+    import inspect
+
+    from services.mcp import mcp_client
+
+    bron = inspect.getsource(mcp_client.sync_tools)
+    assert "Tool.remote_name.notin_(seen)" in bron, "verdwenen tools moeten uit"
+    assert "row.is_enabled = False" in bron, "uitzetten, niet verwijderen"
+    assert "if seen:" in bron, "een lege lijst is een storing, geen lege server"

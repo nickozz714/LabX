@@ -208,12 +208,28 @@ def zonder_geheimen(text: str) -> str:
     return uit
 
 
-def _sample(text: str, head: int = 3000, tail: int = 1000) -> str:
+def _sample(text: str, head: int = 1200, tail: int = 400) -> str:
     """Het stuk dat het model te zien krijgt.
 
-    Kleiner dan vroeger (was 8000/2000). De beoordelingstijd schaalt met de
-    promptlengte, en 4 kB is ruim genoeg om te zien of iets een dataset is —
-    dat zie je aan de eerste twintig regels, niet aan de tienduizendste."""
+    Opnieuw kleiner (was 3000/1000, daarvoor 8000/2000). Gemeten op deze server,
+    die geen GPU heeft: een prompt van 3600 tokens kostte 92 s aan
+    promptevaluatie, van 1900 tokens 32 s. Met een budget van tien seconden liep
+    bijna élke aanroep in een time-out en viel de tweede mening stil — precies
+    zoals eerder toen het budget 2,5 s was, en opnieuw zonder dat iemand het kon
+    zien. Met deze maat komt hij op 11-25 s uit en past hij binnen het budget.
+
+    Wat er verloren gaat is minder dan het lijkt. Dat iets een dataset is, zie je
+    aan de eerste twintig regels; de tienduizendste voegt niets toe. De staart
+    blijft erbij omdat een samenvattende regel ("47 rijen verwerkt, totaal
+    EUR 12.400") daar staat, en juist die is verraderlijk.
+
+    **De SYSTEEMPROMPT is hier met opzet buiten gelaten.** Die inkorten ligt
+    voor de hand — hij is 2845 tekens en dus ~935 tokens van elke aanroep — maar
+    het is gemeten en het werkt niet: met negen voorbeelden gaf qwen2.5:1.5b
+    4/4 goed op de ijkgevallen, met vier voorbeelden 3/4, en het geval dat
+    omviel was het belangrijkste (59 klantrijen werden `confidential: false`).
+    Bij een model van deze grootte dragen die voorbeelden het oordeel; de
+    snelheid zit in de INVOER, niet in de instructie."""
     if len(text) <= head + tail:
         return text
     return text[:head] + "\n…\n" + text[-tail:]
@@ -236,13 +252,23 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
     if not _is_local(url):
         log.warningx("data-guard LLM overgeslagen: niet-lokale URL (lek-risico)", url=url)
         return None
+    # 25 seconden, niet 10. Dit is de derde keer dat dit budget omhoog moet, en
+    # de reden is elke keer dezelfde: de promptevaluatie van een CPU-model
+    # schaalt met de lengte van de prompt, en de meting wint van de schatting.
+    # Met de kleinere sample (zie _sample) komt een aanroep op 11-25 s uit; met
+    # 10 s liep bijna alles in een time-out. Let op: een hoger budget helpt
+    # alleen als de prompt er ook echt binnen past — anders verspilt elke
+    # mislukte aanroep juist méér wachttijd. Wie het anders wil, zet
+    # DATA_GUARD_LLM_TIMEOUT.
+    #
+    # Oorspronkelijke aantekening, nog steeds geldig:
     # 10 seconden, niet 2,5. Gemeten op de huidige server (i5-3570, geen GPU)
     # doet qwen2.5:1.5b er ~10s over een mediaan-uitvoer; met 2,5s liep élke
     # aanroep in een time-out en viel de tweede mening stil zónder dat iemand
     # dat kon zien. Liever traag en werkend dan snel en afwezig. Op een machine
     # met een GPU is dit ruim overbemeten, en dat kost niets: hij stopt zodra
     # het antwoord er is.
-    timeout = float(os.getenv("DATA_GUARD_LLM_TIMEOUT") or 10.0)
+    timeout = float(os.getenv("DATA_GUARD_LLM_TIMEOUT") or 25.0)
     begonnen = time.monotonic()
 
     payload = {
@@ -250,6 +276,13 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
         "format": "json",
         "stream": False,
         "options": {"temperature": 0},
+        # Het model geladen houden tussen aanroepen. Ollama lost hem standaard
+        # na vijf minuten, en dan betaal je bij de volgende aanroep niet alleen
+        # het inladen van het model maar ook de hele systeemprompt opnieuw — de
+        # promptcache is dan weg. Guard-aanroepen komen met vlagen, dus dat
+        # gebeurde vaak. Instelbaar, want op een krappe machine is een GB
+        # vastgehouden geheugen een echte afweging.
+        "keep_alive": os.getenv("DATA_GUARD_LLM_KEEP_ALIVE") or "15m",
         "messages": [
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": "Container-output:\n"

@@ -686,6 +686,10 @@ exec ssh -N \\
         p.updated_at = _now_iso()
         self.db.commit()
         log.infox("Werker bijgezet", lab_id=p.id, werker=index, plafond=plafond)
+        # De az-sessie moet mee. Zonder dit start een werker met een lege
+        # /root/.azure en krijgt de eerste run die erop landt "Please run
+        # 'az login'" — zie KRI-44.
+        await self._sync_azure_profile_into_lab(p, worker_id=w.id)
         if p.allow_network:
             provision_in_background(p.id)
         else:
@@ -1226,13 +1230,27 @@ exec ssh -N \\
             return HTTPException(status_code=409, detail=p.error)
         return HTTPException(status_code=502, detail=f"Lab starten mislukt: {tekst[:500]}")
 
-    async def _sync_azure_profile_into_lab(self, p: Lab) -> None:
-        """If the lab has an assigned Azure profile (msal_bundle), push its
-        az-session files into the container so in-lab `az account
-        get-access-token` works — that's what lets the agent call Fabric/
-        Azure REST APIs from inside the sandbox with curl, not only through
-        the host-side MCP servers. Best-effort: a failed sync must never
-        block a lab start."""
+    async def _sync_azure_profile_into_lab(self, p: Lab,
+                                           worker_id: Optional[int] = None) -> None:
+        """De az-sessie van het lab in ELKE werker zetten.
+
+        Heeft het lab een msal_bundle-profiel, dan gaan de sessiebestanden de
+        container in, zodat `az account get-access-token` binnen het lab werkt —
+        dat is wat de agent in staat stelt Fabric- en Azure-API's met curl aan
+        te roepen in plaats van alleen via de host-MCP-servers.
+
+        **Elke werker, niet alleen de eerste.** Dat was de fout achter KRI-44.
+        Een lab is sinds de autoscaler geen container meer maar een groep, en
+        deze functie zette de sessie alleen in de container van het lab zelf. Op
+        13-09-2026 was dat te zien ook: werker 1 en 2 van Krimpenerwaard hadden
+        `msal_token_cache.json`, werker 3 niet. Een run die op werker 3 landde
+        kreeg "Please run 'az login'", een run op werker 1 niet — vandaar dat het
+        als een intermitterende storing overkwam in plaats van als een gat.
+
+        `worker_id` beperkt het tot één werker; dat is wat een net bijgezette
+        werker nodig heeft en het scheelt de andere containers een schrijfronde.
+        Best-effort: een mislukte sync mag een lab nooit tegenhouden.
+        """
         if not p.azure_profile_id:
             return
         try:
@@ -1242,8 +1260,24 @@ exec ssh -N \\
             profile = self.db.get(AzureProfile, p.azure_profile_id)
             if profile is None or profile.kind != "msal_bundle":
                 return
-            res = await svc.sync(p.azure_profile_id, target="lab", lab_id=p.id)
-            log.infox("Azure-profiel in lab gesynct", lab_id=p.id, ok=bool(res.get("ok")))
+            werkers = [w for w in self.workers(p.id)
+                       if w.status == "running" and w.container_id
+                       and (worker_id is None or w.id == worker_id)]
+            if not werkers:
+                # Geen werkerrijen (een lab van vóór de autoscaler): dan is de
+                # container van het lab zelf het enige doel.
+                res = await svc.sync(p.azure_profile_id, target="lab", lab_id=p.id)
+                log.infox("Azure-profiel in lab gesynct", lab_id=p.id, ok=bool(res.get("ok")))
+                return
+            for w in werkers:
+                try:
+                    res = await svc.sync(p.azure_profile_id, target="lab", lab_id=p.id,
+                                         worker_id=w.id)
+                    log.infox("Azure-profiel in werker gesynct", lab_id=p.id,
+                              werker=w.index, ok=bool(res.get("ok")))
+                except Exception as exc:  # noqa: BLE001
+                    log.warningx("Azure-profiel sync naar werker mislukt", lab_id=p.id,
+                                 werker=w.index, error=str(exc)[:200])
         except Exception as exc:  # noqa: BLE001
             log.warningx("Azure-profiel sync naar lab overgeslagen", lab_id=p.id, error=str(exc)[:200])
 
@@ -1774,9 +1808,20 @@ exec ssh -N \\
             return None
 
     async def az_login(self, lab_id: str, *, az_dir: str = "/root/.azure",
-                       files: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                       files: Optional[Dict[str, str]] = None,
+                       worker_id: Optional[int] = None) -> Dict[str, Any]:
+        """De az-sessie in ÉÉN container zetten.
+
+        `worker_id` moest erbij. Zonder dat landde elke sync in de container van
+        het lab zelf (werker 1), en dat is precies waar het misging: de
+        autoscaler zet werkers bij, die krijgen een lege `/root/.azure`, en of
+        `az account get-access-token` het doet hangt dan af van op welke werker
+        een run toevallig terechtkomt. Gemeten op 13-09-2026: werker 1 en 2 van
+        Krimpenerwaard hadden `msal_token_cache.json`, werker 3 niet — en dat is
+        waarom het probleem "intermitterend" leek.
+        """
         p = self.get(lab_id)
-        cid = self._require_running(p)
+        cid = self._require_running(p, worker_id)
         payload: Dict[str, str] = {}
         if files:
             for fname in ("msal_token_cache.json", "azureProfile.json", "service_principal_entries.json"):

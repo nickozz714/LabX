@@ -521,7 +521,12 @@ class AzureProfileService:
                                   "detail": "staat uit — krijgt de sessie bij de volgende start"})
                     continue
                 try:
-                    res = await self.sync(profile_id, target="lab", lab_id=lab.id)
+                    # Via LabService, want die kent de werkers. Rechtstreeks
+                    # syncen zou alleen werker 1 raken en de rest met een oude
+                    # sessie laten zitten — het gat uit KRI-44.
+                    from services.lab.lab_service import LabService
+                    await LabService(self.db)._sync_azure_profile_into_lab(lab)
+                    res = {"ok": True}
                     steps.append({"target": f"lab {lab.name}", "ok": bool(res.get("ok")),
                                   "detail": "az-sessie in het lab bijgewerkt" if res.get("ok")
                                             else str(res.get("detail"))[:200]})
@@ -537,7 +542,8 @@ class AzureProfileService:
         return " · ".join(parts) or "geverifieerd"
 
     async def sync(self, profile_id: int, *, target: str, lab_id: Optional[str] = None,
-                   az_dir: str = "/root/.azure") -> Dict[str, Any]:
+                   az_dir: str = "/root/.azure",
+                   worker_id: Optional[int] = None) -> Dict[str, Any]:
         row = self.get_or_404(profile_id)
         payload = self._decrypt(row)
         if target == "host":
@@ -545,7 +551,7 @@ class AzureProfileService:
         if target == "lab":
             if not lab_id:
                 raise HTTPException(status_code=400, detail="lab_id is verplicht voor een lab-sync.")
-            return await self._sync_to_lab(row, payload, lab_id, az_dir)
+            return await self._sync_to_lab(row, payload, lab_id, az_dir, worker_id)
         raise HTTPException(status_code=400, detail="target moet 'host' of 'lab' zijn.")
 
     async def _sync_to_host(self, row: AzureProfile, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -566,12 +572,14 @@ class AzureProfileService:
             "Gebruik het als opgeslagen credential."))
 
     async def _sync_to_lab(self, row: AzureProfile, payload: Dict[str, Any],
-                           lab_id: str, az_dir: str) -> Dict[str, Any]:
+                           lab_id: str, az_dir: str,
+                           worker_id: Optional[int] = None) -> Dict[str, Any]:
         if row.kind != "msal_bundle":
             raise HTTPException(status_code=400, detail=(
                 "Alleen een 'msal_bundle'-profiel kan naar een lab gesynct worden. "
                 "Voor een service principal: draai 'az login --service-principal' in het lab."))
         from services.lab.lab_service import LabService
         files = {k: v for k, v in payload.items() if k in AZ_BUNDLE_FILES}
-        res = await LabService(self.db).az_login(lab_id, az_dir=az_dir, files=files)
+        res = await LabService(self.db).az_login(lab_id, az_dir=az_dir, files=files,
+                                                 worker_id=worker_id)
         return {"ok": bool(res.get("ok")), "target": "lab", "detail": res}

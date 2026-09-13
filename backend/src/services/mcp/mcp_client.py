@@ -261,8 +261,43 @@ async def sync_tools(server: MCPServer, *,
             # mcp 2.x renamed Tool.inputSchema to input_schema.
             schema = getattr(t, "input_schema", None) or getattr(t, "inputSchema", None)
             row.argument = schema or {"type": "object", "properties": {}}
+            # Een tool die eerder was uitgezet omdat hij verdwenen leek, hoort
+            # weer aan te gaan zodra hij terug is.
+            if row.id is not None and not row.is_enabled:
+                row.is_enabled = True
             row.updated_at = now
             seen.add(t.name)
+
+        # Wat de server NIET meer aanbiedt, gaat uit.
+        #
+        # Dit ontbrak, en dat was de tweede helft van KRI-44. Microsoft
+        # hernoemde in de Fabric MCP-server alle `onelake_*`-tools van
+        # underscores naar streepjes (`onelake_list_tables` →
+        # `onelake_list-tables`). De sync voegde de nieuwe namen toe en liet de
+        # oude staan, dus LabX bleef 35 tools aanbieden die niet meer bestonden.
+        # De agent kreeg ze netjes in zijn lijst en daarna "The tool was not
+        # found" — terwijl `datafactory_*` en `core_*` in dezelfde sessie wél
+        # werkten, want die waren niet hernoemd. Juist dat maakte het
+        # raadselachtig: een verouderde toolslijst ziet er van buiten precies
+        # hetzelfde uit als een actuele.
+        #
+        # UITZETTEN en niet verwijderen: skills en lab-allowlists verwijzen naar
+        # tools op naam, en een rij weggooien zou die verwijzingen stil breken.
+        # En alleen als er ÍETS teruggekomen is: een server die door een storing
+        # nul tools opsomt, is geen server zonder tools.
+        uitgezet = 0
+        if seen:
+            for row in (db.query(Tool)
+                        .filter(Tool.mcp_server_id == server.id,
+                                Tool.remote_name.notin_(seen),
+                                Tool.is_enabled == True).all()):  # noqa: E712
+                row.is_enabled = False
+                row.updated_at = now
+                uitgezet += 1
+            if uitgezet:
+                log.warningx("Tools uitgezet: de server biedt ze niet meer aan",
+                             server=server.slug, aantal=uitgezet)
+
         # `server` belongs to the CALLER's session (e.g. the router's
         # request-scoped one), not this function's own local `db` — mutating
         # it directly and committing `db` would silently persist nothing
@@ -275,7 +310,7 @@ async def sync_tools(server: MCPServer, *,
         own_server.last_sync_status = "ok"
         own_server.last_sync_error = None
         db.commit()
-        return {"ok": True, "tool_count": len(seen)}
+        return {"ok": True, "tool_count": len(seen), "disabled": uitgezet}
     except Exception as exc:  # noqa: BLE001
         own_server = db.get(MCPServer, server.id)
         own_server.last_sync_status = "error"
