@@ -28,6 +28,7 @@ import {
   type GuardDoel, type GuardRegel, type GuardStatus,
 } from "@/lib/guard";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 
 const ACTIE_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
   blokkeren: "red", maskeren: "violet", waarschuwen: "yellow", toelaten: "green",
@@ -117,6 +118,7 @@ function StatusBalk({ status }: { status: GuardStatus | null }) {
 }
 
 function Regels({ onGewijzigd }: { onGewijzigd: () => void }) {
+  const melding = useMelding();
   const [rijen, setRijen] = useState<GuardRegel[]>([]);
   const [detectors, setDetectors] = useState<GuardDetector[]>([]);
   const [nieuw, setNieuw] = useState<GuardDoel | null>(null);
@@ -137,8 +139,14 @@ function Regels({ onGewijzigd }: { onGewijzigd: () => void }) {
     try {
       await guardApi.update(r.id, payload);
       await laad();
+      // Een regel aan- of uitzetten verschuift niets zichtbaars behalve een
+      // vinkje; zonder bevestiging weet je niet of het is opgeslagen of dat
+      // het vinkje alleen lokaal is meegesprongen.
+      melding.ok(`Regel '${r.name}' opgeslagen`);
     } catch (e) {
       setFout(e instanceof ApiError ? e.message : "Opslaan mislukt");
+      melding.fout(`Regel '${r.name}' niet opgeslagen`,
+                   e instanceof ApiError ? e.message : String(e));
     }
   }
 
@@ -204,10 +212,11 @@ function RegelRegel({ regel, onPatch, onWeg }: {
       </Select>
       {!regel.builtin && (
         <Button variant="ghost" className="ml-auto text-xs text-destructive"
-                onClick={() => {
-                  if (confirm(`Regel '${regel.name}' verwijderen?`))
-                    guardApi.remove(regel.id).then(onWeg);
-                }}>
+                onClick={() =>
+                  confirm(`Regel '${regel.name}' verwijderen?`)
+                    ? guardApi.remove(regel.id).then(onWeg)
+                    : undefined
+                }>
           <Trash2 size={12} />
         </Button>
       )}

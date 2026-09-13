@@ -12,6 +12,7 @@ import type { MCPServerDto, SkillDto, SkillToolLink, ToolDto } from "@/lib/types
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea, Toggle } from "@/components/ui";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { ApiError } from "@/lib/api";
+import { useMelding } from "@/components/Meldingen";
 
 type Section = "skills" | "tools" | "mcp";
 
@@ -48,17 +49,28 @@ function McpSection() {
   const [editingAuth, setEditingAuth] = useState<MCPServerDto | null>(null);
   const [editingConnection, setEditingConnection] = useState<MCPServerDto | null>(null);
 
+  const melding = useMelding();
+
+  // Geeft een belofte terug, zodat een actie kan WACHTEN tot het scherm
+  // bijgewerkt is voordat hij zijn bevestiging toont. Anders meldt hij
+  // "gesynchroniseerd" terwijl de oude cijfers nog in beeld staan.
   function refresh() {
-    mcpServerApi.list().then(setServers);
-    mcpServerApi.catalog().then(setCatalog);
+    return Promise.all([
+      mcpServerApi.list().then(setServers),
+      mcpServerApi.catalog().then(setCatalog),
+    ]);
   }
-  useEffect(refresh, []);
+  useEffect(() => { refresh(); }, []);
 
   async function install(key: string) {
     setInstalling(key);
     try {
-      await mcpServerApi.installFromCatalog(key);
-      refresh();
+      const s = await mcpServerApi.installFromCatalog(key);
+      await refresh();
+      melding.ok(`${s.name} geïnstalleerd`,
+                 "Klik op 'Sync tools' om de toolslijst op te halen.");
+    } catch (err) {
+      melding.fout("Installeren mislukt", err instanceof Error ? err.message : String(err));
     } finally {
       setInstalling(null);
     }
@@ -145,12 +157,44 @@ function McpSection() {
                         {s.has_auth ? "Auth wijzigen" : "Auth instellen"}
                       </Button>
                     )}
+                    {/* Dit verzoek start een MCP-server op en vraagt zijn
+                        toolslijst op; dat duurt bij een npx-server tientallen
+                        seconden. Zonder bezig-tekst en uitkomst lijkt er niets
+                        te gebeuren en klik je nog eens — en dan loopt de sync
+                        twee keer. */}
                     {s.location === "host" && (
-                      <Button variant="secondary" onClick={() => mcpServerApi.sync(s.id).then(refresh)}>
+                      <Button variant="secondary" busyLabel="Synchroniseren…" meldFouten={false}
+                              onClick={async () => {
+                                try {
+                                  const uit = await mcpServerApi.sync(s.id);
+                                  await refresh();
+                                  if (!uit.ok) {
+                                    melding.fout(`Sync van ${s.name} mislukt`, uit.error);
+                                    return;
+                                  }
+                                  const weg = uit.disabled
+                                    ? `, ${uit.disabled} verdwenen tool(s) uitgezet` : "";
+                                  melding.ok(`${s.name} gesynchroniseerd`,
+                                             `${uit.tool_count ?? 0} tools${weg}`);
+                                } catch (err) {
+                                  melding.fout(`Sync van ${s.name} mislukt`,
+                                               err instanceof Error ? err.message : String(err));
+                                }
+                              }}>
                         Sync tools
                       </Button>
                     )}
-                    <Button variant="danger" onClick={() => mcpServerApi.remove(s.id).then(refresh)}>
+                    <Button variant="danger" busyLabel="Verwijderen…" meldFouten={false}
+                            onClick={async () => {
+                              try {
+                                await mcpServerApi.remove(s.id);
+                                await refresh();
+                                melding.ok(`${s.name} verwijderd`);
+                              } catch (err) {
+                                melding.fout("Verwijderen mislukt",
+                                             err instanceof Error ? err.message : String(err));
+                              }
+                            }}>
                       Verwijderen
                     </Button>
                   </div>
@@ -482,12 +526,24 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
 // ── Tools ──────────────────────────────────────────────────────────────────
 
 function ToolsSection() {
+  const melding = useMelding();
   const [tools, setTools] = useState<ToolDto[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   function refresh() {
-    toolApi.list().then(setTools);
+    return toolApi.list().then(setTools);
   }
-  useEffect(refresh, []);
+  useEffect(() => { refresh(); }, []);
+
+  /** Alle tools van één server tegelijk aan- of uitzetten. */
+  async function alleTools(serverId: number, aan: boolean) {
+    try {
+      await toolApi.bulk({ mcp_server_id: serverId, is_enabled: aan });
+      await refresh();
+      melding.ok(`Alle tools van deze server ${aan ? "aangezet" : "uitgezet"}`);
+    } catch (err) {
+      melding.fout("Aanpassen mislukt", err instanceof Error ? err.message : String(err));
+    }
+  }
 
   const grouped = tools.reduce<Record<string, { serverId: number | null; tools: ToolDto[] }>>((acc, t) => {
     const key = t.mcp_server ? t.mcp_server.name : "(overig)";
@@ -505,9 +561,15 @@ function ToolsSection() {
 
   async function bulk(payload: { is_enabled?: boolean; provenance?: "control" | "data" }) {
     if (selected.size === 0) return;
-    await toolApi.bulk({ tool_ids: [...selected], ...payload });
-    setSelected(new Set());
-    refresh();
+    const aantal = selected.size;
+    try {
+      await toolApi.bulk({ tool_ids: [...selected], ...payload });
+      setSelected(new Set());
+      await refresh();
+      melding.ok(`${aantal} tool(s) bijgewerkt`);
+    } catch (err) {
+      melding.fout("Bijwerken mislukt", err instanceof Error ? err.message : String(err));
+    }
   }
 
   return (
@@ -550,12 +612,15 @@ function ToolsSection() {
                   </label>
                   {group.serverId != null && (
                     <>
+                      {/* Kale tekstknoppen: die erven de spinner van Button
+                          niet, dus hier is de melding het enige teken dat er
+                          iets gebeurd is. */}
                       <button className="text-xs text-primary hover:underline"
-                              onClick={() => toolApi.bulk({ mcp_server_id: group.serverId!, is_enabled: true }).then(refresh)}>
+                              onClick={() => alleTools(group.serverId!, true)}>
                         alles aan
                       </button>
                       <button className="text-xs text-primary hover:underline"
-                              onClick={() => toolApi.bulk({ mcp_server_id: group.serverId!, is_enabled: false }).then(refresh)}>
+                              onClick={() => alleTools(group.serverId!, false)}>
                         alles uit
                       </button>
                     </>
@@ -606,14 +671,17 @@ function ToolsSection() {
 // ── Skills (the wizard) ─────────────────────────────────────────────────────
 
 function SkillsSection() {
+  const melding = useMelding();
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState<SkillDto | null>(null);
 
+  // Geeft de belofte terug, zodat een actie kan wachten tot het scherm bij is
+  // voordat hij zijn bevestiging toont.
   function refresh() {
-    skillApi.list().then(setSkills);
+    return skillApi.list().then(setSkills);
   }
-  useEffect(refresh, []);
+  useEffect(() => { refresh(); }, []);
 
   return (
     <div>
@@ -635,7 +703,11 @@ function SkillsSection() {
                   {s.display_name || s.name}
                 </span>
                 <button
-                  onClick={() => skillApi.update(s.id, { is_enabled: !s.is_enabled }).then(refresh)}
+                  onClick={() => skillApi.update(s.id, { is_enabled: !s.is_enabled })
+                    .then(refresh)
+                    .then(() => melding.ok(`Skill '${s.display_name || s.name}' `
+                                           + (s.is_enabled ? "uitgezet" : "aangezet")))
+                    .catch((err) => melding.fout("Aanpassen mislukt", String(err)))}
                   title="Aan/uit"
                 >
                   <Badge tone={s.is_enabled ? "green" : "neutral"}>{s.is_enabled ? "aan" : "uit"}</Badge>
@@ -652,9 +724,11 @@ function SkillsSection() {
                 <Button
                   variant="danger"
                   className="px-2 py-0.5 text-xs"
-                  onClick={() => {
-                    if (confirm(`Skill "${s.display_name || s.name}" verwijderen?`)) skillApi.remove(s.id).then(refresh);
-                  }}
+                  onClick={() =>
+                    confirm(`Skill "${s.display_name || s.name}" verwijderen?`)
+                      ? skillApi.remove(s.id).then(refresh)
+                      : undefined
+                  }
                 >
                   Verwijderen
                 </Button>

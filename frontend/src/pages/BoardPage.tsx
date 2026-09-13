@@ -12,6 +12,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
 import type { BoardDto, PlanDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
@@ -213,7 +214,8 @@ export function BoardPage() {
               </Button>
             )}
             {board.provider !== "local" && (
-              <Button variant="secondary" className="text-xs" onClick={sync} disabled={busy}>
+              <Button variant="secondary" className="text-xs" onClick={sync} disabled={busy}
+                      busy={busy} busyLabel="Synchroniseren…">
                 <RefreshCw size={13} className={busy ? "animate-spin" : ""} /> Sync
               </Button>
             )}
@@ -481,13 +483,20 @@ function PlanBalk({ boardId, plans, onChanged }: {
   plans: PlanDto[];
   onChanged: () => void;
 }) {
+  const melding = useMelding();
   const [open, setOpen] = useState<number | null>(null);
   const actief = plans.filter((p) => ["running", "paused", "scheduled", "draft"].includes(p.state));
   if (actief.length === 0) return null;
 
-  async function actie(fn: Promise<unknown>) {
+  /** Zie OverviewPage: kale icoonknoppen met een resultaat dat pas na de
+   *  refresh zichtbaar wordt, en een `catch` die ontbrak — een mislukte actie
+   *  werd een unhandled rejection in de console en verder niets. */
+  async function actie(fn: Promise<unknown>, gelukt = "Gelukt") {
     try {
       await fn;
+      melding.ok(gelukt);
+    } catch (err) {
+      melding.fout("Dat is niet gelukt", err instanceof Error ? err.message : String(err));
     } finally {
       onChanged();
     }
@@ -509,17 +518,17 @@ function PlanBalk({ boardId, plans, onChanged }: {
                 {p.start_at && p.state === "scheduled" && ` · ${new Date(p.start_at).toLocaleString()}`}
               </span>
               {p.state === "running" && (
-                <button title="Pauzeren" onClick={() => actie(boardApi.pausePlan(boardId, p.id))}>
+                <button title="Pauzeren" onClick={() => actie(boardApi.pausePlan(boardId, p.id), "Planning gepauzeerd")}>
                   <Pause size={12} />
                 </button>
               )}
               {(p.state === "paused" || p.state === "draft" || p.state === "scheduled") && (
                 <button title="Starten / hervatten"
-                        onClick={() => actie(boardApi.resumePlan(boardId, p.id))}>
+                        onClick={() => actie(boardApi.resumePlan(boardId, p.id), "Planning hervat")}>
                   <Play size={12} />
                 </button>
               )}
-              <button title="Afbreken" onClick={() => actie(boardApi.cancelPlan(boardId, p.id))}>
+              <button title="Afbreken" onClick={() => actie(boardApi.cancelPlan(boardId, p.id), "Planning afgebroken")}>
                 <X size={12} />
               </button>
             </div>

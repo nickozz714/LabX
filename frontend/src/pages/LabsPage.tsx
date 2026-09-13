@@ -18,6 +18,7 @@ import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { LabGeheimen } from "@/components/LabGeheimen";
 import { HostMeter } from "@/components/HostMeter";
+import { useMelding } from "@/components/Meldingen";
 import { guardApi, type GuardProfiel } from "@/lib/guard";
 import { MODEL_OPTIONS, modelLabel } from "@/lib/modellen";
 import { getToken } from "@/lib/api";
@@ -446,6 +447,7 @@ function ProfielKeuze({ waarde, onChange }: { waarde: string; onChange: (v: stri
 function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
   const [tab, setTab] = useState<"settings" | "inrichting" | "browser" | "toegang" | "geheimen" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
+  const melding = useMelding();
 
   useEffect(() => {
     if (!lab.llm_guard) return;
@@ -462,16 +464,34 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
   async function toggle(field: "data_guard" | "llm_guard", value: boolean) {
     await labsApi.update(lab.id, { [field]: value });
     onChanged();
+    melding.ok(`${field === "data_guard" ? "Data-guard" : "Lokaal guard-model"} `
+               + (value ? "aangezet" : "uitgezet"));
   }
 
   async function kiesProfiel(key: string) {
     await labsApi.update(lab.id, { security_profile: key });
     onChanged();
+    melding.ok(`Beveiligingsprofiel van ${lab.name} gewijzigd`, key);
   }
 
   async function kiesModel(waarde: string) {
     await labsApi.update(lab.id, { model: waarde });
     onChanged();
+    melding.ok(`Model voor ${lab.name} gewijzigd`, modelLabel(waarde));
+  }
+
+  /** Eén belofte, één bevestiging, één foutmelding. Bestaat omdat de meeste
+   *  labhandelingen geen zichtbaar resultaat hebben op het moment dat ze klaar
+   *  zijn: een lab dat stopt ziet er even later anders uit, maar op het moment
+   *  van klikken gebeurt er ogenschijnlijk niets. */
+  async function melden<T>(taak: Promise<T>, gelukt: string, mislukt: string): Promise<T | void> {
+    try {
+      const uit = await taak;
+      melding.ok(gelukt);
+      return uit;
+    } catch (err) {
+      melding.fout(mislukt, err instanceof Error ? err.message : String(err));
+    }
   }
 
   return (
@@ -480,11 +500,18 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
         <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
         <span className="text-muted-foreground">{lab.image}</span>
         {lab.status === "running" ? (
-          <Button variant="secondary" onClick={() => labsApi.stop(lab.id).then(onChanged)}>Stop</Button>
+          <Button variant="secondary" busyLabel="Stoppen…" meldFouten={false}
+                  onClick={() => melden(labsApi.stop(lab.id).then(onChanged),
+                                        `${lab.name} gestopt`, "Stoppen mislukt")}>Stop</Button>
         ) : (
-          <Button variant="secondary" onClick={() => labsApi.start(lab.id).then(onChanged)}>Start</Button>
+          <Button variant="secondary" busyLabel="Starten…" meldFouten={false}
+                  onClick={() => melden(labsApi.start(lab.id).then(onChanged),
+                                        `${lab.name} gestart`, "Starten mislukt")}>Start</Button>
         )}
-        <Button variant="danger" onClick={() => labsApi.remove(lab.id).then(() => { onChanged(); onClose(); })}>
+        <Button variant="danger" busyLabel="Verwijderen…" meldFouten={false}
+                onClick={() => melden(
+                  labsApi.remove(lab.id).then(() => { onChanged(); onClose(); }),
+                  `${lab.name} verwijderd`, "Verwijderen mislukt")}>
           Verwijderen
         </Button>
       </div>
@@ -517,7 +544,10 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
               Model {guardStatus.model}: <Badge tone={guardStatus.state === "ready" ? "green" : "yellow"}>{guardStatus.state}</Badge>
               {guardStatus.hint && <span className="ml-2">{guardStatus.hint}</span>}
               {guardStatus.state !== "ready" && (
-                <Button variant="ghost" className="ml-2" onClick={() => labsApi.guardModelEnsure().then(setGuardStatus)}>
+                <Button variant="ghost" className="ml-2" busyLabel="Ophalen…" meldFouten={false}
+                        onClick={() => melden(labsApi.guardModelEnsure().then(setGuardStatus),
+                                              "Guard-model wordt opgehaald",
+                                              "Ophalen van het guard-model mislukt")}>
                   Nu ophalen
                 </Button>
               )}

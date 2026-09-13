@@ -11,8 +11,10 @@ import { workflowApi } from "@/lib/workflows";
 import { labsApi } from "@/lib/labs";
 import type { Lab, WorkflowDto, WorkflowStep } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 
 export function WorkflowsPage() {
+  const melding = useMelding();
   const [workflows, setWorkflows] = useState<WorkflowDto[]>([]);
   const [editing, setEditing] = useState<WorkflowDto | null>(null);
   const [creating, setCreating] = useState(false);
@@ -37,7 +39,11 @@ export function WorkflowsPage() {
               <div className="flex items-center justify-between">
                 <span className="cursor-pointer font-medium" onClick={() => setEditing(w)}>{w.name}</span>
                 <button
-                  onClick={() => workflowApi.updateMeta(w.id, { is_enabled: !w.is_enabled }).then(refresh)}
+                  onClick={() => workflowApi.updateMeta(w.id, { is_enabled: !w.is_enabled })
+                    .then(refresh)
+                    .then(() => melding.ok(`Workflow '${w.name}' `
+                                           + (w.is_enabled ? "uitgezet" : "aangezet")))
+                    .catch((err) => melding.fout("Aanpassen mislukt", String(err)))}
                   title="Aan/uit"
                 >
                   <Badge tone={w.is_enabled ? "green" : "neutral"}>{w.is_enabled ? "aan" : "uit"}</Badge>
@@ -49,9 +55,14 @@ export function WorkflowsPage() {
                 <Button
                   variant="danger"
                   className="px-2 py-0.5 text-xs"
-                  onClick={() => {
-                    if (confirm(`Workflow "${w.name}" verwijderen?`)) workflowApi.remove(w.id).then(refresh);
-                  }}
+                  // De belofte TERUGGEVEN: daar herkent Button aan dat er iets
+                  // loopt en zet hij zichzelf op bezig. Met accolades eromheen
+                  // verdwijnt hij en lijkt er niets te gebeuren.
+                  onClick={() =>
+                    confirm(`Workflow "${w.name}" verwijderen?`)
+                      ? workflowApi.remove(w.id).then(refresh)
+                      : undefined
+                  }
                 >
                   Verwijderen
                 </Button>

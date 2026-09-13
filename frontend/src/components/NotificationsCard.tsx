@@ -325,10 +325,11 @@ function KanaalRegel({ kanaal, gebeurtenissen, onGewijzigd }: {
               <Send size={12} /> Testbericht sturen
             </Button>
             <Button variant="ghost" className="ml-auto text-xs text-destructive" disabled={bezig}
-                    onClick={() => {
-                      if (confirm(`Kanaal '${kanaal.name}' verwijderen?`))
-                        notifyApi.remove(kanaal.id).then(onGewijzigd);
-                    }}>
+                    onClick={() =>
+                      confirm(`Kanaal '${kanaal.name}' verwijderen?`)
+                        ? notifyApi.remove(kanaal.id).then(onGewijzigd)
+                        : undefined
+                    }>
               <Trash2 size={12} />
             </Button>
           </div>

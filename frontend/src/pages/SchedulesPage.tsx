@@ -129,9 +129,11 @@ export function SchedulesPage() {
                 <Button
                   variant="danger"
                   className="text-xs"
-                  onClick={() => {
-                    if (confirm(`Schedule "${s.name}" verwijderen?`)) scheduleApi.remove(s.id).then(refresh);
-                  }}
+                  onClick={() =>
+                    confirm(`Schedule "${s.name}" verwijderen?`)
+                      ? scheduleApi.remove(s.id).then(refresh)
+                      : undefined
+                  }
                 >
                   Verwijderen
                 </Button>

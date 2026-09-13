@@ -125,10 +125,11 @@ export function LabGeheimen({ lab }: { lab: Lab }) {
                 <RefreshCw size={12} />
               </Button>
               <Button variant="ghost" className="text-xs text-destructive" disabled={bezig}
-                      onClick={() => {
-                        if (confirm(`Geheim '${g.name}' verwijderen?`))
-                          labsApi.deleteSecret(lab.id, g.name).then(laad);
-                      }}>
+                      onClick={() =>
+                        confirm(`Geheim '${g.name}' verwijderen?`)
+                          ? labsApi.deleteSecret(lab.id, g.name).then(laad)
+                          : undefined
+                      }>
                 <Trash2 size={12} />
               </Button>
             </div>

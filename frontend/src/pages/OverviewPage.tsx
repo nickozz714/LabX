@@ -12,6 +12,7 @@ import { Link } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
 import type { OverviewDto, OverviewRunDto, PlanDto } from "@/lib/types";
 import { Badge, Button, Card, EmptyState } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 import { Bot, Pause, Play, RefreshCw, X } from "lucide-react";
 
 const PLAN_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
@@ -42,6 +43,7 @@ function duur(van: string | null, tot: string | null): string {
 }
 
 export function OverviewPage() {
+  const melding = useMelding();
   const [data, setData] = useState<OverviewDto | null>(null);
   const [laden, setLaden] = useState(true);
 
@@ -77,9 +79,20 @@ export function OverviewPage() {
     b.plans.map((p) => ({ board: b, plan: p })),
   );
 
-  async function actie(fn: Promise<unknown>) {
+  /** Een planning pauzeren, hervatten of afbreken.
+   *
+   *  Deze knoppen zijn kale icoontjes en het resultaat is een statusbadge die
+   *  pas na de refresh verspringt — dus zonder terugkoppeling lijkt een klik
+   *  niets te doen. Erger nog: de fout verdween hier volledig. `try/finally`
+   *  zonder `catch` laat de uitzondering doorlopen naar een `onClick` die er
+   *  niets mee doet, en dan is er alleen een unhandled rejection in de console
+   *  die niemand openheeft staan. */
+  async function actie(fn: Promise<unknown>, gelukt = "Gelukt") {
     try {
       await fn;
+      melding.ok(gelukt);
+    } catch (err) {
+      melding.fout("Dat is niet gelukt", err instanceof Error ? err.message : String(err));
     } finally {
       refresh();
     }
@@ -109,17 +122,17 @@ export function OverviewPage() {
         )}
         <div className="ml-auto flex items-center gap-2">
           {plan.state === "running" && (
-            <button title="Pauzeren" onClick={() => actie(boardApi.pausePlan(board.id, plan.id))}>
+            <button title="Pauzeren" onClick={() => actie(boardApi.pausePlan(board.id, plan.id), "Planning gepauzeerd")}>
               <Pause size={13} />
             </button>
           )}
           {["paused", "scheduled", "draft"].includes(plan.state) && (
             <button title="Starten / hervatten"
-                    onClick={() => actie(boardApi.resumePlan(board.id, plan.id))}>
+                    onClick={() => actie(boardApi.resumePlan(board.id, plan.id), "Planning hervat")}>
               <Play size={13} />
             </button>
           )}
-          <button title="Afbreken" onClick={() => actie(boardApi.cancelPlan(board.id, plan.id))}>
+          <button title="Afbreken" onClick={() => actie(boardApi.cancelPlan(board.id, plan.id), "Planning afgebroken")}>
             <X size={13} />
           </button>
         </div>

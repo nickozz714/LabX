@@ -24,7 +24,7 @@ export const mcpServerApi = {
   create: (payload: Record<string, any>) => api.post<MCPServerDto>("/mcp-servers", payload),
   update: (id: number, payload: Record<string, any>) => api.patch<MCPServerDto>(`/mcp-servers/${id}`, payload),
   remove: (id: number) => api.delete<{ ok: boolean }>(`/mcp-servers/${id}`),
-  sync: (id: number) => api.post<{ ok: boolean; tool_count?: number; error?: string; server: MCPServerDto }>(
+  sync: (id: number) => api.post<{ ok: boolean; tool_count?: number; disabled?: number; error?: string; server: MCPServerDto }>(
     `/mcp-servers/${id}/sync`,
   ),
   catalog: () => api.get<CatalogEntry[]>("/mcp-servers/catalog"),

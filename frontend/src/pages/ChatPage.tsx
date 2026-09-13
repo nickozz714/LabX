@@ -28,6 +28,7 @@ import { labsApi, type Bijlage } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import type { BackgroundRunDto, ChatEvent, Lab, Message, Thread } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { LabTerminal } from "@/components/LabTerminal";
 import { RunDetailModal, runDuration } from "@/components/BackgroundRunDetail";
@@ -50,6 +51,7 @@ const EFFORT_OPTIONS = [
 ];
 
 export function ChatPage() {
+  const melding = useMelding();
   const [threads, setThreads] = useState<Thread[]>([]);
   // Sessies achter agent-runs op een ticket. Standaard uit: op een bord met
   // tachtig tickets zou de lijst niet meer te lezen zijn. Aan als je erin wilt
@@ -773,7 +775,12 @@ export function ChatPage() {
                         <span
                           role="button"
                           className="text-destructive hover:underline"
-                          onClick={(e) => { e.stopPropagation(); chatApi.cancelBackgroundRun(r.id); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            chatApi.cancelBackgroundRun(r.id)
+                              .then(() => melding.ok("Achtergrondtaak geannuleerd"))
+                              .catch((err) => melding.fout("Annuleren mislukt", String(err)));
+                          }}
                         >
                           Annuleer
                         </span>

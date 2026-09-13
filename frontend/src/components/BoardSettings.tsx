@@ -532,11 +532,11 @@ export function BoardSettings({
           <Button
             variant="danger"
             className="text-xs"
-            onClick={() => {
-              if (confirm(`Board "${board.name}" en al zijn tickets verwijderen?`)) {
-                boardApi.remove(board.id).then(onDeleted);
-              }
-            }}
+            onClick={() =>
+              confirm(`Board "${board.name}" en al zijn tickets verwijderen?`)
+                ? boardApi.remove(board.id).then(onDeleted)
+                : undefined
+            }
           >
             Board verwijderen
           </Button>

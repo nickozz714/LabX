@@ -8,13 +8,68 @@
  * desktop-window-manager chrome, which is a distinct, much larger subsystem
  * — see index.css for that call).
  */
-import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { useCallback, useRef, useState } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, MouseEvent, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { Loader2 } from "lucide-react";
+import { meldExtern } from "@/components/Meldingen";
 
+/**
+ * Een knop die zelf ziet dat hij bezig is.
+ *
+ * Dit zit hier en niet in elke aanroeper, en dat is de hele truc: geeft een
+ * `onClick` een Promise terug — en dat doet elke async handler vanzelf — dan
+ * zet deze knop zichzelf op bezig, toont een spinner en weigert een tweede
+ * klik tot het klaar is. Alle bestaande knoppen erven dat zonder dat er één
+ * aanroep hoeft te veranderen.
+ *
+ * De aanleiding: "vaak klik ik op een knop en dan lijkt het alsof er niets
+ * gebeurt, maar naderhand verandert er wel wat." Een MCP-sync duurt tientallen
+ * seconden en gaf ondertussen geen enkel teken van leven. Wie niets ziet
+ * gebeuren klikt nog eens — en start de sync dus twee keer.
+ *
+ * Een mislukte actie meldt zichzelf ook: zonder dat verdwijnt een fout in de
+ * console en blijft het scherm doen alsof er niets aan de hand is. Wie dat niet
+ * wil (omdat de aanroeper de fout zelf netjes toont) zet `meldFouten={false}`.
+ */
 export function Button({
   variant = "primary",
   className = "",
+  busy,
+  busyLabel,
+  meldFouten = true,
+  onClick,
+  children,
+  disabled,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger" | "ghost" }) {
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onClick"> & {
+  variant?: "primary" | "secondary" | "danger" | "ghost";
+  /** Handmatig bezig zetten, voor werk dat buiten deze knop begint. */
+  busy?: boolean;
+  /** Tekst tijdens het wachten; leeg = de gewone inhoud blijft staan. */
+  busyLabel?: string;
+  meldFouten?: boolean;
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void | Promise<unknown>;
+}) {
+  const [zelfBezig, setZelfBezig] = useState(false);
+  // Bij een klik die de knop uit beeld haalt (een modal die sluit) mag er geen
+  // state meer gezet worden op iets dat er niet meer is.
+  const levend = useRef(true);
+
+  const klik = useCallback((e: MouseEvent<HTMLButtonElement>) => {
+    const uit = onClick?.(e);
+    if (!uit || typeof (uit as Promise<unknown>).then !== "function") return;
+    setZelfBezig(true);
+    (uit as Promise<unknown>)
+      .catch((err: unknown) => {
+        if (meldFouten) {
+          const tekst = err instanceof Error ? err.message : String(err);
+          meldExtern("fout", "Dat is niet gelukt", tekst.slice(0, 300));
+        }
+      })
+      .finally(() => { if (levend.current) setZelfBezig(false); });
+  }, [onClick, meldFouten]);
+
+  const bezig = busy || zelfBezig;
   const base = "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const variants: Record<string, string> = {
     primary: "bg-primary text-primary-foreground hover:opacity-90",
@@ -22,7 +77,13 @@ export function Button({
     danger: "bg-destructive text-destructive-foreground hover:opacity-90",
     ghost: "bg-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
   };
-  return <button className={`${base} ${variants[variant]} ${className}`} {...props} />;
+  return (
+    <button className={`${base} ${variants[variant]} ${className}`}
+            onClick={klik} disabled={disabled || bezig} aria-busy={bezig} {...props}>
+      {bezig && <Loader2 size={13} className="animate-spin" />}
+      {bezig && busyLabel ? busyLabel : children}
+    </button>
+  );
 }
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {

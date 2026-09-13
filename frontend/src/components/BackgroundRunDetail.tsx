@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 import { chatApi } from "@/lib/chat";
 import type { BackgroundRunDto, ChatEvent } from "@/lib/types";
 import { Badge, Button, Modal } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 
 export function statusTone(status: BackgroundRunDto["status"]) {
   // "limited" is bewust GEEN rood: er is niets stuk en niets verloren, het werk
@@ -35,6 +36,7 @@ export function runDuration(r: Pick<BackgroundRunDto, "started_at" | "finished_a
 }
 
 export function RunDetailModal({ run, onClose }: { run: BackgroundRunDto; onClose: () => void }) {
+  const melding = useMelding();
   const [steps, setSteps] = useState<ChatEvent[]>([]);
   const [answer, setAnswer] = useState("");
   const [status, setStatus] = useState<string>(run.status);
@@ -76,7 +78,17 @@ export function RunDetailModal({ run, onClose }: { run: BackgroundRunDto; onClos
             <Button
               variant="danger"
               className="ml-auto px-2 py-1 text-xs"
-              onClick={() => chatApi.cancelBackgroundRun(run.id).then(() => setStatus("cancelled"))}
+              busyLabel="Annuleren…" meldFouten={false}
+              onClick={async () => {
+                try {
+                  await chatApi.cancelBackgroundRun(run.id);
+                  setStatus("cancelled");
+                  melding.ok("Achtergrondtaak geannuleerd");
+                } catch (err) {
+                  melding.fout("Annuleren mislukt",
+                               err instanceof Error ? err.message : String(err));
+                }
+              }}
             >
               Annuleren
             </Button>

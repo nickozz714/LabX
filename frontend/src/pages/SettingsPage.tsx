@@ -9,9 +9,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { api, ApiError } from "@/lib/api";
 import type { AppSettingsDto, GuardModelStatus, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 import { NotificationsCard } from "@/components/NotificationsCard";
 
 export function SettingsPage() {
+  const melding = useMelding();
   const [settings, setSettings] = useState<AppSettingsDto | null>(null);
   const [oauthToken, setOauthToken] = useState("");
   const [extraArgsText, setExtraArgsText] = useState("");
@@ -39,10 +41,18 @@ export function SettingsPage() {
   if (!settings) return <div className="p-6 text-sm text-muted-foreground">Laden…</div>;
 
   async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string }) {
-    const updated = await settingsApi.update({ ...settings, ...patch });
-    setSettings(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    try {
+      const updated = await settingsApi.update({ ...settings, ...patch });
+      setSettings(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) {
+      // Zonder dit verdween een mislukte opslag geruisloos: het vinkje bleef
+      // uit en verder gebeurde er niets, dus het leek of je niet geklikt had.
+      melding.fout("Instelling niet opgeslagen",
+                   err instanceof Error ? err.message : String(err));
+      throw err;
+    }
   }
 
   return (
@@ -183,7 +193,22 @@ export function SettingsPage() {
               </Badge>
               <span className="text-muted-foreground">{guardStatus.model} @ {guardStatus.url}</span>
               {guardStatus.state !== "ready" && (
-                <Button variant="ghost" className="ml-auto px-2 py-0.5" onClick={() => labsApi.guardModelEnsure().then(setGuardStatus)}>
+                <Button variant="ghost" className="ml-auto px-2 py-0.5"
+                        busyLabel="Ophalen…" meldFouten={false}
+                        onClick={async () => {
+                          try {
+                            const st = await labsApi.guardModelEnsure();
+                            setGuardStatus(st);
+                            // "pulling" is de normale uitkomst: het ophalen
+                            // loopt daarna nog minuten door op de achtergrond.
+                            melding.ok(st.state === "ready" ? "Guard-model is klaar"
+                                                           : "Guard-model wordt opgehaald",
+                                       st.hint || undefined);
+                          } catch (err) {
+                            melding.fout("Ophalen mislukt",
+                                         err instanceof Error ? err.message : String(err));
+                          }
+                        }}>
                   Nu ophalen
                 </Button>
               )}
