@@ -82,6 +82,27 @@ def test_een_handmatige_start_kiest_zelf_een_werker():
     assert "vrije_werker(lab)" in bron
 
 
+def test_een_handmatige_start_tikt_de_autoscaler_aan():
+    """Het gat dat na de eerste reparatie overbleef. De autoscaler werd alleen
+    door de PLANNER aangeroepen, dus een lab waarop je met de hand werkte bleef
+    op één werker hangen: de extra werkers werden na dertig minuten stilte
+    opgeruimd en kwamen nooit terug. Dat was op 13-09-2026 precies wat er
+    gebeurd was — Krimpenerwaard stond weer op één werker terwijl het plafond
+    op drie stond.
+
+    Deze run zelf wacht er niet op (een nieuwe container moet eerst ingericht
+    worden, en dat duurt minuten); hij gaat op werker 1 en de vólgende start
+    heeft er een."""
+    import inspect
+
+    from services.boards.agent_work import start_ticket_run
+
+    bron = inspect.getsource(start_ticket_run)
+    assert "ensure_extra_worker(lab.id)" in bron
+    # Het bijschalen mag de start nooit tegenhouden.
+    assert "except Exception" in bron.split("ensure_extra_worker")[1][:200]
+
+
 def test_de_planner_telt_handmatige_runs_mee():
     """De spiegelfout: anders zet een planning werk op een werker waar al
     iemand zit, en zijn we terug bij twee runs in dezelfde container."""

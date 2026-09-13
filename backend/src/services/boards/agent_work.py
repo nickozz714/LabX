@@ -277,9 +277,25 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
     # werker; de knop op het ticket deed dat niet.
     if lab_worker_id is None:
         from services.lab.lab_service import LabService
-        vrij = LabService(db).vrije_werker(lab)
+        lab_svc = LabService(db)
+        vrij = lab_svc.vrije_werker(lab)
         if vrij is not None:
             lab_worker_id = vrij.id
+        else:
+            # Niets vrij. Deze run gaat op werker 1 — je drukte bewust op
+            # start en minutenlang wachten op een nieuwe container is geen
+            # antwoord. Maar wél de autoscaler aantikken, zodat de VOLGENDE
+            # start er een heeft. Zonder dit bleef een lab op één werker
+            # hangen zolang je alleen met de hand startte: de autoscaler werd
+            # uitsluitend door de planner aangeroepen, dus de werkers die
+            # ervoor bestaan werden opgeruimd wegens inactiviteit en kwamen
+            # nooit terug. De hostmeter beslist of het kan; zit de machine
+            # vol, dan gebeurt er niets.
+            try:
+                await lab_svc.ensure_extra_worker(lab.id)
+            except Exception as exc:  # noqa: BLE001
+                log.warningx("Bijschalen na handmatige start overgeslagen",
+                             lab_id=lab.id, error=str(exc)[:200])
 
     run = background_runs.start(
         db, thread_id=thread.id, lab_id=board.lab_id,
