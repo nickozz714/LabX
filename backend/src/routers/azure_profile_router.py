@@ -2,7 +2,7 @@
 identities synced to the LabX host or into a lab. Secrets are write-only."""
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -119,3 +119,60 @@ async def verify_profile(profile_id: int, db: Session = Depends(get_db)):
 @router.post("/{profile_id}/sync")
 async def sync_profile(profile_id: int, body: AzureProfileSyncRequest, db: Session = Depends(get_db)):
     return await _svc(db).sync(profile_id, target=body.target, lab_id=body.lab_id, az_dir=body.az_dir)
+
+
+# ── device-code-login voor een eigen Entra-app ─────────────────────────────
+#
+# Twee stappen, want zo werkt de flow: eerst een code die de gebruiker ergens
+# invoert, dan wachten tot hij klaar is. Het pollen doet de BROWSER en niet de
+# server: een verzoek dat vijftien minuten openblijft is een verzoek dat elke
+# proxy onderweg afkapt, en dan lijkt een geslaagde inlog mislukt.
+
+@router.post("/{profile_id}/device-login")
+async def device_login_start(profile_id: int, payload: Optional[Dict[str, Any]] = None,
+                             db: Session = Depends(get_db)):
+    return await _svc(db).device_login_start(
+        profile_id, (payload or {}).get("scopes"))
+
+
+@router.post("/{profile_id}/device-login/poll")
+async def device_login_poll(profile_id: int, payload: Dict[str, Any],
+                            db: Session = Depends(get_db)):
+    code = str((payload or {}).get("device_code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="device_code ontbreekt")
+    return await _svc(db).device_login_poll(profile_id, code)
+
+
+@router.post("/{profile_id}/token-test")
+async def token_test(profile_id: int, payload: Dict[str, Any],
+                     db: Session = Depends(get_db)):
+    """Kan dit profiel een token halen voor deze scope?
+
+    Dit bestaat omdat elke fout hier een ANDERE oorzaak heeft die de gebruiker
+    zelf moet oplossen: geen toestemming gegeven, beheerder heeft nog niet
+    ingestemd, verkeerde app-id, API niet aangezet in de tenant. De melding van
+    Entra zelf (`AADSTS…`) is daarin het enige bruikbare houvast, dus die geven
+    we onverkort door in plaats van er "inloggen mislukt" van te maken.
+    """
+    scope = str((payload or {}).get("scope") or "").strip()
+    if not scope:
+        raise HTTPException(status_code=400, detail="scope ontbreekt")
+    try:
+        token = await _svc(db).token_for(profile_id, scope)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:500]}
+    import base64
+    import json as _json
+    claims = {}
+    try:
+        deel = token.split(".")[1]
+        deel += "=" * (-len(deel) % 4)
+        claims = _json.loads(base64.urlsafe_b64decode(deel))
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "audience": claims.get("aud"),
+            "scopes": (claims.get("scp") or "").split(),
+            "upn": claims.get("upn") or claims.get("preferred_username")}

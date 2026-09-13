@@ -67,6 +67,13 @@ class MCPServer(Base):
     # pasted token in auth_config_encrypted expires and can't refresh itself,
     # which is why Microsoft's Azure-auth'd servers need this instead.
     azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Voor WELKE API het Azure-profiel een token moet halen. Leeg = Azure
+    # Resource Manager, want dat is wat elke Microsoft-server tot nu toe wilde.
+    # Work IQ wil `api://workiq.svc.cloud.microsoft/.default`, en een
+    # ARM-token is daar niet alleen nutteloos maar wordt ook geweigerd: de
+    # audience klopt niet. Daarom hoort dit bij de SERVER en niet bij het
+    # profiel — één inlog bedient meerdere API's.
+    token_scope: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # --- inloggegevens voor het SYNCHRONISEREN, los van die voor het werk ----
     # Een sync is iets anders dan een aanroep: hij vraagt alleen wélke tools er
     # zijn, en hij hoort bij LabX zelf — er is geen lab en geen gebruiker in de

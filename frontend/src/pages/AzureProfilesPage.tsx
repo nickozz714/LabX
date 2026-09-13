@@ -24,6 +24,7 @@ import { labsApi } from "@/lib/labs";
 import type { AzureProfileDto, Lab } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { AzureBundlePicker, bundleComplete } from "@/components/AzureBundlePicker";
+import { EntraAppLogin, EntraStappen } from "@/components/EntraAppLogin";
 import type { ApplyStep } from "@/lib/azureProfiles";
 import { ApiError } from "@/lib/api";
 
@@ -232,6 +233,12 @@ export function AzureProfilesPage() {
                 <Badge tone="violet">{p.kind}</Badge>
               </div>
               {p.identity && <pre className="mb-2 max-h-24 overflow-auto rounded bg-secondary p-2 text-xs">{JSON.stringify(p.identity, null, 2)}</pre>}
+              {/* Een Entra-app-profiel kent de az-bewerkingen niet: er is geen
+                  ~/.azure-bundel om door te zetten of te vernieuwen. Wat het
+                  wél heeft is een inlog, en die staat hier. */}
+              {p.kind === "entra_app" ? (
+                <EntraAppLogin profiel={p} onKlaar={refresh} />
+              ) : (
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {p.kind !== "bearer" && (
                   <Button
@@ -290,6 +297,14 @@ export function AzureProfilesPage() {
                   Verwijderen
                 </Button>
               </div>
+              )}
+              {p.kind === "entra_app" && (
+                <div className="mt-2 flex justify-end">
+                  <Button variant="danger" onClick={() => azureProfilesApi.remove(p.id).then(refresh)}>
+                    Verwijderen
+                  </Button>
+                </div>
+              )}
             </Card>
           ))}
         </div>
@@ -312,7 +327,7 @@ export function AzureProfilesPage() {
 
 function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<"msal_bundle" | "service_principal" | "bearer">("msal_bundle");
+  const [kind, setKind] = useState<"msal_bundle" | "service_principal" | "bearer" | "entra_app">("msal_bundle");
   const [files, setFiles] = useState<Record<string, string>>({});
   const [tenantId, setTenantId] = useState("");
   const [clientId, setClientId] = useState("");
@@ -326,6 +341,7 @@ function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCre
       if (kind === "msal_bundle") payload.files = files;
       if (kind === "service_principal") Object.assign(payload, { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret });
       if (kind === "bearer") payload.token = token;
+      if (kind === "entra_app") Object.assign(payload, { tenant_id: tenantId, client_id: clientId });
       await azureProfilesApi.create(payload);
       onCreated();
     } catch (err) {
@@ -346,6 +362,7 @@ function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCre
             <option value="msal_bundle">Bundel (bestanden uit ~/.azure)</option>
             <option value="service_principal">Service principal</option>
             <option value="bearer">Bearer-token</option>
+            <option value="entra_app">Entra-app (device code) — voor Work IQ, Teams en Outlook</option>
           </select>
         </div>
         {kind === "msal_bundle" && (
@@ -361,12 +378,27 @@ function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCre
             <Input placeholder="client_secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
           </>
         )}
+        {kind === "entra_app" && (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Voor API's die de Azure CLI niet mag gebruiken. Work IQ weigert de CLI met
+              AADSTS65002, en zijn machtigingen bestaan alleen als gedelegeerd — dus een service
+              principal helpt daar ook niet. Je registreert een eigen app en logt daar één keer
+              mee in; LabX houdt het daarna zelf ververst. Na aanmaken verschijnt de knop
+              “Inloggen”.
+            </p>
+            <Input placeholder="Map-id (tenant)" value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
+            <Input placeholder="Toepassings-id (client)" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+            <EntraStappen />
+          </>
+        )}
         {kind === "bearer" && <TextArea rows={3} placeholder="access token" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono text-xs" />}
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button
           className="w-full"
           onClick={submit}
-          disabled={!name || (kind === "msal_bundle" && !bundleComplete(files))}
+          disabled={!name || (kind === "msal_bundle" && !bundleComplete(files))
+                    || (kind === "entra_app" && !(tenantId && clientId))}
         >
           Aanmaken
         </Button>

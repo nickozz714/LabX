@@ -185,6 +185,55 @@ CATALOG: List[Dict[str, Any]] = [
         "provenance": "control",
     },
     {
+        "key": "work-iq",
+        "name": "Microsoft Work IQ (Teams, Outlook, agenda, bestanden)",
+        "description": (
+            "Microsofts eigen intelligentielaag over Microsoft 365, als remote MCP-server. "
+            "Tien generieke tools werken op resource-paden: `fetch /me/messages` leest je mail, "
+            "`do_action /me/sendMail` verstuurt, `fetch /me/chats/{id}/messages` leest een "
+            "Teams-gesprek, `create_entity /me/events` zet een afspraak in de agenda. "
+            "Alles gebeurt NAMENS JOU: de agent ziet precies wat jij ziet, niet meer — Work IQ "
+            "kent geen application-permissies. Vereist daarom een eigen Entra-app-registratie "
+            "met een device-code-inlog (profieltype 'Entra-app'), geen az-CLI-profiel: "
+            "Microsoft weigert de Azure CLI voor deze API. Let op: dit haalt échte mail- en "
+            "chatinhoud naar het model toe."),
+        "kind": "http",
+        "base_url": "https://workiq.svc.cloud.microsoft/mcp",
+        "suggested_location": "host",
+        # Een token voor Azure Resource Manager wordt hier geweigerd: de
+        # audience klopt niet. Work IQ heeft zijn eigen application ID URI.
+        "token_scope": "api://workiq.svc.cloud.microsoft/.default",
+        "needs_auth": True,
+        # `control` zou hier verkeerd zijn: dit levert geen metadata maar de
+        # inhoud van gesprekken en mail.
+        "provenance": "data",
+        "setup": {
+            "titel": "Wat er eenmalig in Entra en het M365-beheercentrum moet gebeuren",
+            "stappen": [
+                "Microsoft Entra → App-registraties → Nieuwe registratie. Naam naar keuze, "
+                "accounttype 'Alleen accounts in deze organisatiemap'. Een redirect-URI is niet "
+                "nodig.",
+                "Bij Verificatie: zet 'Openbare clientstromen toestaan' op JA. Zonder dat werkt "
+                "de device-code-login niet — dat is de enige instelling die mensen hier vergeten.",
+                "Bij API-machtigingen → Machtiging toevoegen → API's die mijn organisatie "
+                "gebruikt → zoek 'Work IQ' → Gedelegeerde machtigingen → vink "
+                "WorkIQAgent.Ask aan (en de overige Work IQ-machtigingen die je wilt gebruiken).",
+                "Klik 'Beheerderstoestemming verlenen'. Dit is verplicht: WorkIQAgent.Ask "
+                "vereist admin consent. Ben je zelf geen beheerder, dan is dit het moment om het "
+                "aan te vragen — de rest kun je zonder beheerder doen.",
+                "Zet Work IQ aan voor de tenant in het Microsoft 365-beheercentrum, en zet daar "
+                "SCHRIJFACTIES aan als de agent ook mail mag versturen of afspraken mag maken. "
+                "Work IQ staat standaard op alleen-lezen.",
+                "Maak een spending policy voor Work IQ. Het rekent af in Copilot Credits, los van "
+                "je Microsoft 365 Copilot-licenties — zonder policy kan het gebruik ongemerkt "
+                "oplopen.",
+                "Kopieer uit Entra de Toepassings-id (client) en de Map-id (tenant) en maak er in "
+                "LabX een Azure-profiel van het type 'Entra-app' mee. Klik daarna op 'Inloggen' "
+                "en voer de code in.",
+            ],
+        },
+    },
+    {
         "key": "github",
         "name": "GitHub",
         "description": "Repositories, issues en pull requests via de officiële GitHub Copilot MCP-"

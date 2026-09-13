@@ -42,8 +42,29 @@ export type UploadResultaat = {
   skipped: { name: string; reden: string }[];
 };
 
+/**
+ * Hoe de machine ervoor staat. De cijfers komen uit /proc — in een container
+ * niet geïsoleerd, dus dit is de HOST en niet de backend-container.
+ */
+export type HostMetrics = {
+  geheugen: {
+    totaal: number; beschikbaar: number; gebruikt: number;
+    deel_gebruikt: number | null; swap_totaal: number; swap_gebruikt: number;
+  };
+  cpu: { kernen: number; bezet: number | null; load: number[]; load_per_kern: number | null };
+  gpu: { naam: string; geheugen_totaal: number; geheugen_gebruikt: number;
+         bezet: number; temperatuur: number }[];
+  schijf: { totaal: number; gebruikt: number; vrij: number; pad: string } | null;
+  labs: {
+    labs_draaiend: number; geheugen: number; cpu: number;
+    per_lab: { id: string; naam: string; werkers: number; geheugen: number; cpu: number }[];
+  };
+  waarschuwingen: { ernst: "laag" | "midden" | "hoog"; onderwerp: string; tekst: string }[];
+};
+
 export const labsApi = {
   list: () => api.get<Lab[]>("/labs"),
+  hostMetrics: () => api.get<HostMetrics>("/labs/host-metrics"),
   get: (id: string) => api.get<Lab>(`/labs/${id}`),
   images: () => api.get<{ presets: ImagePreset[]; local_images: string[]; default_image: string }>("/labs/images"),
   searchImages: (q: string) =>

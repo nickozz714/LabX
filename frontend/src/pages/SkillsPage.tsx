@@ -399,6 +399,7 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
   const [stdioCommand, setStdioCommand] = useState(server.stdio_command || "");
   const [azureProfileId, setAzureProfileId] = useState<number | null>(server.azure_profile_id);
   const [syncProfileId, setSyncProfileId] = useState<number | null>(server.sync_azure_profile_id);
+  const [tokenScope, setTokenScope] = useState(server.token_scope || "");
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
@@ -407,6 +408,7 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
         base_url: server.server_type !== "stdio" ? baseUrl : undefined,
         stdio_command: server.server_type === "stdio" ? stdioCommand : undefined,
         azure_profile_id: azureProfileId,
+        token_scope: tokenScope.trim() || null,
         sync_azure_profile_id: syncProfileId,
       });
       onSaved();
@@ -443,6 +445,18 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
               Alleen relevant voor servers die met Azure/Microsoft-identiteit werken (Azure MCP Server,
               Fabric MCP, Fabric RTI, Dev Box, Azure DevOps). Gebruikt als er geen lab-specifiek profiel is.
             </p>
+            <div className="mt-3 border-t border-border pt-3">
+              <Label>Voor welke API moet het token gelden?</Label>
+              <Input value={tokenScope} placeholder="leeg = Azure Resource Manager"
+                     onChange={(e) => setTokenScope(e.target.value)} className="font-mono text-xs" />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Het profiel is de identiteit; dit zegt vóór welke API er een token gehaald wordt.
+                Eén inlog bedient zo meerdere API's. Leeg laten klopt voor de Microsoft-servers
+                hierboven. Work IQ wil{" "}
+                <code>api://workiq.svc.cloud.microsoft/.default</code> — een
+                Resource-Manager-token wordt daar geweigerd omdat de audience niet klopt.
+              </p>
+            </div>
             <div className="mt-3 border-t border-border pt-3">
               <AzureProfilePicker
                 value={syncProfileId}

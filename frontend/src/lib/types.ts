@@ -205,6 +205,10 @@ export interface MCPServerDto {
   always_allowed: boolean;
   usage_scope: "session" | "lab" | "both";
   azure_profile_id: number | null;
+  /** Voor welke API het Azure-profiel een token moet halen. Leeg = Azure
+   *  Resource Manager. Hoort bij de SERVER en niet bij het profiel, zodat één
+   *  inlog meerdere API's kan bedienen. */
+  token_scope: string | null;
   has_auth: boolean;
   /** Aparte inloggegevens voor het ophalen van de toolslijst; null/false =
    *  dezelfde als voor de aanroepen zelf. */
@@ -305,10 +309,18 @@ export interface ScheduleRunDto {
 export interface AzureProfileDto {
   id: number;
   name: string;
-  kind: "msal_bundle" | "service_principal" | "bearer";
+  kind: "msal_bundle" | "service_principal" | "bearer" | "entra_app";
   description: string | null;
   has_secret: boolean;
   identity: Record<string, any> | null;
+  /** Alleen bij entra_app: het profiel bestaat al zodra de app-gegevens erin
+   *  staan, maar pas na de device-code-login is er een verversingstoken. Dat
+   *  onderscheid moet het scherm kunnen tonen — "opgeslagen" is hier niet
+   *  hetzelfde als "werkt". */
+  logged_in?: boolean;
+  tenant_id?: string | null;
+  client_id?: string | null;
+  scopes?: string[];
   created_at: string;
   updated_at: string;
 }

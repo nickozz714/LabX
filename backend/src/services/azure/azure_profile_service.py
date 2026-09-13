@@ -71,8 +71,24 @@ class AzureProfileService:
         return {
             "id": p.id, "name": p.name, "kind": p.kind, "description": p.description,
             "has_secret": bool(p.secret_encrypted), "identity": identity,
+            # Voor entra_app is "er staat iets versleuteld" niet hetzelfde als
+            # "je bent ingelogd": het profiel bestaat al zodra de app-gegevens
+            # erin staan. Het scherm moet dat verschil kunnen tonen.
+            **self._inlogstatus(p),
             "created_at": p.created_at, "updated_at": p.updated_at,
         }
+
+    def _inlogstatus(self, p: AzureProfile) -> Dict[str, Any]:
+        if p.kind != "entra_app":
+            return {}
+        try:
+            payload = json.loads(decrypt(p.secret_encrypted)) if p.secret_encrypted else {}
+        except Exception:  # noqa: BLE001
+            return {"logged_in": False}
+        return {"logged_in": bool(payload.get("refresh_token")),
+                "tenant_id": payload.get("tenant_id"),
+                "client_id": payload.get("client_id"),
+                "scopes": payload.get("scopes") or []}
 
     def _payload_from_input(self, kind: str, data: Any) -> Dict[str, Any]:
         if kind == "msal_bundle":
@@ -90,7 +106,90 @@ class AzureProfileService:
             if not data.token:
                 raise HTTPException(status_code=400, detail="bearer vereist een token.")
             return {"token": data.token}
+        if kind == "entra_app":
+            # Alleen de app-gegevens; het inloggen is een APARTE stap. Zo kun
+            # je een profiel aanmaken voordat de beheerder klaar is met
+            # toestemming geven, en later inloggen zonder alles opnieuw te
+            # typen. Geen client_secret: een device-code-login is een public
+            # client, en een secret zou hier alleen maar meeliften.
+            if not (data.tenant_id and data.client_id):
+                raise HTTPException(status_code=400, detail=(
+                    "entra_app vereist tenant_id en client_id van je eigen app-registratie."))
+            return {"tenant_id": data.tenant_id, "client_id": data.client_id,
+                    "scopes": [s for s in (data.scopes or []) if s]}
         raise HTTPException(status_code=400, detail=f"kind moet een van {AZURE_PROFILE_KINDS} zijn")
+
+
+    # ── device-code-login voor een eigen app-registratie ────────────────────
+
+    async def device_login_start(self, profile_id: int,
+                                 extra_scopes: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Stap 1: de code die de gebruiker in de browser invoert."""
+        from services.azure import entra_app_login
+
+        row = self.get_or_404(profile_id)
+        if row.kind != "entra_app":
+            raise HTTPException(status_code=400,
+                                detail="Device-code-login werkt alleen voor een entra_app-profiel.")
+        payload = self._decrypt(row)
+        scopes = list(payload.get("scopes") or []) + list(extra_scopes or [])
+        try:
+            return await entra_app_login.start_device_login(
+                tenant_id=str(payload.get("tenant_id") or ""),
+                client_id=str(payload.get("client_id") or ""), scopes=scopes)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    async def device_login_poll(self, profile_id: int, device_code: str) -> Dict[str, Any]:
+        """Stap 2: wachten tot de gebruiker klaar is, en dan bewaren.
+
+        Het verversingstoken is het enige dat er echt toe doet: daarmee kan
+        LabX later zelf tokens halen voor elke API waar deze app toestemming
+        voor heeft, zonder de gebruiker opnieuw lastig te vallen.
+        """
+        from services.azure import entra_app_login
+
+        row = self.get_or_404(profile_id)
+        payload = self._decrypt(row)
+        try:
+            uit = await entra_app_login.poll_device_login(
+                tenant_id=str(payload.get("tenant_id") or ""),
+                client_id=str(payload.get("client_id") or ""), device_code=device_code)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if uit.get("status") != "klaar":
+            return {"status": "wacht"}
+
+        payload["refresh_token"] = uit.get("refresh_token")
+        payload["id_token"] = uit.get("id_token")
+        payload["tokens"] = {}          # verse inlog, oude tokencache vervalt
+        row.secret_encrypted = encrypt(json.dumps(payload))
+        identiteit = entra_app_login.identiteit_uit(payload)
+        row.identity_json = json.dumps(identiteit) if identiteit else None
+        row.updated_at = _now_iso()
+        self.db.commit()
+        self.db.refresh(row)
+        return {"status": "klaar", "identity": identiteit}
+
+    async def token_for(self, profile_id_or_row: Any, scope: str) -> str:
+        """Een geldig token voor deze scope, en de verversing meteen bewaard.
+
+        Entra geeft bij elke verversing een NIEUW verversingstoken uit en trekt
+        het oude na verloop van tijd in. Wie dat niet terugschrijft, is na een
+        paar weken stil uitgelogd — en dat is precies het soort storing dat je
+        pas merkt als je het nodig hebt.
+        """
+        from services.azure import entra_app_login
+
+        row = (profile_id_or_row if isinstance(profile_id_or_row, AzureProfile)
+               else self.get_or_404(int(profile_id_or_row)))
+        payload = self._decrypt(row)
+        token, nieuw = await entra_app_login.token_voor_scope(payload, scope)
+        if nieuw != payload:
+            row.secret_encrypted = encrypt(json.dumps(nieuw))
+            row.updated_at = _now_iso()
+            self.db.commit()
+        return token
 
     def _decrypt(self, p: AzureProfile) -> Dict[str, Any]:
         if not p.secret_encrypted:
@@ -122,8 +221,17 @@ class AzureProfileService:
             row.name = data.name.strip()
         if data.description is not None:
             row.description = data.description
-        if any(v is not None for v in (data.files, data.tenant_id, data.client_id, data.client_secret, data.token)):
+        if any(v is not None for v in (data.files, data.tenant_id, data.client_id,
+                                       data.client_secret, data.token, data.scopes)):
             payload = self._payload_from_input(row.kind, data)
+            if row.kind == "entra_app" and row.secret_encrypted:
+                # De inlog niet weggooien bij het bijwerken van een naam of een
+                # scope: opnieuw moeten inloggen omdat je een scope toevoegde,
+                # is precies het soort straf waar niemand op zit te wachten.
+                oud = self._decrypt(row)
+                for sleutel in ("refresh_token", "id_token", "tokens"):
+                    if oud.get(sleutel) is not None:
+                        payload[sleutel] = oud[sleutel]
             row.secret_encrypted = encrypt(json.dumps(payload))
             row.identity_json = None
         row.updated_at = _now_iso()

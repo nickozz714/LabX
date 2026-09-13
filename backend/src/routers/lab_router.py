@@ -208,6 +208,20 @@ def delete_lab_extra(extra_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.get("/host-metrics")
+async def host_metrics(db: Session = Depends(get_db)):
+    """Hoe staat de machine ervoor?
+
+    Staat onder /labs omdat het hier over LABSCHALING gaat: wat de host heeft,
+    wat ervan op is, wat de draaiende labs claimen, en waar dat knelt. De
+    cijfers komen uit /proc — dat is in een container niet geïsoleerd, dus het
+    zijn de getallen van de host en niet van deze container.
+    """
+    from services.lab.hostmetrics import meten
+
+    return await meten(db)
+
+
 @router.get("/guard-model/status")
 async def guard_model_status():
     from services.lab.data_guard_llm import guard_model_status as _st

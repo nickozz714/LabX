@@ -17,6 +17,7 @@ import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { LabGeheimen } from "@/components/LabGeheimen";
+import { HostMeter } from "@/components/HostMeter";
 import { guardApi, type GuardProfiel } from "@/lib/guard";
 import { MODEL_OPTIONS, modelLabel } from "@/lib/modellen";
 import { getToken } from "@/lib/api";
@@ -65,6 +66,13 @@ export function LabsPage() {
           </div>
         </Card>
       )}
+
+      {/* Boven de labs en niet eronder: het is de randvoorwaarde voor alles
+          wat je op deze pagina doet. Een werker erbij zetten heeft alleen zin
+          als de machine het aankan. */}
+      <div className="mb-4">
+        <HostMeter />
+      </div>
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Laden…</p>

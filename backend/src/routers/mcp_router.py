@@ -28,6 +28,7 @@ def _to_dict(s: MCPServer) -> Dict[str, Any]:
         "always_allowed": s.always_allowed,
         "usage_scope": s.usage_scope or ("session" if s.always_allowed else "both"),
         "azure_profile_id": s.azure_profile_id,
+        "token_scope": s.token_scope,
         "has_auth": bool(s.auth_config_encrypted),
         # Aparte inloggegevens voor het synchroniseren; leeg = de gewone.
         "sync_azure_profile_id": s.sync_azure_profile_id,
@@ -90,6 +91,10 @@ def install_from_catalog(key: str, db: Session = Depends(get_db)):
             name=entry["name"], slug=key, description=entry["description"],
             server_type="http", location=entry["suggested_location"],
             base_url=entry["base_url"],
+            # Voor welke API het Azure-profiel een token moet halen. Zonder dit
+            # krijgt een server als Work IQ een ARM-token, en dat wordt
+            # geweigerd omdat de audience niet klopt.
+            token_scope=entry.get("token_scope"),
             is_enabled=True, created_at=now, updated_at=now,
         )
     else:
@@ -136,6 +141,7 @@ def create_server(payload: Dict[str, Any], db: Session = Depends(get_db)):
         is_enabled=bool(payload.get("is_enabled", True)),
         always_allowed=bool(payload.get("always_allowed", False)),
         azure_profile_id=payload.get("azure_profile_id"),
+        token_scope=(payload.get("token_scope") or None),
         sync_azure_profile_id=payload.get("sync_azure_profile_id"),
         created_at=now, updated_at=now,
     )
@@ -154,7 +160,7 @@ def update_server(server_id: int, payload: Dict[str, Any], db: Session = Depends
     for field in ("name", "description", "server_type", "location", "base_url",
                   "stdio_command", "stdio_install_command", "is_enabled",
                   "always_allowed", "azure_profile_id", "usage_scope",
-                  "sync_azure_profile_id"):
+                  "token_scope", "sync_azure_profile_id"):
         if field in payload:
             setattr(s, field, payload[field])
     _set_auth(s, payload)

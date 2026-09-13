@@ -94,6 +94,20 @@ export function LabAllowlist({ lab, onSaved }: { lab: Lab; onSaved: (updated: La
                     (hele server toestaan — of kies losse tools hieronder)
                   </span>
                 </label>
+                {/* Eén zin, op de plek waar je het aanzet. De guard kijkt niet
+                    mee bij een host-server, dus wat hier binnenkomt gaat
+                    ongefilterd naar het model. Bij metadata-servers is dat
+                    onschuldig; bij een server die mail en chats teruggeeft is
+                    het de hele afweging, en die hoort niet in een handleiding
+                    te staan die je pas achteraf leest. */}
+                {server.slug === "work-iq" && (
+                  <p className="ml-6 mt-1 text-xs text-yellow-600 dark:text-yellow-500">
+                    Aanzetten betekent dat de agent jouw mail, agenda en Teams-gesprekken kan
+                    lezen — en die inhoud gaat naar het model. De data-guard kijkt hier niet mee:
+                    die bewaakt wat een lab-container uitstuurt, en dit is een host-server.
+                    Alleen wat jíj mag zien, want Work IQ werkt namens jou.
+                  </p>
+                )}
                 {serverTools.length > 0 && (
                   <div className="ml-6 mt-1 space-y-1">
                     {serverTools.map((t) => (

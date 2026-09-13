@@ -2,7 +2,7 @@
 ND3X-public/src/schemas/azure_profile.py minus org/project scoping."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -16,6 +16,9 @@ class AzureProfileCreate(BaseModel):
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     token: Optional[str] = None                       # bearer
+    # entra_app: de app-registratie waar de gebruiker zich bij aanmeldt. Geen
+    # secret nodig — een device-code-login is een public client.
+    scopes: Optional[List[str]] = None
 
 
 class AzureProfileUpdate(BaseModel):
@@ -26,6 +29,7 @@ class AzureProfileUpdate(BaseModel):
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     token: Optional[str] = None
+    scopes: Optional[List[str]] = None
 
 
 class AzureProfileRead(BaseModel):
@@ -35,6 +39,13 @@ class AzureProfileRead(BaseModel):
     description: Optional[str] = None
     has_secret: bool
     identity: Optional[Dict[str, Any]] = None
+    # Alleen voor entra_app: "er staat iets versleuteld" is daar niet hetzelfde
+    # als "je bent ingelogd" — het profiel bestaat al zodra de app-gegevens
+    # erin staan, en pas na de device-code-login is er een verversingstoken.
+    logged_in: Optional[bool] = None
+    tenant_id: Optional[str] = None
+    client_id: Optional[str] = None
+    scopes: Optional[List[str]] = None
     created_at: str
     updated_at: str
 

@@ -125,8 +125,26 @@ async def stdio_env_for_profile(profile: AzureProfile) -> Dict[str, str]:
 
 
 async def bearer_header_for_profile(profile: AzureProfile, *,
-                                    scope: str = "https://management.azure.com/.default") -> Dict[str, str]:
+                                    scope: str = "https://management.azure.com/.default",
+                                    db: Optional[Session] = None) -> Dict[str, str]:
     payload = _decrypt_payload(profile)
+    if profile.kind == "entra_app":
+        # Een eigen app-registratie met een device-code-inlog. Hier zit het
+        # verversingstoken, en daarmee is elke API bereikbaar waar deze app
+        # toestemming voor heeft — Work IQ, Graph, wat er ook bij komt. De
+        # sessie is nodig om het verversende token terug te schrijven.
+        if db is None:
+            log.warningx("azure_mcp_auth: entra_app-profiel zonder db-sessie, kan niet verversen",
+                         profile=profile.name)
+            return {}
+        from services.azure.azure_profile_service import AzureProfileService
+        try:
+            token = await AzureProfileService(db).token_for(profile, scope)
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("azure_mcp_auth: kon geen token halen voor entra_app-profiel",
+                         profile=profile.name, scope=scope, error=str(exc)[:300])
+            return {}
+        return {"Authorization": f"Bearer {token}"} if token else {}
     if profile.kind == "bearer" and payload.get("token"):
         return {"Authorization": f"Bearer {payload['token']}"}
     if profile.kind == "service_principal":

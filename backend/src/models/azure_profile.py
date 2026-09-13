@@ -12,7 +12,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from db.database import Base
 
-AZURE_PROFILE_KINDS = ("msal_bundle", "service_principal", "bearer")
+# entra_app: een EIGEN app-registratie waar de gebruiker zich met een
+# device-code bij aanmeldt. Nodig voor alles wat delegated moet werken en dat
+# de Azure CLI niet mag — Work IQ weigert de CLI met AADSTS65002, en zijn
+# permissies bestaan alleen als delegated, dus een service principal helpt daar
+# ook niet. Zie services/azure/entra_app_login.py.
+AZURE_PROFILE_KINDS = ("msal_bundle", "service_principal", "bearer", "entra_app")
 AZURE_SYNC_TARGETS = ("host", "lab")
 
 

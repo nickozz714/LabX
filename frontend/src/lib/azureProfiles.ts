@@ -10,6 +10,16 @@ export interface ApplyStep {
   detail: string;
 }
 
+/** De device-code-inlog voor een eigen Entra-app-registratie. Twee stappen,
+ *  want zo werkt de flow: eerst een code die de gebruiker ergens invoert, dan
+ *  wachten tot hij klaar is. Het pollen doet de BROWSER — een verzoek dat een
+ *  kwartier openblijft wordt onderweg door elke proxy afgekapt, en dan lijkt
+ *  een geslaagde inlog mislukt. */
+export type DeviceLoginStart = {
+  device_code: string; user_code: string; verification_uri: string;
+  expires_in: number; interval: number; message?: string;
+};
+
 export const azureProfilesApi = {
   list: () => api.get<AzureProfileDto[]>("/azure-profiles"),
   create: (payload: Record<string, any>) => api.post<AzureProfileDto>("/azure-profiles", payload),
@@ -41,6 +51,17 @@ export const azureProfilesApi = {
     api.post<AzureProfileDto>(`/azure-profiles/${id}/recapture-lab`, { lab_id: labId }),
   recaptureHost: (id: number) =>
     api.post<AzureProfileDto>(`/azure-profiles/${id}/recapture-host`, {}),
+  deviceLoginStart: (id: number, scopes?: string[]) =>
+    api.post<DeviceLoginStart>(`/azure-profiles/${id}/device-login`, { scopes }),
+  deviceLoginPoll: (id: number, deviceCode: string) =>
+    api.post<{ status: "wacht" | "klaar"; identity?: Record<string, any> }>(
+      `/azure-profiles/${id}/device-login/poll`, { device_code: deviceCode }),
+  /** Kan dit profiel een token halen voor deze API? Geeft bij een fout de
+   *  melding van Entra zelf terug (AADSTS…) — die vertelt precies wat er in
+   *  de app-registratie nog mist. */
+  tokenTest: (id: number, scope: string) =>
+    api.post<{ ok: boolean; error?: string; audience?: string; scopes?: string[]; upn?: string }>(
+      `/azure-profiles/${id}/token-test`, { scope }),
   sync: (id: number, payload: { target: "host" | "lab"; lab_id?: string; az_dir?: string }) =>
     api.post<{ ok: boolean; target: string; detail: any }>(`/azure-profiles/${id}/sync`, payload),
 };

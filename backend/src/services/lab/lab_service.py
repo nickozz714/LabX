@@ -646,6 +646,25 @@ exec ssh -N \\
                       int(getattr(p, "max_workers", 1) or 1))
         if len(huidig) >= plafond:
             return None
+
+        # Past de machine het nog? De autoscaler zet vanzelf werkers bij, en
+        # dat is precies waar een host stilletjes overbelast raakt: elke werker
+        # is een eigen container met dezelfde limieten, dus twee labs met vier
+        # werkers zijn acht containers. Bij te weinig geheugen gaat de kernel
+        # processen afbreken en valt er ergens een lab om zonder duidelijke
+        # oorzaak — liever hier stoppen met een leesbare reden.
+        from services.lab.hostmetrics import past_er_nog_een_bij
+
+        ruimte = past_er_nog_een_bij(self.db, geheugen_mb=int(p.mem_limit_mb or 0),
+                                     cpu=float(p.cpu_limit or 0))
+        if not ruimte["ok"]:
+            log.warningx("Bijschalen overgeslagen: de host zit vol", lab_id=p.id,
+                         reden=ruimte["reden"])
+            return None
+        if ruimte["ernst"] != "geen":
+            log.warningx("Werker bijgezet terwijl de host krap zit", lab_id=p.id,
+                         reden=ruimte["reden"])
+
         now = _now_iso()
         index = max((w.index for w in huidig), default=0) + 1
         w = LabWorker(lab_id=p.id, index=index, network_alias=self._worker_alias(p, index),

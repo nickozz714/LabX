@@ -70,7 +70,8 @@ async def _resolve_auth_headers(server: MCPServer, *, db: Optional[Any] = None,
         from services.azure.azure_mcp_auth import bearer_header_for_profile, resolve_profile
         profile = resolve_profile(db, server, lab_id, purpose=purpose)
         if profile is not None:
-            headers = await bearer_header_for_profile(profile)
+            scope = (server.token_scope or "").strip() or "https://management.azure.com/.default"
+            headers = await bearer_header_for_profile(profile, scope=scope, db=db)
             if headers:
                 return headers
     return _static_auth_headers(server, purpose=purpose)
