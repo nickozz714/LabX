@@ -717,6 +717,48 @@ exec ssh -N \\
                 if w.status == "running" and w.container_id
                 and (w.index == 1 or w.provision_status in ("ok", "skipped"))]
 
+    def bezette_werkers(self, lab_id: str) -> set:
+        """Werker-id's waar NU een agent-run op draait.
+
+        Uit `background_runs` en niet uit de planningen, en dat is de kern van
+        de reparatie: een handmatig gestart ticket heeft geen planningsregel.
+        Wie alleen naar planningen keek, zag zulke runs niet — een planning kon
+        dus een werker pakken waar al iemand zat, en drie met de hand gestarte
+        tickets belandden allemaal in werker 1.
+        """
+        from models.background_run import BackgroundRun
+        from models.lab_worker import LabWorker
+
+        # Via de werker naar het lab: een run weet wélke werker hij gebruikt,
+        # niet bij welk lab die hoort.
+        rijen = (self.db.query(BackgroundRun.lab_worker_id)
+                 .join(LabWorker, LabWorker.id == BackgroundRun.lab_worker_id)
+                 .filter(LabWorker.lab_id == lab_id,
+                         BackgroundRun.status.in_(("running", "queued"))).all())
+        return {r[0] for r in rijen if r[0]}
+
+    def vrije_werker(self, p: Lab) -> Optional[Any]:
+        """Een werker waar nu geen run op draait, of None.
+
+        Dit is de enige plek waar "welke container krijgt dit werk" beslist
+        wordt, voor planningen én voor handmatig gestarte tickets. Twee runs in
+        dezelfde container vechten om dezelfde bestanden, processen en
+        `az`-sessie — dus als er een vrije is, hoort het werk daarheen.
+
+        Geen vrije werker is geen fout: dan valt de aanroeper terug op werker 1
+        (handmatig: de gebruiker drukte bewust op start) of gaat hij wachten
+        (een planning: die heeft geen haast).
+        """
+        werkers = self.claimbare_werkers(p)
+        if not werkers:
+            return None
+        bezet = self.bezette_werkers(p.id)
+        vrij = [w for w in werkers if w.id not in bezet]
+        if not vrij:
+            return None
+        self.touch_worker(vrij[0].id)
+        return vrij[0]
+
     async def reap_idle_workers(self, idle_minutes: int = 30) -> int:
         """Extra werkers opruimen die een tijd niets deden.
 

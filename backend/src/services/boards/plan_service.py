@@ -222,6 +222,12 @@ class PlanService:
                        .filter(TicketPlan.board_id.in_(borden),
                                TicketPlanItem.state == "running").all())
         bezet = {r[0] for r in bezet_rijen if r[0]}
+        # En wat er BUITEN de planningen om draait. Een ticket dat met de hand
+        # is gestart heeft geen planningsregel, dus die runs waren hier
+        # onzichtbaar: een planning kon een werker pakken waar al iemand zat.
+        # Sinds handmatige starts zelf een werker kiezen, is dat geen
+        # theoretisch geval meer.
+        bezet |= lab_svc.bezette_werkers(lab.id)
         # Een lopend item zonder werker (van vóór deze functie) bezet het lab
         # als geheel — anders zou hij naast zichzelf gaan draaien.
         if any(r[0] is None for r in bezet_rijen):

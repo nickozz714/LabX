@@ -269,6 +269,18 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
     prompt = _ticket_prompt(board, ticket, svc.list_comments(ticket.id), extra_instruction)
     _zet_op_bezig(db, svc, board, ticket)
 
+    # Geen werker meegekregen (een handmatige start vanaf het ticket): zelf een
+    # vrije zoeken. Zonder dit landde ELK handmatig gestart ticket in de
+    # container van het lab zelf — drie tickets tegelijk starten gaf drie runs
+    # in werker 1, die daar om dezelfde bestanden, processen en az-sessie
+    # vochten, terwijl werker 2 en 3 niets deden. Alleen de planner koos een
+    # werker; de knop op het ticket deed dat niet.
+    if lab_worker_id is None:
+        from services.lab.lab_service import LabService
+        vrij = LabService(db).vrije_werker(lab)
+        if vrij is not None:
+            lab_worker_id = vrij.id
+
     run = background_runs.start(
         db, thread_id=thread.id, lab_id=board.lab_id,
         history=[{"role": "user", "content": prompt}], prompt=prompt,
