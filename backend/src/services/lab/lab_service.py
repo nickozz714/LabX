@@ -157,6 +157,54 @@ class LabService:
                         w.container_id = None
                         w.error = "Container niet meer gevonden na herstart van LabX"
                     w.updated_at = _now_iso()
+
+        # Inrichten dat is blijven hangen.
+        #
+        # `provision_status` gaat op "running" bij de start van een ronde en
+        # pas aan het EIND naar ok/error. Sneuvelt het proces ertussenin — een
+        # deploy, een herstart, een container die omvalt — dan blijft het lab
+        # voorgoed denken dat hij bezig is, en blijven de werkers op "pending"
+        # staan. Zo'n werker is niet claimbaar, dus de autoscaler zet er wel
+        # containers bij maar er komt nooit werk op. Precies dat gebeurde op
+        # 13-09-2026: werker 2 en 3 van Krimpenerwaard stonden na een deploy
+        # midden in het inrichten stil, en er was niets dat ze eruit haalde.
+        #
+        # Bij het opstarten is er per definitie geen ronde meer aan de gang —
+        # `_PROVISION_TASKS` leeft in het geheugen van het proces dat net weg
+        # is. Alles wat nog op "bezig" staat, is dus afgebroken. We zetten het
+        # terug op "pending" (niet op "error"): er is niets stuk, het is alleen
+        # niet af, en de volgende ronde maakt het gewoon af — inrichten is
+        # idempotent.
+        vastgelopen = 0
+        for p in self.db.query(Lab).filter(Lab.provision_status == "running").all():
+            p.provision_status = "pending"
+            p.updated_at = _now_iso()
+            vastgelopen += 1
+            log.warningx("Inrichten was blijven hangen na een herstart; opnieuw ingepland",
+                         lab_id=p.id, lab=p.name)
+            if p.status == "running" and p.allow_network:
+                provision_in_background(p.id)
+        # En de spiegelvorm: het lab denkt dat het klaar is, maar er staat een
+        # werker op "pending". Dat overkomt een werker die werd bijgezet terwijl
+        # er al een ronde liep — die stond niet in de lijst die díé ronde
+        # afwerkte. Normaal vangt `_na_inrichten` dat op met een ronde
+        # erachteraan, maar ook dát leeft in het geheugen van een proces dat kan
+        # sneuvelen.
+        from models.lab_worker import LabWorker
+
+        for p in self.db.query(Lab).filter(Lab.status == "running",
+                                           Lab.provision_status.notin_(("running",))).all():
+            hangt = (self.db.query(LabWorker)
+                     .filter(LabWorker.lab_id == p.id, LabWorker.status == "running",
+                             LabWorker.provision_status == "pending").count())
+            if hangt and p.allow_network:
+                log.warningx("Werker(s) nog niet ingericht terwijl het lab klaar is; ronde ingepland",
+                             lab_id=p.id, lab=p.name, werkers=hangt)
+                provision_in_background(p.id)
+                fixed += 1
+
+        fixed += vastgelopen
+
         if fixed:
             self.db.commit()
         # Orphans: labelled containers with no matching DB row at all. A
