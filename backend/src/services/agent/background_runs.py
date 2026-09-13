@@ -354,6 +354,47 @@ def cancel(run_id: str) -> bool:
     return True
 
 
+def ruim_dode_runs_op(db: Session, *, respijt_seconden: int = 60) -> int:
+    """Runs die "running" heten terwijl er niets meer draait.
+
+    Een run hangt aan een asyncio-taak in dit proces. Sneuvelt die taak zonder
+    de rij af te sluiten — een event loop die sluit, een exception op een plek
+    waar niemand hem vangt — dan blijft de rij voorgoed op "running" staan. En
+    daarmee blijft het TICKET op "running" staan: de knop "Agent starten" is
+    uitgeschakeld, de agent doet niets, en er is geen weg terug.
+
+    Dit bestond wel voor planningen (`PlanService._ruim_dode_runs_op`) maar niet
+    voor een handmatig gestart ticket — dezelfde blinde vlek als bij het kiezen
+    van een werker. Op 13-09-2026 stonden er drie zulke runs: 23 minuten
+    "running", nul stappen, containers op 0,09% CPU.
+
+    Het respijt is er voor de seconde tussen het aanmaken van de rij en het
+    registreren van de taak; zonder dat zou deze opruiming een run kunnen
+    afschieten die net begint.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    grens = (datetime.now(timezone.utc) - timedelta(seconds=max(10, respijt_seconden))).isoformat()
+    opgeruimd = 0
+    for r in db.query(BackgroundRun).filter(BackgroundRun.status == "running").all():
+        if (r.started_at or "") > grens:
+            continue          # net begonnen; de taak kan nog geregistreerd worden
+        if is_active(r.id):
+            continue
+        r.status = "interrupted"
+        r.error = "De run is verdwenen zonder af te ronden"
+        r.finished_at = _now_iso()
+        opgeruimd += 1
+        log.warningx("Dode run opgeruimd", run_id=r.id[:8], gestart=r.started_at)
+    if opgeruimd:
+        db.commit()
+        # Het ticket moet ook los, anders blijft het op "de agent werkt eraan"
+        # staan terwijl er niets werkt.
+        from services.boards.agent_work import geef_tickets_vrij
+        geef_tickets_vrij(db)
+    return opgeruimd
+
+
 def reconcile_on_start(db: Session) -> int:
     """A backend restart orphans any in-flight run's subprocess — the row
     must not claim 'running' forever. Same reasoning as

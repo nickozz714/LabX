@@ -23,6 +23,7 @@ import { boardApi } from "@/lib/boards";
 import { chatApi } from "@/lib/chat";
 import type { BoardDto, ChatEvent, TicketCommentDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
+import { useMelding } from "@/components/Meldingen";
 import { ApiError } from "@/lib/api";
 import { Bot, ExternalLink, MessageSquare, Pencil, Trash2, X } from "lucide-react";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
@@ -134,6 +135,7 @@ export function TicketDrawer({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
+  const melding = useMelding();
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [comments, setComments] = useState<TicketCommentDto[]>([]);
   const [draftInternal, setDraftInternal] = useState(false);
@@ -419,9 +421,39 @@ export function TicketDrawer({
               className="text-xs"
               disabled={busy || !board.lab_id || ticket.agent_state === "running"}
               onClick={runAgent}
+              busyLabel="Starten…"
             >
               {ticket.agent_state === "running" ? "Agent werkt…" : "Agent starten"}
             </Button>
+            {/* Zonder deze knop was een vastgelopen run een doodlopende weg:
+                "Agent starten" blijft uitgeschakeld zolang agent_state op
+                "running" staat, en er was geen tweede knop. Werkt ook als de
+                run alleen nog in de database bestaat — dan geeft hij het ticket
+                alsnog vrij. */}
+            {ticket.agent_state === "running" && (
+              <Button
+                variant="danger"
+                className="text-xs"
+                busyLabel="Stoppen…"
+                meldFouten={false}
+                onClick={async () => {
+                  try {
+                    const uit = await boardApi.cancelAgent(board.id, ticket.id);
+                    await load();
+                    onChanged();
+                    melding.ok(uit.afgebroken ? "Agent gestopt" : "Ticket vrijgegeven",
+                               uit.afgebroken ? undefined
+                                 : "De run was al gestopt; het ticket stond alleen nog op "
+                                   + "'de agent werkt eraan'.");
+                  } catch (err) {
+                    melding.fout("Stoppen mislukt",
+                                 err instanceof Error ? err.message : String(err));
+                  }
+                }}
+              >
+                Agent stoppen
+              </Button>
+            )}
             <BijlageKnop
               labId={board.lab_id}
               dir={ticketBijlageMap(ticket.key)}

@@ -38,4 +38,10 @@ export const chatApi = {
     streamSSE(`/chat/background-runs/${runId}/stream`, {}, onEvent as any, signal),
   cancelBackgroundRun: (runId: string) =>
     api.post<{ ok: boolean; cancelled: boolean }>(`/chat/background-runs/${runId}/cancel`),
+  /** De lopende beurt in dit gesprek afbreken. Per thread en niet per run-id,
+   *  want dat is wat het scherm weet: je ziet een antwoord binnendruppelen,
+   *  geen identificatie. */
+  cancelTurn: (threadId: string) =>
+    api.post<{ ok: boolean; afgebroken: boolean; runs: number; detail: string }>(
+      `/chat/threads/${threadId}/cancel`),
 };

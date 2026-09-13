@@ -289,6 +289,31 @@ export function ChatPage() {
       `"${value || "(standaard)"}" is nu de standaard-${kind === "model" ? "model" : "effort"} voor nieuwe chats.`);
   }
 
+  /** De lopende beurt afbreken.
+   *
+   *  Het afbreken van de STREAM (abortRef) stopte alleen het meekijken — de
+   *  beurt draait server-side door als foreground-run. Daarom eerst de run
+   *  afbreken, dan pas de stream loslaten. Heet de run alleen nog in de
+   *  database "running", dan wordt hij afgesloten; anders strandt elke
+   *  volgende beurt op "er loopt al een beurt in dit gesprek".
+   */
+  async function stopBeurt() {
+    if (!activeThread) return;
+    const threadId = activeThread.id;
+    try {
+      const uit = await chatApi.cancelTurn(threadId);
+      abortRef.current?.abort();
+      setStreaming(false);
+      setLiveSteps([]);
+      setLiveAnswer("");
+      const msgs = await chatApi.listMessages(threadId);
+      setMessages((prev) => mergeServerMessages(prev, msgs));
+      melding.ok(uit.afgebroken ? "Beurt afgebroken" : "Gesprek vrijgegeven", uit.detail);
+    } catch (err) {
+      melding.fout("Stoppen mislukt", err instanceof Error ? err.message : String(err));
+    }
+  }
+
   function pushLocalNotice(threadId: string, text: string) {
     setMessages((prev) => [
       ...prev,
@@ -628,6 +653,17 @@ export function ChatPage() {
                   ))}
                   {liveAnswer && <div className="markdown-body mt-1"><ReactMarkdown remarkPlugins={[remarkGfm]}>{liveAnswer}</ReactMarkdown></div>}
                   {!liveAnswer && <div className="text-muted-foreground">Bezig…</div>}
+                  {/* Het afbreken van de STREAM stopte alleen het meekijken —
+                      de beurt draait server-side door. Deze knop breekt de run
+                      zelf af, en sluit hem af als hij alleen nog in de database
+                      "running" heet; anders strandt elke volgende beurt op
+                      "er loopt al een beurt in dit gesprek". */}
+                  <div className="mt-2">
+                    <Button variant="danger" className="text-xs" busyLabel="Stoppen…"
+                            meldFouten={false} onClick={stopBeurt}>
+                      Stoppen
+                    </Button>
+                  </div>
                 </Card>
               )}
             </div>
@@ -651,9 +687,19 @@ export function ChatPage() {
                   className="resize-none"
                 />
                 <div className="flex flex-col justify-end gap-1">
-                  <Button onClick={send} disabled={inputDisabled || (!input.trim() && !bijlagen.length)}>
-                    Stuur
-                  </Button>
+                  {/* Tijdens het streamen staat "Stuur" uit — dan hoort hier
+                      de uitweg te zitten, op de plek waar je hem zoekt en
+                      zonder dat je naar beneden hoeft te scrollen. */}
+                  {streaming ? (
+                    <Button variant="danger" busyLabel="Stoppen…" meldFouten={false}
+                            onClick={stopBeurt}>
+                      Stoppen
+                    </Button>
+                  ) : (
+                    <Button onClick={send} disabled={inputDisabled || (!input.trim() && !bijlagen.length)}>
+                      Stuur
+                    </Button>
+                  )}
                   <Button
                     variant="secondary"
                     onClick={sendBackground}

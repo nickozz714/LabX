@@ -28,6 +28,28 @@ log = get_logger(__name__)
 scheduler = DynamicScheduler(tick_seconds=30)
 
 
+async def _dode_runs_tick() -> None:
+    """Runs die "running" heten terwijl er niets meer draait, en de tickets die
+    daardoor vastzitten.
+
+    Draaide alleen bij het OPSTARTEN (reconcile_on_start) en voor planningen.
+    Een handmatig gestarte run die tussentijds zijn taak verloor, bleef daardoor
+    eeuwig staan — inclusief het ticket, waarop "Agent starten" dan uitgeschakeld
+    blijft zonder dat er iets gebeurt.
+    """
+    from services.agent.background_runs import ruim_dode_runs_op
+
+    db = SessionLocal()
+    try:
+        aantal = ruim_dode_runs_op(db)
+        if aantal:
+            log.infox("Dode runs opgeruimd", aantal=aantal)
+    except Exception as exc:  # noqa: BLE001 — een opruiming mag nooit de scheduler slopen
+        log.warningx("Opruimen van dode runs mislukt", error=str(exc)[:200])
+    finally:
+        db.close()
+
+
 async def _lab_reaper_tick() -> None:
     db = SessionLocal()
     try:
@@ -156,6 +178,9 @@ async def lifespan(_app: FastAPI):
     scheduler.register(
         name="lab_reaper", interval_seconds=settings.LAB_REAPER_INTERVAL_SECONDS,
         fn=_lab_reaper_tick, run_immediately=False,
+    )
+    scheduler.register(
+        name="dode_runs", interval_seconds=120, fn=_dode_runs_tick, run_immediately=False,
     )
     from services.scheduling.cron import tick as _cron_tick
     scheduler.register(name="schedule_cron", interval_seconds=30, fn=_cron_tick, run_immediately=True)

@@ -493,6 +493,80 @@ def _meld_over_ticket(ticket: Ticket, board: Optional[Board], run, status: str) 
              ticket.agent_last_error or f"Run eindigde als '{status}'.", context)
 
 
+def geef_tickets_vrij(db: Session) -> int:
+    """Tickets loskoppelen waarvan de run niet meer loopt.
+
+    Het spiegelbeeld van `background_runs.ruim_dode_runs_op`: die sluit de rij
+    af, deze zet het ticket weer vrij. Zonder dit blijft "Agent starten"
+    uitgeschakeld op een ticket waar niets aan gebeurt — en dat is een
+    doodlopende weg, want er is geen andere knop.
+    """
+    from models.background_run import BackgroundRun
+
+    vrij = 0
+    for t in db.query(Ticket).filter(Ticket.agent_state == "running").all():
+        run = db.get(BackgroundRun, t.agent_run_id) if t.agent_run_id else None
+        if run is not None and run.status in ("running", "queued"):
+            continue
+        t.agent_state = "failed" if (run is None or run.status != "completed") else "done"
+        t.agent_last_error = (run.error if run is not None else None) or \
+            "De run bij dit ticket is verdwenen"
+        t.updated_at = _now_iso()
+        vrij += 1
+    if vrij:
+        db.commit()
+    return vrij
+
+
+async def cancel_ticket_run(db: Session, ticket_id: int) -> Dict[str, Any]:
+    """De agent van dit ticket stoppen.
+
+    Werkt in twee situaties, en dat is de hele reden dat hij bestaat: een run
+    die ECHT draait wordt afgebroken, en een run die alleen nog in de database
+    "running" heet wordt afgesloten. Dat tweede geval was onbereikbaar — er was
+    geen knop en de opruiming keek alleen naar planningen — en dan staat een
+    ticket voorgoed op "de agent werkt eraan" terwijl er niets werkt.
+    """
+    from models.background_run import BackgroundRun
+    from services.agent import background_runs
+
+    svc = BoardService(db)
+    ticket = svc.get_ticket(ticket_id)
+    run_id = ticket.agent_run_id
+    afgebroken = bool(run_id) and background_runs.cancel(run_id)
+
+    if run_id:
+        run = db.get(BackgroundRun, run_id)
+        if run is not None and run.status in ("running", "queued"):
+            run.status = "cancelled" if afgebroken else "interrupted"
+            run.error = ("Afgebroken vanaf het ticket" if afgebroken
+                         else "De run was al verdwenen; het ticket is vrijgegeven")
+            run.finished_at = _now_iso()
+
+    ticket.agent_state = "failed"
+    ticket.agent_last_error = ("Afgebroken" if afgebroken
+                               else "De run was al gestopt; ticket vrijgegeven")
+    ticket.updated_at = _now_iso()
+
+    # Hoort dit ticket bij een lopende planning, dan moet dat item ook los —
+    # anders blijft de planning wachten op iets dat niet meer komt.
+    from models.plan import TicketPlanItem
+
+    items = (db.query(TicketPlanItem)
+             .filter(TicketPlanItem.ticket_id == ticket_id,
+                     TicketPlanItem.state == "running").all())
+    for it in items:
+        it.state = "failed"
+        it.error = "Afgebroken vanaf het ticket"
+        it.finished_at = _now_iso()
+    db.commit()
+
+    log.infox("Agent-run afgebroken vanaf ticket", ticket=ticket.key,
+              run_id=(run_id or "")[:8], liep_nog=afgebroken)
+    return {"ok": True, "afgebroken": afgebroken, "run_id": run_id,
+            "planning_items": len(items)}
+
+
 def reconcile_on_start(db: Session) -> int:
     """Na een herstart zijn alle in-flight runs weg (background_runs zet ze op
     'interrupted'), maar het ticket claimt nog 'running'. Zonder deze opruiming

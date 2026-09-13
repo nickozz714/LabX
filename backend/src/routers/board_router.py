@@ -373,6 +373,22 @@ async def start_agent_run(board_id: int, ticket_id: int, payload: Optional[Dict[
                                   trigger="handmatig")
 
 
+@router.post("/{board_id}/tickets/{ticket_id}/agent/cancel")
+async def cancel_agent_run(board_id: int, ticket_id: int, db: Session = Depends(get_db)):
+    """Stop de agent van dit ticket.
+
+    Bestond niet, en dat was een doodlopende weg: zolang `agent_state` op
+    "running" staat is "Agent starten" uitgeschakeld, en er was geen tweede
+    knop. Een run die in de database bleef hangen — omdat zijn taak sneuvelde
+    zonder de rij af te sluiten — blokkeerde het ticket dus voorgoed.
+    """
+    from services.boards.agent_work import cancel_ticket_run
+
+    svc = _svc(db)
+    _ticket_of_board(svc, board_id, ticket_id)
+    return await cancel_ticket_run(db, ticket_id)
+
+
 @router.post("/{board_id}/pick-up")
 async def pick_up(board_id: int, payload: Optional[Dict[str, Any]] = None,
             db: Session = Depends(get_db)):

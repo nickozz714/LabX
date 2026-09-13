@@ -270,6 +270,54 @@ def cancel_background_run(run_id: str, db: Session = Depends(get_db)):
     return {"ok": True, "cancelled": ok}
 
 
+@router.post("/threads/{thread_id}/cancel")
+def cancel_turn(thread_id: str, db: Session = Depends(get_db)):
+    """De lopende beurt in dit gesprek afbreken.
+
+    Per THREAD en niet per run-id, want dat is wat het scherm weet: je ziet een
+    antwoord binnendruppelen, niet een identificatie. De beurt draait
+    server-side als foreground-run, dus hier valt echt iets af te breken — het
+    sluiten van de stream deed dat niet: dan stopte alleen het meekijken en
+    werkte de agent vrolijk door.
+
+    Ook bruikbaar als de run alleen nog in de database "running" heet: dan
+    wordt de rij afgesloten. Anders blijft elke volgende poging stranden op
+    "er loopt al een beurt in dit gesprek".
+    """
+    from models.background_run import BackgroundRun
+    from services.agent import background_runs
+
+    t = db.get(Thread, thread_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Thread niet gevonden")
+
+    lopend = (db.query(BackgroundRun)
+              .filter(BackgroundRun.thread_id == thread_id,
+                      BackgroundRun.status.in_(("running", "queued")))
+              .order_by(BackgroundRun.started_at.desc()).all())
+    if not lopend:
+        return {"ok": True, "afgebroken": False, "runs": 0,
+                "detail": "Er liep niets in dit gesprek."}
+
+    afgebroken = 0
+    opgeruimd = 0
+    for r in lopend:
+        if background_runs.cancel(r.id):
+            afgebroken += 1
+            continue
+        # Geen levende taak meer: de rij afsluiten, anders blijft hij de
+        # volgende beurt blokkeren.
+        r.status = "interrupted"
+        r.error = "De run was al gestopt; afgesloten vanuit de chat"
+        r.finished_at = _now_iso()
+        opgeruimd += 1
+    db.commit()
+    return {"ok": True, "afgebroken": afgebroken > 0, "runs": len(lopend),
+            "opgeruimd": opgeruimd,
+            "detail": (f"{afgebroken} beurt(en) afgebroken" if afgebroken else
+                       f"{opgeruimd} vastgelopen beurt(en) afgesloten")}
+
+
 @router.post("/threads/{thread_id}/ask")
 async def ask(thread_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     """SSE stream of {kind: session|thinking|tool|delta|answer} events. The

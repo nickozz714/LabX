@@ -78,6 +78,11 @@ export const boardApi = {
   runAgent: (boardId: number, ticketId: number, instruction?: string, attachments?: Bijlage[]) =>
     api.post<AgentRunStart>(`/boards/${boardId}/tickets/${ticketId}/agent-run`,
                             { instruction, attachments }),
+  /** De agent van dit ticket stoppen. Werkt ook als de run alleen nog in de
+   *  database "running" heet — dan geeft hij het ticket alsnog vrij. */
+  cancelAgent: (boardId: number, ticketId: number) =>
+    api.post<{ ok: boolean; afgebroken: boolean; run_id: string | null; planning_items: number }>(
+      `/boards/${boardId}/tickets/${ticketId}/agent/cancel`, {}),
   pickUp: (boardId: number, payload?: { column?: string; max_tickets?: number }) =>
     api.post<{ started: AgentRunStart[]; count: number }>(`/boards/${boardId}/pick-up`, payload || {}),
 
