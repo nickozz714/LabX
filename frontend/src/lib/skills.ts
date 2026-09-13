@@ -29,6 +29,7 @@ export const mcpServerApi = {
   ),
   catalog: () => api.get<CatalogEntry[]>("/mcp-servers/catalog"),
   installFromCatalog: (key: string) => api.post<MCPServerDto>(`/mcp-servers/catalog/${key}/install`),
+  gereedheid: (id: number) => api.get<Gereedheid>(`/mcp-servers/${id}/gereedheid`),
 };
 
 export interface CatalogEntry {
@@ -42,5 +43,22 @@ export interface CatalogEntry {
   suggested_location: "host" | "lab";
   suggested_args?: string;
   provenance: "control" | "data";
+  /** Voor welke API een gekoppeld Azure-profiel een token moet halen. */
+  token_scope?: string | null;
+  needs_auth?: boolean;
+  /** Wat er eenmalig buiten LabX geregeld moet worden. Stond al in de
+   *  catalogus op de server, maar werd hier nooit uitgelezen — en dus nergens
+   *  getoond. Dat was precies de klacht: "ik zie nergens wat ik moet doen". */
+  setup?: { titel: string; stappen: string[] } | null;
   installed: boolean;
 }
+
+/** Wat er nog moet gebeuren voordat een server werkt. */
+export type Gereedheid = {
+  server_id: number;
+  slug: string;
+  token_scope: string | null;
+  klaar: boolean;
+  punten: { ok: boolean; titel: string; uitleg: string; actie: string | null }[];
+  setup?: { titel: string; stappen: string[] } | null;
+};

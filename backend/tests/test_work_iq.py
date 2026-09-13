@@ -177,3 +177,50 @@ def test_een_sync_zet_verdwenen_tools_uit():
     assert "Tool.remote_name.notin_(seen)" in bron, "verdwenen tools moeten uit"
     assert "row.is_enabled = False" in bron, "uitzetten, niet verwijderen"
     assert "if seen:" in bron, "een lege lijst is een storing, geen lege server"
+
+
+# ── het pad ernaartoe (wat er ontbrak) ──────────────────────────────────────
+
+def test_een_taskgroup_fout_wordt_leesbaar():
+    """Wat er in de UI stond toen Work IQ niet werkte: "unhandled errors in a
+    TaskGroup (1 sub-exception)". De MCP-client draait zijn verbinding in een
+    TaskGroup en die verpakt élke fout in een groep; de echte oorzaak — een
+    401, een DNS-fout, een proces dat niet start — zit een laag dieper. Zonder
+    uitpakken is de melding letterlijk onbruikbaar."""
+    from services.mcp.mcp_client import _leesbare_fout
+
+    groep = ExceptionGroup("unhandled errors in a TaskGroup",
+                           [RuntimeError("HTTP 401 Unauthorized")])
+    uit = _leesbare_fout(groep)
+    assert "401" in uit
+    assert "TaskGroup" not in uit
+
+
+def test_geneste_groepen_worden_ook_uitgepakt():
+    from services.mcp.mcp_client import _leesbare_fout
+
+    binnenin = ExceptionGroup("inner", [ValueError("scope klopt niet")])
+    uit = _leesbare_fout(ExceptionGroup("outer", [binnenin]))
+    assert "scope klopt niet" in uit
+
+
+def test_een_profiel_dat_niet_past_zegt_dat():
+    """Het echte geval: een msal_bundle-profiel gekoppeld aan Work IQ. Dat gaf
+    stilletjes GEEN headers terug — de aanroep ging zonder Authorization de
+    deur uit en kwam terug als 401. Zwijgen is hier het slechtste antwoord: de
+    gebruiker kan dit zelf oplossen zodra hij weet wát er mis is."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from services.azure.azure_mcp_auth import ProfielPastNiet, bearer_header_for_profile
+
+    profiel = SimpleNamespace(kind="msal_bundle", name="Beeminds", secret_encrypted=None)
+    try:
+        asyncio.run(bearer_header_for_profile(profiel, scope=WIQ, db=None))
+    except ProfielPastNiet as exc:
+        assert "Beeminds" in str(exc)
+        assert "Entra-app" in str(exc), "zeg ook wat het WEL moet zijn"
+    except Exception as exc:  # noqa: BLE001
+        raise AssertionError(f"verkeerde soort fout: {type(exc).__name__}: {exc}")
+    else:
+        raise AssertionError("een msal_bundle hoort hier te weigeren, niet stil te blijven")

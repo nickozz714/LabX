@@ -13,6 +13,8 @@ import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea, Toggle 
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { ApiError } from "@/lib/api";
 import { useMelding } from "@/components/Meldingen";
+import { ServerGereedheid } from "@/components/ServerGereedheid";
+import { useNavigate } from "react-router-dom";
 
 type Section = "skills" | "tools" | "mcp";
 
@@ -50,6 +52,7 @@ function McpSection() {
   const [editingConnection, setEditingConnection] = useState<MCPServerDto | null>(null);
 
   const melding = useMelding();
+  const navigate = useNavigate();
 
   // Geeft een belofte terug, zodat een actie kan WACHTEN tot het scherm
   // bijgewerkt is voordat hij zijn bevestiging toont. Anders meldt hij
@@ -113,6 +116,23 @@ function McpSection() {
                   </Badge>
                 </div>
                 <p className="mb-2 text-xs text-muted-foreground">{c.description}</p>
+                {/* Deze stonden al in de catalogus op de server en werden hier
+                    nooit uitgelezen — precies de reden dat je nergens zag wat
+                    je moest doen. Vóór het installeren, want het is nogal
+                    relevant dat er eerst iets in Entra moet gebeuren. */}
+                {c.setup && (
+                  <details className="mb-2 rounded-md border border-border p-2 text-xs">
+                    <summary className="cursor-pointer font-medium">{c.setup.titel}</summary>
+                    <ol className="mt-1 space-y-1">
+                      {c.setup.stappen.map((stap, i) => (
+                        <li key={i} className="flex gap-1.5">
+                          <span className="font-mono text-muted-foreground">{i + 1}.</span>
+                          <span className="text-muted-foreground">{stap}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
                 <code className="mb-2 block truncate text-xs text-muted-foreground">{c.kind === "http" ? c.base_url : c.package}</code>
                 <Button
                   variant={c.installed ? "secondary" : "primary"}
@@ -199,6 +219,7 @@ function McpSection() {
                     </Button>
                   </div>
                 </div>
+                <ServerGereedheid serverId={s.id} onNaarProfielen={() => navigate("/azure-profiles")} />
                 {s.location === "host" && (
                   <div className="mt-2 flex items-center gap-2 border-t border-border pt-2 text-xs">
                     <span className="font-semibold text-muted-foreground">Bruikbaar in:</span>
@@ -397,6 +418,22 @@ function EditAuthModal({ server, onClose, onSaved }: { server: MCPServerDto; onC
 
   return (
     <Modal open onClose={onClose} title={`Authenticatie — ${server.name}`}>
+      {/* Voor een server die zijn token bij een API haalt is een geplakt token
+          niet alleen omslachtig maar nutteloos: hij verloopt binnen een uur en
+          kan zichzelf niet verversen. Dat hoort hier te staan en niet in een
+          handleiding — dit is het scherm waar je belandt als je denkt dat je
+          hier iets moet invullen. */}
+      {server.token_scope && (
+        <div className="mb-3 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs">
+          <span className="font-medium">Voor deze server heb je hier waarschijnlijk niets nodig.</span>
+          <p className="mt-1 text-muted-foreground">
+            Hij haalt zijn token bij <code>{server.token_scope}</code> via een gekoppeld
+            Azure-profiel — zie “Verbinding bewerken”. Een token dat je hier plakt verloopt
+            binnen een uur en kan zichzelf niet verversen; gebruik dit alleen om tijdelijk
+            iets te proberen.
+          </p>
+        </div>
+      )}
       <div className="space-y-4">
         <div>
           <p className="mb-1 text-xs font-semibold text-muted-foreground">Voor aanroepen (lab/sessie)</p>
@@ -483,6 +520,7 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
             <AzureProfilePicker
               value={azureProfileId}
               onChange={setAzureProfileId}
+              tokenScope={tokenScope.trim() || server.token_scope}
               label="Standaard Azure-profiel (voor Microsoft-servers zoals Azure MCP/Fabric — mint of ververst een echte token/az-sessie i.p.v. een statisch token; wordt overruled door het Azure-profiel van het actieve lab als een chat aan een lab hangt)"
             />
             <p className="mt-1 text-xs text-muted-foreground">

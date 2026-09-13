@@ -221,3 +221,86 @@ def _lab_container_for(db: Session, server: MCPServer, lab_id: Optional[str]) ->
         if slug in {str(x).lower() for x in (lab.allowed_mcp or [])}:
             return lab.container_id
     return None
+
+
+@router.get("/{server_id}/gereedheid")
+def gereedheid(server_id: int, db: Session = Depends(get_db)):
+    """Wat moet er nog gebeuren voordat deze server werkt?
+
+    Dit bestaat omdat de onderdelen er wel waren maar het PAD niet. Work IQ
+    installeren gaf een server in de lijst, "Auth instellen" bood alleen een
+    statisch token (waar die API niets mee doet), de Azure-profielkeuze zat
+    verstopt achter "Verbinding bewerken", en de zes stappen die je in Entra
+    moet zetten stonden in de catalogus zonder ooit getoond te worden. Wie dat
+    niet van tevoren wist, kreeg als enige signaal een mislukte sync.
+
+    Geeft per server terug wat er klopt, wat er ontbreekt, en wat de volgende
+    stap is — in die volgorde, zodat de UI het gewoon kan aflopen.
+    """
+    from models.azure_profile import AzureProfile
+    from models.tool import Tool
+    from services.mcp.catalog import find
+
+    s = db.get(MCPServer, server_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="MCP-server niet gevonden")
+
+    entry = find(s.slug) or {}
+    punten: list[Dict[str, Any]] = []
+    scope = (s.token_scope or "").strip()
+
+    if scope:
+        profiel = db.get(AzureProfile, s.azure_profile_id) if s.azure_profile_id else None
+        if profiel is None:
+            punten.append({
+                "ok": False, "titel": "Geen Azure-profiel gekoppeld",
+                "uitleg": (f"Deze server haalt zijn token bij {scope}. Koppel een Azure-profiel "
+                           "van het type 'Entra-app' onder 'Verbinding bewerken'."),
+                "actie": "azure-profiel"})
+        elif profiel.kind != "entra_app":
+            punten.append({
+                "ok": False, "titel": f"Profiel '{profiel.name}' past niet bij deze server",
+                "uitleg": (f"Het is van het type '{profiel.kind}'. Een az-CLI-sessie geeft alleen "
+                           "tokens aan de Azure CLI zelf, en Microsoft autoriseert die niet voor "
+                           f"{scope} (AADSTS65002). Maak een profiel van het type 'Entra-app' aan "
+                           "en koppel dat."),
+                "actie": "azure-profiel"})
+        else:
+            ingelogd = False
+            try:
+                import json as _json
+
+                from utils.crypto import decrypt
+                ingelogd = bool(_json.loads(decrypt(profiel.secret_encrypted or "")).get("refresh_token"))
+            except Exception:  # noqa: BLE001
+                ingelogd = False
+            punten.append({
+                "ok": ingelogd,
+                "titel": (f"Profiel '{profiel.name}' is ingelogd" if ingelogd
+                          else f"Profiel '{profiel.name}' is nog niet ingelogd"),
+                "uitleg": ("" if ingelogd else
+                           "Ga naar Azure-profielen en klik op 'Inloggen' bij dit profiel; je "
+                           "voert dan een code in de browser in."),
+                "actie": None if ingelogd else "azure-profiel"})
+
+    if s.last_sync_status == "error":
+        punten.append({"ok": False, "titel": "De laatste sync is mislukt",
+                       "uitleg": s.last_sync_error or "", "actie": "sync"})
+    elif s.last_sync_status == "ok":
+        aantal = db.query(Tool).filter(Tool.mcp_server_id == s.id,
+                                       Tool.is_enabled == True).count()  # noqa: E712
+        punten.append({"ok": aantal > 0,
+                       "titel": (f"{aantal} tools opgehaald" if aantal
+                                 else "Gesynct, maar geen tools gevonden"),
+                       "uitleg": "", "actie": None if aantal else "sync"})
+    else:
+        punten.append({"ok": False, "titel": "Nog niet gesynchroniseerd",
+                       "uitleg": "Klik op 'Sync tools' om op te halen wat deze server aanbiedt.",
+                       "actie": "sync"})
+
+    return {"server_id": s.id, "slug": s.slug, "token_scope": scope or None,
+            "klaar": all(p["ok"] for p in punten),
+            "punten": punten,
+            # De stappen uit de catalogus. Die stonden er al; ze werden alleen
+            # nooit getoond.
+            "setup": entry.get("setup")}

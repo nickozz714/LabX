@@ -21,7 +21,7 @@ official `mcp` SDK (a dependency of fastmcp). Two locations (the fix for
 from __future__ import annotations
 
 import shlex
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from component_logging import get_logger
 from models.mcp_server import MCPServer
@@ -71,6 +71,11 @@ async def _resolve_auth_headers(server: MCPServer, *, db: Optional[Any] = None,
         profile = resolve_profile(db, server, lab_id, purpose=purpose)
         if profile is not None:
             scope = (server.token_scope or "").strip() or "https://management.azure.com/.default"
+            # ProfielPastNiet NIET vangen: een profiel dat deze server niet kan
+            # bedienen is een instelfout die de gebruiker zelf oplost, en die
+            # moet hij dus te lezen krijgen. Terugvallen op het statische token
+            # zou hier betekenen: zonder Authorization de deur uit, een 401
+            # terug, en een onbegrijpelijke foutmelding in de UI.
             headers = await bearer_header_for_profile(profile, scope=scope, db=db)
             if headers:
                 return headers
@@ -190,6 +195,33 @@ async def _stdio_env(server: MCPServer, *, db: Optional[Any] = None,
     if not overrides:
         return None
     return {**os.environ, **overrides}
+
+
+def _leesbare_fout(exc: BaseException) -> str:
+    """De echte oorzaak uit een ExceptionGroup peuteren.
+
+    De MCP-client draait zijn verbinding in een TaskGroup, en die verpakt elke
+    fout in een groep. Wat er dan in de UI belandde was letterlijk "unhandled
+    errors in a TaskGroup (1 sub-exception)" — een melding die niets zegt over
+    wat er mis is. De onderliggende fout (een 401, een DNS-fout, een proces dat
+    niet start) zit één laag dieper en is precies wat je moet weten.
+    """
+    gezien: List[str] = []
+
+    def _plat(e: BaseException, diepte: int = 0) -> None:
+        if diepte > 4:
+            return
+        sub = getattr(e, "exceptions", None)
+        if sub:
+            for s in sub:
+                _plat(s, diepte + 1)
+            return
+        tekst = (str(e) or type(e).__name__).strip()
+        if tekst and tekst not in gezien:
+            gezien.append(f"{type(e).__name__}: {tekst}" if str(e) else type(e).__name__)
+
+    _plat(exc)
+    return " | ".join(gezien) or (str(exc) or type(exc).__name__)
 
 
 async def sync_tools(server: MCPServer, *,
@@ -314,9 +346,9 @@ async def sync_tools(server: MCPServer, *,
     except Exception as exc:  # noqa: BLE001
         own_server = db.get(MCPServer, server.id)
         own_server.last_sync_status = "error"
-        own_server.last_sync_error = str(exc)[:2000]
+        own_server.last_sync_error = _leesbare_fout(exc)[:2000]
         db.commit()
-        log.warningx("MCP-server sync mislukt", server=server.slug, error=str(exc)[:300])
-        return {"ok": False, "error": str(exc)[:500]}
+        log.warningx("MCP-server sync mislukt", server=server.slug, error=_leesbare_fout(exc)[:300])
+        return {"ok": False, "error": _leesbare_fout(exc)[:500]}
     finally:
         db.close()

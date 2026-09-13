@@ -38,6 +38,18 @@ from models.mcp_server import MCPServer
 
 log = get_logger(__name__)
 
+
+class ProfielPastNiet(RuntimeError):
+    """Dit profiel kan voor deze server geen token maken.
+
+    Een aparte soort, want dit is geen storing maar een verkeerde combinatie —
+    en de gebruiker kan hem zelf oplossen zodra hij weet wélke. Tot deze fout
+    bestond, gaf een msal_bundle-profiel op een http-server stilletjes GEEN
+    headers terug: de aanroep ging zonder Authorization de deur uit, kwam terug
+    als 401, en dat werd in de UI "unhandled errors in a TaskGroup". Zwijgen is
+    hier het slechtste antwoord.
+    """
+
 _PROFILE_DIR_ROOT = Path(os.environ.get("LABX_DATA_DIR", "/data")) / "azure_mcp_profiles"
 
 
@@ -163,7 +175,8 @@ async def bearer_header_for_profile(profile: AzureProfile, *,
             log.warningx("azure_mcp_auth: kon geen SP-token minten voor http/sse-mcp", profile=profile.name,
                          error=str(exc)[:200])
             return {}
-    log.warningx("azure_mcp_auth: 'msal_bundle'-profiel kan niet gemint worden tot een Bearer-header voor "
-                "een http/sse-server — gebruik een service_principal-profiel of een stdio-server.",
-                profile=profile.name)
-    return {}
+    raise ProfielPastNiet(
+        f"Het profiel '{profile.name}' is van het type '{profile.kind}' en kan geen token maken "
+        f"voor {scope}. Een az-CLI-sessie (msal_bundle) geeft alleen tokens aan de Azure CLI zelf. "
+        "Kies een profiel van het type 'Entra-app' (device-code-login op je eigen "
+        "app-registratie), of een service principal als de API application-machtigingen kent.")
