@@ -7,11 +7,11 @@
  * banner is the direct fix for issue 1 ("geen Docker aanwezig").
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { dockerStatus, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
+import { dockerStatus, downloadLabFile, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { RefreshCw } from "lucide-react";
+import { Download, Loader2, RefreshCw } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
@@ -1182,6 +1182,10 @@ function PublishPanel({ lab }: { lab: Lab }) {
  */
 function FileBrowser({ lab }: { lab: Lab }) {
   const [path, setPath] = useState("/workspace");
+  // `melding` is hieronder al een lokale statusregel in dit paneel; de
+  // meldingenbalk krijgt daarom een eigen naam.
+  const balk = useMelding();
+  const [bezigMet, setBezigMet] = useState<string | null>(null);
   const [entries, setEntries] = useState<LabFileEntry[]>([]);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1257,6 +1261,26 @@ function FileBrowser({ lab }: { lab: Lab }) {
             {e.bytes !== null && !e.is_dir && (
               <span className="ml-auto text-[11px] text-muted-foreground">{leesbareMaat(e.bytes)}</span>
             )}
+            {/* Klikken op de regel opent een VOORBEELD (tekst, afgekapt op
+                200 kB). Deze knop haalt het bestand zelf op — ruwe bytes, dus
+                ook een parquet of een zip. Een map komt er als tar.gz uit. */}
+            <button
+              title={e.is_dir ? "Map downloaden als tar.gz" : "Bestand downloaden"}
+              className={`shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground
+                ${e.bytes === null || e.is_dir ? "ml-auto" : ""}`}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setBezigMet(e.name);
+                downloadLabFile(lab.id, `${path}/${e.name}`)
+                  .then((naam) => balk.ok(`${naam} gedownload`))
+                  .catch((err) => balk.fout("Downloaden mislukt", String(err?.message || err)))
+                  .finally(() => setBezigMet(null));
+              }}
+            >
+              {bezigMet === e.name
+                ? <Loader2 size={13} className="animate-spin" />
+                : <Download size={13} />}
+            </button>
           </li>
         ))}
         {entries.length === 0 && (

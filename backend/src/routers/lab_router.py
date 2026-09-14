@@ -441,6 +441,30 @@ async def read_lab_file(lab_id: str, path: str = Query(...), db: Session = Depen
     return await _service(db).read_file(lab_id, path)
 
 
+@router.get("/{lab_id}/download")
+async def download_lab_file(lab_id: str, path: str = Query(...),
+                            worker_id: Optional[int] = Query(default=None),
+                            db: Session = Depends(get_db)):
+    """Een bestand of map uit het lab downloaden.
+
+    Apart van `/file`, en met reden: die geeft TEKST terug binnen een
+    JSON-antwoord, afgekapt op 200 kB. Prima om even in een logbestand te
+    kijken, onbruikbaar om een parquet of een zip op te halen — die overleven
+    de UTF-8-decodering niet. Hier gaan de ruwe bytes rechtstreeks van de
+    container naar de browser, zonder ooit volledig in het geheugen te staan.
+
+    Een map komt er als tar.gz uit.
+    """
+    from fastapi.responses import StreamingResponse
+
+    uit = await _service(db).download(lab_id, path, worker_id=worker_id)
+    # Aanhalingstekens uit de bestandsnaam: die zouden de header breken.
+    veilig = uit["filename"].replace('"', "").replace("\\", "")
+    return StreamingResponse(
+        uit["stream"], media_type=uit["media_type"],
+        headers={"Content-Disposition": f'attachment; filename="{veilig}"'})
+
+
 @router.put("/{lab_id}/file")
 async def write_lab_file(lab_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     path: Optional[str] = payload.get("path")

@@ -1678,6 +1678,47 @@ exec ssh -N \\
             raise HTTPException(status_code=404, detail=result["output"][:300])
         return {"path": target, "content": result["output"], "truncated": result["truncated"]}
 
+    async def download(self, lab_id: str, path: str, *,
+                       worker_id: Optional[int] = None) -> Dict[str, Any]:
+        """Een bestand of map uit het lab halen, als ruwe bytes.
+
+        Bestond niet, en dat was het gat: `read_file` kapt af op 200 kB en
+        stuurt de inhoud als TEKST door JSON. Een parquet, een zip of een
+        afbeelding overleeft die UTF-8-decodering niet, en 200 kB is geen
+        download. Het scherm had dan ook alleen een voorbeeldweergave.
+
+        Een map gaat er als tar.gz uit: één bestand in plaats van een boom die
+        je per stuk moet aanklikken.
+
+        Geeft de generator plus de naam en het type terug; het streamen zelf
+        doet de router, zodat de bytes nooit volledig in het geheugen staan.
+        """
+        p = self.get(lab_id)
+        cid = self._require_running(p, worker_id)
+        target = self._safe_path(path)
+
+        # Bestaat het, en is het een map? `test` is goedkoper dan een `stat` die
+        # we toch moeten ontleden.
+        soort = await self.runtime.exec(
+            cid, ["sh", "-c", 'if [ -d "$1" ]; then echo map; elif [ -f "$1" ]; then echo bestand; '
+                  'else echo weg; fi', "sh", target], timeout=15)
+        wat = (soort["output"] or "").strip()
+        if wat == "weg":
+            raise HTTPException(status_code=404, detail=f"Niet gevonden: {target}")
+
+        naam = target.rsplit("/", 1)[-1] or "workspace"
+        if wat == "map":
+            ouder = target.rsplit("/", 1)[0] or "/"
+            # -C naar de ouder en dan de naam: zo zit de map zelf in het archief
+            # en niet een pad van vier niveaus diep.
+            cmd = ["tar", "-czf", "-", "-C", ouder, naam]
+            return {"stream": self.runtime.stream_out(cid, cmd), "filename": f"{naam}.tar.gz",
+                    "media_type": "application/gzip"}
+
+        self._touch(p)
+        return {"stream": self.runtime.stream_out(cid, ["cat", "--", target]),
+                "filename": naam, "media_type": "application/octet-stream"}
+
     async def write_file(self, lab_id: str, path: str, content: str, *,
                     worker_id: Optional[int] = None) -> Dict[str, Any]:
         p = self.get(lab_id)

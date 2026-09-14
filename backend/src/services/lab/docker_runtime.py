@@ -324,6 +324,41 @@ class DockerRuntime:
                 rows.append({"name": parts[0], "id": parts[1], "state": parts[2]})
         return rows
 
+    async def stream_out(self, container_id: str, cmd: List[str], *,
+                         workdir: str = "/workspace",
+                         chunk: int = 256 * 1024):
+        """Ruwe bytes uit een container, stuk voor stuk.
+
+        `exec()` decodeert naar tekst en kapt af op een maximum — prima voor een
+        commando-uitvoer, onbruikbaar voor een BESTAND. Een parquet of een zip
+        overleeft die decodering niet, en 200 kB is geen download.
+
+        Dit is een async generator: de bytes gaan rechtstreeks van de container
+        naar de HTTP-respons zonder ooit volledig in het geheugen te staan. Een
+        bestand van een gigabyte mag de backend niet omduwen.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            self._bin, "exec", "-w", workdir, container_id, *cmd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=_docker_env(),
+        )
+        try:
+            while True:
+                brok = await proc.stdout.read(chunk)
+                if not brok:
+                    break
+                yield brok
+        finally:
+            # Breekt de client de verbinding af, dan hoort het proces in de
+            # container ook te stoppen — anders blijft er een `cat` op een groot
+            # bestand staan die niemand meer leest.
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            await proc.wait()
+
     async def exec(
         self,
         container_id: str,

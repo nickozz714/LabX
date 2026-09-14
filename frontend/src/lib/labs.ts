@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api, getToken } from "@/lib/api";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
 
 /** Eén regel uit de bestandsbrowser. `bytes` is null voor mappen, en ook voor
@@ -145,6 +145,51 @@ export const labsApi = {
 export function labTerminalUrl(id: string, token: string): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${window.location.host}/api/labs/${id}/terminal?token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Een bestand of map uit het lab naar je eigen machine halen.
+ *
+ * Niet met een gewone `<a href>`: de API wil een Bearer-token en dat stuurt de
+ * browser bij een link niet mee. Dus zelf ophalen, en het resultaat als blob
+ * aanbieden. Een map komt er als tar.gz uit.
+ *
+ * De blob staat wel even volledig in het geheugen van de browser. Dat is de
+ * prijs voor een download die niet om een token in de URL vraagt — en die zou
+ * in serverlogs en je geschiedenis belanden.
+ */
+export async function downloadLabFile(labId: string, path: string): Promise<string> {
+  const token = getToken();
+  const res = await fetch(
+    `/api/labs/${labId}/download?path=${encodeURIComponent(path)}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+  );
+  if (!res.ok) {
+    const tekst = await res.text().catch(() => "");
+    let detail = tekst;
+    try {
+      detail = JSON.parse(tekst).detail || tekst;
+    } catch {
+      /* geen JSON — de tekst zelf is dan het beste wat we hebben */
+    }
+    throw new Error(detail || `Downloaden mislukt (${res.status})`);
+  }
+  // De naam die de server meegeeft; die weet of het een tar.gz geworden is.
+  const cd = res.headers.get("Content-Disposition") || "";
+  const uitKop = /filename="([^"]+)"/.exec(cd)?.[1];
+  const naam = uitKop || path.split("/").pop() || "download";
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = naam;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Pas opruimen nadat de browser de download heeft opgepakt.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return naam;
 }
 
 export function downloadGuardAuditCsvUrl(id: string): string {
