@@ -67,16 +67,34 @@ async def _resolve_auth_headers(server: MCPServer, *, db: Optional[Any] = None,
     `purpose="sync"` neemt de aparte sync-inloggegevens: het ophalen van de
     toolslijst is werk van LabX zelf, niet van een lab of een gebruiker."""
     if db is not None:
-        from services.azure.azure_mcp_auth import bearer_header_for_profile, resolve_profile
+        from services.azure.azure_mcp_auth import (
+            ProfielPastNiet, bearer_header_for_profile, resolve_profile,
+        )
         profile = resolve_profile(db, server, lab_id, purpose=purpose)
         if profile is not None:
             scope = (server.token_scope or "").strip() or "https://management.azure.com/.default"
-            # ProfielPastNiet NIET vangen: een profiel dat deze server niet kan
-            # bedienen is een instelfout die de gebruiker zelf oplost, en die
-            # moet hij dus te lezen krijgen. Terugvallen op het statische token
-            # zou hier betekenen: zonder Authorization de deur uit, een 401
-            # terug, en een onbegrijpelijke foutmelding in de UI.
-            headers = await bearer_header_for_profile(profile, scope=scope, db=db)
+            try:
+                headers = await bearer_header_for_profile(profile, scope=scope, db=db)
+            except ProfielPastNiet:
+                # Hier hangt alles aan de vraag of dit profiel de BEDOELDE
+                # inlogweg is voor deze server.
+                #
+                # Heeft de server een eigen `token_scope`, dan wél: dan is het
+                # profiel het enige pad naar een token, en stil terugvallen op
+                # niets levert een 401 met een onbegrijpelijke melding. Dat was
+                # de reden dat deze fout er kwam (Work IQ met een az-CLI-profiel).
+                #
+                # Heeft de server GEEN token_scope, dan is het profiel meegekomen
+                # via het LAB — en dan is het geen instelfout maar toeval: het lab
+                # heeft nu eenmaal een Azure-identiteit voor heel ander werk. Zo
+                # sneuvelde Nectar in elk lab met een Azure-profiel, terwijl die
+                # server gewoon een statisch token heeft dat prima werkt. Dus:
+                # waarschuwen en doorlopen naar dat token, zoals het altijd ging.
+                if (server.token_scope or "").strip():
+                    raise
+                log.warningx("Azure-profiel past niet bij deze server; statisch token gebruikt",
+                             server=server.slug, profiel=profile.name, soort=profile.kind)
+                headers = {}
             if headers:
                 return headers
     return _static_auth_headers(server, purpose=purpose)

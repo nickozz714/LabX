@@ -224,3 +224,34 @@ def test_een_profiel_dat_niet_past_zegt_dat():
         raise AssertionError(f"verkeerde soort fout: {type(exc).__name__}: {exc}")
     else:
         raise AssertionError("een msal_bundle hoort hier te weigeren, niet stil te blijven")
+
+
+# ── de regressie die dit veroorzaakte ───────────────────────────────────────
+
+def test_een_lab_profiel_sloopt_een_server_met_statisch_token_niet():
+    """Op 15-09-2026 meldde een agent in het Swinkels-lab: "Hive-tools zijn
+    onbereikbaar (profielfout op tokens)". Dat was deze fout, één dag oud.
+
+    Nectar heeft géén token_scope en géén eigen Azure-profiel — alleen een
+    statisch Bearer-token. Maar bij een RUNTIME-aanroep wint het profiel van het
+    LAB, en dat lab heeft een msal_bundle voor heel ander werk. `ProfielPastNiet`
+    sloeg daardoor toe op een server die dat profiel nooit nodig had, en Nectar
+    viel uit in élk lab met een Azure-identiteit.
+
+    Het onderscheid dat het oplost: heeft de server een eigen `token_scope`, dan
+    is het profiel de bedoelde inlogweg en moet de fout zichtbaar zijn. Zonder
+    token_scope is het profiel toevallig meegekomen via het lab — dan
+    waarschuwen en doorlopen naar het statische token, zoals het altijd ging.
+
+    Mijn test van die dag miste het omdat `sync_tools` een andere volgorde
+    gebruikt (het profiel van de SERVER, niet dat van het lab) en dus nooit bij
+    dat profiel uitkomt."""
+    import inspect
+
+    from services.mcp import mcp_client
+
+    bron = inspect.getsource(mcp_client._resolve_auth_headers)
+    assert "except ProfielPastNiet:" in bron
+    assert 'if (server.token_scope or "").strip():' in bron
+    assert "raise" in bron, "mét een eigen scope blijft de fout zichtbaar"
+    assert "headers = {}" in bron, "zonder scope doorlopen naar het statische token"

@@ -148,6 +148,10 @@ export function TicketDrawer({
   const [busy, setBusy] = useState(false);
 
   // Live meelezen met de agent-run van dit ticket.
+  // Aan wélke run dit paneel nu hangt. Een ref en geen state: hij stuurt geen
+  // weergave aan, hij voorkomt dat gebeurtenissen van een verlaten run
+  // binnendruppelen.
+  const gehechtAan = useRef<string | null>(null);
   const [runSteps, setRunSteps] = useState<ChatEvent[]>([]);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -162,6 +166,14 @@ export function TicketDrawer({
   }
 
   useEffect(() => {
+    // Het verslag van de VORIGE run meteen weg. Het afbreken van de stream
+    // stond hier al, maar de stappen bleven staan — en als het nieuwe ticket
+    // geen lopende run heeft, stapt de effect hieronder er meteen uit en blijft
+    // het verslag van een heel ander ticket in beeld. Precies wat er gebeurde.
+    abortRef.current?.abort();
+    gehechtAan.current = null;
+    setRunSteps([]);
+    setRunStatus(null);
     load().catch(() => setError("Ticket laden mislukt"));
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -170,14 +182,20 @@ export function TicketDrawer({
   // Loopt er al een run (bv. gestart door een schedule)? Dan meteen aanhaken.
   useEffect(() => {
     if (!ticket?.agent_run_id || ticket.agent_state !== "running") return;
+    // `load()` is async: tijdens het laden van het NIEUWE ticket wijst `ticket`
+    // nog naar het oude. Zonder deze toets haakt hij dan opnieuw aan bij de run
+    // van het ticket dat je net verliet.
+    if (ticket.id !== ticketId) return;
     attachToRun(ticket.agent_run_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticket?.agent_run_id, ticket?.agent_state]);
+  }, [ticket?.id, ticket?.agent_run_id, ticket?.agent_state, ticketId]);
 
   function attachToRun(runId: string) {
+    if (gehechtAan.current === runId) return;   // al aangehaakt; niet opnieuw
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    gehechtAan.current = runId;
     setRunSteps([]);
     setRunStatus("running");
     chatApi
@@ -187,6 +205,9 @@ export function TicketDrawer({
           // Alleen de voortgangsstappen: het eindantwoord van de agent komt
           // als opmerking in de tijdlijn terecht, dus dat hier óók tonen zou
           // hetzelfde verslag twee keer op het scherm zetten.
+          // Een stream die net is afgebroken kan nog één gebeurtenis
+          // nalopen; die hoort niet bij het ticket dat nu openstaat.
+          if (gehechtAan.current !== runId) return;
           if (ev.kind === "thinking" || ev.kind === "tool") setRunSteps((prev) => [...prev, ev]);
           if (ev.kind === "run_status") {
             setRunStatus(ev.status);

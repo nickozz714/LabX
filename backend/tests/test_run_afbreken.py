@@ -131,3 +131,40 @@ def test_de_chat_stopt_de_run_en_niet_alleen_de_stream():
     fn = tekst[tekst.index("async function stopBeurt()"):]
     fn = fn[:fn.index("\n  }")]
     assert fn.index("cancelTurn") < fn.index("abort()"), "eerst de run, dan de stream"
+
+
+# ── het verslag hoort bij het ticket dat openstaat ──────────────────────────
+
+def _ticketdrawer() -> str:
+    pad = Path(__file__).resolve().parents[2] / "frontend/src/components/TicketDrawer.tsx"
+    if not pad.exists():
+        pytest.skip("frontend niet aanwezig in deze omgeving")
+    return pad.read_text(encoding="utf-8")
+
+
+def test_het_runverslag_wordt_gewist_bij_een_ander_ticket():
+    """Waargenomen: "de run details blijven staan en hangen op het laatst
+    geopende — zelfs als ik een ander ticket open staat daar de run van een
+    heel ander ticket."
+
+    Het afbreken van de stream stond er al; het WISSEN van de stappen niet. Bij
+    een ticket zonder lopende run stapt de aanhaak-effect er meteen uit, en dan
+    blijft het verslag van het vorige ticket gewoon in beeld."""
+    bron = _ticketdrawer()
+    blok = bron[bron.index("}, [ticketId]);") - 900:bron.index("}, [ticketId]);")]
+    assert "setRunSteps([])" in blok
+    assert "setRunStatus(null)" in blok
+
+
+def test_hij_haakt_niet_opnieuw_aan_bij_het_vorige_ticket():
+    """`load()` is async: tijdens het laden van het nieuwe ticket wijst `ticket`
+    nog naar het oude. Zonder deze toets haakt het paneel dan aan bij de run van
+    het ticket dat je net verliet."""
+    bron = _ticketdrawer()
+    assert "if (ticket.id !== ticketId) return;" in bron
+
+
+def test_gebeurtenissen_van_een_verlaten_run_worden_genegeerd():
+    """Een stream die net is afgebroken kan nog één gebeurtenis nalopen."""
+    bron = _ticketdrawer()
+    assert "gehechtAan.current !== runId" in bron
