@@ -35,6 +35,7 @@ import { RunDetailModal, runDuration } from "@/components/BackgroundRunDetail";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import { getToken, ApiError } from "@/lib/api";
 import { MODEL_OPTIONS } from "@/lib/modellen";
+import { useBevestiging } from "@/components/Bevestiging";
 
 // Chat-standaarden leven HIER, niet op de Instellingen-pagina: elk gesprek
 // kan zijn eigen model/effort kiezen via deze dropdowns of de /model en
@@ -51,6 +52,7 @@ const EFFORT_OPTIONS = [
 ];
 
 export function ChatPage() {
+  const bevestig = useBevestiging();
   const melding = useMelding();
   const [threads, setThreads] = useState<Thread[]>([]);
   // Sessies achter agent-runs op een ticket. Standaard uit: op een bord met
@@ -244,7 +246,12 @@ export function ChatPage() {
   }
 
   async function removeThread(t: Thread) {
-    if (!confirm(`Chat "${t.title}" verwijderen?`)) return;
+    const ja = await bevestig.vraag({
+      titel: `Chat "${t.title}" verwijderen?`,
+      tekst: "Het gesprek en alles wat de agent erin deed, verdwijnen.",
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
     await chatApi.deleteThread(t.id);
     setThreads((prev) => prev.filter((x) => x.id !== t.id));
     setActiveThread((prev) => (prev && prev.id === t.id ? null : prev));

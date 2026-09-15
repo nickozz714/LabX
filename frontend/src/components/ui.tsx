@@ -8,7 +8,7 @@
  * desktop-window-manager chrome, which is a distinct, much larger subsystem
  * — see index.css for that call).
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, MouseEvent, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { Loader2 } from "lucide-react";
 import { meldExtern } from "@/components/Meldingen";
@@ -51,9 +51,10 @@ export function Button({
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void | Promise<unknown>;
 }) {
   const [zelfBezig, setZelfBezig] = useState(false);
-  // Bij een klik die de knop uit beeld haalt (een modal die sluit) mag er geen
-  // state meer gezet worden op iets dat er niet meer is.
+  // Bij een klik die de knop uit beeld haalt (verwijderen, een modal die
+  // sluit) mag er geen state meer gezet worden op iets dat er niet meer is.
   const levend = useRef(true);
+  useEffect(() => () => { levend.current = false; }, []);
 
   const klik = useCallback((e: MouseEvent<HTMLButtonElement>) => {
     const uit = onClick?.(e);

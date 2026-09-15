@@ -12,8 +12,10 @@ import { labsApi } from "@/lib/labs";
 import type { Lab, WorkflowDto, WorkflowStep } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { useBevestiging } from "@/components/Bevestiging";
 
 export function WorkflowsPage() {
+  const bevestig = useBevestiging();
   const melding = useMelding();
   const [workflows, setWorkflows] = useState<WorkflowDto[]>([]);
   const [editing, setEditing] = useState<WorkflowDto | null>(null);
@@ -58,11 +60,14 @@ export function WorkflowsPage() {
                   // De belofte TERUGGEVEN: daar herkent Button aan dat er iets
                   // loopt en zet hij zichzelf op bezig. Met accolades eromheen
                   // verdwijnt hij en lijkt er niets te gebeuren.
-                  onClick={() =>
-                    confirm(`Workflow "${w.name}" verwijderen?`)
-                      ? workflowApi.remove(w.id).then(refresh)
-                      : undefined
-                  }
+                  onClick={async () => {
+                    const ja = await bevestig.vraag({
+                      titel: `Workflow "${w.name}" verwijderen?`,
+                      tekst: "De stappen erin gaan mee.",
+                      bevestig: "Verwijderen",
+                    });
+                    if (ja) await workflowApi.remove(w.id).then(refresh);
+                  }}
                 >
                   Verwijderen
                 </Button>

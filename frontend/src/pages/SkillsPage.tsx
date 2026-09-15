@@ -15,6 +15,7 @@ import { ApiError } from "@/lib/api";
 import { useMelding } from "@/components/Meldingen";
 import { ServerGereedheid } from "@/components/ServerGereedheid";
 import { useNavigate } from "react-router-dom";
+import { useBevestiging } from "@/components/Bevestiging";
 
 type Section = "skills" | "tools" | "mcp";
 
@@ -709,6 +710,7 @@ function ToolsSection() {
 // ── Skills (the wizard) ─────────────────────────────────────────────────────
 
 function SkillsSection() {
+  const bevestig = useBevestiging();
   const melding = useMelding();
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -762,11 +764,14 @@ function SkillsSection() {
                 <Button
                   variant="danger"
                   className="px-2 py-0.5 text-xs"
-                  onClick={() =>
-                    confirm(`Skill "${s.display_name || s.name}" verwijderen?`)
-                      ? skillApi.remove(s.id).then(refresh)
-                      : undefined
-                  }
+                  onClick={async () => {
+                    const ja = await bevestig.vraag({
+                      titel: `Skill "${s.display_name || s.name}" verwijderen?`,
+                      tekst: "De agent kan deze skill daarna niet meer gebruiken.",
+                      bevestig: "Verwijderen",
+                    });
+                    if (ja) await skillApi.remove(s.id).then(refresh);
+                  }}
                 >
                   Verwijderen
                 </Button>

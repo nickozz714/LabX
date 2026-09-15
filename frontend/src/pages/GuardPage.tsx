@@ -29,6 +29,7 @@ import {
 } from "@/lib/guard";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { useBevestiging } from "@/components/Bevestiging";
 
 const ACTIE_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
   blokkeren: "red", maskeren: "violet", waarschuwen: "yellow", toelaten: "green",
@@ -197,6 +198,7 @@ function RegelRegel({ regel, onPatch, onWeg }: {
   onPatch: (r: GuardRegel, p: Record<string, unknown>) => void;
   onWeg: () => void;
 }) {
+  const bevestig = useBevestiging();
   const acties: GuardRegel["action"][] = regel.target === "opdracht"
     ? ["blokkeren", "waarschuwen", "toelaten"]
     : ["maskeren", "blokkeren", "waarschuwen", "toelaten"];
@@ -212,11 +214,14 @@ function RegelRegel({ regel, onPatch, onWeg }: {
       </Select>
       {!regel.builtin && (
         <Button variant="ghost" className="ml-auto text-xs text-destructive"
-                onClick={() =>
-                  confirm(`Regel '${regel.name}' verwijderen?`)
-                    ? guardApi.remove(regel.id).then(onWeg)
-                    : undefined
-                }>
+                onClick={async () => {
+                  const ja = await bevestig.vraag({
+                    titel: `Regel '${regel.name}' verwijderen?`,
+                    tekst: "Wat deze regel tegenhield, komt er daarna gewoon doorheen.",
+                    bevestig: "Verwijderen",
+                  });
+                  if (ja) await guardApi.remove(regel.id).then(onWeg);
+                }}>
           <Trash2 size={12} />
         </Button>
       )}

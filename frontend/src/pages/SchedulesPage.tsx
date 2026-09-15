@@ -19,6 +19,7 @@ import type { BoardDto, Lab, ScheduleDto, ScheduleKind, ScheduleRunDto, Workflow
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { Bot, CalendarClock, PlayCircle, Workflow as WorkflowIcon } from "lucide-react";
+import { useBevestiging } from "@/components/Bevestiging";
 
 const KIND_LABEL: Record<ScheduleKind, string> = {
   prompt: "Prompt",
@@ -27,6 +28,7 @@ const KIND_LABEL: Record<ScheduleKind, string> = {
 };
 
 export function SchedulesPage() {
+  const bevestig = useBevestiging();
   const [schedules, setSchedules] = useState<ScheduleDto[]>([]);
   const [labs, setLabs] = useState<Lab[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowDto[]>([]);
@@ -129,11 +131,14 @@ export function SchedulesPage() {
                 <Button
                   variant="danger"
                   className="text-xs"
-                  onClick={() =>
-                    confirm(`Schedule "${s.name}" verwijderen?`)
-                      ? scheduleApi.remove(s.id).then(refresh)
-                      : undefined
-                  }
+                  onClick={async () => {
+                    const ja = await bevestig.vraag({
+                      titel: `Schedule "${s.name}" verwijderen?`,
+                      tekst: "De planning stopt en komt niet meer terug.",
+                      bevestig: "Verwijderen",
+                    });
+                    if (ja) await scheduleApi.remove(s.id).then(refresh);
+                  }}
                 >
                   Verwijderen
                 </Button>

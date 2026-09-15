@@ -18,6 +18,7 @@ import { Bell, RefreshCw, Send, Trash2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { notifyApi, type MeldGebeurtenis, type MeldKanaal } from "@/lib/notify";
 import { Badge, Button, Card, Input, Label, Select, Toggle } from "@/components/ui";
+import { useBevestiging } from "@/components/Bevestiging";
 
 const LEEG_EMAIL = {
   smtp_host: "", smtp_port: 587, smtp_user: "", smtp_tls: "starttls",
@@ -105,6 +106,7 @@ function KanaalRegel({ kanaal, gebeurtenissen, onGewijzigd }: {
   gebeurtenissen: MeldGebeurtenis[];
   onGewijzigd: () => void;
 }) {
+  const bevestig = useBevestiging();
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState<Record<string, any>>({ ...kanaal.config });
   const [geheim, setGeheim] = useState("");
@@ -325,11 +327,14 @@ function KanaalRegel({ kanaal, gebeurtenissen, onGewijzigd }: {
               <Send size={12} /> Testbericht sturen
             </Button>
             <Button variant="ghost" className="ml-auto text-xs text-destructive" disabled={bezig}
-                    onClick={() =>
-                      confirm(`Kanaal '${kanaal.name}' verwijderen?`)
-                        ? notifyApi.remove(kanaal.id).then(onGewijzigd)
-                        : undefined
-                    }>
+                    onClick={async () => {
+                      const ja = await bevestig.vraag({
+                        titel: `Kanaal '${kanaal.name}' verwijderen?`,
+                        tekst: "Er gaan daarna geen meldingen meer via dit kanaal.",
+                        bevestig: "Verwijderen",
+                      });
+                      if (ja) await notifyApi.remove(kanaal.id).then(onGewijzigd);
+                    }}>
               <Trash2 size={12} />
             </Button>
           </div>

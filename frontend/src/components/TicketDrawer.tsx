@@ -24,6 +24,7 @@ import { chatApi } from "@/lib/chat";
 import type { BoardDto, ChatEvent, TicketCommentDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
 import { Bot, ExternalLink, MessageSquare, Pencil, Trash2, X } from "lucide-react";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
@@ -49,7 +50,8 @@ function MarkdownField({
   value: string | null;
   placeholder: string;
   rows?: number;
-  onSave: (next: string) => Promise<void> | void;
+  /** `false` = niet opgeslagen; dan blijft de editor open met de tekst erin. */
+  onSave: (next: string) => Promise<boolean | void> | boolean | void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
@@ -64,8 +66,10 @@ function MarkdownField({
   async function commit() {
     setSaving(true);
     try {
-      await onSave(draft);
-      setEditing(false);
+      // Mislukt het opslaan, dan blijft de editor staan. Anders sloot hij alsof
+      // het gelukt was en was het getypte werk weg — met alleen een regeltje
+      // bovenaan het paneel als spoor.
+      if ((await onSave(draft)) !== false) setEditing(false);
     } finally {
       setSaving(false);
     }
@@ -136,6 +140,7 @@ export function TicketDrawer({
 }) {
   const navigate = useNavigate();
   const melding = useMelding();
+  const bevestig = useBevestiging();
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [comments, setComments] = useState<TicketCommentDto[]>([]);
   const [draftInternal, setDraftInternal] = useState(false);
@@ -146,6 +151,10 @@ export function TicketDrawer({
   const [bijlagen, setBijlagen] = useState<Bijlage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Velden slaan op bij het verlaten van het veld. Zonder teken van leven is
+  // dat niet te onderscheiden van niets doen; deze vlag zet er twee seconden
+  // "opgeslagen" bij.
+  const [opgeslagen, setOpgeslagen] = useState(false);
 
   // Live meelezen met de agent-run van dit ticket.
   // Aan wélke run dit paneel nu hangt. Een ref en geen state: hij stuurt geen
@@ -155,10 +164,17 @@ export function TicketDrawer({
   const [runSteps, setRunSteps] = useState<ChatEvent[]>([]);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Wat er nú op de server staat. De velden werken tijdens het typen de lokale
+  // `ticket` bij, dus daar valt niet meer aan af te lezen of er iets veranderd
+  // is — en zonder dat verschil stuurt elk verlaten van een veld een PATCH, die
+  // het ticket op "niet gesynct" zet en bij een two-way board ongevraagd naar
+  // Jira gaat.
+  const opServer = useRef<TicketDto | null>(null);
 
   async function load() {
     const t = await boardApi.ticket(board.id, ticketId);
     setTicket(t);
+    opServer.current = t;
     // Nieuwste bovenaan: bij een ticket waar de agent een paar keer overheen is
     // gegaan wil je het laatste verslag zien zonder eerst door de historie te
     // scrollen. De backend levert oplopend (chronologisch) aan.
@@ -223,15 +239,34 @@ export function TicketDrawer({
       .catch(() => {});
   }
 
-  async function save(patch: Record<string, any>) {
-    if (!ticket) return;
+  /** Geeft terug of het opslaan lukte; de aanroeper hoeft dat niet te vangen. */
+  async function save(patch: Record<string, any>): Promise<boolean> {
+    if (!ticket) return false;
+    const heen = opServer.current;
+    if (heen) {
+      const anders = Object.fromEntries(
+        Object.entries(patch).filter(
+          ([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify((heen as any)[k] ?? null)),
+      );
+      if (Object.keys(anders).length === 0) return true;   // niets veranderd
+      patch = anders;
+    }
     setError(null);
     try {
       const updated = await boardApi.updateTicket(board.id, ticket.id, patch);
+      opServer.current = updated;
       setTicket({ ...updated, comments: ticket.comments });
       onChanged();
+      setOpgeslagen(true);
+      window.setTimeout(() => setOpgeslagen(false), 2000);
+      return true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Opslaan mislukt");
+      const tekst = err instanceof ApiError ? err.message : "Opslaan mislukt";
+      setError(tekst);
+      // Ook als melding: het regeltje bovenaan het paneel staat bij een lang
+      // ticket buiten beeld, en dan lijkt een mislukte opslag op een gelukte.
+      melding.fout("Opslaan mislukt", tekst);
+      return false;
     }
   }
 
@@ -240,20 +275,40 @@ export function TicketDrawer({
     await boardApi.addComment(board.id, ticket.id, draft.trim(), draftInternal);
     setDraft("");
     await load();
+    melding.ok(draftInternal ? "Interne opmerking geplaatst" : "Opmerking geplaatst");
   }
 
   /** Een interne opmerking alsnog naar de bron. Alleen deze kant op: uit Jira
    *  terughalen kan niet, dus vragen we het één keer expliciet. */
   async function promote(commentId: number) {
     if (!ticket) return;
-    if (!confirm("Deze opmerking naar de bron sturen? Terughalen kan daarna niet meer.")) return;
+    const ja = await bevestig.vraag({
+      titel: "Deze opmerking naar de bron sturen?",
+      tekst: `Hij komt in ${ticket.external_key || "de bron"} te staan. Terughalen kan daarna niet meer.`,
+      bevestig: "Versturen",
+      variant: "primary",
+    });
+    if (!ja) return;
     setCommentBusy(commentId);
     try {
       const r = await boardApi.promoteComment(board.id, ticket.id, commentId);
-      if (r.pushed && !r.pushed.ok) setError(r.pushed.error || "Plaatsen in de bron mislukt");
+      if (r.pushed && !r.pushed.ok) {
+        const tekst = r.pushed.error || "Plaatsen in de bron mislukt";
+        setError(tekst);
+        melding.fout("Niet in de bron geplaatst", tekst);
+      } else if (r.pushed) {
+        melding.ok("In de bron geplaatst");
+      } else {
+        // Geen two-way board: de opmerking staat nu klaar en gaat mee met de
+        // eerstvolgende sync. Zonder dit onderscheid lijkt "niets gebeurd".
+        melding.ok("Gemarkeerd voor de bron",
+                   "Dit board synchroniseert niet twee kanten op; hij gaat mee met de volgende sync.");
+      }
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Promoveren mislukt");
+      const tekst = err instanceof ApiError ? err.message : "Promoveren mislukt";
+      setError(tekst);
+      melding.fout("Promoveren mislukt", tekst);
     } finally {
       setCommentBusy(null);
     }
@@ -270,18 +325,34 @@ export function TicketDrawer({
       attachToRun(started.run_id);
       await load();
       onChanged();
+      melding.ok("Agent gestart", "Het verslag verschijnt hieronder in de tijdlijn.");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Agent starten mislukt");
+      const tekst = err instanceof ApiError ? err.message : "Agent starten mislukt";
+      setError(tekst);
+      melding.fout("Agent starten mislukt", tekst);
     } finally {
       setBusy(false);
     }
   }
 
   async function removeTicket() {
-    if (!ticket || !confirm(`Ticket ${ticket.key} verwijderen?`)) return;
-    await boardApi.removeTicket(board.id, ticket.id);
-    onChanged();
-    onClose();
+    if (!ticket) return;
+    const ja = await bevestig.vraag({
+      titel: `Ticket ${ticket.key} verwijderen?`,
+      tekst: `"${ticket.title}" en alle opmerkingen eronder verdwijnen uit LabX. Dit kan niet ongedaan gemaakt worden.`,
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
+    try {
+      await boardApi.removeTicket(board.id, ticket.id);
+      melding.ok(`${ticket.key} verwijderd`);
+      onChanged();
+      onClose();
+    } catch (err) {
+      const tekst = err instanceof ApiError ? err.message : "Verwijderen mislukt";
+      setError(tekst);
+      melding.fout("Verwijderen mislukt", tekst);
+    }
   }
 
   if (!ticket) {
@@ -299,14 +370,16 @@ export function TicketDrawer({
           <span className="font-mono text-xs text-muted-foreground">{ticket.key}</span>
           <Badge tone={AGENT_TONE[ticket.agent_state] || "neutral"}>agent: {ticket.agent_state}</Badge>
           {ticket.dirty && <Badge tone="yellow">niet gesynct</Badge>}
+          {opgeslagen && <span className="text-[11px] text-emerald-500">opgeslagen</span>}
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={removeTicket} className="text-muted-foreground hover:text-destructive" title="Verwijderen">
+          <Button variant="ghost" className="px-1.5 py-1 hover:text-destructive"
+                  meldFouten={false} onClick={removeTicket} title="Verwijderen">
             <Trash2 size={15} />
-          </button>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+          </Button>
+          <Button variant="ghost" className="px-1.5 py-1" onClick={onClose} title="Sluiten">
             <X size={16} />
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -591,13 +664,16 @@ export function TicketDrawer({
                       <Badge tone="neutral">gaat naar de bron</Badge>
                     ))}
                   {c.kind === "comment" && c.internal && board.provider !== "local" && (
-                    <button
-                      className="ml-auto text-muted-foreground underline hover:text-foreground"
-                      disabled={commentBusy === c.id}
+                    <Button
+                      variant="ghost"
+                      className="ml-auto px-1.5 py-0.5 text-[11px] underline"
+                      busy={commentBusy === c.id}
+                      busyLabel="bezig…"
+                      meldFouten={false}
                       onClick={() => promote(c.id)}
                     >
-                      {commentBusy === c.id ? "bezig…" : "naar de bron"}
-                    </button>
+                      naar de bron
+                    </Button>
                   )}
                 </div>
                 {c.kind === "comment" ? (

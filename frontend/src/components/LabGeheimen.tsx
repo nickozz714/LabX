@@ -22,6 +22,7 @@ import { ApiError } from "@/lib/api";
 import { labsApi, type LabGeheim } from "@/lib/labs";
 import type { Lab } from "@/lib/types";
 import { Badge, Button, Input, Label, Select, TextArea } from "@/components/ui";
+import { useBevestiging } from "@/components/Bevestiging";
 
 const VOORBEELD =
   "az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv";
@@ -33,6 +34,7 @@ function tijd(waarde: string | null): string {
 }
 
 export function LabGeheimen({ lab }: { lab: Lab }) {
+  const bevestig = useBevestiging();
   const [rijen, setRijen] = useState<LabGeheim[]>([]);
   const [nieuw, setNieuw] = useState(false);
   const [naam, setNaam] = useState("");
@@ -125,11 +127,14 @@ export function LabGeheimen({ lab }: { lab: Lab }) {
                 <RefreshCw size={12} />
               </Button>
               <Button variant="ghost" className="text-xs text-destructive" disabled={bezig}
-                      onClick={() =>
-                        confirm(`Geheim '${g.name}' verwijderen?`)
-                          ? labsApi.deleteSecret(lab.id, g.name).then(laad)
-                          : undefined
-                      }>
+                      onClick={async () => {
+                        const ja = await bevestig.vraag({
+                          titel: `Geheim '${g.name}' verwijderen?`,
+                          tekst: "De waarde is daarna weg; wie hem nodig heeft moet hem opnieuw invoeren.",
+                          bevestig: "Verwijderen",
+                        });
+                        if (ja) await labsApi.deleteSecret(lab.id, g.name).then(laad);
+                      }}>
                 <Trash2 size={12} />
               </Button>
             </div>

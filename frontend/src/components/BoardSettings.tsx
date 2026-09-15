@@ -25,6 +25,7 @@ import type { BoardColumnDto, BoardDto, ExternalBoardColumn, Lab, ProviderSpec }
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { Info } from "lucide-react";
+import { useBevestiging } from "@/components/Bevestiging";
 
 export function BoardSettings({
   board, onClose, onSaved, onDeleted,
@@ -34,6 +35,7 @@ export function BoardSettings({
   onSaved: () => void;
   onDeleted: () => void;
 }) {
+  const bevestig = useBevestiging();
   const [name, setName] = useState(board.name);
   const [description, setDescription] = useState(board.description || "");
   const [keyPrefix, setKeyPrefix] = useState(board.key_prefix);
@@ -532,11 +534,14 @@ export function BoardSettings({
           <Button
             variant="danger"
             className="text-xs"
-            onClick={() =>
-              confirm(`Board "${board.name}" en al zijn tickets verwijderen?`)
-                ? boardApi.remove(board.id).then(onDeleted)
-                : undefined
-            }
+            onClick={async () => {
+              const ja = await bevestig.vraag({
+                titel: `Board "${board.name}" verwijderen?`,
+                tekst: "Het board en al zijn tickets verdwijnen uit LabX. Dit kan niet ongedaan gemaakt worden.",
+                bevestig: "Verwijderen",
+              });
+              if (ja) await boardApi.remove(board.id).then(onDeleted);
+            }}
           >
             Board verwijderen
           </Button>

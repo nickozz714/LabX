@@ -2,6 +2,7 @@ import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Shell } from "@/components/Shell";
+import { BevestigingProvider } from "@/components/Bevestiging";
 import { MeldingProvider } from "@/components/Meldingen";
 import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
@@ -62,7 +63,11 @@ export default function App() {
           {/* Buiten de router, zodat een melding blijft staan als de actie je
               naar een ander scherm brengt. */}
           <MeldingProvider>
-            <AppRoutes />
+            {/* Bevestigen doen we zelf, niet met window.confirm(): een browser
+                mag dat venster weigeren en geeft dan stil "nee" terug. */}
+            <BevestigingProvider>
+              <AppRoutes />
+            </BevestigingProvider>
           </MeldingProvider>
         </AuthProvider>
       </BrowserRouter>
