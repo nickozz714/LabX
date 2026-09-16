@@ -26,6 +26,47 @@ Waarom LabX:
 - **Volledig zicht** — live stappen en redenatie van de agent, tokenteller +
   context-indicator, achtergrondtaken die doorlopen terwijl jij weg navigeert.
 
+## Systeemvereisten
+
+LabX zelf is licht; wat het zwaar maakt zijn de **labs**, want dat zijn volwaardige
+containers waarin een agent bouwt en test. Reken daarom niet per installatie maar per
+lab. De getallen hieronder zijn gemeten op de referentie-installatie (4 cores, 23 GB,
+Docker 27 op Ubuntu) en niet geschat.
+
+| | Minimaal | Aanbevolen |
+| --- | --- | --- |
+| CPU | 2 cores | 4+ cores |
+| Geheugen | 4 GB | 8–16 GB |
+| Vrije schijfruimte | 15 GB | 40 GB+ (SSD) |
+| Gelijktijdige labs/werkers | 1 | 3–4 |
+
+**Waar het heen gaat.** De backend-container gebruikt ~450 MB, de web-container ~5 MB.
+Een lab krijgt standaard **1 CPU en 2 GB** (per lab in te stellen); in de praktijk zit
+daar 250–500 MB écht in gebruik en is de rest bestandscache die de kernel weer inneemt
+zodra het krap wordt. Aan schijf gaat er ~3 GB in images op voordat er één lab werkt:
+het backend-image is 1,87 GB (Python + Node + de Claude Code CLI + azure-cli) en het
+standaard lab-image `python:3-bookworm` nog eens 1,03 GB. Daarbovenop komt wat de agent
+installeert en in `/workspace` zet.
+
+**CPU is de echte grens, niet geheugen.** Een lab dat een test-suite draait of `pip
+install` doet trekt zijn volle core; meerdere labs op één core wachten meetbaar op
+elkaar. Boven de labslijst staat een **hostmeter**: geheugen, load en wat er al aan
+labs vergeven is, met een waarschuwing zodra je de machine overvraagt — kijk daar
+voordat je een werker bijzet of het plafond verhoogt.
+
+**Verder nodig:**
+
+- **Docker** — Docker Desktop (macOS/Windows) of een Docker-daemon (Linux). LabX start
+  labs als *sibling*-containers op dezelfde daemon; geen Docker-in-Docker.
+  Op macOS/Windows: geef de Docker-VM minstens 4 GB, anders is het eerste lab al krap.
+- **Claude-abonnement** — de agent is de Claude Code CLI; koppelen met een eenmalig
+  `claude setup-token`. Een API-key is géén vervanging.
+- **Architectuur** — amd64 en arm64 (Apple Silicon) worden allebei als image gepubliceerd.
+  Windows-on-ARM valt af: daar is Docker Desktop niet bruikbaar.
+- **Optioneel** — een lokaal guard-model via Ollama (tweede mening van de data-guard)
+  vraagt ~1 GB extra geheugen voor `qwen2.5:1.5b`; laat je het uit, dan doet de guard
+  het op zijn regelset.
+
 ## Installeren
 
 **Desktop-app (aanbevolen)** — download de installer van de
@@ -63,6 +104,12 @@ in je werkmap. Let op dat LabX `/var/run/docker.sock` mount — op een gedeelde 
 betekent dat volledige controle over de Docker-daemon; zet er een docker-socket-proxy
 voor als dat te ver gaat.
 
+**Door een agent laten opzetten** — er is een runbook dat een AI-agent (Claude Code of
+vergelijkbaar, met shelltoegang op de doelmachine) van begin tot eind kan uitvoeren:
+machinecontrole, secrets, starten, account aanmaken, rooktest, en wat te doen als een
+stap faalt. Zie
+**[Geautomatiseerd opzetten](https://github.com/nickozz714/LabX/wiki/Geautomatiseerd-opzetten)**.
+
 Meer detail (server-hardening, reverse proxy, docker-socket-proxy, GHCR-images):
 zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
 
@@ -70,9 +117,9 @@ zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
 
 | Onderdeel | Kort |
 | --- | --- |
-| **Labs** | Docker-sandboxes (sibling containers), bestandsbrowser, exec, interactieve terminal (xterm.js), egress-guard, publish-naar-git, az-login |
+| **Labs** | Docker-sandboxes (sibling containers), bestandsbrowser met downloaden, exec, interactieve terminal (xterm.js), egress-guard, publish-naar-git, az-login. Per lab versleutelde **geheimen**: de agent verwijst ernaar met een naam, de waarde komt nooit in de tekst van een commando en dus ook niet in een log |
 | **Lab-inrichting** | Kies bij het aanmaken een preset-image of een eigen image, vink aan wat erbij moet (Playwright + Chromium, Node, uv, compilers) en geef desgewenst een eigen setup-script mee. De catalogus beheer je zelf bij Instellingen > Lab-extra's — geen code-change per pakket. Installeren gebeurt op de achtergrond en idempotent, dus een bestaand lab pikt een nieuw pakket op bij de volgende start. Een bestaand lab kan ook opnieuw opgebouwd worden op een ander of bijgewerkt image (/workspace blijft, pakketten komen automatisch terug), en de agent kan dit alles zelf via `lab__packages`, `lab__install_packages` en `lab__rebuild` |
-| **Chat** | Claude Code CLI als volwaardige agent, gekoppeld aan een draaiend lab; Markdown, live stappen, tokenteller, per-chat model/effort (dropdown + `/model`, `/effort`) |
+| **Chat** | Claude Code CLI als volwaardige agent, gekoppeld aan een draaiend lab; Markdown, live stappen, tokenteller, per-chat model/effort (dropdown + `/model`, `/effort`). Een lab kan een eigen standaardmodel krijgen; achtergrondtaken blijven op de instelling die je daarvoor kiest. Een vastgelopen sessie is af te breken — in de chat én op het ticket |
 | **Achtergrondtaken** | Handmatig of door het model zelf gestart; turns draaien server-side door, ook als je wegnavigeert — Taken-tab in het rechterpaneel |
 | **MCP-servers** | Host- (extern) of lab-servers (stdio in de container), scope per sessie/lab/beide, Azure-profielkoppeling, bulk-acties |
 | **Skills** | Wizard met tool-picker (gegroepeerd per MCP-server), per tool instructies + input-schema-preview; installeerbaar in een lab (incl. bestanden) |
@@ -83,8 +130,13 @@ zie de **[wiki](https://github.com/nickozz714/LabX/wiki)**.
 | **Werkers per lab (autoscaler)** | Een lab houdt altijd één werker aan (en stopt na 14 uur zonder gebruik). Staat er werk te wachten en is er niets vrij, dan zet LabX zelf een werker bij tot het plafond dat jij instelt; ongebruikte extra werkers verdwijnen na een half uur weer. Werkers delen /workspace — één werkplaats met meer handen. De agent kan er zelf om vragen met `lab__scale_workers`, maar nooit boven jouw plafond |
 | **Interactief inloggen** | Logins die je niet kunt automatiseren (Microsoft met MFA) doe je zelf: in de browser ván het lab, of met je eigen browser via een tunnel die LabX voor je klaarzet (commando + downloadbaar script, poort instelbaar). De sessie die daar ontstaat leg je vast als Azure-profiel met **Uit een lab** — anders blijft hij in dat ene lab hangen. Voor de Fabric CLI is er een pakket dat `fab` installeert en zijn inlogpoort vastzet |
 | **Overzicht** | Eén scherm over alle boards heen: wat draait er nu, wat wacht of staat stil, hoeveel werk er per board klaarstaat, en wat er gelopen heeft met afloop en duur |
-| **Azure-profielen** | Meerdere versleutelde identiteiten, syncbaar naar host of lab |
 | **Hooks** | Meerdere automatische hooks per gebeurtenis, zichtbaar als ⚙️-stappen in de chat |
+| **Data-guard** | Een classifier die je zelf beheert (regels aan/uit, maskeren in plaats van blokkeren) plus optioneel een lokaal model als tweede mening. Per lab kies je een **beveiligingsprofiel**, en de agent verklaart vooraf zijn **intentie** ("tellen", "metadata", "klantdata"); de guard beoordeelt daar zowel de opdracht als de uitvoer aan. Elke beslissing komt versleuteld in een audit, zodat achteraf te bewijzen is wat er wel en niet naar buiten ging |
+| **Meldingen** | Mail- en Telegram-kanalen per gebeurtenis (run klaar, run mislukt, aandacht nodig, planning klaar, storing). Mail heeft een weg terug: antwoord je op de melding, dan komt je antwoord in de sessie terecht. Alleen afzenders die je toestaat, en automatische post wordt herkend en genegeerd |
+| **Bijlagen** | Bestanden meesturen naar de workspace — in een chatbericht of bij het starten van een agent-run op een ticket |
+| **Gebruikslimiet** | Loop je tegen je Claude-limiet aan, dan pauzeert het werk in plaats van te mislukken, en het hervat zichzelf zodra de limiet weer open is |
+| **Hostmeter** | Geheugen, load en wat er al aan labs vergeven is, met waarschuwing bij overvraging — boven de labslijst |
+| **Azure & Microsoft 365** | Meerdere versleutelde identiteiten, syncbaar naar host of lab; device-code-login voor een eigen Entra-app, en **Work IQ** voor Teams- en Outlook-context per lab. Wat de beheerder in Entra moet toestaan staat in de GUI beschreven |
 
 ## Agent boards
 

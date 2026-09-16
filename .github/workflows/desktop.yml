@@ -59,14 +59,28 @@ jobs:
         working-directory: desktop
         run: npm run tauri build
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.bundle_paths }}
-          if-no-files-found: error
-
+      # EERST de Release, dan pas het artifact. Andersom ging het mis: het
+      # uploaden van artifacts liep tegen het opslagquotum van het account
+      # ("Artifact storage quota has been hit") en liet de job falen VÓÓR de
+      # release-stap. Gevolg: v0.1.17 t/m v0.1.37 hebben wel images op GHCR maar
+      # geen installers — de Releases-pagina, waar README en wiki naartoe
+      # wijzen, bleef drie weken op v0.1.16 staan terwijl de builds zelf prima
+      # slaagden.
       - name: Attach installers to the GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.bundle_paths }}
+          generate_release_notes: true
+
+      # Alleen voor een handmatige build zónder tag: dan is er geen release om
+      # het aan te hangen en is het artifact de enige manier om erbij te komen.
+      # Op een tag zou het alleen maar quotum opsouperen voor een tweede kopie
+      # van wat al aan de release hangt.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bundle_paths }}
+          if-no-files-found: error
+          retention-days: 7
