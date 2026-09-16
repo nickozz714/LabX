@@ -75,6 +75,18 @@ jobs:
         working-directory: desktop
         run: npm run tauri build -- ${{ matrix.tauri_args }}
 
+      # Losse controle dat er ook echt een installer ligt. Die zat eerst
+      # verstopt in `if-no-files-found: error` van de artifact-upload, en die
+      # stap slaan we op een tag over — dan zou een verkeerd bundelpad stil een
+      # release zonder bestanden opleveren.
+      - name: Controleer dat er een installer is
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(${{ matrix.bundle_paths }})
+          [ ${#files[@]} -gt 0 ] || { echo "geen installer op ${{ matrix.bundle_paths }}"; exit 1; }
+          printf 'gevonden: %s\n' "${files[@]}"
+
       # EERST de Release, dan pas het artifact. Andersom ging het mis: het
       # uploaden van artifacts liep tegen het opslagquotum van het account
       # ("Artifact storage quota has been hit") en liet de job falen VÓÓR de
@@ -98,8 +110,12 @@ jobs:
       # van wat al aan de release hangt.
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        # Het artifact is een gemak, geen opleverproduct: bij een handmatige
+        # build zonder tag is het de enige manier om bij de installer te komen,
+        # maar als het opslagquotum vol zit hoort dat geen geslaagde build rood
+        # te maken. Of de installer bestaat is een stap hierboven al getoetst.
+        continue-on-error: true
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.bundle_paths }}
-          if-no-files-found: error
           retention-days: 7
