@@ -36,6 +36,28 @@ het honinggeel uit de mind-interface van Nectar.
 | `#0E9F6E` / `#D97706` / `#DC2626` | doorgelaten · gemaskeerd of wachtend · geblokkeerd |
 | `#8B5CF6` violet | wat terugkomt naar jou |
 
+## Naar PowerPoint
+
+```bash
+python3 maak-pptx.py --titel "LabX" \
+    --ondertitel "Een veilige AI-werkplaats — zeven platen, van de kern tot waar het draait" \
+    --accent 3B82F6 --uit LabX-platen.pptx
+```
+
+Levert een 16:9-deck op met een titeldia, één dia per plaat en **sprekersnotities**
+(waarvoor die plaat is, en waar je bij het vertellen op moet letten). In elke dia zit de
+SVG én een bitmap-voorvertoning: PowerPoint 2019+ toont de vector — scherp op elk formaat en
+met rechtermuis → *Converteren naar vorm* tot losse vormen te maken — en oudere versies
+vallen terug op de bitmap. Zo gaat het deck overal open.
+
+Het renderen gebeurt met Chrome in headless-modus en niet met ImageMagick: die laatste
+rendert SVG-tekst met een eigen, beperkte engine en maakt er een potje van zodra er een
+lettertype-fallback aan te pas komt.
+
+De `.pptx` staat bewust **niet** in git — het is een gegenereerd bestand dat bij elke
+regeneratie in zijn geheel verandert, en de platen ernaast zijn de bron. Het bouwen kost een
+paar seconden.
+
 ## In een presentatie
 
 - **PowerPoint / Keynote**: Invoegen → Afbeeldingen → het `.svg`-bestand.

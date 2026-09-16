@@ -1,0 +1,5 @@
+# Gegenereerd uit de .svg-bestanden met `maak-pptx.py`. Niet in git: het zijn
+# binaire bestanden die bij elke regeneratie in hun geheel veranderen, en de
+# bron ernaast is leidend. Opnieuw maken is één commando (zie README).
+*.pptx
+.png-cache/

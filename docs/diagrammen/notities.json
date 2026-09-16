@@ -1,0 +1,9 @@
+{
+  "1-wat-is-labx.svg": "De openingsplaat. In één beeld wat LabX anders maakt: de agent mag binnen het lab vrijwel alles, en de guard vormt de wand ervan — alles wat het lab verlaat komt daarlangs, ook op weg terug naar de agent zelf.",
+  "2-de-agent-lus.svg": "Voor het publiek dat wil weten hoe het echt werkt. Vier stappen die zich herhalen, met een poort ervoor en een poort erna. De guard zit in de lus, niet als een controle achteraf.",
+  "3-wat-het-model-weet.svg": "De plaat voor de vraag waar het altijd op vastloopt: wat weet dat ding eigenlijk, en waar haalt het dat vandaan? Vier kanalen naar binnen en verder niets — geen bestand op de host, geen commando lokaal, geen willekeurige URL. Let op: WebSearch mag wel, dat staat er bewust bij.",
+  "4-van-ticket-tot-resultaat.svg": "Voor teams die al met Jira of Azure DevOps werken. Het bord hangt aan een lab, de planning is een rij die zichzelf afwerkt, en werkers pakken parallel op.",
+  "5-de-data-guard.svg": "Voor de vraag die altijd komt: hoe voorkom je dat er data weglekt? Een poort op wat het lab in gaat, een poort op wat eruit komt. Het dreigingsmodel is de ongelukkige stap, niet de kwade opzet — een profiel geeft richting in plaats van dat het iets dichttimmert. De audit is de kant die telt richting een verwerkersovereenkomst.",
+  "6-labx-en-nectar.svg": "Waarom het samen meer is dan apart. Elke aangesloten agent leest bij elke prompt uit hetzelfde geheugen en schrijft er door een write-gate naartoe terug.",
+  "7-waar-het-draait.svg": "Voor de beheerder. Wat waar draait en welke poorten — en de vraag die daarbij hoort: de Claude Code CLI draait in de api-container van LabX, niet in een werker. Een werker voert alleen uit; daar draait geen model in."
+}
