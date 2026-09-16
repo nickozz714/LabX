@@ -71,7 +71,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.bundle_paths }}
-          generate_release_notes: true
+          # Maar één van de twee matrix-jobs mag de notities genereren. Doen ze
+          # het allebei, dan plakt de tweede ze achter de eerste en staat de
+          # changelog twee keer in de release — zoals bij v0.1.38 gebeurde.
+          generate_release_notes: ${{ matrix.os == 'macos-latest' }}
 
       # Alleen voor een handmatige build zónder tag: dan is er geen release om
       # het aan te hangen en is het artifact de enige manier om erbij te komen.
