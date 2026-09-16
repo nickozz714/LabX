@@ -4,6 +4,9 @@
     <marker id="a" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M1 1 L11 6 L1 11 z" fill="#3B82F6"/>
     </marker>
+    <marker id="aw" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#D97706"/>
+    </marker>
     <marker id="ag" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M1 1 L11 6 L1 11 z" fill="#94A3B8"/>
     </marker>
@@ -61,19 +64,19 @@
   <text class="f lab" x="730" y="378">een build of een test.</text>
   <text class="f sm" x="730" y="404">Hier gebeurt het echte werk.</text>
 
-  <line x1="950" y1="336" x2="1010" y2="336" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="950" y1="336" x2="1010" y2="336" stroke="#D97706" stroke-width="2.5" marker-end="url(#aw)"/>
 
   <!-- 4 guard -->
-  <rect x="1018" y="252" width="248" height="168" rx="14" fill="#0B1220"/>
-  <circle cx="1050" cy="284" r="17" fill="#FFFFFF"/>
-  <text class="f num" x="1050" y="290" text-anchor="middle" fill="#0B1220">4</text>
-  <text class="f h" x="1080" y="290" fill="#FFFFFF">De guard kijkt</text>
-  <text class="f lab" x="1046" y="330" fill="#CBD5E1">Niet naar de vorm van</text>
-  <text class="f lab" x="1046" y="354" fill="#CBD5E1">het commando, maar naar</text>
-  <text class="f lab" x="1046" y="378" fill="#CBD5E1">wat er uit kwam.</text>
-  <text class="f sm" x="1046" y="404" fill="#94A3B8">Doorlaten · maskeren · blokkeren</text>
+  <rect x="1018" y="252" width="248" height="168" rx="14" fill="#FEF7EC" stroke="#D97706" stroke-width="2.5"/>
+  <circle cx="1050" cy="284" r="17" fill="#D97706"/>
+  <text class="f num" x="1050" y="290" text-anchor="middle">4</text>
+  <text class="f h" x="1080" y="290">De guard kijkt</text>
+  <text class="f lab" x="1046" y="330">Niet naar de vorm van</text>
+  <text class="f lab" x="1046" y="354">het commando, maar naar</text>
+  <text class="f lab" x="1046" y="378">wat er uit kwam.</text>
+  <text class="f" x="1046" y="404" font-size="13.5" font-weight="700" fill="#0E9F6E">doorlaten<tspan fill="#B45309"> · maskeren</tspan><tspan fill="#DC2626"> · blokkeren</tspan></text>
 
-  <line x1="1266" y1="336" x2="1326" y2="336" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="1266" y1="336" x2="1326" y2="336" stroke="#D97706" stroke-width="2.5" marker-end="url(#aw)"/>
 
   <!-- 5 verslag -->
   <rect x="1334" y="252" width="196" height="168" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
@@ -101,7 +104,7 @@
   <circle cx="116" cy="758" r="4" fill="#3B82F6"/>
   <text class="f lab" x="134" y="764">Zijn eigen vorige sessie — hij weet nog wat hij gedaan heeft</text>
   <circle cx="116" cy="790" r="4" fill="#E08C1E"/>
-  <text class="f lab" x="134" y="796">Kennis uit Nectar, bij elke prompt opnieuw (zie plaat 5)</text>
+  <text class="f lab" x="134" y="796">Kennis uit Nectar, bij elke prompt opnieuw (zie plaat 3)</text>
 
   <!-- what you see -->
   <rect x="818" y="584" width="712" height="230" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>

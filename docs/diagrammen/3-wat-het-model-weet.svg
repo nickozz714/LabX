@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="t3">
+  <title id="t3">Wat het model weet: vier bronnen, verder niets — en hoe Nectar er een van is</title>
+  <defs>
+    <marker id="ab" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="ah" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#E08C1E"/>
+    </marker>
+    <marker id="av" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#8B5CF6"/>
+    </marker>
+  </defs>
+  <style>
+    .f { font-family: Archivo, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
+    .sub { font-size: 19px; fill: #64748B; }
+    .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
+    .h { font-size: 19px; font-weight: 700; fill: #0B1220; }
+    .lab { font-size: 15px; fill: #334155; }
+    .sm { font-size: 13.5px; fill: #64748B; }
+    .tag { font-size: 12.5px; font-weight: 700; letter-spacing: 1.1px; }
+    .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 13px; }
+  </style>
+
+  <rect width="1600" height="900" fill="#FBFCFE"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#0B1220"/>
+
+  <text class="f eyebrow" x="70" y="78">PLAAT 3 — WAAR DE KENNIS VANDAAN KOMT</text>
+  <text class="f title" x="70" y="122">Het model weet niets uit zichzelf — en mag niets zelf pakken</text>
+  <text class="f sub" x="70" y="156">Vier kanalen naar binnen, en verder helemaal niets. Wat er niet in gestopt wordt, weet het niet.</text>
+
+  <!-- vier bronnen -->
+  <text class="f tag" x="70" y="212" fill="#3B82F6">DE VIER BRONNEN — MEER ZIJN HET ER NIET</text>
+
+  <rect x="70" y="228" width="326" height="98" rx="12" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2"/>
+  <rect x="70" y="228" width="6" height="98" rx="3" fill="#3B82F6"/>
+  <text class="f h" x="98" y="262">1 · Jouw opdracht</text>
+  <text class="f sm" x="98" y="288">Het ticket met omschrijving en criteria,</text>
+  <text class="f sm" x="98" y="310">je chatbericht, en de bijlagen die je meestuurt</text>
+
+  <rect x="70" y="340" width="326" height="98" rx="12" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2"/>
+  <rect x="70" y="340" width="6" height="98" rx="3" fill="#3B82F6"/>
+  <text class="f h" x="98" y="374">2 · Wat er in het lab staat</text>
+  <text class="f sm" x="98" y="400">Markdown, code, data — alles in /workspace.</text>
+  <text class="f sm" x="98" y="422">Alleen te lezen via een tool, dus langs de guard</text>
+
+  <rect x="70" y="452" width="326" height="98" rx="12" fill="#FDF3E3" stroke="#E08C1E" stroke-width="2"/>
+  <rect x="70" y="452" width="6" height="98" rx="3" fill="#E08C1E"/>
+  <text class="f h" x="98" y="486">3 · Nectar</text>
+  <text class="f sm" x="98" y="512">Het geheugen van de organisatie — staat er al</text>
+  <text class="f sm" x="98" y="534">vóór hij iets vraagt. Zie de balk onderaan</text>
+
+  <rect x="70" y="564" width="326" height="98" rx="12" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2"/>
+  <rect x="70" y="564" width="6" height="98" rx="3" fill="#3B82F6"/>
+  <text class="f h" x="98" y="598">4 · Skills</text>
+  <text class="f sm" x="98" y="624">How-to-kennis die jij beheert, met instructies</text>
+  <text class="f sm" x="98" y="646">per tool. Ook gewoon Markdown</text>
+
+  <path d="M396 278 L470 278 L470 400" stroke="#3B82F6" stroke-width="2.5" fill="none"/>
+  <path d="M396 390 L470 390" stroke="#3B82F6" stroke-width="2.5" fill="none"/>
+  <path d="M396 502 L470 502" stroke="#E08C1E" stroke-width="2.5" fill="none"/>
+  <path d="M396 614 L470 614 L470 420" stroke="#3B82F6" stroke-width="2.5" fill="none"/>
+  <path d="M470 430 L536 430" stroke="#3B82F6" stroke-width="3" marker-end="url(#ab)"/>
+
+  <!-- het model, verzegeld -->
+  <rect x="546" y="228" width="452" height="434" rx="18" fill="#FFFFFF" stroke="#0B1220" stroke-width="3"/>
+  <rect x="546" y="228" width="452" height="46" rx="18" fill="#0B1220"/>
+  <rect x="546" y="256" width="452" height="18" fill="#0B1220"/>
+  <text class="f tag" x="772" y="258" text-anchor="middle" fill="#FFFFFF">EIGEN CONTAINER — VERDER NERGENS BIJ</text>
+
+  <text class="f h" x="772" y="310" text-anchor="middle" font-size="23">Claude Code CLI</text>
+  <text class="f sm" x="772" y="336" text-anchor="middle">draait als proces in de LabX-container,</text>
+  <text class="f sm" x="772" y="358" text-anchor="middle">niet op jouw machine en niet in het lab</text>
+
+  <line x1="586" y1="384" x2="958" y2="384" stroke="#E2E8F0" stroke-width="2"/>
+
+  <text class="f tag" x="586" y="414" fill="#DC2626">WAT ER DICHTSTAAT</text>
+  <rect x="586" y="428" width="372" height="126" rx="10" fill="#FDECEC"/>
+  <text class="f mono" x="606" y="454" fill="#B91C1C">Bash · Read · Write · Edit · Glob · Grep</text>
+  <text class="f mono" x="606" y="478" fill="#B91C1C">WebFetch · NotebookEdit · TodoWrite</text>
+  <text class="f sm" x="606" y="506" fill="#7F1D1D">Geen enkel bestand op de host te lezen,</text>
+  <text class="f sm" x="606" y="528" fill="#7F1D1D">geen commando lokaal te draaien,</text>
+  <text class="f sm" x="606" y="548" fill="#7F1D1D">geen willekeurige URL op te halen.</text>
+
+  <rect x="586" y="566" width="372" height="76" rx="10" fill="#F1F5F9"/>
+  <text class="f sm" x="606" y="592">Geen API-sleutel en geen sessie van de host erfelijk.</text>
+  <text class="f sm" x="606" y="614">Geen MCP-server van jouw eigen Claude Code erbij:</text>
+  <text class="f mono" x="606" y="634" fill="#475569">--strict-mcp-config</text>
+
+  <path d="M998 430 L1064 430" stroke="#3B82F6" stroke-width="3" marker-end="url(#ab)"/>
+
+  <!-- de enige uitweg -->
+  <rect x="1074" y="228" width="456" height="200" rx="14" fill="#EAF1FE" stroke="#3B82F6" stroke-width="2"/>
+  <text class="f tag" x="1102" y="264" fill="#1D4ED8">DE ENIGE UITWEG NAAR WERK</text>
+  <text class="f h" x="1102" y="298" font-size="21">Alles loopt via de LabX-gateway</text>
+  <text class="f mono" x="1102" y="328" fill="#1D4ED8">mcp__labx</text>
+  <text class="f sm" x="1102" y="358">Elke tool die hij mag gebruiken hangt daaraan, en elk</text>
+  <text class="f sm" x="1102" y="380">antwoord dat terugkomt is langs de data-guard geweest.</text>
+  <text class="f sm" x="1102" y="406">Eén doorgang betekent: één plek waar je het kunt zien en stoppen.</text>
+
+  <rect x="1074" y="444" width="456" height="98" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="1102" y="478" fill="#94A3B8">ÉÉN UITZONDERING, BEWUST</text>
+  <text class="f lab" x="1102" y="506"><tspan font-weight="700">WebSearch</tspan> mag wel — zoeken is een lage lek-kans.</text>
+  <text class="f sm" x="1102" y="528">Een pagina ophalen (WebFetch) mag juist níét: dat ís een uitgaand kanaal.</text>
+
+  <rect x="1074" y="558" width="456" height="104" rx="14" fill="#F1ECFE"/>
+  <text class="f tag" x="1102" y="592" fill="#6D28D9">WAT ERUIT KOMT</text>
+  <text class="f lab" x="1102" y="620">Het verslag op het ticket · bestanden in het lab ·</text>
+  <text class="f lab" x="1102" y="642">en wat hij leerde, terug naar Nectar</text>
+
+  <!-- Nectar-balk -->
+  <rect x="70" y="694" width="1460" height="136" rx="16" fill="#0B1220"/>
+  <text class="f tag" x="102" y="730" fill="#E08C1E">HOE NECTAR DIT VOEDT — DE CYCLUS, ELKE PROMPT OPNIEUW</text>
+
+  <circle cx="118" cy="776" r="15" fill="#E08C1E"/>
+  <text class="f" x="118" y="782" text-anchor="middle" font-size="14" font-weight="700" fill="#0B1220">1</text>
+  <text class="f" x="144" y="772" font-size="16" font-weight="700" fill="#FFFFFF">Recall, automatisch</text>
+  <text class="f" x="144" y="796" font-size="13.5" fill="#94A3B8">Een hook haalt de relevante kennis op vóór het model iets vraagt</text>
+
+  <path d="M620 776 L668 776" stroke="#E08C1E" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <circle cx="700" cy="776" r="15" fill="#E08C1E"/>
+  <text class="f" x="700" y="782" text-anchor="middle" font-size="14" font-weight="700" fill="#0B1220">2</text>
+  <text class="f" x="726" y="772" font-size="16" font-weight="700" fill="#FFFFFF">Het werk gebeurt</text>
+  <text class="f" x="726" y="796" font-size="13.5" fill="#94A3B8">Met die kennis al in de context — niets opnieuw uit te leggen</text>
+
+  <path d="M1140 776 L1188 776" stroke="#E08C1E" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <circle cx="1220" cy="776" r="15" fill="#E08C1E"/>
+  <text class="f" x="1220" y="782" text-anchor="middle" font-size="14" font-weight="700" fill="#0B1220">3</text>
+  <text class="f" x="1246" y="772" font-size="16" font-weight="700" fill="#FFFFFF">Terug door de write-gate</text>
+  <text class="f" x="1246" y="796" font-size="13.5" fill="#94A3B8">Kwaliteit, persoonsgegevens en dubbelingen getoetst</text>
+</svg>

@@ -21,7 +21,7 @@
   <rect width="1600" height="900" fill="#FBFCFE"/>
   <rect x="0" y="0" width="1600" height="6" fill="#64748B"/>
 
-  <text class="f eyebrow" x="70" y="78">PLAAT 6 — WAAR HET DRAAIT</text>
+  <text class="f eyebrow" x="70" y="78">PLAAT 7 — WAAR HET DRAAIT</text>
   <text class="f title" x="70" y="122">Twee machines, jouw netwerk, geen cloud</text>
   <text class="f sub" x="70" y="156">Alles draait in Docker. Buiten die containers wordt er niets op de machine geïnstalleerd.</text>
 

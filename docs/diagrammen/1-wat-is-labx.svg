@@ -7,11 +7,8 @@
     <marker id="ablue" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M1 1 L11 6 L1 11 z" fill="#3B82F6"/>
     </marker>
-    <marker id="agreen" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M1 1 L11 6 L1 11 z" fill="#0E9F6E"/>
-    </marker>
-    <marker id="ared" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M1 1 L11 6 L1 11 z" fill="#DC2626"/>
+    <marker id="aamber" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#D97706"/>
     </marker>
   </defs>
   <style>
@@ -19,11 +16,11 @@
     .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
     .sub { font-size: 19px; fill: #64748B; }
     .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
-    .h { font-size: 21px; font-weight: 700; fill: #0B1220; }
-    .lab { font-size: 16px; fill: #334155; }
-    .sm { font-size: 14.5px; fill: #64748B; }
+    .h { font-size: 20px; font-weight: 700; fill: #0B1220; }
+    .lab { font-size: 15.5px; fill: #334155; }
+    .sm { font-size: 14px; fill: #64748B; }
     .tag { font-size: 13px; font-weight: 700; letter-spacing: 1.1px; }
-    .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 14px; fill: #475569; }
+    .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 13.5px; fill: #475569; }
   </style>
 
   <rect width="1600" height="900" fill="#FBFCFE"/>
@@ -31,91 +28,107 @@
 
   <text class="f eyebrow" x="70" y="78">PLAAT 1 — DE KERN</text>
   <text class="f title" x="70" y="122">Een agent met een eigen, afgeschermde werkplaats</text>
-  <text class="f sub" x="70" y="156">De agent mag binnen het lab vrijwel alles. De grens wordt bewaakt op wat eruit gaat.</text>
+  <text class="f sub" x="70" y="156">De agent mag binnen het lab vrijwel alles. Alles wat het lab verlaat gaat eerst langs de guard.</text>
 
   <!-- jij -->
-  <rect x="70" y="330" width="230" height="200" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
-  <circle cx="185" cy="396" r="26" fill="#EAF1FE" stroke="#3B82F6" stroke-width="2"/>
-  <circle cx="185" cy="388" r="9" fill="#3B82F6"/>
-  <path d="M168 410 a17 17 0 0 1 34 0" fill="#3B82F6"/>
-  <text class="f h" x="185" y="458" text-anchor="middle">Jij</text>
-  <text class="f sm" x="185" y="484" text-anchor="middle">geeft de opdracht,</text>
-  <text class="f sm" x="185" y="504" text-anchor="middle">bepaalt de grenzen</text>
+  <rect x="70" y="316" width="196" height="184" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <circle cx="168" cy="374" r="25" fill="#EAF1FE" stroke="#3B82F6" stroke-width="2"/>
+  <circle cx="168" cy="366" r="8.5" fill="#3B82F6"/>
+  <path d="M152 388 a16 16 0 0 1 32 0" fill="#3B82F6"/>
+  <text class="f h" x="168" y="434" text-anchor="middle">Jij</text>
+  <text class="f sm" x="168" y="460" text-anchor="middle">geeft de opdracht,</text>
+  <text class="f sm" x="168" y="480" text-anchor="middle">bepaalt de grenzen</text>
 
-  <line x1="300" y1="430" x2="372" y2="430" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="266" y1="408" x2="322" y2="408" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
 
-  <!-- LabX -->
-  <rect x="380" y="300" width="250" height="260" rx="14" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5"/>
-  <rect x="380" y="300" width="250" height="44" rx="14" fill="#3B82F6"/>
-  <rect x="380" y="330" width="250" height="14" fill="#3B82F6"/>
-  <text class="f tag" x="505" y="330" text-anchor="middle" fill="#FFFFFF">LABX</text>
-  <text class="f lab" x="505" y="386" text-anchor="middle">Chat · Boards</text>
-  <text class="f lab" x="505" y="412" text-anchor="middle">Skills · Workflows</text>
-  <text class="f lab" x="505" y="438" text-anchor="middle">Schedules</text>
-  <line x1="412" y1="462" x2="598" y2="462" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f sm" x="505" y="490" text-anchor="middle">Start de labs als</text>
-  <text class="f sm" x="505" y="510" text-anchor="middle">losse containers</text>
-  <text class="f mono" x="505" y="536" text-anchor="middle">docker.sock</text>
+  <!-- LabX + de agent -->
+  <rect x="330" y="270" width="290" height="276" rx="14" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5"/>
+  <rect x="330" y="270" width="290" height="44" rx="14" fill="#3B82F6"/>
+  <rect x="330" y="300" width="290" height="14" fill="#3B82F6"/>
+  <text class="f tag" x="475" y="300" text-anchor="middle" fill="#FFFFFF">LABX — EN DE AGENT</text>
 
-  <line x1="630" y1="430" x2="702" y2="430" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#ablue)"/>
+  <rect x="358" y="336" width="234" height="96" rx="11" fill="#EAF1FE"/>
+  <text class="f h" x="475" y="370" text-anchor="middle">Claude Code CLI</text>
+  <text class="f sm" x="475" y="394" text-anchor="middle">denkt, kiest, vraagt</text>
+  <text class="f sm" x="475" y="416" text-anchor="middle">maar raakt zelf niets aan</text>
+
+  <text class="f lab" x="475" y="460" text-anchor="middle">Chat · Boards · Skills</text>
+  <text class="f lab" x="475" y="484" text-anchor="middle">Workflows · Schedules</text>
+  <text class="f mono" x="475" y="516" text-anchor="middle">start de labs via docker.sock</text>
+
+  <!-- de guard ALS de wand van de sandbox -->
+  <rect x="648" y="222" width="94" height="418" rx="14" fill="#1E293B"/>
+  <rect x="648" y="222" width="94" height="8" rx="4" fill="#D97706"/>
+  <text class="f tag" x="695" y="284" text-anchor="middle" fill="#FBBF24">DATA</text>
+  <text class="f tag" x="695" y="304" text-anchor="middle" fill="#FBBF24">GUARD</text>
+  <line x1="668" y1="326" x2="722" y2="326" stroke="#475569" stroke-width="2"/>
+  <text class="f" x="695" y="360" text-anchor="middle" font-size="13" fill="#CBD5E1">alles wat</text>
+  <text class="f" x="695" y="380" text-anchor="middle" font-size="13" fill="#CBD5E1">het lab</text>
+  <text class="f" x="695" y="400" text-anchor="middle" font-size="13" fill="#CBD5E1">verlaat,</text>
+  <text class="f" x="695" y="420" text-anchor="middle" font-size="13" fill="#CBD5E1">komt hier</text>
+  <text class="f" x="695" y="440" text-anchor="middle" font-size="13" fill="#CBD5E1">langs</text>
+  <line x1="668" y1="464" x2="722" y2="464" stroke="#475569" stroke-width="2"/>
+  <text class="f" x="695" y="496" text-anchor="middle" font-size="12.5" font-weight="700" fill="#34D399">doorlaten</text>
+  <text class="f" x="695" y="520" text-anchor="middle" font-size="12.5" font-weight="700" fill="#FBBF24">maskeren</text>
+  <text class="f" x="695" y="544" text-anchor="middle" font-size="12.5" font-weight="700" fill="#F87171">blokkeren</text>
+
+  <!-- opdracht erheen, uitvoer terug -->
+  <path d="M620 352 L642 352" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#ablue)"/>
+  <path d="M748 352 L784 352" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#ablue)"/>
+  <text class="f" x="700" y="204" text-anchor="middle" font-size="13.5" font-weight="700" fill="#3B82F6">opdracht →</text>
+
+  <path d="M784 476 L748 476" stroke="#D97706" stroke-width="3" marker-end="url(#aamber)"/>
+  <path d="M642 476 L620 476" stroke="#D97706" stroke-width="3" marker-end="url(#aamber)"/>
+  <text class="f" x="700" y="672" text-anchor="middle" font-size="13.5" font-weight="700" fill="#B45309">← uitvoer, getoetst</text>
 
   <!-- sandbox -->
-  <rect x="712" y="238" width="490" height="386" rx="18" fill="#F8FAFF" stroke="#94A3B8" stroke-width="2.5" stroke-dasharray="10 7"/>
-  <text class="f tag" x="736" y="272" fill="#64748B">HET LAB — WEGWERPBARE SANDBOX</text>
+  <rect x="792" y="222" width="440" height="418" rx="18" fill="#F8FAFF" stroke="#94A3B8" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text class="f tag" x="816" y="256" fill="#64748B">HET LAB — WEGWERPBARE SANDBOX</text>
 
-  <rect x="740" y="296" width="200" height="132" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f h" x="840" y="336" text-anchor="middle">De agent</text>
-  <text class="f sm" x="840" y="362" text-anchor="middle">Claude Code CLI</text>
-  <text class="f sm" x="840" y="386" text-anchor="middle">shell · bestanden</text>
-  <text class="f sm" x="840" y="408" text-anchor="middle">installeert wat hij mist</text>
+  <rect x="818" y="278" width="186" height="118" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="911" y="314" text-anchor="middle">Werker 1</text>
+  <text class="f sm" x="911" y="340" text-anchor="middle">shell · bestanden</text>
+  <text class="f sm" x="911" y="362" text-anchor="middle">installeert wat hij mist</text>
+  <text class="f sm" x="911" y="384" text-anchor="middle">1 CPU · 2 GB</text>
 
-  <rect x="972" y="296" width="200" height="132" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f h" x="1072" y="336" text-anchor="middle">Werkers</text>
-  <text class="f sm" x="1072" y="362" text-anchor="middle">1 CPU · 2 GB elk</text>
-  <text class="f sm" x="1072" y="386" text-anchor="middle">delen /workspace</text>
-  <text class="f sm" x="1072" y="408" text-anchor="middle">schalen mee met werk</text>
+  <rect x="1020" y="278" width="186" height="118" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="1113" y="314" text-anchor="middle">Werker 2</text>
+  <text class="f sm" x="1113" y="340" text-anchor="middle">deelt /workspace</text>
+  <text class="f sm" x="1113" y="362" text-anchor="middle">schaalt mee met werk</text>
+  <text class="f sm" x="1113" y="384" text-anchor="middle">1 CPU · 2 GB</text>
 
-  <rect x="740" y="452" width="432" height="144" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f h" x="956" y="490" text-anchor="middle">Wat erin kan</text>
-  <text class="f lab" x="956" y="522" text-anchor="middle">repositories · bestanden · geheimen · Azure-sessie</text>
-  <text class="f lab" x="956" y="548" text-anchor="middle">MCP-tools · skills · een eigen browser</text>
-  <text class="f sm" x="956" y="578" text-anchor="middle">Lab weg = alles weg. Geen restanten op de host.</text>
+  <rect x="818" y="412" width="388" height="200" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="1012" y="448" text-anchor="middle">Wat erin zit</text>
+  <text class="f lab" x="1012" y="480" text-anchor="middle">repositories · bestanden · geheimen</text>
+  <text class="f lab" x="1012" y="506" text-anchor="middle">de Azure-sessie · MCP-tools · skills</text>
+  <text class="f lab" x="1012" y="532" text-anchor="middle">een eigen browser</text>
+  <line x1="850" y1="556" x2="1174" y2="556" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f sm" x="1012" y="584" text-anchor="middle">Lab weg = alles weg. Geen restanten op de host.</text>
 
-  <!-- guard on the boundary -->
-  <rect x="1160" y="360" width="84" height="142" rx="12" fill="#0B1220"/>
-  <text class="f tag" x="1202" y="400" text-anchor="middle" fill="#FFFFFF">DATA</text>
-  <text class="f tag" x="1202" y="420" text-anchor="middle" fill="#FFFFFF">GUARD</text>
-  <line x1="1176" y1="438" x2="1228" y2="438" stroke="#475569" stroke-width="2"/>
-  <text class="f" x="1202" y="464" text-anchor="middle" font-size="13" fill="#CBD5E1">kijkt naar</text>
-  <text class="f" x="1202" y="482" text-anchor="middle" font-size="13" fill="#CBD5E1">wat eruit gaat</text>
+  <!-- buitenwereld -->
+  <rect x="1300" y="222" width="230" height="418" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="1415" y="256" text-anchor="middle" fill="#64748B">BUITENWERELD</text>
+  <text class="f lab" x="1415" y="304" text-anchor="middle">Git · GitHub</text>
+  <text class="f lab" x="1415" y="338" text-anchor="middle">Jira · Azure DevOps</text>
+  <text class="f lab" x="1415" y="372" text-anchor="middle">Azure · Fabric</text>
+  <text class="f lab" x="1415" y="406" text-anchor="middle">Teams · Outlook</text>
+  <text class="f lab" x="1415" y="440" text-anchor="middle">Internet</text>
+  <line x1="1332" y1="472" x2="1498" y2="472" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f sm" x="1415" y="504" text-anchor="middle">Het lab praat hier zelf mee,</text>
+  <text class="f sm" x="1415" y="526" text-anchor="middle">met een allowlist die jij zet.</text>
+  <text class="f sm" x="1415" y="560" text-anchor="middle">Netwerk per lab helemaal</text>
+  <text class="f sm" x="1415" y="582" text-anchor="middle">uit te zetten.</text>
 
-  <!-- outside -->
-  <rect x="1300" y="238" width="230" height="386" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f tag" x="1415" y="276" text-anchor="middle" fill="#64748B">BUITENWERELD</text>
-  <text class="f lab" x="1415" y="320" text-anchor="middle">Git · GitHub</text>
-  <text class="f lab" x="1415" y="352" text-anchor="middle">Jira · Azure DevOps</text>
-  <text class="f lab" x="1415" y="384" text-anchor="middle">Azure · Fabric</text>
-  <text class="f lab" x="1415" y="416" text-anchor="middle">Teams · Outlook</text>
-  <text class="f lab" x="1415" y="448" text-anchor="middle">Internet</text>
-  <line x1="1332" y1="478" x2="1498" y2="478" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f sm" x="1415" y="510" text-anchor="middle">Netwerk per lab</text>
-  <text class="f sm" x="1415" y="532" text-anchor="middle">aan of uit te zetten</text>
-
-  <path d="M1244 406 L1292 406" stroke="#0E9F6E" stroke-width="3" marker-end="url(#agreen)"/>
-  <text class="f" x="1268" y="392" text-anchor="middle" font-size="13" font-weight="700" fill="#0E9F6E">mag eruit</text>
-
-  <path d="M1244 462 L1292 462" stroke="#DC2626" stroke-width="3" stroke-dasharray="7 5"/>
-  <line x1="1270" y1="446" x2="1290" y2="478" stroke="#DC2626" stroke-width="3.5"/>
-  <line x1="1290" y1="446" x2="1270" y2="478" stroke="#DC2626" stroke-width="3.5"/>
-  <text class="f" x="1268" y="504" text-anchor="middle" font-size="13" font-weight="700" fill="#DC2626">klantdata niet</text>
+  <path d="M1232 402 L1292 402" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+  <path d="M1292 442 L1232 442" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
 
   <!-- bottom band -->
-  <rect x="70" y="684" width="1460" height="130" rx="14" fill="#F1F5F9"/>
-  <text class="f h" x="110" y="726">De drie beloftes</text>
-  <text class="f lab" x="110" y="762">Echt werk — een volledige shell, geen chat-theater.</text>
-  <text class="f lab" x="590" y="762">Afgeschermd — wegwerpbaar, en bewaakt op de uitgang.</text>
-  <text class="f lab" x="1060" y="762">Van jou — het draait op jouw machine.</text>
-  <rect x="110" y="778" width="46" height="4" rx="2" fill="#3B82F6"/>
-  <rect x="590" y="778" width="46" height="4" rx="2" fill="#0B1220"/>
-  <rect x="1060" y="778" width="46" height="4" rx="2" fill="#8B5CF6"/>
+  <rect x="70" y="700" width="1460" height="130" rx="14" fill="#F1F5F9"/>
+  <text class="f h" x="110" y="742">De drie beloftes</text>
+  <text class="f lab" x="110" y="778">Echt werk — een volledige shell, geen chat-theater.</text>
+  <text class="f lab" x="590" y="778">Afgeschermd — wegwerpbaar, en bewaakt op de uitgang.</text>
+  <text class="f lab" x="1060" y="778">Van jou — het draait op jouw machine.</text>
+  <rect x="110" y="794" width="46" height="4" rx="2" fill="#3B82F6"/>
+  <rect x="590" y="794" width="46" height="4" rx="2" fill="#D97706"/>
+  <rect x="1060" y="794" width="46" height="4" rx="2" fill="#8B5CF6"/>
 </svg>

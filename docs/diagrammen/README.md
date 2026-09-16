@@ -7,10 +7,19 @@ Allemaal **1600 × 900** (16:9 — precies een slide) en **SVG**, dus scherp op 
 | --- | --- | --- |
 | 1 | `1-wat-is-labx.svg` | De kern: een agent met een eigen, afgeschermde werkplaats |
 | 2 | `2-de-agent-lus.svg` | Wat er gebeurt tussen opdracht en verslag |
-| 3 | `3-van-ticket-tot-resultaat.svg` | Boards, planningen en werkers; sync met Jira en Azure DevOps |
-| 4 | `4-de-data-guard.svg` | Profiel, verklaarde intentie, de twee poorten en de audit |
-| 5 | `5-labx-en-nectar.svg` | De combinatie: LabX doet het werk, Nectar onthoudt het |
-| 6 | `6-waar-het-draait.svg` | Twee machines, poorten, volumes en wat het kost |
+| 3 | `3-wat-het-model-weet.svg` | De vier bronnen, wat er dichtstaat, en de Nectar-cyclus |
+| 4 | `4-van-ticket-tot-resultaat.svg` | Boards, planningen en werkers; sync met Jira en Azure DevOps |
+| 5 | `5-de-data-guard.svg` | Profiel, verklaarde intentie, de twee poorten en de audit |
+| 6 | `6-labx-en-nectar.svg` | De combinatie: LabX doet het werk, Nectar onthoudt het |
+| 7 | `7-waar-het-draait.svg` | Twee machines, poorten, volumes en wat het kost |
+
+Plaat 3 is de plaat voor de vraag die altijd komt: *wat weet dat model eigenlijk, en waar
+haalt het dat vandaan?* Hij is niet naar smaak getekend maar afgelezen uit
+`backend/src/services/agent/claude_cli_provider.py` — daar staat welke eigen tools van de CLI
+dichtgezet worden (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebFetch`, …), dat
+`--strict-mcp-config` voorkomt dat er een MCP-server van de beheerder meelift, en welke
+omgevingsvariabelen worden gestript. Verandert die lijst, dan hoort de plaat mee te
+veranderen.
 
 ## Beeldtaal
 
