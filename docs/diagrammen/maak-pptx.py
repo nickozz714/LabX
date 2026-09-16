@@ -3,6 +3,12 @@
 
     python3 maak-pptx.py --titel "LabX" --ondertitel "..." --uit LabX-platen.pptx
 
+Meerdere series in één deck (elke sectie krijgt een tussendia):
+
+    python3 maak-pptx.py --titel "LabX en Nectar" --uit beide.pptx \
+        --sectie "LabX|../../../LabX/docs/diagrammen|3B82F6|zeven platen" \
+        --sectie "Nectar|../../../Nectar/docs/diagrammen|E08C1E|acht platen"
+
 **Waarom er een PNG én de SVG in het bestand zit.** PowerPoint toont sinds 2019
 een ingebedde SVG rechtstreeks (scherp op elk formaat, en met rechtermuis →
 "Converteren naar vorm" tot losse vormen te maken). Oudere versies en de
@@ -110,7 +116,11 @@ def tekstvak(dia, x, y, b, h, tekst, *, grootte, kleur, vet=False, spatie=0):
     return vak
 
 
-def titeldia(prs, titel: str, ondertitel: str, accent: str) -> None:
+def donkere_dia(prs, titel: str, ondertitel: str, accent: str, *, klein=False) -> None:
+    """Titel- of tussendia: donker vlak, accentbalk, twee regels tekst.
+
+    Dezelfde vorm voor allebei, alleen kleiner gezet bij een tussendia — die
+    hoort een adempauze te zijn en geen tweede opening."""
     dia = prs.slides.add_slide(prs.slide_layouts[6])
     vlak = dia.shapes.add_shape(1, Emu(0), Emu(0), BREED, HOOG)   # 1 = rechthoek
     vlak.fill.solid()
@@ -124,35 +134,53 @@ def titeldia(prs, titel: str, ondertitel: str, accent: str) -> None:
     balk.line.fill.background()
     balk.shadow.inherit = False
 
-    tekstvak(dia, 914400, 2500000, 9000000, 1200000, titel, grootte=54, kleur="FFFFFF", vet=True)
-    tekstvak(dia, 914400, 3700000, 9600000, 900000, ondertitel, grootte=20, kleur="94A3B8")
+    tekstvak(dia, 914400, 2500000, 9600000, 1200000, titel,
+             grootte=38 if klein else 54, kleur="FFFFFF", vet=True)
+    if ondertitel:
+        tekstvak(dia, 914400, 3450000 if klein else 3700000, 9600000, 900000, ondertitel,
+                 grootte=18 if klein else 20, kleur="94A3B8")
 
 
-def bouw(map_: Path, titel: str, ondertitel: str, accent: str,
-         notities: dict[str, str], uit: Path) -> None:
+def bouw(secties: list[dict], titel: str, ondertitel: str, accent: str, uit: Path) -> None:
     browser = chrome()
     prs = Presentation()
     prs.slide_width, prs.slide_height = BREED, HOOG
-    titeldia(prs, titel, ondertitel, accent)
+    donkere_dia(prs, titel, ondertitel, accent)
 
-    platen = sorted(p for p in map_.glob("*.svg"))
-    if not platen:
-        sys.exit(f"Geen platen gevonden in {map_}")
+    teller = 0
+    for sectie in secties:
+        map_ = Path(sectie["map"]).resolve()
+        platen = sorted(map_.glob("*.svg"))
+        if not platen:
+            sys.exit(f"Geen platen gevonden in {map_}")
 
-    for n, svg in enumerate(platen, start=1):
-        png = HIER / ".png-cache" / f"{svg.stem}.png"
-        if not png.exists() or png.stat().st_mtime < svg.stat().st_mtime:
-            naar_png(svg, png, browser)
-        dia = prs.slides.add_slide(prs.slide_layouts[6])
-        plaatje = dia.shapes.add_picture(str(png), Emu(0), Emu(0), BREED, HOOG)
-        hang_svg_aan(dia, plaatje, svg, n)
-        notitie = notities.get(svg.name)
-        if notitie:
-            dia.notes_slide.notes_text_frame.text = notitie
-        print(f"  dia {n + 1}: {svg.name}")
+        if len(secties) > 1:
+            donkere_dia(prs, sectie["naam"], sectie.get("ondertitel", ""),
+                        sectie.get("accent", accent), klein=True)
+            print(f"\n{sectie['naam']}")
+
+        notities = {}
+        nj = map_ / "notities.json"
+        if nj.exists():
+            notities = json.loads(nj.read_text())
+
+        for svg in platen:
+            teller += 1
+            # De cache staat bij de bron, niet bij het script: bij een deck over
+            # meerdere series zou anders de ene map vol raken met renders van de
+            # andere.
+            png = map_ / ".png-cache" / f"{svg.stem}.png"
+            if not png.exists() or png.stat().st_mtime < svg.stat().st_mtime:
+                naar_png(svg, png, browser)
+            dia = prs.slides.add_slide(prs.slide_layouts[6])
+            plaatje = dia.shapes.add_picture(str(png), Emu(0), Emu(0), BREED, HOOG)
+            hang_svg_aan(dia, plaatje, svg, teller)
+            if notities.get(svg.name):
+                dia.notes_slide.notes_text_frame.text = notities[svg.name]
+            print(f"  {svg.name}")
 
     prs.save(str(uit))
-    print(f"\n{uit}  ({uit.stat().st_size / 1_048_576:.1f} MB, {len(platen) + 1} dia's)")
+    print(f"\n{uit}  ({uit.stat().st_size / 1_048_576:.1f} MB, {len(prs.slides._sldIdLst)} dia's)")
 
 
 def main() -> None:
@@ -160,17 +188,22 @@ def main() -> None:
     ap.add_argument("--titel", required=True)
     ap.add_argument("--ondertitel", default="")
     ap.add_argument("--accent", default="3B82F6", help="hex, zonder #")
-    ap.add_argument("--map", default=str(HIER))
-    ap.add_argument("--notities", default=str(HIER / "notities.json"))
+    ap.add_argument("--map", default=str(HIER), help="één serie; genegeerd als --sectie wordt gebruikt")
+    ap.add_argument("--sectie", action="append", default=[],
+                    help='"naam|map|accent|ondertitel" — herhaalbaar')
     ap.add_argument("--uit", required=True)
     a = ap.parse_args()
 
-    notities = {}
-    pad = Path(a.notities)
-    if pad.exists():
-        notities = json.loads(pad.read_text())
+    if a.sectie:
+        secties = []
+        for ruw in a.sectie:
+            deel = (ruw.split("|") + ["", "", ""])[:4]
+            secties.append({"naam": deel[0], "map": deel[1],
+                            "accent": deel[2] or a.accent, "ondertitel": deel[3]})
+    else:
+        secties = [{"naam": a.titel, "map": a.map, "accent": a.accent}]
 
-    bouw(Path(a.map), a.titel, a.ondertitel, a.accent, notities, Path(a.uit))
+    bouw(secties, a.titel, a.ondertitel, a.accent, Path(a.uit))
 
 
 if __name__ == "__main__":

@@ -50,6 +50,19 @@ SVG én een bitmap-voorvertoning: PowerPoint 2019+ toont de vector — scherp op
 met rechtermuis → *Converteren naar vorm* tot losse vormen te maken — en oudere versies
 vallen terug op de bitmap. Zo gaat het deck overal open.
 
+Eén deck over **beide** producten, met een tussendia per serie:
+
+```bash
+python3 maak-pptx.py --titel "LabX en Nectar" \
+    --ondertitel "Een veilige AI-werkplaats, en het geheugen erachter — vijftien platen" \
+    --sectie "LabX|<pad>/LabX/docs/diagrammen|3B82F6|Een veilige AI-werkplaats" \
+    --sectie "Nectar|<pad>/Nectar/docs/diagrammen|E08C1E|Het geheugen van de organisatie" \
+    --uit LabX-en-Nectar-platen.pptx
+```
+
+Zet dat gecombineerde deck buiten beide repo's neer: het hoort bij geen van tweeën, en LabX
+en Nectar hebben niet dezelfde zichtbaarheid.
+
 Het renderen gebeurt met Chrome in headless-modus en niet met ImageMagick: die laatste
 rendert SVG-tekst met een eigen, beperkte engine en maakt er een potje van zodra er een
 lettertype-fallback aan te pas komt.
