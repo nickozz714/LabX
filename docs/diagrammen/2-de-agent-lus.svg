@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="t2">
+  <title id="t2">De agent-lus: van opdracht naar verslag, langs de guard</title>
+  <defs>
+    <marker id="a" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <style>
+    .f { font-family: Archivo, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
+    .sub { font-size: 19px; fill: #64748B; }
+    .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
+    .h { font-size: 20px; font-weight: 700; fill: #0B1220; }
+    .lab { font-size: 15.5px; fill: #334155; }
+    .sm { font-size: 14px; fill: #64748B; }
+    .num { font-size: 15px; font-weight: 700; fill: #FFFFFF; }
+    .tag { font-size: 13px; font-weight: 700; letter-spacing: 1.1px; }
+  </style>
+
+  <rect width="1600" height="900" fill="#FBFCFE"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#3B82F6"/>
+
+  <text class="f eyebrow" x="70" y="78">PLAAT 2 — DE WERKING</text>
+  <text class="f title" x="70" y="122">Wat er gebeurt tussen opdracht en verslag</text>
+  <text class="f sub" x="70" y="156">Elke ronde is dezelfde vijf stappen. De guard zit in de lus, niet erachter.</text>
+
+  <!-- 1 opdracht -->
+  <rect x="70" y="252" width="248" height="168" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <circle cx="102" cy="284" r="17" fill="#3B82F6"/>
+  <text class="f num" x="102" y="290" text-anchor="middle">1</text>
+  <text class="f h" x="132" y="290">Opdracht</text>
+  <text class="f lab" x="98" y="330">Een chatbericht,</text>
+  <text class="f lab" x="98" y="354">een ticket, of een</text>
+  <text class="f lab" x="98" y="378">schedule die afgaat.</text>
+  <text class="f sm" x="98" y="404">Met bijlagen, desgewenst.</text>
+
+  <line x1="318" y1="336" x2="378" y2="336" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- 2 agent kiest -->
+  <rect x="386" y="252" width="248" height="168" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <circle cx="418" cy="284" r="17" fill="#3B82F6"/>
+  <text class="f num" x="418" y="290" text-anchor="middle">2</text>
+  <text class="f h" x="448" y="290">De agent kiest</text>
+  <text class="f lab" x="414" y="330">Ziet alleen naam en</text>
+  <text class="f lab" x="414" y="354">beschrijving van elke</text>
+  <text class="f lab" x="414" y="378">toegestane tool.</text>
+  <text class="f sm" x="414" y="404">Het schema laadt pas bij gebruik.</text>
+
+  <line x1="634" y1="336" x2="694" y2="336" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- 3 uitvoeren -->
+  <rect x="702" y="252" width="248" height="168" rx="14" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5"/>
+  <circle cx="734" cy="284" r="17" fill="#3B82F6"/>
+  <text class="f num" x="734" y="290" text-anchor="middle">3</text>
+  <text class="f h" x="764" y="290">Uitvoeren</text>
+  <text class="f lab" x="730" y="330">In het lab: een commando,</text>
+  <text class="f lab" x="730" y="354">een MCP-tool, een script,</text>
+  <text class="f lab" x="730" y="378">een build of een test.</text>
+  <text class="f sm" x="730" y="404">Hier gebeurt het echte werk.</text>
+
+  <line x1="950" y1="336" x2="1010" y2="336" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- 4 guard -->
+  <rect x="1018" y="252" width="248" height="168" rx="14" fill="#0B1220"/>
+  <circle cx="1050" cy="284" r="17" fill="#FFFFFF"/>
+  <text class="f num" x="1050" y="290" text-anchor="middle" fill="#0B1220">4</text>
+  <text class="f h" x="1080" y="290" fill="#FFFFFF">De guard kijkt</text>
+  <text class="f lab" x="1046" y="330" fill="#CBD5E1">Niet naar de vorm van</text>
+  <text class="f lab" x="1046" y="354" fill="#CBD5E1">het commando, maar naar</text>
+  <text class="f lab" x="1046" y="378" fill="#CBD5E1">wat er uit kwam.</text>
+  <text class="f sm" x="1046" y="404" fill="#94A3B8">Doorlaten · maskeren · blokkeren</text>
+
+  <line x1="1266" y1="336" x2="1326" y2="336" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- 5 verslag -->
+  <rect x="1334" y="252" width="196" height="168" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <circle cx="1366" cy="284" r="17" fill="#3B82F6"/>
+  <text class="f num" x="1366" y="290" text-anchor="middle">5</text>
+  <text class="f h" x="1396" y="290">Verslag</text>
+  <text class="f lab" x="1362" y="330">Op het ticket,</text>
+  <text class="f lab" x="1362" y="354">in de chat, of als</text>
+  <text class="f lab" x="1362" y="378">melding per mail.</text>
+
+  <!-- loop back -->
+  <path d="M1432 420 L1432 492 Q1432 512 1412 512 L216 512 Q196 512 196 492 L196 420"
+        fill="none" stroke="#94A3B8" stroke-width="2.5" stroke-dasharray="8 6" marker-end="url(#ag)"/>
+  <rect x="646" y="490" width="320" height="44" rx="10" fill="#FBFCFE"/>
+  <text class="f lab" x="806" y="519" text-anchor="middle" fill="#64748B">…en weer een ronde, tot het werk af is</text>
+
+  <!-- what the agent sees -->
+  <rect x="70" y="584" width="712" height="230" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="106" y="622" fill="#94A3B8">WAT DE AGENT MEEKRIJGT</text>
+  <text class="f h" x="106" y="658">Context die hij niet zelf hoeft te zoeken</text>
+  <circle cx="116" cy="694" r="4" fill="#3B82F6"/>
+  <text class="f lab" x="134" y="700">De opdracht, de acceptatiecriteria en de tijdlijn van het ticket</text>
+  <circle cx="116" cy="726" r="4" fill="#3B82F6"/>
+  <text class="f lab" x="134" y="732">Skills: how-to-kennis met instructies per tool</text>
+  <circle cx="116" cy="758" r="4" fill="#3B82F6"/>
+  <text class="f lab" x="134" y="764">Zijn eigen vorige sessie — hij weet nog wat hij gedaan heeft</text>
+  <circle cx="116" cy="790" r="4" fill="#E08C1E"/>
+  <text class="f lab" x="134" y="796">Kennis uit Nectar, bij elke prompt opnieuw (zie plaat 5)</text>
+
+  <!-- what you see -->
+  <rect x="818" y="584" width="712" height="230" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="854" y="622" fill="#94A3B8">WAT JIJ ONDERTUSSEN ZIET</text>
+  <text class="f h" x="854" y="658">Live, en het loopt door als je wegklikt</text>
+  <circle cx="864" cy="694" r="4" fill="#8B5CF6"/>
+  <text class="f lab" x="882" y="700">Elke stap en elke afweging, terwijl hij ze zet</text>
+  <circle cx="864" cy="726" r="4" fill="#8B5CF6"/>
+  <text class="f lab" x="882" y="732">Tokenteller en context-indicator</text>
+  <circle cx="864" cy="758" r="4" fill="#8B5CF6"/>
+  <text class="f lab" x="882" y="764">Wat de guard tegenhield, en waarom</text>
+  <circle cx="864" cy="790" r="4" fill="#8B5CF6"/>
+  <text class="f lab" x="882" y="796">Een knop om hem te stoppen — ook als hij vastloopt</text>
+</svg>

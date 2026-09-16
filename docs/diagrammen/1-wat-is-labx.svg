@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="t1">
+  <title id="t1">Wat LabX is: een agent met een eigen afgeschermde werkplaats</title>
+  <defs>
+    <marker id="a" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#64748B"/>
+    </marker>
+    <marker id="ablue" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="agreen" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#0E9F6E"/>
+    </marker>
+    <marker id="ared" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#DC2626"/>
+    </marker>
+  </defs>
+  <style>
+    .f { font-family: Archivo, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
+    .sub { font-size: 19px; fill: #64748B; }
+    .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
+    .h { font-size: 21px; font-weight: 700; fill: #0B1220; }
+    .lab { font-size: 16px; fill: #334155; }
+    .sm { font-size: 14.5px; fill: #64748B; }
+    .tag { font-size: 13px; font-weight: 700; letter-spacing: 1.1px; }
+    .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 14px; fill: #475569; }
+  </style>
+
+  <rect width="1600" height="900" fill="#FBFCFE"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#3B82F6"/>
+
+  <text class="f eyebrow" x="70" y="78">PLAAT 1 — DE KERN</text>
+  <text class="f title" x="70" y="122">Een agent met een eigen, afgeschermde werkplaats</text>
+  <text class="f sub" x="70" y="156">De agent mag binnen het lab vrijwel alles. De grens wordt bewaakt op wat eruit gaat.</text>
+
+  <!-- jij -->
+  <rect x="70" y="330" width="230" height="200" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <circle cx="185" cy="396" r="26" fill="#EAF1FE" stroke="#3B82F6" stroke-width="2"/>
+  <circle cx="185" cy="388" r="9" fill="#3B82F6"/>
+  <path d="M168 410 a17 17 0 0 1 34 0" fill="#3B82F6"/>
+  <text class="f h" x="185" y="458" text-anchor="middle">Jij</text>
+  <text class="f sm" x="185" y="484" text-anchor="middle">geeft de opdracht,</text>
+  <text class="f sm" x="185" y="504" text-anchor="middle">bepaalt de grenzen</text>
+
+  <line x1="300" y1="430" x2="372" y2="430" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- LabX -->
+  <rect x="380" y="300" width="250" height="260" rx="14" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5"/>
+  <rect x="380" y="300" width="250" height="44" rx="14" fill="#3B82F6"/>
+  <rect x="380" y="330" width="250" height="14" fill="#3B82F6"/>
+  <text class="f tag" x="505" y="330" text-anchor="middle" fill="#FFFFFF">LABX</text>
+  <text class="f lab" x="505" y="386" text-anchor="middle">Chat · Boards</text>
+  <text class="f lab" x="505" y="412" text-anchor="middle">Skills · Workflows</text>
+  <text class="f lab" x="505" y="438" text-anchor="middle">Schedules</text>
+  <line x1="412" y1="462" x2="598" y2="462" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f sm" x="505" y="490" text-anchor="middle">Start de labs als</text>
+  <text class="f sm" x="505" y="510" text-anchor="middle">losse containers</text>
+  <text class="f mono" x="505" y="536" text-anchor="middle">docker.sock</text>
+
+  <line x1="630" y1="430" x2="702" y2="430" stroke="#3B82F6" stroke-width="2.5" marker-end="url(#ablue)"/>
+
+  <!-- sandbox -->
+  <rect x="712" y="238" width="490" height="386" rx="18" fill="#F8FAFF" stroke="#94A3B8" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text class="f tag" x="736" y="272" fill="#64748B">HET LAB — WEGWERPBARE SANDBOX</text>
+
+  <rect x="740" y="296" width="200" height="132" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="840" y="336" text-anchor="middle">De agent</text>
+  <text class="f sm" x="840" y="362" text-anchor="middle">Claude Code CLI</text>
+  <text class="f sm" x="840" y="386" text-anchor="middle">shell · bestanden</text>
+  <text class="f sm" x="840" y="408" text-anchor="middle">installeert wat hij mist</text>
+
+  <rect x="972" y="296" width="200" height="132" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="1072" y="336" text-anchor="middle">Werkers</text>
+  <text class="f sm" x="1072" y="362" text-anchor="middle">1 CPU · 2 GB elk</text>
+  <text class="f sm" x="1072" y="386" text-anchor="middle">delen /workspace</text>
+  <text class="f sm" x="1072" y="408" text-anchor="middle">schalen mee met werk</text>
+
+  <rect x="740" y="452" width="432" height="144" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="956" y="490" text-anchor="middle">Wat erin kan</text>
+  <text class="f lab" x="956" y="522" text-anchor="middle">repositories · bestanden · geheimen · Azure-sessie</text>
+  <text class="f lab" x="956" y="548" text-anchor="middle">MCP-tools · skills · een eigen browser</text>
+  <text class="f sm" x="956" y="578" text-anchor="middle">Lab weg = alles weg. Geen restanten op de host.</text>
+
+  <!-- guard on the boundary -->
+  <rect x="1160" y="360" width="84" height="142" rx="12" fill="#0B1220"/>
+  <text class="f tag" x="1202" y="400" text-anchor="middle" fill="#FFFFFF">DATA</text>
+  <text class="f tag" x="1202" y="420" text-anchor="middle" fill="#FFFFFF">GUARD</text>
+  <line x1="1176" y1="438" x2="1228" y2="438" stroke="#475569" stroke-width="2"/>
+  <text class="f" x="1202" y="464" text-anchor="middle" font-size="13" fill="#CBD5E1">kijkt naar</text>
+  <text class="f" x="1202" y="482" text-anchor="middle" font-size="13" fill="#CBD5E1">wat eruit gaat</text>
+
+  <!-- outside -->
+  <rect x="1300" y="238" width="230" height="386" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="1415" y="276" text-anchor="middle" fill="#64748B">BUITENWERELD</text>
+  <text class="f lab" x="1415" y="320" text-anchor="middle">Git · GitHub</text>
+  <text class="f lab" x="1415" y="352" text-anchor="middle">Jira · Azure DevOps</text>
+  <text class="f lab" x="1415" y="384" text-anchor="middle">Azure · Fabric</text>
+  <text class="f lab" x="1415" y="416" text-anchor="middle">Teams · Outlook</text>
+  <text class="f lab" x="1415" y="448" text-anchor="middle">Internet</text>
+  <line x1="1332" y1="478" x2="1498" y2="478" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f sm" x="1415" y="510" text-anchor="middle">Netwerk per lab</text>
+  <text class="f sm" x="1415" y="532" text-anchor="middle">aan of uit te zetten</text>
+
+  <path d="M1244 406 L1292 406" stroke="#0E9F6E" stroke-width="3" marker-end="url(#agreen)"/>
+  <text class="f" x="1268" y="392" text-anchor="middle" font-size="13" font-weight="700" fill="#0E9F6E">mag eruit</text>
+
+  <path d="M1244 462 L1292 462" stroke="#DC2626" stroke-width="3" stroke-dasharray="7 5"/>
+  <line x1="1270" y1="446" x2="1290" y2="478" stroke="#DC2626" stroke-width="3.5"/>
+  <line x1="1290" y1="446" x2="1270" y2="478" stroke="#DC2626" stroke-width="3.5"/>
+  <text class="f" x="1268" y="504" text-anchor="middle" font-size="13" font-weight="700" fill="#DC2626">klantdata niet</text>
+
+  <!-- bottom band -->
+  <rect x="70" y="684" width="1460" height="130" rx="14" fill="#F1F5F9"/>
+  <text class="f h" x="110" y="726">De drie beloftes</text>
+  <text class="f lab" x="110" y="762">Echt werk — een volledige shell, geen chat-theater.</text>
+  <text class="f lab" x="590" y="762">Afgeschermd — wegwerpbaar, en bewaakt op de uitgang.</text>
+  <text class="f lab" x="1060" y="762">Van jou — het draait op jouw machine.</text>
+  <rect x="110" y="778" width="46" height="4" rx="2" fill="#3B82F6"/>
+  <rect x="590" y="778" width="46" height="4" rx="2" fill="#0B1220"/>
+  <rect x="1060" y="778" width="46" height="4" rx="2" fill="#8B5CF6"/>
+</svg>

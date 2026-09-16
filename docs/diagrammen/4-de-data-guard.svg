@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="t4">
+  <title id="t4">De data-guard: profiel, verklaarde intentie en een audit die iets bewijst</title>
+  <defs>
+    <marker id="a" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#64748B"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#0E9F6E"/>
+    </marker>
+    <marker id="aw" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#D97706"/>
+    </marker>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#DC2626"/>
+    </marker>
+  </defs>
+  <style>
+    .f { font-family: Archivo, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
+    .sub { font-size: 19px; fill: #64748B; }
+    .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
+    .h { font-size: 20px; font-weight: 700; fill: #0B1220; }
+    .lab { font-size: 15.5px; fill: #334155; }
+    .sm { font-size: 14px; fill: #64748B; }
+    .tag { font-size: 13px; font-weight: 700; letter-spacing: 1.1px; }
+    .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 14px; }
+  </style>
+
+  <rect width="1600" height="900" fill="#FBFCFE"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#0B1220"/>
+
+  <text class="f eyebrow" x="70" y="78">PLAAT 4 — DE GRENS</text>
+  <text class="f title" x="70" y="122">De guard kijkt naar wat eruit komt, niet naar hoe het gevraagd werd</text>
+  <text class="f sub" x="70" y="156">Vorm liegt. Een onschuldig ogend commando kan veertig klantrijen opleveren — en andersom.</text>
+
+  <!-- context: profiel + intentie -->
+  <rect x="70" y="220" width="330" height="290" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="102" y="256" fill="#94A3B8">WAT DE GUARD VOORAF WEET</text>
+
+  <rect x="102" y="278" width="266" height="96" rx="10" fill="#F1ECFE"/>
+  <text class="f h" x="120" y="310" fill="#6D28D9">Profiel van het lab</text>
+  <text class="f sm" x="120" y="334">Generiek · Fabric/Azure · Streng</text>
+  <text class="f sm" x="120" y="356">Verschuift wat NORMAAL is,</text>
+  <text class="f sm" x="120" y="374" font-weight="700">niet wat beschermd wordt</text>
+
+  <rect x="102" y="388" width="266" height="96" rx="10" fill="#EAF1FE"/>
+  <text class="f h" x="120" y="420" fill="#1D4ED8">Verklaarde intentie</text>
+  <text class="f sm" x="120" y="444">Metadata · telling · code · klantdata</text>
+  <text class="f sm" x="120" y="466">De agent zegt vooraf wat hij</text>
+  <text class="f sm" x="120" y="484">gaat ophalen</text>
+
+  <path d="M400 330 L462 330" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+  <path d="M400 436 L462 436" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- poort 1 -->
+  <rect x="470" y="220" width="300" height="290" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="502" y="256" fill="#94A3B8">POORT 1 — DE OPDRACHT</text>
+  <text class="f h" x="502" y="290">Mag dit gevraagd worden?</text>
+  <text class="f lab" x="502" y="326">De intentie VERRUIMT hier.</text>
+  <rect x="502" y="344" width="236" height="76" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5"/>
+  <text class="f mono" x="518" y="372" fill="#475569">SELECT COLUMN_NAME</text>
+  <text class="f mono" x="518" y="394" fill="#475569">FROM INFORMATION_SCHEMA</text>
+  <text class="f sm" x="502" y="446">Lijkt op rijen ophalen. Met "metadata"</text>
+  <text class="f sm" x="502" y="468">verklaard gaat hij door — want er komt</text>
+  <text class="f sm" x="502" y="490">een kolommenlijst uit, geen gegevens.</text>
+
+  <path d="M770 366 L832 366" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- poort 2 -->
+  <rect x="840" y="220" width="330" height="290" rx="14" fill="#0B1220"/>
+  <text class="f tag" x="872" y="256" fill="#94A3B8">POORT 2 — DE UITVOER</text>
+  <text class="f h" x="872" y="290" fill="#FFFFFF">Hier wordt beslist</text>
+
+  <rect x="872" y="312" width="266" height="52" rx="9" fill="#1E293B"/>
+  <text class="f lab" x="890" y="336" fill="#E2E8F0">Regelset die jij beheert</text>
+  <text class="f" x="890" y="356" font-size="13" fill="#94A3B8">BSN · IBAN · creditcard · datasets</text>
+
+  <rect x="872" y="374" width="266" height="52" rx="9" fill="#1E293B"/>
+  <text class="f lab" x="890" y="398" fill="#E2E8F0">Lokaal model als tweede mening</text>
+  <text class="f" x="890" y="418" font-size="13" fill="#94A3B8">geeft een categorie, geen ja/nee</text>
+
+  <rect x="872" y="436" width="266" height="52" rx="9" fill="#312033"/>
+  <text class="f lab" x="890" y="460" fill="#FBCFE8">Klopt het met de intentie?</text>
+  <text class="f" x="890" y="480" font-size="13" fill="#F9A8D4">zo niet: MISMATCH, en dicht</text>
+
+  <!-- uitkomsten -->
+  <path d="M1170 300 L1244 300" stroke="#0E9F6E" stroke-width="3" marker-end="url(#ag)"/>
+  <rect x="1252" y="264" width="278" height="72" rx="12" fill="#E7F7F1" stroke="#0E9F6E" stroke-width="2"/>
+  <text class="f h" x="1276" y="296" fill="#0E7A55">Doorlaten</text>
+  <text class="f sm" x="1276" y="320">schema's, aantallen, aggregaties</text>
+
+  <path d="M1170 366 L1244 366" stroke="#D97706" stroke-width="3" marker-end="url(#aw)"/>
+  <rect x="1252" y="330" width="278" height="72" rx="12" fill="#FEF3E2" stroke="#D97706" stroke-width="2"/>
+  <text class="f h" x="1276" y="362" fill="#B45309">Maskeren</text>
+  <text class="f sm" x="1276" y="386">één BSN hoeft niet het hele antwoord</text>
+
+  <path d="M1170 432 L1244 432" stroke="#DC2626" stroke-width="3" marker-end="url(#ar)"/>
+  <rect x="1252" y="396" width="278" height="72" rx="12" fill="#FDECEC" stroke="#DC2626" stroke-width="2"/>
+  <text class="f h" x="1276" y="428" fill="#B91C1C">Blokkeren</text>
+  <text class="f sm" x="1276" y="452">ruwe klantrecords gaan niet naar buiten</text>
+
+  <!-- audit -->
+  <path d="M1005 510 L1005 566" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+  <rect x="840" y="574" width="690" height="150" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="872" y="610" fill="#94A3B8">DE AUDIT</text>
+  <text class="f h" x="872" y="644">Achteraf te bewijzen wat er wel en niet naar buiten ging</text>
+  <text class="f lab" x="872" y="676">Wat er gevraagd werd · wat eruit kwam · welke regel aansloeg · welk profiel</text>
+  <text class="f lab" x="872" y="700">en welke intentie golden · en wat de uitkomst was</text>
+  <rect x="1300" y="620" width="196" height="76" rx="10" fill="#F1F5F9"/>
+  <text class="f sm" x="1398" y="650" text-anchor="middle">De inhoud staat</text>
+  <text class="f sm" x="1398" y="672" text-anchor="middle" font-weight="700">versleuteld opgeslagen</text>
+  <text class="f" x="1398" y="690" text-anchor="middle" font-size="12.5" fill="#94A3B8">de audit is geen nieuw lek</text>
+
+  <!-- declare and verify -->
+  <rect x="70" y="536" width="700" height="188" rx="14" fill="#F1F5F9"/>
+  <text class="f tag" x="106" y="572" fill="#64748B">WAAROM VERKLAREN GEEN VRIJBRIEF IS</text>
+  <text class="f h" x="106" y="608">Liegen kost je de uitvoer én laat een spoor achter</text>
+  <text class="f lab" x="106" y="644">Zeg je "metadata" en er komen veertig klantrijen uit, dan gaat het alsnog</text>
+  <text class="f lab" x="106" y="668">dicht — en staat het als mismatch in de audit.</text>
+  <text class="f sm" x="106" y="702">Precies andersom dan een systeem waarin een declaratie de controle uitzet.</text>
+</svg>

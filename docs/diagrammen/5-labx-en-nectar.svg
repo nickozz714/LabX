@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="t5">
+  <title id="t5">LabX en Nectar: de agent doet het werk, de hive onthoudt het</title>
+  <defs>
+    <marker id="ah" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#E08C1E"/>
+    </marker>
+    <marker id="ab" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <style>
+    .f { font-family: Archivo, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
+    .sub { font-size: 19px; fill: #64748B; }
+    .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
+    .h { font-size: 20px; font-weight: 700; fill: #0B1220; }
+    .hw { font-size: 20px; font-weight: 700; fill: #FFFFFF; }
+    .lab { font-size: 15.5px; fill: #334155; }
+    .sm { font-size: 14px; fill: #64748B; }
+    .smw { font-size: 14px; fill: #94A3B8; }
+    .tag { font-size: 13px; font-weight: 700; letter-spacing: 1.1px; }
+    .flow { font-size: 15px; font-weight: 700; }
+  </style>
+
+  <rect width="1600" height="900" fill="#FBFCFE"/>
+  <rect x="0" y="0" width="800" height="6" fill="#3B82F6"/>
+  <rect x="800" y="0" width="800" height="6" fill="#E08C1E"/>
+
+  <text class="f eyebrow" x="70" y="78">PLAAT 5 — DE COMBINATIE</text>
+  <text class="f title" x="70" y="122">LabX doet het werk. Nectar onthoudt het.</text>
+  <text class="f sub" x="70" y="156">Eén gedeeld geheugen voor elke agent — niet één losse notitie per project, per machine, per week.</text>
+
+  <!-- clients -->
+  <text class="f tag" x="70" y="212" fill="#3B82F6">DE ZWERM — ELKE AANGESLOTEN AGENT</text>
+
+  <rect x="70" y="228" width="300" height="104" rx="12" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5"/>
+  <text class="f h" x="96" y="266">Een agent in een LabX-lab</text>
+  <text class="f sm" x="96" y="292">werkt aan een ticket, bouwt, test</text>
+  <text class="f sm" x="96" y="314">en legt onderweg vast wat hij leert</text>
+
+  <rect x="70" y="344" width="300" height="104" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="96" y="382">Claude Code op een laptop</text>
+  <text class="f sm" x="96" y="408">per project aangezet, met eigen</text>
+  <text class="f sm" x="96" y="430">token en eigen rol</text>
+
+  <rect x="70" y="460" width="300" height="104" rx="12" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="96" y="498">Elke andere MCP-client</text>
+  <text class="f sm" x="96" y="524">de hive praat MCP, dus het hoeft</text>
+  <text class="f sm" x="96" y="546">geen Claude Code te zijn</text>
+
+  <!-- flows -->
+  <path d="M960 300 L392 300" stroke="#E08C1E" stroke-width="3.5" marker-end="url(#ah)"/>
+  <rect x="452" y="212" width="452" height="72" rx="10" fill="#FDF3E3"/>
+  <text class="f flow" x="478" y="242" fill="#B45309">↙ RECALL — bij ELKE prompt, automatisch</text>
+  <text class="f sm" x="478" y="268">De relevante kennis staat er al voordat de agent iets vraagt</text>
+
+  <path d="M392 500 L960 500" stroke="#3B82F6" stroke-width="3.5" marker-end="url(#ab)"/>
+  <rect x="452" y="516" width="452" height="72" rx="10" fill="#EAF1FE"/>
+  <text class="f flow" x="478" y="546" fill="#1D4ED8">↗ ONTHOUDEN — door de write-gate</text>
+  <text class="f sm" x="478" y="572">Kwaliteit, persoonsgegevens en dubbelingen worden getoetst</text>
+
+  <!-- de hive -->
+  <rect x="972" y="196" width="558" height="404" rx="18" fill="#0B1220"/>
+  <text class="f tag" x="1004" y="236" fill="#E08C1E">NECTAR — HET GEHEUGEN VAN DE ORGANISATIE</text>
+
+  <!-- graph -->
+  <circle cx="1130" cy="330" r="30" fill="#E08C1E"/>
+  <text class="f" x="1130" y="336" text-anchor="middle" font-size="13" font-weight="700" fill="#0B1220">Fabric</text>
+  <circle cx="1268" cy="288" r="26" fill="#FFB547"/>
+  <text class="f" x="1268" y="293" text-anchor="middle" font-size="12" font-weight="700" fill="#0B1220">LabX</text>
+  <circle cx="1268" cy="392" r="22" fill="#FF7847"/>
+  <circle cx="1392" cy="330" r="18" fill="#FFE2B8"/>
+  <circle cx="1170" cy="424" r="16" fill="#8A6A30"/>
+  <circle cx="1352" cy="244" r="13" fill="#E6C05C"/>
+  <circle cx="1400" cy="424" r="13" fill="#E6C05C"/>
+  <line x1="1130" y1="330" x2="1268" y2="288" stroke="#8A6A30" stroke-width="2.5"/>
+  <line x1="1130" y1="330" x2="1268" y2="392" stroke="#8A6A30" stroke-width="2.5"/>
+  <line x1="1268" y1="288" x2="1392" y2="330" stroke="#8A6A30" stroke-width="2"/>
+  <line x1="1268" y1="392" x2="1392" y2="330" stroke="#8A6A30" stroke-width="2"/>
+  <line x1="1130" y1="330" x2="1170" y2="424" stroke="#8A6A30" stroke-width="2"/>
+  <line x1="1268" y1="288" x2="1352" y2="244" stroke="#8A6A30" stroke-width="1.8"/>
+  <line x1="1392" y1="330" x2="1400" y2="424" stroke="#8A6A30" stroke-width="1.8"/>
+  <text class="f smw" x="1004" y="470">Onderwerpen met geheugens eronder, meerdere ouders per knoop.</text>
+  <text class="f smw" x="1004" y="492">Wat gebruikt wordt stijgt; wat niemand meer raakt zakt weg.</text>
+
+  <rect x="1004" y="514" width="158" height="62" rx="9" fill="#1E293B"/>
+  <text class="f" x="1083" y="540" text-anchor="middle" font-size="14.5" font-weight="700" fill="#FFE2B8">Skills</text>
+  <text class="f" x="1083" y="562" text-anchor="middle" font-size="13" fill="#94A3B8">en workflows</text>
+  <rect x="1174" y="514" width="158" height="62" rx="9" fill="#1E293B"/>
+  <text class="f" x="1253" y="540" text-anchor="middle" font-size="14.5" font-weight="700" fill="#FFE2B8">Besluiten</text>
+  <text class="f" x="1253" y="562" text-anchor="middle" font-size="13" fill="#94A3B8">met het waarom erbij</text>
+  <rect x="1344" y="514" width="158" height="62" rx="9" fill="#1E293B"/>
+  <text class="f" x="1423" y="540" text-anchor="middle" font-size="14.5" font-weight="700" fill="#FFE2B8">Kluis</text>
+  <text class="f" x="1423" y="562" text-anchor="middle" font-size="13" fill="#94A3B8">geheimen per account</text>
+
+  <!-- swarm maintenance -->
+  <path d="M1252 600 L1252 636 Q1252 652 1236 652 L236 652 Q220 652 220 636 L220 600"
+        fill="none" stroke="#94A3B8" stroke-width="2.5" stroke-dasharray="8 6" marker-end="url(#ag)"/>
+  <rect x="566" y="630" width="424" height="44" rx="10" fill="#FBFCFE"/>
+  <text class="f lab" x="778" y="659" text-anchor="middle" fill="#64748B">De hive geeft onderhoudstaakjes terug — de zwerm ruimt zichzelf op</text>
+
+  <!-- payoff -->
+  <rect x="70" y="704" width="470" height="126" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f h" x="102" y="744">Zonder Nectar</text>
+  <text class="f sm" x="102" y="774">Elke agent begint blanco. Wat de vorige uitzocht,</text>
+  <text class="f sm" x="102" y="796">staat in een chat die niemand terugleest.</text>
+
+  <rect x="564" y="704" width="470" height="126" rx="14" fill="#FDF3E3" stroke="#E08C1E" stroke-width="2"/>
+  <text class="f h" x="596" y="744" fill="#B45309">Met Nectar</text>
+  <text class="f sm" x="596" y="774">Een afspraak die maandag gemaakt is, staat woensdag</text>
+  <text class="f sm" x="596" y="796">in de context van een agent die er niet bij was.</text>
+
+  <rect x="1058" y="704" width="472" height="126" rx="14" fill="#F1F5F9"/>
+  <text class="f h" x="1090" y="744">En het blijft binnen</text>
+  <text class="f sm" x="1090" y="774">Eigen server, lokale modellen voor embeddings en</text>
+  <text class="f sm" x="1090" y="796">herrangschikking. Geen cloud, niets naar buiten.</text>
+</svg>

@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="t6">
+  <title id="t6">Waar het draait: twee machines, jouw netwerk, geen cloud</title>
+  <defs>
+    <marker id="a" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#64748B"/>
+    </marker>
+  </defs>
+  <style>
+    .f { font-family: Archivo, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
+    .sub { font-size: 19px; fill: #64748B; }
+    .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
+    .h { font-size: 20px; font-weight: 700; fill: #0B1220; }
+    .lab { font-size: 15.5px; fill: #334155; }
+    .sm { font-size: 14px; fill: #64748B; }
+    .tag { font-size: 13px; font-weight: 700; letter-spacing: 1.1px; }
+    .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 13.5px; fill: #475569; }
+    .monow { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 13.5px; fill: #94A3B8; }
+  </style>
+
+  <rect width="1600" height="900" fill="#FBFCFE"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#64748B"/>
+
+  <text class="f eyebrow" x="70" y="78">PLAAT 6 — WAAR HET DRAAIT</text>
+  <text class="f title" x="70" y="122">Twee machines, jouw netwerk, geen cloud</text>
+  <text class="f sub" x="70" y="156">Alles draait in Docker. Buiten die containers wordt er niets op de machine geïnstalleerd.</text>
+
+  <!-- LabX machine -->
+  <rect x="70" y="212" width="690" height="440" rx="16" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5"/>
+  <rect x="70" y="212" width="690" height="46" rx="16" fill="#3B82F6"/>
+  <rect x="70" y="242" width="690" height="16" fill="#3B82F6"/>
+  <text class="f tag" x="102" y="242" fill="#FFFFFF">MACHINE 1 — LABX</text>
+  <text class="f" x="728" y="242" text-anchor="end" font-size="13" fill="#C7DDFD">één per persoon</text>
+
+  <rect x="102" y="284" width="196" height="92" rx="11" fill="#EAF1FE" stroke="#3B82F6" stroke-width="1.5"/>
+  <text class="f h" x="200" y="318" text-anchor="middle">web</text>
+  <text class="f sm" x="200" y="342" text-anchor="middle">de UI in je browser</text>
+  <text class="f mono" x="200" y="364" text-anchor="middle">:8080</text>
+
+  <rect x="318" y="284" width="196" height="92" rx="11" fill="#EAF1FE" stroke="#3B82F6" stroke-width="1.5"/>
+  <text class="f h" x="416" y="318" text-anchor="middle">api</text>
+  <text class="f sm" x="416" y="342" text-anchor="middle">FastAPI + SQLite</text>
+  <text class="f mono" x="416" y="364" text-anchor="middle">:8090</text>
+
+  <rect x="534" y="284" width="196" height="92" rx="11" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5"/>
+  <text class="f h" x="632" y="318" text-anchor="middle">volumes</text>
+  <text class="f mono" x="632" y="342" text-anchor="middle">labx_data</text>
+  <text class="f mono" x="632" y="362" text-anchor="middle">labx_claude_home</text>
+
+  <path d="M416 376 L416 408" stroke="#64748B" stroke-width="2.5" marker-end="url(#a)"/>
+  <text class="f mono" x="432" y="398">docker.sock</text>
+
+  <rect x="102" y="416" width="628" height="204" rx="12" fill="#F8FAFF" stroke="#94A3B8" stroke-width="2" stroke-dasharray="10 7"/>
+  <text class="f tag" x="126" y="448" fill="#64748B">DE LABS — LOSSE CONTAINERS NAAST DE API, OP DEZELFDE DAEMON</text>
+
+  <rect x="126" y="466" width="172" height="76" rx="10" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2"/>
+  <text class="f lab" x="212" y="498" text-anchor="middle">Lab · werker 1</text>
+  <text class="f sm" x="212" y="522" text-anchor="middle">1 CPU · 2 GB</text>
+
+  <rect x="314" y="466" width="172" height="76" rx="10" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2"/>
+  <text class="f lab" x="400" y="498" text-anchor="middle">Lab · werker 2</text>
+  <text class="f sm" x="400" y="522" text-anchor="middle">1 CPU · 2 GB</text>
+
+  <rect x="502" y="466" width="204" height="76" rx="10" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" stroke-dasharray="6 5"/>
+  <text class="f sm" x="604" y="498" text-anchor="middle">meer werkers als er werk</text>
+  <text class="f sm" x="604" y="520" text-anchor="middle">wacht — tot jouw plafond</text>
+
+  <text class="f sm" x="126" y="576">Reken op 1 core per gelijktijdig lab. CPU is de echte grens, niet geheugen:</text>
+  <text class="f sm" x="126" y="598">twee labs op één core wachten meetbaar op elkaar.</text>
+
+  <!-- Nectar machine -->
+  <rect x="800" y="212" width="730" height="440" rx="16" fill="#FFFFFF" stroke="#E08C1E" stroke-width="2.5"/>
+  <rect x="800" y="212" width="730" height="46" rx="16" fill="#E08C1E"/>
+  <rect x="800" y="242" width="730" height="16" fill="#E08C1E"/>
+  <text class="f tag" x="832" y="242" fill="#FFFFFF">MACHINE 2 — NECTAR</text>
+  <text class="f" x="1498" y="242" text-anchor="end" font-size="13" fill="#FDF3E3">één voor de hele organisatie</text>
+
+  <rect x="832" y="284" width="470" height="200" rx="12" fill="#0B1220"/>
+  <text class="f tag" x="856" y="318" fill="#E08C1E">ÉÉN CONTAINER, ALLES ERIN</text>
+  <rect x="856" y="336" width="196" height="58" rx="9" fill="#1E293B"/>
+  <text class="f" x="954" y="362" text-anchor="middle" font-size="15" font-weight="700" fill="#FFFFFF">Neo4j</text>
+  <text class="f" x="954" y="382" text-anchor="middle" font-size="12.5" fill="#94A3B8">de graph zelf</text>
+  <rect x="1068" y="336" width="210" height="58" rx="9" fill="#1E293B"/>
+  <text class="f" x="1173" y="362" text-anchor="middle" font-size="15" font-weight="700" fill="#FFFFFF">API + MCP</text>
+  <text class="f" x="1173" y="382" text-anchor="middle" font-size="12.5" fill="#94A3B8">waar de clients op praten</text>
+  <rect x="856" y="404" width="422" height="58" rx="9" fill="#1E293B"/>
+  <text class="f" x="1067" y="430" text-anchor="middle" font-size="15" font-weight="700" fill="#FFFFFF">Lokale modellen</text>
+  <text class="f" x="1067" y="450" text-anchor="middle" font-size="12.5" fill="#94A3B8">embeddings en herrangschikking — in het image gebakken</text>
+
+  <rect x="1322" y="284" width="180" height="200" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="1412" y="318" text-anchor="middle" fill="#94A3B8">POORTEN</text>
+  <text class="f mono" x="1412" y="352" text-anchor="middle">:8642  API + MCP</text>
+  <text class="f mono" x="1412" y="380" text-anchor="middle">:8643  over TLS</text>
+  <text class="f mono" x="1412" y="408" text-anchor="middle">:7474  browser</text>
+  <text class="f mono" x="1412" y="436" text-anchor="middle">:7687  bolt</text>
+  <text class="f" x="1412" y="466" text-anchor="middle" font-size="12.5" fill="#DC2626">7474/7687 nooit naar buiten</text>
+
+  <rect x="832" y="500" width="670" height="120" rx="12" fill="#FDF3E3"/>
+  <text class="f h" x="856" y="534" fill="#B45309">Eén replica, één volume</text>
+  <text class="f sm" x="856" y="562">Nectar is single-writer: Neo4j zit erin en bezit de opslag. Nooit twee instanties op</text>
+  <text class="f sm" x="856" y="584">hetzelfde volume, nooit uitschalen — opschalen (CPU/RAM) wel.</text>
+  <text class="f mono" x="856" y="608">nectar_hive-data  ←  dit volume IS het geheugen. Back-uppen.</text>
+
+  <!-- bottom facts -->
+  <rect x="70" y="684" width="1460" height="146" rx="14" fill="#F1F5F9"/>
+  <text class="f tag" x="106" y="720" fill="#64748B">GEMETEN OP DE REFERENTIE-INSTALLATIE — 4 CORES, 23 GB, DOCKER OP UBUNTU</text>
+
+  <text class="f h" x="106" y="762">LabX</text>
+  <text class="f sm" x="106" y="788">api ~450 MB · web ~5 MB · per lab 250–500 MB in</text>
+  <text class="f sm" x="106" y="810">gebruik van zijn 2 GB · ~3 GB aan images</text>
+
+  <text class="f h" x="606" y="762">Nectar</text>
+  <text class="f sm" x="606" y="788">~1,7 GB met beide modellen geladen · image 1,2 GB</text>
+  <text class="f sm" x="606" y="810">het plafond van 8 GB is een grens, geen reservering</text>
+
+  <text class="f h" x="1106" y="762">Minimaal</text>
+  <text class="f sm" x="1106" y="788">2 cores · 4 GB · 15 GB schijf</text>
+  <text class="f sm" x="1106" y="810">aanbevolen 4 cores · 8–16 GB · SSD</text>
+
+  <rect x="106" y="732" width="40" height="4" rx="2" fill="#3B82F6"/>
+  <rect x="606" y="732" width="40" height="4" rx="2" fill="#E08C1E"/>
+  <rect x="1106" y="732" width="40" height="4" rx="2" fill="#64748B"/>
+</svg>
