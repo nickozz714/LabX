@@ -9,9 +9,9 @@ Allemaal **1600 × 900** (16:9 — precies een slide) en **SVG**, dus scherp op 
 | 2 | `2-de-agent-lus.svg` | Wat er gebeurt tussen opdracht en verslag |
 | 3 | `3-wat-het-model-weet.svg` | De vier bronnen, wat er dichtstaat, en de Nectar-cyclus |
 | 4 | `4-van-ticket-tot-resultaat.svg` | Boards, planningen en werkers; sync met Jira en Azure DevOps |
-| 5 | `5-de-data-guard.svg` | Profiel, verklaarde intentie, de twee poorten en de audit |
+| 5 | `5-de-data-guard.svg` | Invoer- én uitvoercontrole, wat je zelf instelt, en de audit |
 | 6 | `6-labx-en-nectar.svg` | De combinatie: LabX doet het werk, Nectar onthoudt het |
-| 7 | `7-waar-het-draait.svg` | Twee machines, poorten, volumes en wat het kost |
+| 7 | `7-waar-het-draait.svg` | Welke containers, welke poorten, welke volumes — en waar de CLI draait |
 
 Plaat 3 is de plaat voor de vraag die altijd komt: *wat weet dat model eigenlijk, en waar
 haalt het dat vandaan?* Hij is niet naar smaak getekend maar afgelezen uit
@@ -51,6 +51,8 @@ ook doen op een machine die dat lettertype niet heeft.
 
 ## Bijhouden
 
-De cijfers op plaat 6 zijn gemeten, niet geschat (referentie: 4 cores, 23 GB, Docker op
-Ubuntu). Verandert er iets wezenlijks aan een product, dan hoort de bijbehorende plaat mee
-te veranderen — het zijn tekstbestanden, dus een aanpassing is een gewone diff.
+Wat er op de platen staat is afgelezen uit de code, niet bedacht: welke tools dichtstaan
+(`claude_cli_provider.py`), waar de guard zit (`tool_execution_service.py`), welke acties en
+doelen een regel kan hebben (`models/guard_rule.py`) en welke poorten open staan. Verandert
+daar iets, dan hoort de bijbehorende plaat mee te veranderen — het zijn tekstbestanden, dus
+een aanpassing is een gewone diff.

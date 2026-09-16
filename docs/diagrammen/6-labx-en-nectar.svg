@@ -66,25 +66,39 @@
   <rect x="972" y="196" width="558" height="404" rx="18" fill="#0B1220"/>
   <text class="f tag" x="1004" y="236" fill="#E08C1E">NECTAR — HET GEHEUGEN VAN DE ORGANISATIE</text>
 
-  <!-- graph -->
-  <circle cx="1130" cy="330" r="30" fill="#E08C1E"/>
-  <text class="f" x="1130" y="336" text-anchor="middle" font-size="13" font-weight="700" fill="#0B1220">Fabric</text>
-  <circle cx="1268" cy="288" r="26" fill="#FFB547"/>
-  <text class="f" x="1268" y="293" text-anchor="middle" font-size="12" font-weight="700" fill="#0B1220">LabX</text>
-  <circle cx="1268" cy="392" r="22" fill="#FF7847"/>
-  <circle cx="1392" cy="330" r="18" fill="#FFE2B8"/>
-  <circle cx="1170" cy="424" r="16" fill="#8A6A30"/>
-  <circle cx="1352" cy="244" r="13" fill="#E6C05C"/>
-  <circle cx="1400" cy="424" r="13" fill="#E6C05C"/>
-  <line x1="1130" y1="330" x2="1268" y2="288" stroke="#8A6A30" stroke-width="2.5"/>
-  <line x1="1130" y1="330" x2="1268" y2="392" stroke="#8A6A30" stroke-width="2.5"/>
-  <line x1="1268" y1="288" x2="1392" y2="330" stroke="#8A6A30" stroke-width="2"/>
-  <line x1="1268" y1="392" x2="1392" y2="330" stroke="#8A6A30" stroke-width="2"/>
-  <line x1="1130" y1="330" x2="1170" y2="424" stroke="#8A6A30" stroke-width="2"/>
-  <line x1="1268" y1="288" x2="1352" y2="244" stroke="#8A6A30" stroke-width="1.8"/>
-  <line x1="1392" y1="330" x2="1400" y2="424" stroke="#8A6A30" stroke-width="1.8"/>
-  <text class="f smw" x="1004" y="470">Onderwerpen met geheugens eronder, meerdere ouders per knoop.</text>
-  <text class="f smw" x="1004" y="492">Wat gebruikt wordt stijgt; wat niemand meer raakt zakt weg.</text>
+  <!-- graph: onderwerpen boven, geheugens eronder, en een knoop met meer dan een ouder -->
+  <text class="f" x="1004" y="272" font-size="11.5" font-weight="700" letter-spacing="1.4" fill="#8A6A30">ONDERWERPEN</text>
+
+  <rect x="1004" y="282" width="136" height="38" rx="19" fill="#E08C1E"/>
+  <text class="f" x="1072" y="306" text-anchor="middle" font-size="15" font-weight="700" fill="#0B1220">Fabric</text>
+
+  <rect x="1156" y="282" width="118" height="38" rx="19" fill="#E08C1E"/>
+  <text class="f" x="1215" y="306" text-anchor="middle" font-size="15" font-weight="700" fill="#0B1220">LabX</text>
+
+  <rect x="1290" y="282" width="172" height="38" rx="19" fill="#E08C1E"/>
+  <text class="f" x="1376" y="306" text-anchor="middle" font-size="15" font-weight="700" fill="#0B1220">Beveiliging</text>
+
+  <line x1="1072" y1="320" x2="1036" y2="373" stroke="#6B5424" stroke-width="2"/>
+  <line x1="1072" y1="320" x2="1124" y2="373" stroke="#6B5424" stroke-width="2"/>
+  <line x1="1376" y1="320" x2="1318" y2="373" stroke="#6B5424" stroke-width="2"/>
+  <line x1="1376" y1="320" x2="1430" y2="373" stroke="#6B5424" stroke-width="2"/>
+
+  <line x1="1072" y1="320" x2="1215" y2="373" stroke="#FFB547" stroke-width="2.5"/>
+  <line x1="1215" y1="320" x2="1215" y2="373" stroke="#FFB547" stroke-width="2.5"/>
+  <line x1="1376" y1="320" x2="1215" y2="373" stroke="#FFB547" stroke-width="2.5"/>
+
+  <circle cx="1036" cy="386" r="13" fill="#FFB547"/>
+  <circle cx="1124" cy="386" r="13" fill="#FF7847"/>
+  <circle cx="1215" cy="386" r="17" fill="#FFE2B8" stroke="#FFB547" stroke-width="2.5"/>
+  <circle cx="1318" cy="386" r="13" fill="#FF7847"/>
+  <circle cx="1430" cy="386" r="9" fill="#6B5424"/>
+
+  <text class="f" x="1004" y="428" font-size="11.5" font-weight="700" letter-spacing="1.4" fill="#8A6A30">GEHEUGENS</text>
+  <text class="f" x="1215" y="428" text-anchor="middle" font-size="12.5" fill="#FFE2B8">hangt onder drie onderwerpen</text>
+  <text class="f" x="1450" y="428" text-anchor="end" font-size="12.5" fill="#8A99AE">zakt weg</text>
+
+  <text class="f smw" x="1004" y="464">Een geheugen kan onder meerdere onderwerpen hangen — het hoeft</text>
+  <text class="f smw" x="1004" y="486">niet in één map te passen. Wat gebruikt wordt stijgt, de rest zakt weg.</text>
 
   <rect x="1004" y="514" width="158" height="62" rx="9" fill="#1E293B"/>
   <text class="f" x="1083" y="540" text-anchor="middle" font-size="14.5" font-weight="700" fill="#FFE2B8">Skills</text>
