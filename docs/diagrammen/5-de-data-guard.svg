@@ -32,7 +32,7 @@
 
   <text class="f eyebrow" x="70" y="76">PLAAT 5 — DE GRENS</text>
   <text class="f title" x="70" y="120">Twee poorten: één op wat erin gaat, één op wat eruit komt</text>
-  <text class="f sub" x="70" y="153">Vorm liegt. Daarom beslist niet het commando maar de uitvoer — en staat elke regel bij jou.</text>
+  <text class="f sub" x="70" y="153">Zodat klantdata niet ongemerkt bij een model of een derde belandt — en je achteraf kunt laten zien wat er gebeurde.</text>
 
   <!-- ============ POORT 1 — INVOER ============ -->
   <rect x="70" y="196" width="330" height="392" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
@@ -41,21 +41,22 @@
   <text class="f tag" x="94" y="224" fill="#FFFFFF">POORT 1 · INVOERCONTROLE</text>
 
   <text class="f h" x="94" y="272">Wat het lab in gaat</text>
-  <text class="f sm" x="94" y="298">Het commando wordt getoetst vóór het draait.</text>
+  <text class="f sm" x="94" y="298">Het commando wordt getoetst vóór het draait —</text>
+  <text class="f sm" x="94" y="318">tegenhouden is beter dan achteraf opruimen.</text>
 
-  <rect x="94" y="316" width="282" height="62" rx="9" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5"/>
-  <text class="f mono" x="110" y="340" fill="#334155">SELECT COLUMN_NAME</text>
-  <text class="f mono" x="110" y="362" fill="#334155">FROM INFORMATION_SCHEMA</text>
+  <rect x="94" y="334" width="282" height="60" rx="9" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="f mono" x="110" y="358" fill="#334155">SELECT COLUMN_NAME</text>
+  <text class="f mono" x="110" y="380" fill="#334155">FROM INFORMATION_SCHEMA</text>
 
-  <text class="f sm" x="94" y="404">Lijkt op rijen ophalen. De verklaarde intentie</text>
-  <text class="f sm" x="94" y="424">"metadata" verruimt dit — er komt immers een</text>
-  <text class="f sm" x="94" y="444">kolommenlijst uit, geen gegevens.</text>
+  <text class="f sm" x="94" y="418">Lijkt op rijen ophalen. De verklaarde intentie</text>
+  <text class="f sm" x="94" y="438">"metadata" verruimt dit — er komt immers een</text>
+  <text class="f sm" x="94" y="458">kolommenlijst uit, geen gegevens.</text>
 
-  <line x1="94" y1="466" x2="376" y2="466" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f tag" x="94" y="492" fill="#94A3B8">DE UITKOMST HIER</text>
-  <text class="f lab" x="94" y="518">Uitvoeren, of tegenhouden voordat er</text>
-  <text class="f lab" x="94" y="540">iets gebeurd is.</text>
-  <text class="f sm" x="94" y="566">Regels met doel <tspan class="mono" fill="#334155">opdracht</tspan> gelden hier.</text>
+  <line x1="94" y1="478" x2="376" y2="478" stroke="#E2E8F0" stroke-width="2"/>
+  <text class="f tag" x="94" y="504" fill="#94A3B8">DE UITKOMST HIER</text>
+  <text class="f lab" x="94" y="530">Uitvoeren, of tegenhouden voordat er</text>
+  <text class="f lab" x="94" y="550">iets gebeurd is.</text>
+  <text class="f sm" x="94" y="574">Regels met doel <tspan class="mono" fill="#334155">opdracht</tspan> gelden hier.</text>
 
   <path d="M400 392 L436 392" stroke="#334155" stroke-width="2.5" marker-end="url(#ai)"/>
 
@@ -97,7 +98,7 @@
 
   <rect x="712" y="472" width="332" height="68" rx="10" fill="#FCF0F4" stroke="#E9A8C0" stroke-width="1.5"/>
   <text class="f" x="730" y="498" font-size="15.5" font-weight="700" fill="#0B1220">Klopt het met de intentie?</text>
-  <text class="f sm" x="730" y="520">Zo niet: <tspan font-weight="700" fill="#9D174D">mismatch</tspan>, en het gaat alsnog dicht.</text>
+  <text class="f sm" x="730" y="520">Zo niet: <tspan font-weight="700" fill="#9D174D">mismatch</tspan> — een vangnet, geen verwijt.</text>
 
   <text class="f sm" x="712" y="566">Regels met doel <tspan class="mono" fill="#334155">uitvoer</tspan> gelden hier.</text>
 
@@ -124,10 +125,10 @@
   <text class="f h" x="196" y="663">Niets hiervan staat vast — dit zet jij zelf</text>
 
   <rect x="94" y="686" width="298" height="122" rx="11" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
-  <text class="f" x="114" y="714" font-size="15.5" font-weight="700" fill="#0B1220">Profiel per lab</text>
-  <text class="f sm" x="114" y="740">Generiek — geen aannames</text>
-  <text class="f sm" x="114" y="762">Fabric/Azure — technische uitvoer is normaal</text>
-  <text class="f sm" x="114" y="784">Streng — dicht in plaats van gemaskeerd</text>
+  <text class="f" x="114" y="714" font-size="15.5" font-weight="700" fill="#0B1220">Profiel per lab — geeft richting</text>
+  <text class="f sm" x="114" y="738">Wat geldt hier als normaal werk?</text>
+  <text class="f sm" x="114" y="760">Generiek · Fabric/Azure — technische uitvoer</text>
+  <text class="f sm" x="114" y="782">is daar de norm · Streng — dicht i.p.v. gemaskeerd</text>
 
   <rect x="410" y="686" width="298" height="122" rx="11" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
   <text class="f" x="430" y="714" font-size="15.5" font-weight="700" fill="#0B1220">Elke regel apart</text>
