@@ -27,6 +27,7 @@ _ADDITIVE_COLUMNS = {
         ("internal", "BOOLEAN NOT NULL DEFAULT 0"),
     ],
     "mcp_servers": [
+        ("stuur_sessie", "BOOLEAN NOT NULL DEFAULT 0"),
         ("always_allowed", "BOOLEAN NOT NULL DEFAULT 0"),
         ("auth_config_encrypted", "TEXT"),
         ("azure_profile_id", "INTEGER"),

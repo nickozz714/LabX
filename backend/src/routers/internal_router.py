@@ -438,7 +438,12 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             raise HTTPException(status_code=400, detail="tool_id of tool_name is verplicht")
         try:
             result = await svc.execute_tool(int(tool_id), args, lab_id=lab_id,
-                                            worker_id=worker_id)
+                                            worker_id=worker_id,
+                                            # De gateway stuurt zijn thread al mee; die is
+                                            # stabiel over de beurten van één gesprek of
+                                            # ticketrun, en dus precies de korrel waarop een
+                                            # server als Nectar zijn sessie-baan wil hangen.
+                                            sessie=(payload.get("thread_id") or "").strip() or None)
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001

@@ -29,6 +29,7 @@ def _to_dict(s: MCPServer) -> Dict[str, Any]:
         "usage_scope": s.usage_scope or ("session" if s.always_allowed else "both"),
         "azure_profile_id": s.azure_profile_id,
         "token_scope": s.token_scope,
+        "stuur_sessie": bool(getattr(s, "stuur_sessie", False)),
         "has_auth": bool(s.auth_config_encrypted),
         # Aparte inloggegevens voor het synchroniseren; leeg = de gewone.
         "sync_azure_profile_id": s.sync_azure_profile_id,
@@ -142,6 +143,7 @@ def create_server(payload: Dict[str, Any], db: Session = Depends(get_db)):
         always_allowed=bool(payload.get("always_allowed", False)),
         azure_profile_id=payload.get("azure_profile_id"),
         token_scope=(payload.get("token_scope") or None),
+        stuur_sessie=bool(payload.get("stuur_sessie", False)),
         sync_azure_profile_id=payload.get("sync_azure_profile_id"),
         created_at=now, updated_at=now,
     )
@@ -160,7 +162,7 @@ def update_server(server_id: int, payload: Dict[str, Any], db: Session = Depends
     for field in ("name", "description", "server_type", "location", "base_url",
                   "stdio_command", "stdio_install_command", "is_enabled",
                   "always_allowed", "azure_profile_id", "usage_scope",
-                  "token_scope", "sync_azure_profile_id"):
+                  "token_scope", "stuur_sessie", "sync_azure_profile_id"):
         if field in payload:
             setattr(s, field, payload[field])
     _set_auth(s, payload)

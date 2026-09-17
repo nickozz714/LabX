@@ -74,6 +74,16 @@ class MCPServer(Base):
     # audience klopt niet. Daarom hoort dit bij de SERVER en niet bij het
     # profiel — één inlog bedient meerdere API's.
     token_scope: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Stuurt LabX bij elke aanroep mee WELKE sessie er belt (de thread-id, in
+    # de header `X-Hive-Session`)?
+    #
+    # Dit staat standaard uit en is per server te zetten, omdat het alleen
+    # ergens goed voor is bij een server die per sessie iets onthoudt — bij
+    # Nectar is dat de focus-baan. Een willekeurige server van een derde hoeft
+    # niet te weten hoeveel gesprekken je voert of welk er belt; dat is een
+    # gegeven dat je niet zomaar weggeeft omdat het toevallig handig kan zijn.
+    stuur_sessie: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # --- inloggegevens voor het SYNCHRONISEREN, los van die voor het werk ----
     # Een sync is iets anders dan een aanroep: hij vraagt alleen wélke tools er
     # zijn, en hij hoort bij LabX zelf — er is geen lab en geen gebruiker in de

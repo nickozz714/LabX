@@ -482,6 +482,7 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
   const [azureProfileId, setAzureProfileId] = useState<number | null>(server.azure_profile_id);
   const [syncProfileId, setSyncProfileId] = useState<number | null>(server.sync_azure_profile_id);
   const [tokenScope, setTokenScope] = useState(server.token_scope || "");
+  const [stuurSessie, setStuurSessie] = useState(server.stuur_sessie === true);
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
@@ -491,6 +492,7 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
         stdio_command: server.server_type === "stdio" ? stdioCommand : undefined,
         azure_profile_id: azureProfileId,
         token_scope: tokenScope.trim() || null,
+        stuur_sessie: stuurSessie,
         sync_azure_profile_id: syncProfileId,
       });
       onSaved();
@@ -539,6 +541,23 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
                 <code>api://workiq.svc.cloud.microsoft/.default</code> — een
                 Resource-Manager-token wordt daar geweigerd omdat de audience niet klopt.
               </p>
+            </div>
+            <div className="mt-3 border-t border-border pt-3">
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" checked={stuurSessie}
+                       onChange={(e) => setStuurSessie(e.target.checked)} />
+                <span>
+                  <span className="font-medium">Vertel deze server welke sessie er belt</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    Stuurt de thread-id mee als <code>X-Hive-Session</code>. Zet dit aan voor
+                    Nectar: zijn focus-banen hangen aan een sessie, en zonder dit moet het model
+                    zijn eigen sessietoken onthouden en bij elke aanroep meegeven — wat het niet
+                    doet, waarna iedereen de focus van dezelfde willekeurige baan krijgt. Laat het
+                    uit bij servers van derden: die hoeven niet te weten hoeveel gesprekken je
+                    voert of welk er belt.
+                  </span>
+                </span>
+              </label>
             </div>
             <div className="mt-3 border-t border-border pt-3">
               <AzureProfilePicker

@@ -226,7 +226,8 @@ class ChatAgent:
                 return str(m.get("content") or "")
         return ""
 
-    async def _auto_hook_blocks(self, *, settings, user_input: Any) -> List[Dict[str, Any]]:
+    async def _auto_hook_blocks(self, *, settings, user_input: Any,
+                                thread_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """The 'automatische hook' feature, multi-hook edition: run every
         configured+enabled hook tool BEFORE the model sees the turn and
         inject each result — recall is not left to the model's discretion.
@@ -252,7 +253,8 @@ class ChatAgent:
                 continue
             query = (h.get("query_template") or "").strip() or self._latest_user_text(user_input)
             try:
-                result = await ToolExecutionService(self.db).execute_tool(tool.id, {"query": query})
+                result = await ToolExecutionService(self.db).execute_tool(
+                    tool.id, {"query": query}, sessie=thread_id)
             except Exception as exc:  # noqa: BLE001 — a hook must never break the turn
                 log.warningx("auto-hook mislukt", tool=name, error=str(exc)[:200])
                 results.append({"name": name, "block": "", "chars": 0, "error": str(exc)[:200]})
@@ -282,7 +284,8 @@ class ChatAgent:
         skills_block = self._skill_instructions_block(domain_skills)
         if skills_block:
             instructions += "\n\n" + skills_block
-        hook_results = await self._auto_hook_blocks(settings=settings, user_input=user_input)
+        hook_results = await self._auto_hook_blocks(settings=settings, user_input=user_input,
+                                                    thread_id=thread_id)
         for h in hook_results:
             if h["block"]:
                 instructions += "\n\n" + h["block"]

@@ -217,6 +217,8 @@ export interface MCPServerDto {
    *  Resource Manager. Hoort bij de SERVER en niet bij het profiel, zodat één
    *  inlog meerdere API's kan bedienen. */
   token_scope: string | null;
+  /** Stuurt LabX mee welke sessie er belt (X-Hive-Session)? */
+  stuur_sessie?: boolean;
   has_auth: boolean;
   /** Aparte inloggegevens voor het ophalen van de toolslijst; null/false =
    *  dezelfde als voor de aanroepen zelf. */

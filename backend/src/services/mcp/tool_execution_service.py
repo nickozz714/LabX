@@ -119,7 +119,8 @@ class ToolExecutionService:
 
     async def execute_tool(self, tool_id: int, args: Dict[str, Any], *,
                            lab_id: Optional[str] = None,
-                           worker_id: Optional[int] = None) -> Any:
+                           worker_id: Optional[int] = None,
+                           sessie: Optional[str] = None) -> Any:
         tool = self.db.get(Tool, tool_id)
         if not tool or not tool.is_enabled:
             raise RuntimeError(f"Tool {tool_id} niet gevonden of uitgeschakeld")
@@ -131,7 +132,7 @@ class ToolExecutionService:
 
         cid = self._lab_container_id(lab_id, worker_id) if server.location == "lab" else None
         result = await mcp_client.call_tool(server, tool.remote_name, args, lab_container_id=cid,
-                                            db=self.db, lab_id=lab_id)
+                                            db=self.db, lab_id=lab_id, sessie=sessie)
 
         if server.location != "lab":
             return result  # host-side: not customer data leaving a container

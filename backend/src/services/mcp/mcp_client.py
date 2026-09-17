@@ -144,7 +144,8 @@ def _streamable_http_ctx(url: str, headers: Dict[str, str]):
 
 async def call_tool(server: MCPServer, remote_name: str, args: Dict[str, Any], *,
                     lab_container_id: Optional[str] = None, timeout: float = 120.0,
-                    db: Optional[Any] = None, lab_id: Optional[str] = None) -> Any:
+                    db: Optional[Any] = None, lab_id: Optional[str] = None,
+                    sessie: Optional[str] = None) -> Any:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
@@ -187,6 +188,14 @@ async def call_tool(server: MCPServer, remote_name: str, args: Dict[str, Any], *
     if not server.base_url:
         raise RuntimeError(f"MCP-server '{server.name}' heeft geen base_url.")
     headers = await _resolve_auth_headers(server, db=db, lab_id=lab_id)
+    # Welke sessie er belt, maar alleen bij een server die dat mag weten. Voor
+    # Nectar is dit het verschil tussen werken en niet werken: zijn focus-banen
+    # hangen aan een sessie, en zonder dit moest het MODEL zijn eigen
+    # sessietoken onthouden en meegeven bij elke aanroep. Dat deed het niet — en
+    # dan viel Nectar terug op de projectbrede focus, waardoor elke agent de
+    # taak van een ander ingespoten kreeg.
+    if sessie and getattr(server, "stuur_sessie", False):
+        headers = {**headers, "X-Hive-Session": str(sessie)}
     async with _streamable_http_ctx(server.base_url, headers) as streams:
         read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
