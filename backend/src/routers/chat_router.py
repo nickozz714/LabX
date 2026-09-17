@@ -29,8 +29,25 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _thread_dict(t: Thread) -> Dict[str, Any]:
+def _actieve_threads(db: Session) -> set:
+    """Threads waar op dit moment een beurt in loopt.
+
+    In één query voor de hele lijst: per chat kijken zou een vraag per regel
+    kosten, en dit wordt elke paar seconden opgehaald.
+
+    Ook achtergrondruns tellen mee, niet alleen chatbeurten: dat er ergens iets
+    draait is de vraag, niet hoe het gestart is.
+    """
+    from models.background_run import BackgroundRun
+
+    rijen = (db.query(BackgroundRun.thread_id)
+             .filter(BackgroundRun.status.in_(("running", "queued"))).all())
+    return {r[0] for r in rijen if r[0]}
+
+
+def _thread_dict(t: Thread, *, actief: bool = False) -> Dict[str, Any]:
     return {"id": t.id, "title": t.title, "lab_id": t.lab_id, "model": t.model, "effort": t.effort,
+            "actief": actief,
             # "board" = de sessie achter een agent-run op een ticket. De UI toont
             # die anders (en houdt hem uit de gewone lijst), maar je kunt er
             # gewoon in doorpraten.
@@ -64,7 +81,8 @@ def list_threads(include_board: bool = False, archived: bool = False,
     q = (q.filter(Thread.archived_at.isnot(None)) if archived
          else q.filter(Thread.archived_at.is_(None)))
     kolom = Thread.archived_at if archived else Thread.updated_at
-    return [_thread_dict(t) for t in q.order_by(kolom.desc()).all()]
+    bezig = _actieve_threads(db)
+    return [_thread_dict(t, actief=t.id in bezig) for t in q.order_by(kolom.desc()).all()]
 
 
 @router.get("/threads/{thread_id}")
@@ -74,7 +92,7 @@ def get_thread(thread_id: str, db: Session = Depends(get_db)):
     t = db.get(Thread, thread_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Chat niet gevonden")
-    return _thread_dict(t)
+    return _thread_dict(t, actief=t.id in _actieve_threads(db))
 
 
 @router.post("/threads")

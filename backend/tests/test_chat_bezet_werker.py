@@ -189,3 +189,30 @@ def test_vrije_werker_gaat_altijd_voor(db):
 
     _run(db)                     # alleen werker 1 bezet
     assert asyncio.run(chat_router._werker_voor_chat(db, db.get(Lab, "lab1"))) == 2
+
+
+# ── en in de chatlijst wil je zien waar iets loopt ──────────────────────────
+#
+# "Nu ben ik me in de rondte aan het klikken." Terecht: de lijst zei niet in
+# welke chat een beurt liep, dus je moest ze één voor één openen.
+
+def test_actieve_threads_is_wat_er_nu_draait(db):
+    from routers.chat_router import _actieve_threads
+    from models.thread import Thread
+
+    db.add(Thread(id="t2", title="Stil", lab_id="lab1", created_at=_nu(), updated_at=_nu()))
+    db.commit()
+
+    assert _actieve_threads(db) == set()
+    _run(db)                                  # loopt in t1
+    _run(db, status="completed", tid="t2")    # afgelopen: telt niet
+    assert _actieve_threads(db) == {"t1"}
+
+
+def test_wachtende_run_telt_ook_als_actief(db):
+    """Een beurt die nog moet beginnen is voor jou hetzelfde als een die loopt:
+    je wacht erop, dus je wilt hem zien."""
+    from routers.chat_router import _actieve_threads
+
+    _run(db, status="queued")
+    assert _actieve_threads(db) == {"t1"}

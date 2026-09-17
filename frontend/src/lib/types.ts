@@ -119,6 +119,8 @@ export interface Thread {
   source?: string;
   /** Gezet = uit de lijst, maar niet weg: hij blijft gewoon te openen. */
   archived_at?: string | null;
+  /** Er loopt op dit moment een beurt in deze chat. */
+  actief?: boolean;
   updated_at: string;
 }
 

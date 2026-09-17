@@ -157,7 +157,15 @@ export function ChatPage() {
   }
 
   useEffect(() => {
-    chatApi.listThreads(toonBoard, toonArchief).then(setThreads);
+    let leeft = true;
+    const haal = () => chatApi.listThreads(toonBoard, toonArchief)
+      .then((r) => { if (leeft) setThreads(r); })
+      .catch(() => {});
+    haal();
+    // Elke vijf seconden opnieuw. Zonder dat is "actief" een momentopname van
+    // toen je de pagina opende, en dat is precies zo nutteloos als geen stip.
+    const tik = window.setInterval(haal, 5000);
+    return () => { leeft = false; window.clearInterval(tik); };
   }, [toonBoard, toonArchief]);
 
   useEffect(() => {
@@ -530,6 +538,12 @@ export function ChatPage() {
                       <span className="shrink-0 text-[11px] text-muted-foreground">
                         {group.threads.length}
                       </span>
+                      {group.threads.some((t) => t.actief) && (
+                        <span className="shrink-0 rounded-full bg-success/15 px-1.5 text-[10px] font-semibold text-success"
+                              title="Chats met een lopende beurt in dit lab">
+                          {group.threads.filter((t) => t.actief).length} actief
+                        </span>
+                      )}
                     </button>
                     {group.lab && (
                       <button
@@ -557,6 +571,16 @@ export function ChatPage() {
                             activeThread?.id === t.id ? "bg-primary/10" : "hover:bg-secondary"
                           }`}
                         >
+                          {/* Draait er nu iets? Die vraag stel je bij het scannen
+                              van de lijst, dus staat het antwoord vóór de titel
+                              en niet erachter — daar zou het wegvallen bij een
+                              lange naam. */}
+                          <span
+                            className={`size-1.5 shrink-0 rounded-full ${
+                              t.actief ? "animate-pulse bg-success" : "bg-transparent"
+                            }`}
+                            title={t.actief ? "Er loopt nu een beurt in deze chat" : undefined}
+                          />
                           <span className="flex-1 truncate">{t.title}</span>
                           {t.source === "board" && (
                             <span className="shrink-0 rounded bg-secondary px-1 text-[10px] text-muted-foreground"
