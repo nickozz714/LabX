@@ -334,6 +334,24 @@ def _agent_commented_since(db: Session, ticket_id: int, since: str) -> bool:
             .first()) is not None
 
 
+def _wacht_nog(db: Session, run) -> bool:
+    """Staat het planning-item van deze run geparkeerd tot een later moment?
+
+    Gekeken wordt op `run_id` en niet op de werker: `board__wait_until` geeft de
+    werker juist vrij, dus die is op dit moment al losgekoppeld van het item.
+    """
+    from models.plan import TicketPlanItem
+
+    run_id = str(getattr(run, "id", "") or "")
+    if not run_id:
+        return False
+    item = (db.query(TicketPlanItem)
+            .filter(TicketPlanItem.run_id == run_id).first())
+    if item is None or item.state != "waiting" or not item.resume_at:
+        return False
+    return str(item.resume_at) > _now_iso()
+
+
 def _make_finish_hook(ticket_id: int, *, started_at: str):
     def _hook(db: Session, run) -> None:
         svc = BoardService(db)
@@ -350,6 +368,27 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
         verloren = achtergrond_subagents(getattr(run, "steps", None))
         if verloren and status == "completed":
             status = "onafgemaakt"
+
+        # Een run die eindigt terwijl zijn planning-item met `board__wait_until`
+        # geparkeerd staat, is NIET klaar — hij is met opzet even gestopt. De
+        # run meldt netjes "completed", want de agent heeft zijn beurt
+        # afgerond zoals hem gevraagd was; het WERK loopt door zodra de
+        # wachttijd om is.
+        #
+        # Zonder dit onderscheid verplaatste de hook hieronder het ticket naar
+        # de klaar-kolom, waarna de planning het item als "buitenom afgerond"
+        # afvinkte en de hervatting stilzwijgend liet vallen. Dat gebeurde in
+        # de nacht van 16 op 17 september vier keer achter elkaar: vier tickets
+        # op Klaar, en het zilver en goud dat erachter zat is nooit gedraaid.
+        if status == "completed" and _wacht_nog(db, run):
+            ticket.agent_state = "queued"
+            ticket.agent_last_error = None
+            answer = (getattr(run, "answer", None) or "").strip()
+            if answer and not _agent_commented_since(db, ticket.id, started_at):
+                svc.add_comment(ticket.id, kind="comment", author="agent",
+                                body=answer[:_MAX_ANSWER_IN_COMMENT])
+            db.commit()
+            return
 
         if status == "completed":
             answer = (getattr(run, "answer", None) or "").strip()

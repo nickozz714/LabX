@@ -324,6 +324,16 @@ class PlanService:
         # zou ze de agent opnieuw op afgerond werk zetten.
         for it in items:
             if it.state in ("waiting", "blocked"):
+                # Een item dat met `board__wait_until` tot een bepaald moment
+                # geparkeerd staat, is met zoveel woorden NIET af. De kolom van
+                # het ticket mag dat niet overrulen zolang die tijd nog loopt:
+                # dan wint een kolomwijziging van twintig seconden later van een
+                # expliciete uitspraak dat het werk nog moet gebeuren, en valt
+                # de hervatting geruisloos weg. Is de tijd om, dan telt de kolom
+                # weer gewoon mee — staat het ticket dan op klaar, dan is het
+                # klaar.
+                if it.resume_at and it.resume_at > nu:
+                    continue
                 t = self.db.get(Ticket, it.ticket_id)
                 if self._afgerond_buitenom(plan, it, t):
                     self._rond_af_buitenom(plan, it, t)
