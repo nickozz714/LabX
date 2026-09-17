@@ -74,6 +74,21 @@ class Lab(Base):
     # de knop van de mens: een agent die het druk heeft mag niet ongelimiteerd
     # containers op deze machine zetten. max = min betekent: niet schalen.
     max_workers: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Mag een chatbeurt bij een vol lab in een bezette werker landen?
+    #
+    # Een chat bezet net zo goed een container als een ticket, dus normaal
+    # claimt hij er een. Is alles bezet en staat het plafond op slot, dan is er
+    # een keuze te maken die niet voor iedereen hetzelfde uitpakt:
+    #
+    #   True  — de beurt gaat door in werker 1, naast het werk dat er al zit.
+    #           Jij drukte op verzenden; je krijgt antwoord. Prijs: twee runs
+    #           in dezelfde bestanden, processen en az-sessie.
+    #   False — de beurt wordt geweigerd tot er een werker vrij is. Het lab
+    #           blijft schoon; jij wacht.
+    #
+    # Standaard True, want dat is hoe het altijd werkte en het weigeren van een
+    # mens is de ingrijpendere van de twee.
+    chat_deelt_werker: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     # ── inrichting bovenop het basis-image (zie models/lab_extra.py) ─────────
     # Keys uit `lab_extras` die in dit lab geïnstalleerd worden (Playwright +

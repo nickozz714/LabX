@@ -29,6 +29,8 @@ export interface Lab {
   min_workers: number;
   /** Plafond: tot hier mag de autoscaler (en de agent) gaan. */
   max_workers: number;
+  /** Mag een chatbeurt bij een vol lab in een bezette werker landen? */
+  chat_deelt_werker?: boolean;
   workers: {
     id: number;
     index: number;

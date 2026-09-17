@@ -294,6 +294,7 @@ async def create_lab(payload: Dict[str, Any], db: Session = Depends(get_db)):
         environment=(payload.get("environment") or "").strip() or None,
         extras=payload.get("extras"),
         setup_script=payload.get("setup_script"),
+        chat_deelt_werker=bool(payload.get("chat_deelt_werker", True)),
         min_workers=int(payload.get("min_workers") or 1),
         max_workers=int(payload.get("max_workers") or payload.get("min_workers") or 1),
         security_profile=payload.get("security_profile"),
@@ -383,6 +384,12 @@ async def scale_workers(lab_id: str, payload: Dict[str, Any], db: Session = Depe
     Werkers delen /workspace — één werkplaats met meer handen, geen losse
     labs. Afschalen raakt alleen werkers die niets doen, en nooit de eerste."""
     svc = _service(db)
+    if "chat_deelt_werker" in payload:
+        # Hoort bij dezelfde knop in de interface: hoeveel werkers, en wat er
+        # gebeurt als ze allemaal bezet zijn.
+        p = svc.get(lab_id)
+        p.chat_deelt_werker = bool(payload.get("chat_deelt_werker"))
+        db.commit()
     return await svc.scale(lab_id,
                            min_workers=payload.get("min_workers"),
                            max_workers=payload.get("max_workers"),

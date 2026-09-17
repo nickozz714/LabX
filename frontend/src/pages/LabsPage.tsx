@@ -619,21 +619,25 @@ function provisionTone(status: Lab["provision_status"]) {
 function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
   const [onder, setOnder] = useState(lab.min_workers || 1);
   const [boven, setBoven] = useState(lab.max_workers || 1);
+  const [deelt, setDeelt] = useState(lab.chat_deelt_werker !== false);
   const [busy, setBusy] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
 
   useEffect(() => {
     setOnder(lab.min_workers || 1);
     setBoven(lab.max_workers || 1);
-  }, [lab.min_workers, lab.max_workers]);
+    setDeelt(lab.chat_deelt_werker !== false);
+  }, [lab.min_workers, lab.max_workers, lab.chat_deelt_werker]);
 
-  const gewijzigd = onder !== (lab.min_workers || 1) || boven !== (lab.max_workers || 1);
+  const gewijzigd = onder !== (lab.min_workers || 1)
+    || boven !== (lab.max_workers || 1)
+    || deelt !== (lab.chat_deelt_werker !== false);
 
   async function schalen() {
     setBusy(true);
     setFout(null);
     try {
-      await labsApi.scaleWorkers(lab.id, onder, Math.max(onder, boven));
+      await labsApi.scaleWorkers(lab.id, onder, Math.max(onder, boven), deelt);
       onChanged();
     } catch (err) {
       setFout(err instanceof ApiError ? err.message : "Schalen mislukt");
@@ -659,6 +663,20 @@ function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
           werkers na een half uur op. Ze delen /workspace.
         </span>
       </div>
+      <label className="flex cursor-pointer items-start gap-2 rounded-md bg-secondary/40 p-2 text-xs">
+        <input type="checkbox" className="mt-0.5" checked={deelt}
+               onChange={(e) => setDeelt(e.target.checked)} />
+        <span>
+          <span className="font-medium text-foreground">
+            Een chat mag een bezette werker delen als het plafond bereikt is
+          </span>
+          <br />
+          Een chatbeurt claimt normaal een eigen werker, net als een ticket. Staat alles vol,
+          dan gaat je bericht met dit vinkje tóch door — in werker 1, naast het werk dat er al
+          zit. Uit gezet krijg je in plaats daarvan de melding dat je even moet wachten, en
+          blijven twee runs uit elkaars bestanden.
+        </span>
+      </label>
       <div className="flex flex-wrap gap-1">
         {(lab.workers || []).map((w) => (
           <span key={w.id}

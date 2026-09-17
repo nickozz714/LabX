@@ -2064,6 +2064,7 @@ exec ssh -N \\
             "worker_count": int(getattr(p, "worker_count", 1) or 1),
             "min_workers": int(getattr(p, "min_workers", 1) or 1),
             "max_workers": int(getattr(p, "max_workers", 1) or 1),
+            "chat_deelt_werker": bool(getattr(p, "chat_deelt_werker", True)),
             "security_profile": getattr(p, "security_profile", None) or "generiek",
             "model": getattr(p, "model", None),
             "workers": [{"id": w.id, "index": w.index, "status": w.status,

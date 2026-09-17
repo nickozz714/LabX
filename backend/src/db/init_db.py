@@ -74,6 +74,7 @@ _ADDITIVE_COLUMNS = {
         ("wait_reason", "TEXT"),
     ],
     "labs": [
+        ("chat_deelt_werker", "BOOLEAN NOT NULL DEFAULT 1"),
         ("azure_profile_id", "INTEGER"),
         ("extras", "TEXT"),
         ("setup_script", "TEXT"),

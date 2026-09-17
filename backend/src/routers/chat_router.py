@@ -177,10 +177,11 @@ async def _werker_voor_chat(db: Session, lab: Lab) -> Optional[int]:
     eigen werker te claimen, zodat een ticket dat straks start er niet bovenop
     gaat zitten — en zodat het overzicht klopt.
 
-    Lukt dat niet, dan gaat de beurt gewoon door in werker 1 (dat deed hij
-    altijd al). Een mens die op verzenden drukt afwijzen omdat er op de
-    achtergrond een ticket draait, zou een slechtere ruil zijn dan het delen
-    van een container.
+    Is alles bezet en zit het plafond vast, dan beslist `chat_deelt_werker` van
+    het lab wat er gebeurt: meedoen in werker 1 (standaard, en hoe het altijd
+    werkte) of wachten tot er een werker vrijkomt. Dat is een afweging tussen
+    "jij drukte op verzenden en krijgt antwoord" en "geen twee runs in dezelfde
+    bestanden", en die valt niet voor elk lab hetzelfde uit.
     """
     from services.lab.lab_service import LabService
 
@@ -189,14 +190,26 @@ async def _werker_voor_chat(db: Session, lab: Lab) -> Optional[int]:
     if vrij is not None:
         return vrij.id
     # Niets vrij: de autoscaler mag erbij zetten als jouw plafond dat toelaat.
-    # De volgende beurt heeft er dan wat aan; deze niet meer, want wachten op
-    # het inrichten van een container zou de chat laten hangen.
+    # Déze beurt heeft daar niets aan — een verse werker is bij terugkeer nog
+    # aan het inrichten en mag pas werk krijgen als dat klaar is — maar de
+    # volgende wel, en een ticket dat staat te wachten ook.
     try:
-        await svc.ensure_extra_worker(lab.id)
+        erbij = await svc.ensure_extra_worker(lab.id)
     except Exception as exc:  # noqa: BLE001
         log.warningx("Autoscaler kon voor een chat niet bijschalen",
                      lab_id=lab.id, error=str(exc)[:200])
-    return None
+        erbij = None
+
+    if getattr(lab, "chat_deelt_werker", True):
+        return None          # meedoen in werker 1, zoals het altijd ging
+    raise HTTPException(
+        status_code=409,
+        detail=("Alle werkers van dit lab zijn bezig"
+                + (" — er wordt er een bijgezet, probeer het zo opnieuw."
+                   if erbij is not None else
+                   " en het werkerplafond is bereikt. Wacht tot er een vrijkomt, verhoog "
+                   "het plafond bij het lab, of zet daar 'chat mag een bezette werker "
+                   "delen' aan.")))
 
 
 @router.post("/threads/{thread_id}/background")

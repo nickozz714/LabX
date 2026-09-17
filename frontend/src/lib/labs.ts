@@ -89,11 +89,11 @@ export const labsApi = {
       `/labs/${id}/tunnel-script?ssh_target=${encodeURIComponent(sshTarget)}&port=${port}`),
   // De grenzen van de autoscaler: min blijft altijd staan, tot max mag hij
   // bijschalen als er werk wacht.
-  scaleWorkers: (id: string, minWorkers: number, maxWorkers: number) =>
+  scaleWorkers: (id: string, minWorkers: number, maxWorkers: number, chatDeelt?: boolean) =>
     api.post<{ ok: boolean; workers: number; min: number; max: number;
                toegevoegd: number[]; verwijderd: number[] }>(
       `/labs/${id}/workers`,
-      { min_workers: minWorkers, max_workers: maxWorkers },
+      { min_workers: minWorkers, max_workers: maxWorkers, chat_deelt_werker: chatDeelt },
     ),
   rebuild: (id: string, image?: string) =>
     api.post<{ ok: boolean; status: string; image: string }>(`/labs/${id}/rebuild`, { image }),
