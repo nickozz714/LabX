@@ -35,6 +35,7 @@ def _thread_dict(t: Thread) -> Dict[str, Any]:
             # die anders (en houdt hem uit de gewone lijst), maar je kunt er
             # gewoon in doorpraten.
             "source": getattr(t, "source", "chat") or "chat",
+            "archived_at": getattr(t, "archived_at", None),
             "created_at": t.created_at, "updated_at": t.updated_at}
 
 
@@ -44,18 +45,26 @@ def _message_dict(m: Message) -> Dict[str, Any]:
 
 
 @router.get("/threads")
-def list_threads(include_board: bool = False, db: Session = Depends(get_db)):
-    """Standaard alleen echte chats.
+def list_threads(include_board: bool = False, archived: bool = False,
+                 db: Session = Depends(get_db)):
+    """Standaard alleen echte chats, en alleen de actieve.
 
     De threads achter agent-runs op een board-ticket (source="board") blijven
     bestaan — ze dragen de CLI-sessie en de stappen — maar horen hier niet
     standaard in: op een bord met tachtig tickets zou de chatlijst niet meer te
     lezen zijn. Met `include_board` komen ze er wél bij, voor wie in zo'n
-    sessie wil doorpraten; het ticket zelf linkt er rechtstreeks naartoe."""
+    sessie wil doorpraten; het ticket zelf linkt er rechtstreeks naartoe.
+
+    `archived` is bewust een OMSCHAKELING en geen "toon er meer": actief en
+    archief zijn twee lijsten die je apart bekijkt. Een archief dat tussen je
+    lopende gesprekken door staat, is geen archief."""
     q = db.query(Thread)
     if not include_board:
         q = q.filter(Thread.source != "board")
-    return [_thread_dict(t) for t in q.order_by(Thread.updated_at.desc()).all()]
+    q = (q.filter(Thread.archived_at.isnot(None)) if archived
+         else q.filter(Thread.archived_at.is_(None)))
+    kolom = Thread.archived_at if archived else Thread.updated_at
+    return [_thread_dict(t) for t in q.order_by(kolom.desc()).all()]
 
 
 @router.get("/threads/{thread_id}")
@@ -102,6 +111,20 @@ def update_thread(thread_id: str, payload: Dict[str, Any], db: Session = Depends
     if "effort" in payload:
         effort = (payload.get("effort") or "").strip()
         t.effort = effort or None
+    if "archived" in payload:
+        t.archived_at = _now_iso() if payload.get("archived") else None
+        if not payload.get("archived"):
+            # Terughalen zet de klok opnieuw. Zonder dit zou de opruimronde een
+            # chat die je net terugpakte binnen het uur weer opzij zetten —
+            # openen verandert `updated_at` immers niet, alleen een bericht.
+            t.updated_at = _now_iso()
+            db.commit()
+            return _thread_dict(t)
+        # Archiveren laat `updated_at` juist staan: dat is het spoor van wanneer
+        # er voor het laatst echt iets gebeurde, en dat wil je niet wissen door
+        # iets op te ruimen.
+        db.commit()
+        return _thread_dict(t)
     t.updated_at = _now_iso()
     db.commit()
     return _thread_dict(t)

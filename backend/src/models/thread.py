@@ -32,7 +32,20 @@ class Thread(Base):
     # defaults are a chat concern, Settings is infrastructure config.
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Gearchiveerd: uit de lijst, niet weg. Een tijdstip en geen vlaggetje,
+    # zodat je later kunt zien wanneer iets opzij ging — en omdat het
+    # opruimwerk toch op tijd sorteert.
+    #
+    # Archiveren raakt de inhoud NIET: de thread, zijn berichten en zijn
+    # CLI-sessie blijven staan, en `GET /chat/threads/{id}` geeft hem gewoon
+    # terug. Dat is het verschil met verwijderen, en de reden dat dit veilig
+    # vanzelf mag gebeuren.
+    archived_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    __table_args__ = (Index("idx_threads_lab", "lab_id"),)
+    __table_args__ = (
+        Index("idx_threads_lab", "lab_id"),
+        # De chatlijst filtert hierop bij elke pagina-lading.
+        Index("idx_threads_archived", "archived_at"),
+    )

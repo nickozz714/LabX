@@ -95,6 +95,23 @@ export function SettingsPage() {
           </div>
         </div>
         <div>
+          <Label>Chats archiveren na (dagen zonder activiteit, 0 = uit)</Label>
+          <Input
+            type="number"
+            min={0}
+            value={settings.chat_archive_days ?? ""}
+            placeholder="3"
+            onChange={(e) => setSettings({ ...settings, chat_archive_days: e.target.value ? Number(e.target.value) : null })}
+            onBlur={() => save({ chat_archive_days: settings.chat_archive_days })}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Archiveren is geen verwijderen: de chat verdwijnt uit de lijst maar blijft compleet en
+            gewoon te openen via <span className="font-medium">Archief bekijken</span> in de
+            chatpagina. Alleen een bericht telt als activiteit — een chat openen houdt hem niet
+            kunstmatig levend.
+          </p>
+        </div>
+        <div>
           <Label>Extra CLI-argumenten (spatie-gescheiden)</Label>
           <Input
             value={extraArgsText}

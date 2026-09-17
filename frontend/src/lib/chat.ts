@@ -9,13 +9,15 @@ export const chatBijlageMap = (threadId: string) =>
   `/workspace/uploads/chat-${(threadId || "").slice(0, 8)}`;
 
 export const chatApi = {
-  listThreads: (includeBoard = false) =>
-    api.get<Thread[]>(`/chat/threads${includeBoard ? "?include_board=true" : ""}`),
+  listThreads: (includeBoard = false, archived = false) =>
+    api.get<Thread[]>(`/chat/threads?include_board=${includeBoard}&archived=${archived}`),
   createThread: (lab_id: string, title?: string) => api.post<Thread>("/chat/threads", { lab_id, title }),
   getThread: (id: string) => api.get<Thread>(`/chat/threads/${id}`),
   renameThread: (id: string, title: string) => api.patch<Thread>(`/chat/threads/${id}`, { title }),
   setThreadModel: (id: string, model: string | null) => api.patch<Thread>(`/chat/threads/${id}`, { model }),
   setThreadEffort: (id: string, effort: string | null) => api.patch<Thread>(`/chat/threads/${id}`, { effort }),
+  archiveThread: (id: string, archived: boolean) =>
+    api.patch<Thread>(`/chat/threads/${id}`, { archived }),
   deleteThread: (id: string) => api.delete<{ ok: boolean }>(`/chat/threads/${id}`),
   listMessages: (threadId: string) => api.get<Message[]>(`/chat/threads/${threadId}/messages`),
   // `attachments` zijn paden van bestanden die al in het lab staan; de server

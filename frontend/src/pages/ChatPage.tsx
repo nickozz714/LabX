@@ -20,7 +20,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi, chatBijlageMap } from "@/lib/chat";
@@ -59,6 +59,9 @@ export function ChatPage() {
   // tachtig tickets zou de lijst niet meer te lezen zijn. Aan als je erin wilt
   // doorpraten — of vanzelf, als je via een ticket binnenkomt.
   const [toonBoard, setToonBoard] = useState(false);
+  // Actief of archief — twee lijsten die je apart bekijkt. Een archief
+  // tussen je lopende gesprekken door is geen archief.
+  const [toonArchief, setToonArchief] = useState(false);
   const [zoekParams, setZoekParams] = useSearchParams();
   const [labs, setLabs] = useState<Lab[]>([]);
   const [activeThread, setActiveThread] = useState<Thread | null>(null);
@@ -154,8 +157,8 @@ export function ChatPage() {
   }
 
   useEffect(() => {
-    chatApi.listThreads(toonBoard).then(setThreads);
-  }, [toonBoard]);
+    chatApi.listThreads(toonBoard, toonArchief).then(setThreads);
+  }, [toonBoard, toonArchief]);
 
   useEffect(() => {
     labsApi.list().then(setLabs);
@@ -243,6 +246,18 @@ export function ChatPage() {
     setThreads((prev) => [t, ...prev]);
     setActiveThread(t);
     setMessages([]);
+  }
+
+  async function archiveThread(t: Thread) {
+    const naarArchief = !t.archived_at;
+    await chatApi.archiveThread(t.id, naarArchief);
+    // Hij hoort niet meer in de lijst die je nu bekijkt: eruit halen in plaats
+    // van bijwerken, anders blijft er een regel staan die er niet thuishoort.
+    setThreads((prev) => prev.filter((x) => x.id !== t.id));
+    setActiveThread((prev) =>
+      prev && prev.id === t.id ? { ...prev, archived_at: naarArchief ? new Date().toISOString() : null } : prev);
+    melding.ok(naarArchief ? "Chat gearchiveerd" : "Chat teruggehaald",
+               naarArchief ? "Te vinden onder Archief; de inhoud blijft staan." : undefined);
   }
 
   async function removeThread(t: Thread) {
@@ -472,13 +487,20 @@ export function ChatPage() {
     <div className="flex h-full">
       <aside className="w-64 shrink-0 overflow-y-auto border-r border-border p-3">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Chats</h2>
+          <h2 className="text-sm font-semibold">{toonArchief ? "Archief" : "Chats"}</h2>
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground"
                  title="Ook de sessies achter agent-runs op een ticket tonen. Daar kun je gewoon in doorpraten — de agent hervat dan zijn eigen sessie.">
             <input type="checkbox" checked={toonBoard} onChange={(e) => setToonBoard(e.target.checked)} />
             board
           </label>
         </div>
+        <button
+          onClick={() => setToonArchief((v) => !v)}
+          className="mb-2 flex w-full items-center gap-1.5 rounded px-1 py-1 text-[11px] text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+        >
+          <Archive size={12} />
+          {toonArchief ? "Terug naar je chats" : "Archief bekijken"}
+        </button>
 
         {labs.length === 0 && threadGroups.length === 0 ? (
           <p className="text-xs text-muted-foreground">
@@ -523,7 +545,9 @@ export function ChatPage() {
                   {open && (
                     <ul className="mt-0.5 space-y-1 pl-2">
                       {group.threads.length === 0 && (
-                        <li className="px-2 py-1 text-xs text-muted-foreground">Nog geen chats</li>
+                        <li className="px-2 py-1 text-xs text-muted-foreground">
+                          {toonArchief ? "Niets in het archief" : "Nog geen chats"}
+                        </li>
                       )}
                       {group.threads.map((t) => (
                         <li
@@ -549,6 +573,18 @@ export function ChatPage() {
                             title="Naam wijzigen"
                           >
                             <Pencil size={13} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              archiveThread(t);
+                            }}
+                            className="hidden shrink-0 text-muted-foreground hover:text-foreground group-hover:block"
+                            title={t.archived_at
+                              ? "Terughalen naar je chats"
+                              : "Archiveren — uit de lijst, maar blijft te openen"}
+                          >
+                            {t.archived_at ? <ArchiveRestore size={13} /> : <Archive size={13} />}
                           </button>
                           <button
                             onClick={(e) => {
@@ -589,6 +625,18 @@ export function ChatPage() {
                   <Pencil size={13} />
                 </button>
               </span>
+              {activeThread.archived_at && (
+                <span className="flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5 text-xs text-muted-foreground">
+                  <Archive size={12} /> gearchiveerd
+                  <button
+                    onClick={() => archiveThread(activeThread)}
+                    className="font-semibold text-primary hover:underline"
+                    title="Terug naar je chats"
+                  >
+                    terughalen
+                  </button>
+                </span>
+              )}
               {lab && <Badge tone={lab.status === "running" ? "green" : "red"}>⬢ {lab.name} — {lab.status}</Badge>}
               {lab && lab.status !== "running" && (
                 <span className="ml-2 text-xs text-muted-foreground">Start dit lab om te kunnen chatten.</span>

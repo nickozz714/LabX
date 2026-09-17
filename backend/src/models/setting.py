@@ -35,6 +35,9 @@ class AppSettings(Base):
     # Claude Code CLI feature-parity additions (`--effort`, `--fallback-model`,
     # `--max-budget-usd`, `--autocompact`) — see claude_cli_provider.py
     # ClaudeCliProvider._build_cmd for how each becomes a flag.
+    # Na hoeveel dagen zonder activiteit een chat vanzelf het archief in gaat.
+    # 0 (of leeg) zet het uit. Standaard 3 — zie services/chat/archief.py.
+    chat_archive_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     default_effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
     fallback_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)

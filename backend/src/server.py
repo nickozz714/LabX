@@ -95,6 +95,18 @@ async def _guard_audit_opruimen() -> None:
         db.close()
 
 
+async def _chat_archief_tick() -> None:
+    """Chats die dagen stilliggen uit de lijst halen. Ze blijven bestaan en
+    blijven te openen — zie services/chat/archief.py."""
+    from services.chat.archief import archiveer_stille_chats
+
+    db = SessionLocal()
+    try:
+        archiveer_stille_chats(db)
+    finally:
+        db.close()
+
+
 async def _hervat_limiet_tick() -> None:
     """Werk dat op een gebruikslimiet stilviel weer oppakken zodra de limiet
     opengaat. Alleen voor runs die NIET in een planning zitten; die hervat de
@@ -203,6 +215,10 @@ async def lifespan(_app: FastAPI):
                        fn=_guard_audit_opruimen, run_immediately=True)
     scheduler.register(name="worker_reaper", interval_seconds=300, fn=_worker_reaper_tick,
                        run_immediately=False)
+    # Eens per uur; de termijn staat in dagen, dus fijner meten heeft geen zin.
+    # Wel meteen bij het starten: dan is de lijst na een herstart direct schoon.
+    scheduler.register(name="chat_archief", interval_seconds=3600, fn=_chat_archief_tick,
+                       run_immediately=True)
     await scheduler.start()
     # De MCP-gateway alvast één keer laten importeren. De CLI start hem per run
     # als eigen proces, en dat proces moet de halve backend van schijf lezen:

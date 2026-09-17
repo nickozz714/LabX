@@ -36,6 +36,7 @@ _ADDITIVE_COLUMNS = {
         ("token_scope", "VARCHAR(255)"),
     ],
     "app_settings": [
+        ("chat_archive_days", "INTEGER"),
         ("auto_recall_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
         ("auto_recall_tool_name", "VARCHAR(255)"),
         ("auto_recall_query_template", "TEXT"),
@@ -95,6 +96,9 @@ _ADDITIVE_COLUMNS = {
         ("model", "VARCHAR(128)"),
         ("effort", "VARCHAR(16)"),
         ("source", "VARCHAR(16) NOT NULL DEFAULT 'chat'"),
+        # Uit de lijst, niet weg. Bestaande chats beginnen leeg (= actief); de
+        # opruimtaak zet ze daarna vanzelf opzij als ze oud genoeg zijn.
+        ("archived_at", "VARCHAR(64)"),
     ],
     "boards": [
         # Kolom waar een ticket heen gaat zodra de agent eraan begint.

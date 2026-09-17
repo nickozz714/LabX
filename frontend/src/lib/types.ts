@@ -115,6 +115,8 @@ export interface Thread {
   created_at: string;
   /** "board" = de sessie achter een agent-run op een ticket. */
   source?: string;
+  /** Gezet = uit de lijst, maar niet weg: hij blijft gewoon te openen. */
+  archived_at?: string | null;
   updated_at: string;
 }
 
@@ -171,6 +173,8 @@ export interface AppSettingsDto {
   default_model: string;
   max_turns: number;
   timeout_seconds: number | null;
+  /** Na hoeveel dagen stilte een chat vanzelf het archief in gaat. 0/null = uit. */
+  chat_archive_days: number | null;
   extra_args: string[];
   enable_tool_search: boolean;
   data_guard_default: boolean;
