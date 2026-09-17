@@ -766,24 +766,50 @@ exec ssh -N \\
                 and (w.index == 1 or w.provision_status in ("ok", "skipped"))]
 
     def bezette_werkers(self, lab_id: str) -> set:
-        """Werker-id's waar NU een agent-run op draait.
+        """Werker-id's waar NU een agent-run op draait — chat inbegrepen.
 
         Uit `background_runs` en niet uit de planningen, en dat is de kern van
         de reparatie: een handmatig gestart ticket heeft geen planningsregel.
         Wie alleen naar planningen keek, zag zulke runs niet — een planning kon
         dus een werker pakken waar al iemand zat, en drie met de hand gestarte
         tickets belandden allemaal in werker 1.
+
+        **Een lopende chat telt mee.** Een beurt in de chat draait net zo goed
+        in een container van dit lab als een ticket: hij pakt de shell, de
+        bestanden en de az-sessie. Dat hij vroeger niet meetelde had één
+        oorzaak — een chat kiest geen werker, dus `lab_worker_id` blijft leeg —
+        en twee gevolgen: het overzicht zei 0/1 terwijl je zelf zat te chatten,
+        en een ticket startte vrolijk in diezelfde container.
+
+        Een run zonder werker draait per definitie in werker 1 (zie
+        `container_for`), dus zo telt hij hier ook mee.
         """
         from models.background_run import BackgroundRun
         from models.lab_worker import LabWorker
+        from models.thread import Thread
 
         # Via de werker naar het lab: een run weet wélke werker hij gebruikt,
         # niet bij welk lab die hoort.
-        rijen = (self.db.query(BackgroundRun.lab_worker_id)
-                 .join(LabWorker, LabWorker.id == BackgroundRun.lab_worker_id)
-                 .filter(LabWorker.lab_id == lab_id,
-                         BackgroundRun.status.in_(("running", "queued"))).all())
-        return {r[0] for r in rijen if r[0]}
+        bezet = {r[0] for r in
+                 (self.db.query(BackgroundRun.lab_worker_id)
+                  .join(LabWorker, LabWorker.id == BackgroundRun.lab_worker_id)
+                  .filter(LabWorker.lab_id == lab_id,
+                          BackgroundRun.status.in_(("running", "queued"))).all())
+                 if r[0]}
+
+        # En de runs zonder werker: die zitten in werker 1. Via de thread, want
+        # dat is het enige wat zo'n run aan een lab bindt.
+        zonder = (self.db.query(BackgroundRun.id)
+                  .join(Thread, Thread.id == BackgroundRun.thread_id)
+                  .filter(Thread.lab_id == lab_id,
+                          BackgroundRun.lab_worker_id.is_(None),
+                          BackgroundRun.status.in_(("running", "queued"))).first())
+        if zonder is not None:
+            eerste = (self.db.query(LabWorker)
+                      .filter(LabWorker.lab_id == lab_id, LabWorker.index == 1).first())
+            if eerste is not None:
+                bezet.add(eerste.id)
+        return bezet
 
     def vrije_werker(self, p: Lab) -> Optional[Any]:
         """Een werker waar nu geen run op draait, of None.
@@ -933,18 +959,15 @@ exec ssh -N \\
                 "toegevoegd": toegevoegd, "verwijderd": verwijderd}
 
     def _bezette_werkers(self, lab_id: str) -> set:
-        """Werkers waar nu een planning-ticket op draait."""
-        from models.board import Board
-        from models.plan import TicketPlan, TicketPlanItem
-        borden = [b.id for b in self.db.query(Board).filter(Board.lab_id == lab_id).all()]
-        if not borden:
-            return set()
-        rijen = (self.db.query(TicketPlanItem.worker_id)
-                 .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
-                 .filter(TicketPlan.board_id.in_(borden),
-                         TicketPlanItem.state == "running",
-                         TicketPlanItem.worker_id.isnot(None)).all())
-        return {r[0] for r in rijen}
+        """Zelfde vraag, oude naam.
+
+        Dit was ooit een tweede, eigen definitie van "bezet" die alleen naar
+        lopende PLANNING-items keek. Twee antwoorden op dezelfde vraag is er
+        een te veel: het opruimen van werkers kon er een weghalen waar een
+        handmatig ticket of een chat in zat, en het overzicht telde anders dan
+        de planner. Er is er nu nog één.
+        """
+        return self.bezette_werkers(lab_id)
 
     def container_for(self, p: Lab, worker_id: Optional[int] = None) -> Optional[str]:
         """De container waarin een handeling hoort te landen.

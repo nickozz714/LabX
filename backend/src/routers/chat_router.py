@@ -169,6 +169,36 @@ def _met_bijlagen(tekst: str, payload: Dict[str, Any]) -> str:
     return f"{tekst}\n{blok}" if blok else tekst
 
 
+async def _werker_voor_chat(db: Session, lab: Lab) -> Optional[int]:
+    """Welke werker deze beurt krijgt.
+
+    Een chatbeurt is net zo goed werk in het lab als een ticket: hij pakt de
+    shell, de bestanden en de az-sessie van één container. Hij hoort dus een
+    eigen werker te claimen, zodat een ticket dat straks start er niet bovenop
+    gaat zitten — en zodat het overzicht klopt.
+
+    Lukt dat niet, dan gaat de beurt gewoon door in werker 1 (dat deed hij
+    altijd al). Een mens die op verzenden drukt afwijzen omdat er op de
+    achtergrond een ticket draait, zou een slechtere ruil zijn dan het delen
+    van een container.
+    """
+    from services.lab.lab_service import LabService
+
+    svc = LabService(db)
+    vrij = svc.vrije_werker(lab)
+    if vrij is not None:
+        return vrij.id
+    # Niets vrij: de autoscaler mag erbij zetten als jouw plafond dat toelaat.
+    # De volgende beurt heeft er dan wat aan; deze niet meer, want wachten op
+    # het inrichten van een container zou de chat laten hangen.
+    try:
+        await svc.ensure_extra_worker(lab.id)
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Autoscaler kon voor een chat niet bijschalen",
+                     lab_id=lab.id, error=str(exc)[:200])
+    return None
+
+
 @router.post("/threads/{thread_id}/background")
 async def start_background(thread_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     """Non-blocking variant of ask: fires the same agent run via
@@ -193,10 +223,12 @@ async def start_background(thread_id: str, payload: Dict[str, Any], db: Session 
     db.commit()
 
     from services.agent import background_runs
+    werker = await _werker_voor_chat(db, lab)
     history = _history_for_prompt(db, thread_id)
     run = background_runs.start(
         db, thread_id=thread_id, lab_id=lab.id, history=history, prompt=text,
-        model=payload.get("model") or t.model, effort=payload.get("effort") or t.effort)
+        model=payload.get("model") or t.model, effort=payload.get("effort") or t.effort,
+        lab_worker_id=werker)
     return background_runs.to_dict(run)
 
 
@@ -373,11 +405,13 @@ async def ask(thread_id: str, payload: Dict[str, Any], db: Session = Depends(get
     t.updated_at = now
     db.commit()
 
+    werker = await _werker_voor_chat(db, lab)
     history = _history_for_prompt(db, thread_id)
     run, q = background_runs.start(
         db, thread_id=thread_id, lab_id=lab.id, history=history, prompt=text,
         model=payload.get("model") or t.model, effort=payload.get("effort") or t.effort,
-        mode="foreground", resume_session_id=t.cli_session_id, pre_subscribe=True)
+        mode="foreground", resume_session_id=t.cli_session_id, pre_subscribe=True,
+        lab_worker_id=werker)
 
     async def _events():
         try:

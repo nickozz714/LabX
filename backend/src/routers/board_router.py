@@ -196,7 +196,9 @@ def overview(runs: int = Query(default=30, le=200), db: Session = Depends(get_db
             from services.lab.lab_service import LabService
             lab_svc = LabService(db)
             werkers_totaal = len(lab_svc.ensure_workers(lab))
-            werkers_bezet = len(lab_svc._bezette_werkers(lab.id))
+            # Dezelfde telling als de planner gebruikt — inclusief een
+            # lopende chat, want die bezet net zo goed een container.
+            werkers_bezet = len(lab_svc.bezette_werkers(lab.id))
         actief = db.query(TicketPlan).filter(
             TicketPlan.board_id == b.id,
             TicketPlan.state.in_(("running", "paused", "scheduled"))).all()
