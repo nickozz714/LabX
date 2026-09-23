@@ -147,20 +147,70 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
   );
 }
 
-export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+/**
+ * Een venster boven de pagina.
+ *
+ * `dirty` is het belangrijkste argument: staat er niet-opgeslagen werk in, dan
+ * gooit een klik NAAST het venster dat niet meer weg. Dat was de enige manier
+ * om een half getypte workflow kwijt te raken — één klik ernaast, alles weg,
+ * geen waarschuwing. Een klik naast het venster is bijna nooit "gooi mijn werk
+ * weg", dus die negeren we; bewust sluiten (✕ of Escape) vraagt dan om een
+ * bevestiging IN het venster zelf.
+ *
+ * Zonder `dirty` gedraagt hij zich als altijd: overal klikken sluit.
+ */
+export function Modal({ open, onClose, title, children, wide, dirty }: {
+  open: boolean; onClose: () => void; title: string; children: ReactNode;
+  wide?: boolean;
+  /** Staat er niet-opgeslagen werk in? Dan wordt sluiten beschermd. */
+  dirty?: boolean;
+}) {
+  const [vraagt, setVraagt] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const opToets = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (dirty) setVraagt(true);
+      else onClose();
+    };
+    window.addEventListener("keydown", opToets);
+    return () => window.removeEventListener("keydown", opToets);
+  }, [open, dirty, onClose]);
+
   if (!open) return null;
+
+  const sluitPoging = () => (dirty ? setVraagt(true) : onClose());
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4"
+      // Naast het venster klikken sluit alleen als er niets te verliezen valt.
+      onClick={() => !dirty && onClose()}
+    >
       <div
         className={`w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[85vh] overflow-y-auto rounded-xl border border-border bg-card p-5 text-card-foreground shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold">{title}</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+          <button onClick={sluitPoging} className="text-muted-foreground hover:text-foreground">
             ✕
           </button>
         </div>
+        {vraagt && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs">
+            <span className="flex-1">Je hebt wijzigingen die nog niet opgeslagen zijn.</span>
+            <Button variant="secondary" className="px-2 py-0.5 text-xs"
+                    onClick={() => setVraagt(false)}>
+              Terug naar bewerken
+            </Button>
+            <Button variant="danger" className="px-2 py-0.5 text-xs"
+                    onClick={() => { setVraagt(false); onClose(); }}>
+              Sluiten zonder opslaan
+            </Button>
+          </div>
+        )}
         {children}
       </div>
     </div>

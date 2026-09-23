@@ -155,9 +155,15 @@ def list_runs(schedule_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{schedule_id}/run")
-def run_schedule_now(schedule_id: int, db: Session = Depends(get_db)):
+async def run_schedule_now(schedule_id: int, db: Session = Depends(get_db)):
     """Nu uitvoeren, zonder op de cron te wachten. Loopt via hetzelfde pad als
-    een echte fire en levert dus ook een gewone ScheduleRun op."""
+    een echte fire en levert dus ook een gewone ScheduleRun op.
+
+    **Deze functie MOET async zijn.** Hij zet het werk als taak op de lopende
+    event loop; een gewone `def` draait bij FastAPI in een threadpool, en daar
+    is geen loop — `run_now` viel dan om met "no running event loop" en gaf een
+    500 nog voordat er iets geprobeerd was. Dat zag eruit als "de schedule
+    mislukt meteen", terwijl er in werkelijkheid niets gestart was."""
     if not db.get(Schedule, schedule_id):
         raise HTTPException(status_code=404, detail="Schedule niet gevonden")
     from services.scheduling.cron import run_now
