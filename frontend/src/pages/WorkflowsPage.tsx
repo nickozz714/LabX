@@ -108,6 +108,13 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
   const [labs, setLabs] = useState<Lab[]>([]);
   const [runLabId, setRunLabId] = useState("");
   const [runResult, setRunResult] = useState<string | null>(null);
+  // Is er iets veranderd sinds het openen? Zo ja, dan gooit een klik naast het
+  // venster dit niet meer weg — zie Modal.
+  const gewijzigd =
+    name !== (existing?.name || "") ||
+    description !== (existing?.description || "") ||
+    markdown !== (existing?.markdown || "") ||
+    JSON.stringify(steps) !== JSON.stringify(existing?.steps || []);
 
   useEffect(() => {
     labsApi.list().then(setLabs);
@@ -148,7 +155,8 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
   }
 
   return (
-    <Modal open onClose={onClose} title={existing ? "Workflow bewerken" : "Nieuwe workflow"} wide>
+    <Modal open onClose={onClose} dirty={gewijzigd}
+           title={existing ? "Workflow bewerken" : "Nieuwe workflow"} wide>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div>
