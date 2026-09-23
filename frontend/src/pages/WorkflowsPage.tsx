@@ -68,12 +68,23 @@ export function WorkflowsPage() {
                     </span>
                   )}
                 </span>
+                {/* De twee knoppen horen bij elkaar, rechts. Los in een
+                    justify-between-rij belandt de eerste precies in het midden
+                    van de kaart — alsof hij bij niets hoort. */}
+                <div className="flex items-center gap-2">
                 <Button
                   variant="secondary"
                   className="px-2 py-0.5 text-xs"
                   onClick={() => setVerloopVoor(verloopVoor?.id === w.id ? null : w)}
                 >
-                  Verloop
+                  {verloopVoor?.id === w.id ? "Verloop sluiten" : "Verloop"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="px-2 py-0.5 text-xs"
+                  onClick={() => navigate(`/workflows/${w.id}`)}
+                >
+                  Bewerken
                 </Button>
                 <Button
                   variant="danger"
@@ -92,6 +103,7 @@ export function WorkflowsPage() {
                 >
                   Verwijderen
                 </Button>
+                </div>
               </div>
             </Card>
           ))}
