@@ -255,9 +255,9 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
               <Label>Handmatig uitvoeren tegen lab</Label>
               <select value={runLabId} onChange={(e) => setRunLabId(e.target.value)} className="rounded border border-input bg-background px-2 py-1 text-sm">
                 <option value="">Kies een lab…</option>
-                {labs.filter((l) => l.status === "running").map((l) => (
+                {labs.map((l) => (
                   <option key={l.id} value={l.id}>
-                    {l.name}
+                    {l.name}{l.status === "running" ? "" : ` (${l.status} — wordt gestart)`}
                   </option>
                 ))}
               </select>

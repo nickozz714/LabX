@@ -82,10 +82,22 @@ async def _run_board_schedule(db, sched: Schedule, run: ScheduleRun) -> None:
 
 async def _run_agent_schedule(db, sched: Schedule, run: ScheduleRun) -> None:
     lab = db.get(Lab, sched.lab_id)
-    if not lab or lab.status != "running":
+    if lab is None:
         run.status = "failed"
-        run.error = "Lab draait niet"
+        run.error = "Het gekoppelde lab bestaat niet meer"
         return
+    if lab.status != "running":
+        # Een lab gaat vanzelf uit als er een tijd niet in gewerkt is — dat is
+        # de bedoeling. Maar een schedule die daardoor faalt, faalt precies op
+        # het moment waarvoor hij bestaat: 's nachts, als er niemand keek. Dus
+        # aanzetten; lukt dát niet, dan is er pas echt iets aan de hand.
+        from services.lab.lab_service import LabService
+        try:
+            await LabService(db).ensure_running(lab.id)
+        except Exception as exc:  # noqa: BLE001
+            run.status = "failed"
+            run.error = f"Het lab kon niet gestart worden: {str(exc)[:500]}"
+            return
 
     if _kind_of(sched) == "workflow" and sched.workflow_id:
         wf = db.get(Workflow, sched.workflow_id)

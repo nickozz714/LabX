@@ -216,9 +216,10 @@ async def run_workflow(workflow_id: int, payload: Dict[str, Any], db: Session = 
     lab = db.get(Lab, lab_id) if lab_id else None
     if not lab:
         raise HTTPException(status_code=409, detail="Geef een lab_id op")
-    if lab.status != "running":
-        raise HTTPException(status_code=409,
-                            detail=f"Lab '{lab.name}' draait niet — start hem eerst")
+    # Een lab dat slaapt is geen beletsel: de motor zet hem als eerste stap aan
+    # (en zet dat ook in het verslag). Weigeren zou betekenen dat een workflow
+    # precies niet draait op het moment waarvoor hij bestaat — 's nachts, als
+    # het lab al uren niet gebruikt is.
     run = engine.maak_run(db, w, lab_id=lab_id, trigger_type="manual",
                           invoer=payload.get("invoer") or None,
                           worker_id=payload.get("worker_id"))

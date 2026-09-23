@@ -160,6 +160,11 @@ def db():
         Lab.__table__, Thread.__table__,
     ])
     sessie = sessionmaker(bind=motor)()
+    # Elke run hoort bij een lab, en de motor zet dat lab aan als het uit staat.
+    # De meeste tests hier gaan niet over het lab, dus dat draait gewoon.
+    sessie.add(Lab(id="lab-1", name="Fabric", status="running",
+                   image="python:3-bookworm", created_at="nu", updated_at="nu"))
+    sessie.commit()
     yield sessie
     sessie.close()
 
@@ -543,3 +548,70 @@ def test_validatie_meldt_een_lege_bubbel():
     nodes, edges = graph.normaliseer(
         [{"id": "b", "type": "parallel", "naam": "Leeg"}], [])
     assert any("leeg" in m for m in graph.valideer(nodes, edges))
+
+
+# ── een slapend lab ─────────────────────────────────────────────────────────
+#
+# Een lab gaat vanzelf uit als er een tijd niet in gewerkt is, en dat hoort zo.
+# Maar dan draait de workflow van vannacht precies niet op het moment waarvoor
+# hij bestaat. Dus: de run zet het lab zelf aan.
+
+def _lab(db, status="stopped"):
+    """De toestand van het lab uit de fixture zetten."""
+    from models.lab import Lab
+    rij = db.get(Lab, "lab-1")
+    rij.status = status
+    db.commit()
+    return rij
+
+
+def _start_nep(monkeypatch, *, faalt=False):
+    """LabService.ensure_running vervangen; hij praat anders met docker."""
+    import services.lab.lab_service as ls
+    aanroepen = []
+
+    class NepService:
+        def __init__(self, _db):
+            pass
+
+        async def ensure_running(self, lab_id):
+            aanroepen.append(lab_id)
+            if faalt:
+                raise RuntimeError("container weg")
+            return {"ok": True, "started": True, "status": "running"}
+
+    monkeypatch.setattr(ls, "LabService", NepService)
+    return aanroepen
+
+
+def test_een_slapend_lab_wordt_gestart_en_dat_staat_in_het_verslag(db, monkeypatch):
+    """Zonder die regel in het verslag lijkt de eerste activiteit
+    onverklaarbaar lang te duren."""
+    _lab(db, status="stopped")
+    gestart = _start_nep(monkeypatch)
+    wf = _workflow(db, [{"id": "a", "type": "agent", "naam": "Doen", "prompt": "doe"}], [])
+    run, beurten = _draai(db, monkeypatch, wf, {})
+    assert gestart == ["lab-1"]
+    assert run.status == "completed"
+    stappen = _stappen(db, run)
+    assert stappen[0].naam.startswith("Lab 'Fabric' starten")
+    assert stappen[0].status == "ok"
+    assert [b["node"] for b in beurten] == ["Doen"]
+
+
+def test_een_draaiend_lab_levert_geen_extra_regel_op(db, monkeypatch):
+    _lab(db, status="running")
+    _start_nep(monkeypatch)
+    wf = _workflow(db, [{"id": "a", "type": "agent", "naam": "Doen", "prompt": "doe"}], [])
+    run, _ = _draai(db, monkeypatch, wf, {})
+    assert [s.naam for s in _stappen(db, run)] == ["Doen"]
+
+
+def test_een_lab_dat_niet_wil_starten_stopt_de_run_met_een_reden(db, monkeypatch):
+    _lab(db, status="error")
+    _start_nep(monkeypatch, faalt=True)
+    wf = _workflow(db, [{"id": "a", "type": "agent", "naam": "Doen", "prompt": "doe"}], [])
+    run, beurten = _draai(db, monkeypatch, wf, {})
+    assert run.status == "failed"
+    assert "niet gestart" in (run.error or "")
+    assert beurten == [], "er hoort niets gedraaid te hebben in een lab dat er niet is"

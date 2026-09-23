@@ -171,10 +171,15 @@ export function WorkflowEditorPage() {
         )}
         {loopt && <Badge tone="yellow">draait</Badge>}
         {vuil && <Badge tone="yellow">niet opgeslagen</Badge>}
-        <Select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-44">
+        {/* Ook labs die uit staan: een lab gaat vanzelf slapen na een tijd
+            stilte, en dat mag geen reden zijn dat je je workflow niet kunt
+            draaien. De motor zet hem als eerste stap aan. */}
+        <Select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-52">
           <option value="">Kies een lab…</option>
-          {labs.filter((l) => l.status === "running").map((l) => (
-            <option key={l.id} value={l.id}>{l.name}</option>
+          {labs.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}{l.status === "running" ? "" : ` (${l.status} — wordt gestart)`}
+            </option>
           ))}
         </Select>
         <Button variant="secondary" disabled={!labId} onClick={uitvoeren}>Uitvoeren</Button>

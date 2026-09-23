@@ -136,6 +136,16 @@ async def voer_uit(run_id: str) -> None:
         log.infox("Workflow gestart", run=run.id, workflow=workflow.name,
                   activiteiten=len(nodes))
 
+        # Een lab gaat vanzelf uit als er een tijd niet in gewerkt is — dat is
+        # precies de bedoeling, maar het mag geen reden zijn dat de workflow
+        # van vannacht niet draait. Dus zetten we hem aan, en zetten we dat als
+        # eerste regel in het verslag: anders lijkt de eerste activiteit
+        # onverklaarbaar lang te duren.
+        gelukt, melding = await _zorg_dat_het_lab_draait(db, run)
+        if not gelukt:
+            _rond_af(db, run, "failed", error=melding)
+            return
+
         context: Dict[str, Any] = {"stap": {}, "invoer": run.input_json or {}}
         totalen = {"stappen": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
         wachtrij: List[Dict[str, Any]] = [start]
@@ -214,6 +224,37 @@ def _meld(db: Session, run: WorkflowRun, status: str, error: Optional[str]) -> N
                  (run.output or "")[:1500], {"workflow_run_id": run.id})
     except Exception as exc:  # noqa: BLE001
         log.warningx("Melding over workflow overgeslagen", run=run.id, error=str(exc)[:200])
+
+
+async def _zorg_dat_het_lab_draait(db: Session, run: WorkflowRun) -> Tuple[bool, str]:
+    """Het lab aanzetten als het uit staat.
+
+    Het inrichten dat daarna loopt (pakketten terugzetten) wachten we NIET af:
+    dat is idempotent en start vanzelf, en de eerste activiteit heeft er
+    meestal niets van nodig. Een agent die toch een pakket mist, krijgt dat te
+    horen van het pakket zelf — dat is beter dan elke run een paar minuten
+    laten wachten op iets dat er meestal al staat."""
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    lab = db.get(Lab, run.lab_id) if run.lab_id else None
+    if lab is None:
+        return False, "Het gekoppelde lab bestaat niet meer"
+    if lab.status == "running":
+        return True, ""
+    stap = _log_stap(db, run, {"id": "__lab__", "naam": f"Lab '{lab.name}' starten",
+                               "type": "lab"}, 0, status="running",
+                     invoer=f"Het lab stond {lab.status}.")
+    try:
+        res = await LabService(db).ensure_running(run.lab_id)
+    except Exception as exc:  # noqa: BLE001
+        _werk_stap_bij(db, stap, status="fout", error=str(exc)[:2000])
+        return False, f"Het lab kon niet gestart worden: {str(exc)[:500]}"
+    _werk_stap_bij(db, stap, status="ok",
+                   uitvoer=("Gestart." if res.get("started") else "Draaide al.")
+                           + " Het inrichten loopt op de achtergrond door.")
+    log.infox("Lab gestart voor een workflow", run=run.id, lab_id=run.lab_id)
+    return True, ""
 
 
 # ── één activiteit ──────────────────────────────────────────────────────────

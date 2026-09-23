@@ -98,6 +98,22 @@ niet door zijn eigen werk beïnvloed mag zijn. Daar hoort ook de **rol** bij:
 een systeeminstructie voor die ene stap ("je bent reviewer, wees streng, wijzig
 niets").
 
+## Een lab dat slaapt
+
+Een lab gaat vanzelf uit als er een tijd niet in gewerkt is — dat hoort zo, en
+het is precies waarom een workflow er last van had: die draait 's nachts, als
+het lab al uren stil is.
+
+Daarom hoef je geen draaiend lab te kiezen. Kies er een die slaapt, en de run
+**zet hem als eerste stap aan** — dat staat ook als eerste regel in het
+verslag, anders lijkt de eerste activiteit onverklaarbaar lang te duren. Het
+inrichten dat daarna loopt (pakketten terugzetten) wordt niet afgewacht: dat is
+idempotent, en de meeste activiteiten hebben er niets van nodig.
+
+Hetzelfde geldt voor een **schedule**: die faalde met "Lab draait niet" — op
+het moment waarvoor hij bestond, en zonder dat iemand keek. Nu wordt het lab
+gestart. Lukt dát niet, dan faalt de run met wat er precies misging.
+
 ## Schedulen
 
 Dat kon al: **Scheduling** → type "workflow" + lab + cron. Wat er veranderde,
