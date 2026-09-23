@@ -546,59 +546,170 @@ const ITEM_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet
   waiting: "neutral", skipped: "neutral",
 };
 
+/**
+ * De regels van een planning, gegroepeerd in BUNDELS.
+ *
+ * Een bundel is een stel tickets dat samen in ÉÉN werker draait; de bundels
+ * zelf gaan op volgorde. Daarmee kun je zes tickets oppakken en ze toch per
+ * twee laten lopen: parallel waar het mag, volgordelijk waar het moet.
+ *
+ * Wat een bundel niet is: isolatie. De tickets delen /workspace, de processen
+ * en de browser van die container — als twee mensen op één pc. Wie ze bij
+ * elkaar sleept, zegt daarmee dat ze elkaar verdragen; LabX weet dat niet en
+ * gaat dat ook niet raden.
+ *
+ * Slepen werkt zoals op het bord zelf: pak een ticket, laat het vallen op een
+ * bundel. Een LOPEND ticket blijft waar het is — dat zit al in een container,
+ * en zijn bundel verplaatsen zou betekenen dat de administratie iets anders
+ * zegt dan de werkelijkheid.
+ */
 function PlanRegels({ boardId, planId, onChanged }: {
   boardId: number; planId: number; onChanged: () => void;
 }) {
   const [plan, setPlan] = useState<PlanDto | null>(null);
+  const gesleept = useRef<number | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
   useEffect(() => {
     boardApi.plan(boardId, planId).then(setPlan).catch(() => {});
   }, [boardId, planId]);
+
   if (!plan?.items) return null;
+  const items = plan.items;
+
+  // De groepen in de volgorde waarin ze aan de beurt komen: die van het eerste
+  // ticket van de bundel. Zo blijft "volgorde = prioriteit" ook met bundels
+  // waar zijn, en verspringt er niets bij het slepen.
+  const groepen: { sleutel: string; bundel: number | null; regels: typeof items }[] = [];
+  for (const it of items) {
+    const sleutel = it.bundel ? `b${it.bundel}` : `i${it.id}`;
+    const bestaand = groepen.find((g) => g.sleutel === sleutel);
+    if (bestaand) bestaand.regels.push(it);
+    else groepen.push({ sleutel, bundel: it.bundel, regels: [it] });
+  }
+  const hoogste = items.reduce((m, it) => Math.max(m, it.bundel || 0), 0);
+
+  async function zet(bundels: Record<number, number | null>) {
+    const bijgewerkt = await boardApi.setPlanBundels(boardId, planId, bundels);
+    setPlan(bijgewerkt);
+    onChanged();
+  }
+
+  /** Laat het gesleepte ticket vallen op een groep (of op "nieuw"/"los"). */
+  function drop(doel: { bundel: number | null; regels: typeof items } | "nieuw" | "los") {
+    const id = gesleept.current;
+    gesleept.current = null;
+    setOver(null);
+    if (!id) return;
+    const bron = items.find((x) => x.id === id);
+    if (!bron || bron.state === "running") return;
+    if (doel === "los") return void zet({ [id]: null });
+    if (doel === "nieuw") return void zet({ [id]: hoogste + 1 });
+    if (doel.regels.some((r) => r.id === id)) return;       // al in deze bundel
+    if (doel.bundel) return void zet({ [id]: doel.bundel });
+    // Op een los ticket laten vallen: dan worden ze samen een nieuwe bundel.
+    const buur = doel.regels[0];
+    if (buur.state === "running") return;
+    void zet({ [id]: hoogste + 1, [buur.id]: hoogste + 1 });
+  }
+
+  const sleepbaar = (state: string) => ["waiting", "blocked"].includes(state);
+
   return (
-    <div className="mt-1 space-y-0.5 border-t border-border pt-1">
-      {plan.items.map((it) => (
-        <div key={it.id} className="flex flex-wrap items-center gap-2">
-          <Badge tone={it.resume_at ? "violet" : (ITEM_TOON[it.state] || "neutral")}>
-            {it.resume_at ? "wacht" : it.state}
-          </Badge>
-          <span className="font-mono">{it.ticket_key}</span>
-          <span className="max-w-[16rem] truncate text-muted-foreground">{it.ticket_title}</span>
-          {it.resume_at && (
-            <span className="text-[11px] text-muted-foreground"
-                  title="Dit ticket wacht op iets dat tijd kost; de planning gaat ondertussen verder">
-              {new Date(it.resume_at) > new Date()
-                ? `wacht tot ${new Date(it.resume_at).toLocaleTimeString(undefined,
-                    { hour: "2-digit", minute: "2-digit" })}`
-                : "aan de beurt"}
-            </span>
-          )}
-          {it.wait_reason && (
-            <span className="w-full truncate text-[11px] text-muted-foreground"
-                  title={it.wait_reason}>
-              ↳ {it.wait_reason}
-            </span>
-          )}
-          {it.claims?.length > 0 && (
-            <span className="rounded bg-secondary px-1 text-[11px] text-muted-foreground"
-                  title={`Houdt vast: ${it.claims.join(", ")} — andere tickets die hieraan komen wachten`}>
-              🔒 {it.claims.length}
-            </span>
-          )}
-          {["waiting", "blocked"].includes(it.state) && (
-            <button
-              title="Uit de planning halen"
-              onClick={() =>
-                boardApi.removePlanItem(boardId, planId, it.id).then((p) => {
-                  setPlan(p);
-                  onChanged();
-                })
-              }
-            >
-              <X size={11} />
-            </button>
-          )}
-        </div>
-      ))}
+    <div className="mt-1 space-y-1 border-t border-border pt-1">
+      <p className="text-[11px] text-muted-foreground">
+        Sleep tickets op elkaar om ze samen in één werker te laten draaien. Ze delen dan
+        /workspace, de processen en de browser van die container — bundels gaan onderling
+        op volgorde.
+      </p>
+      {groepen.map((groep) => {
+        const gebundeld = Boolean(groep.bundel);
+        return (
+          <div
+            key={groep.sleutel}
+            onDragOver={(e) => { e.preventDefault(); setOver(groep.sleutel); }}
+            onDragLeave={() => setOver((x) => (x === groep.sleutel ? null : x))}
+            onDrop={() => drop(groep)}
+            className={`rounded-md border px-2 py-1 ${
+              over === groep.sleutel ? "border-primary bg-primary/5" : "border-transparent"
+            } ${gebundeld ? "border-border bg-secondary/30" : ""}`}
+          >
+            {gebundeld && (
+              <div className="mb-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="font-medium">Bundel {groep.bundel}</span>
+                <span>· {groep.regels.length} tickets samen in één werker</span>
+              </div>
+            )}
+            {groep.regels.map((it) => (
+              <div
+                key={it.id}
+                draggable={sleepbaar(it.state)}
+                onDragStart={() => (gesleept.current = it.id)}
+                className={`flex flex-wrap items-center gap-2 ${
+                  sleepbaar(it.state) ? "cursor-grab" : ""
+                }`}
+              >
+                <Badge tone={it.resume_at ? "violet" : (ITEM_TOON[it.state] || "neutral")}>
+                  {it.resume_at ? "wacht" : it.state}
+                </Badge>
+                <span className="font-mono">{it.ticket_key}</span>
+                <span className="max-w-[16rem] truncate text-muted-foreground">{it.ticket_title}</span>
+                {it.resume_at && (
+                  <span className="text-[11px] text-muted-foreground"
+                        title="Dit ticket wacht op iets dat tijd kost; de planning gaat ondertussen verder">
+                    {new Date(it.resume_at) > new Date()
+                      ? `wacht tot ${new Date(it.resume_at).toLocaleTimeString(undefined,
+                          { hour: "2-digit", minute: "2-digit" })}`
+                      : "aan de beurt"}
+                  </span>
+                )}
+                {it.wait_reason && (
+                  <span className="w-full truncate text-[11px] text-muted-foreground"
+                        title={it.wait_reason}>
+                    ↳ {it.wait_reason}
+                  </span>
+                )}
+                {it.claims?.length > 0 && (
+                  <span className="rounded bg-secondary px-1 text-[11px] text-muted-foreground"
+                        title={`Houdt vast: ${it.claims.join(", ")} — andere tickets die hieraan komen wachten`}>
+                    🔒 {it.claims.length}
+                  </span>
+                )}
+                {gebundeld && sleepbaar(it.state) && (
+                  <button title="Uit de bundel halen (draait dan alleen)"
+                          onClick={() => zet({ [it.id]: null })}
+                          className="text-[11px] text-muted-foreground hover:text-foreground">
+                    losmaken
+                  </button>
+                )}
+                {sleepbaar(it.state) && (
+                  <button
+                    title="Uit de planning halen"
+                    onClick={() =>
+                      boardApi.removePlanItem(boardId, planId, it.id).then((p) => {
+                        setPlan(p);
+                        onChanged();
+                      })
+                    }
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setOver("nieuw"); }}
+        onDragLeave={() => setOver((x) => (x === "nieuw" ? null : x))}
+        onDrop={() => drop("nieuw")}
+        className={`rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground ${
+          over === "nieuw" ? "border-primary bg-primary/5" : "border-border"
+        }`}
+      >
+        Sleep hierheen voor een nieuwe bundel
+      </div>
     </div>
   );
 }

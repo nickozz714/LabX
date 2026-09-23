@@ -291,9 +291,39 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
             log.warningx("achtergrondtaak-afronding mislukt", run_id=run_id, error=str(exc)[:300])
         finally:
             db.close()
+        _geef_resources_vrij(run_id)
         _run_finish_hooks(run_id)
         _meld_achtergrondtaak(run_id, mode, status, answer, error)
         _publish(run_id, {"kind": "run_status", "status": status})
+
+
+def _geef_resources_vrij(run_id: str) -> None:
+    """Wat deze sessie in het lab had gereserveerd, gaat los zodra de beurt om is.
+
+    Een claim hoort bij het WERK, niet bij het gesprek: houdt een chat de
+    browser vast tussen twee berichten door, dan staat de collega in dezelfde
+    container voor niets te wachten. De houdbaarheid op de claim is het
+    vangnet; dit is het normale pad.
+    """
+    from db.database import SessionLocal
+    from models.thread import Thread
+
+    db = SessionLocal()
+    try:
+        run = db.get(BackgroundRun, run_id)
+        if run is None or not run.thread_id:
+            return
+        t = db.get(Thread, run.thread_id)
+        if t is None or not t.lab_id:
+            return
+        from services.lab.resources import ResourceService
+        ResourceService(db).release(lab_id=t.lab_id, houder=str(run.thread_id),
+                                    reden="beurt afgelopen")
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Resources vrijgeven na een run mislukt", run_id=run_id,
+                     error=str(exc)[:200])
+    finally:
+        db.close()
 
 
 def _meld_achtergrondtaak(run_id: str, mode: str, status: str,

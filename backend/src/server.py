@@ -82,6 +82,22 @@ async def _plan_tick() -> None:
     await _tick()
 
 
+async def _claims_opruimen() -> None:
+    """Verlopen reserveringen afsluiten.
+
+    Een agent die crasht of afgebroken wordt, geeft zijn claim niet meer zelf
+    vrij. De houdbaarheid vangt dat op, maar zonder deze ronde blijft zo'n
+    claim in het overzicht staan alsof er nog iemand op zit — en dat is precies
+    het soort spookblokkade waar niemand meer uitkomt."""
+    from services.lab.resources import ResourceService
+
+    db = SessionLocal()
+    try:
+        ResourceService(db).ruim_verlopen_op()
+    finally:
+        db.close()
+
+
 async def _guard_audit_opruimen() -> None:
     """Oude guard-auditregels weggooien. Dat spoor bevat per definitie precies
     de gegevens die de guard tegenhield; zonder opruimen groeit er een archief
@@ -171,6 +187,10 @@ async def lifespan(_app: FastAPI):
         # update werkt alleen regels bij die niemand zelf heeft gewijzigd.
         from services.lab.classifier import seed_standaardregels
         seed_standaardregels(db)
+        # De meegeleverde claimbare resources (browser, playground, az-sessie).
+        # Alleen toevoegen wat ontbreekt; jouw aanpassingen blijven staan.
+        from services.lab.resources import seed_builtin_resources
+        seed_builtin_resources(db)
         fixed = await LabService(db).reconcile_on_start()
         if fixed:
             log.infox("Labs gereconcilieerd bij opstart", fixed=fixed)
@@ -215,6 +235,11 @@ async def lifespan(_app: FastAPI):
                        fn=_guard_audit_opruimen, run_immediately=True)
     scheduler.register(name="worker_reaper", interval_seconds=300, fn=_worker_reaper_tick,
                        run_immediately=False)
+    # Elke minuut: een verlopen claim die nog een minuut in het overzicht staat
+    # is te verdragen, vijf minuten niet — dan zit er iemand te wachten op iets
+    # wat allang vrij is.
+    scheduler.register(name="claims_opruimen", interval_seconds=60, fn=_claims_opruimen,
+                       run_immediately=True)
     # Eens per uur; de termijn staat in dagen, dus fijner meten heeft geen zin.
     # Wel meteen bij het starten: dan is de lijst na een herstart direct schoon.
     scheduler.register(name="chat_archief", interval_seconds=3600, fn=_chat_archief_tick,
@@ -244,7 +269,7 @@ app.add_middleware(
 from routers import (  # noqa: E402
     auth_router, system_router, lab_router, chat_router, internal_router, settings_router,
     skill_router, tool_router, mcp_router, workflow_router, schedule_router, azure_profile_router,
-    board_router, notify_router, guard_router,
+    board_router, notify_router, guard_router, resource_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -266,3 +291,4 @@ app.include_router(azure_profile_router.router, prefix="/api")
 app.include_router(board_router.router, prefix="/api")
 app.include_router(notify_router.router, prefix="/api")
 app.include_router(guard_router.router, prefix="/api")
+app.include_router(resource_router.router, prefix="/api")

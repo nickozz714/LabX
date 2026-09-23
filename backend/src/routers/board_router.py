@@ -501,6 +501,20 @@ def reorder_plan(board_id: int, plan_id: int, payload: Dict[str, Any],
     return svc.to_dict(svc.get(plan_id))
 
 
+@router.post("/{board_id}/plans/{plan_id}/bundels")
+def set_plan_bundels(board_id: int, plan_id: int, payload: Dict[str, Any],
+                     db: Session = Depends(get_db)):
+    """Welke tickets samen in één werker draaien: {"bundels": {item_id: nummer}}.
+
+    Een nummer dat leeg of 0 is betekent "alleen" — dat is de standaard. De
+    volgorde van de bundels volgt de volgorde van de tickets zelf, dus
+    herschikken doe je met /reorder."""
+    svc = _plan_svc(db)
+    ruw = payload.get("bundels") or {}
+    svc.set_bundels(plan_id, {int(k): (int(v) if v else None) for k, v in ruw.items()})
+    return svc.to_dict(svc.get(plan_id))
+
+
 @router.delete("/{board_id}/plans/{plan_id}/items/{item_id}")
 def remove_plan_item(board_id: int, plan_id: int, item_id: int, db: Session = Depends(get_db)):
     svc = _plan_svc(db)

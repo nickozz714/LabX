@@ -62,6 +62,12 @@ class Lab(Base):
     # per-lab choice. See services/azure/azure_mcp_auth.py.
     azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Welke resources in dit lab te claimen zijn (sleutels uit `claim_resources`).
+    # NULL = de meegeleverde standaard, en dat is met opzet geen lege lijst: een
+    # bestaand lab hoort de browser te kunnen reserveren zonder dat iemand eerst
+    # een vinkje zet. Zie services/lab/resources.py.
+    claim_resources: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     # Hoeveel containers dit lab NU heeft (zie models/lab_worker.py). Dit is
     # een afgeleide: de autoscaler beweegt hem tussen min en max.
     worker_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

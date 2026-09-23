@@ -11,6 +11,7 @@ import type { AppSettingsDto, GuardModelStatus, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { NotificationsCard } from "@/components/NotificationsCard";
+import { ClaimResourcesCard } from "@/components/ClaimResourcesCard";
 
 export function SettingsPage() {
   const melding = useMelding();
@@ -343,6 +344,7 @@ export function SettingsPage() {
       </Card>
 
       <LabExtrasCard />
+      <ClaimResourcesCard />
 
       <NotificationsCard />
 

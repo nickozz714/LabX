@@ -364,6 +364,90 @@ async def _lab_rebuild(db: Session, lab_id: Optional[str],
                        f"lab__packages, en verwacht tot die tijd geen shell in dit lab.")}
 
 
+async def _lab_resource(db: Session, tool_name: str, lab_id: Optional[str],
+                        args: Dict[str, Any], worker_id: Optional[int],
+                        thread_id: Optional[str]) -> Dict[str, Any]:
+    """De claim-tools voor het fysieke spul in een container.
+
+    De HOUDER is de sessie (de thread): die is stabiel over de beurten van één
+    gesprek of ticketrun, en hij is ook waarop het vrijgeven na afloop van een
+    beurt werkt (zie background_runs._geef_resources_vrij).
+    """
+    from models.lab import Lab
+    from services.lab.resources import ResourceService
+
+    if not lab_id:
+        return {"error": "Deze tool werkt alleen in een chat die aan een lab hangt."}
+    lab = db.get(Lab, str(lab_id))
+    if lab is None:
+        return {"error": "Het gekoppelde lab bestaat niet meer."}
+    houder = str(thread_id or "").strip()
+    if not houder:
+        return {"error": "Deze beurt heeft geen sessie; claimen kan hier niet."}
+    svc = ResourceService(db)
+    label = _houder_label(db, houder)
+
+    if tool_name == "lab__resource__status":
+        beschikbaar = svc.voor_lab(lab)
+        bezet = {c["resource"]: c for c in svc.actief(str(lab_id), worker_id=worker_id)}
+        regels = []
+        for r in beschikbaar:
+            claim = bezet.get(r.key)
+            if claim is None:
+                regels.append(f"- {r.key} — vrij ({r.label})")
+            elif claim["houder"] == houder:
+                regels.append(f"- {r.key} — van jou, tot {claim['verloopt']}")
+            else:
+                regels.append(f"- {r.key} — bezet door {claim['houder_label'] or 'een ander'} "
+                              f"sinds {claim['sinds']}")
+        if not regels:
+            return {"result": "In dit lab is niets ingesteld om te reserveren."}
+        return {"result": "Te reserveren in dit lab:\n" + "\n".join(regels)}
+
+    if tool_name == "lab__resource__release":
+        naam = str(args.get("resource") or "").strip().lower()
+        aantal = svc.release(lab_id=str(lab_id), houder=houder,
+                             resource_keys=[naam] if naam else None)
+        if not aantal:
+            return {"result": "Je had hier niets gereserveerd."}
+        return {"result": f"Vrijgegeven: {naam or 'alles wat je vasthield'} ({aantal})."}
+
+    if tool_name == "lab__resource__claim":
+        res = await svc.claim(
+            lab=lab, worker_id=worker_id,
+            resource_key=str(args.get("resource") or ""),
+            houder=houder, houder_soort="sessie", houder_label=label,
+            reden=str(args.get("reason") or "").strip() or None,
+            wacht_seconden=int(args.get("wait_seconds") or 0))
+        if res.get("onbekend"):
+            return {"error": res.get("melding")}
+        if res.get("ok"):
+            deel = "had je al" if res.get("al_van_jou") else "is van jou"
+            return {"result": (f"{res['resource']} {deel} tot {res.get('verloopt')}. "
+                               f"Geef hem vrij met lab__resource__release zodra je klaar bent.")}
+        gewacht = res.get("gewacht_seconden")
+        staart = f" (na {gewacht}s wachten)" if gewacht else ""
+        return {"result": (f"{res.get('resource')} is bezet door {res.get('bezet_door')} "
+                           f"sinds {res.get('sinds')}{staart}. "
+                           f"Doe zolang iets anders, of probeer het later opnieuw.")}
+    return {"error": f"Onbekende resource-tool: {tool_name}"}
+
+
+def _houder_label(db: Session, thread_id: str) -> str:
+    """Hoe een mens (en een collega-agent) deze houder herkent: het ticket waar
+    de sessie aan werkt, anders de titel van het gesprek."""
+    from models.board import Ticket
+    from models.thread import Thread
+
+    t = db.get(Thread, thread_id)
+    if t is None:
+        return thread_id[:12]
+    ticket = (db.query(Ticket).filter(Ticket.agent_thread_id == thread_id).first())
+    if ticket is not None:
+        return f"{ticket.key} ({ticket.title})"[:255]
+    return (getattr(t, "title", None) or f"chat {thread_id[:8]}")[:255]
+
+
 @router.post("/execute")
 async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] = Header(default=None)):
     if not x_labx_internal_token or x_labx_internal_token != INTERNAL_MCP_TOKEN:
@@ -427,6 +511,9 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             return await _lab_scale(db, lab_id, args)
         if payload.get("tool_name") == "lab__rebuild":
             return await _lab_rebuild(db, lab_id, args)
+        if str(payload.get("tool_name") or "").startswith("lab__resource__"):
+            return await _lab_resource(db, str(payload["tool_name"]), lab_id, args,
+                                       worker_id, payload.get("thread_id"))
         if payload.get("tool_name") == "task__start_background":
             return await _task_start_background(db, payload, lab_id, args)
         if payload.get("tool_name") == "task__check_background":

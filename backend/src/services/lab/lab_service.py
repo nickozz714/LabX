@@ -1406,7 +1406,8 @@ exec ssh -N \\
                               setup_script: Any = "__unset__",
                               security_profile: Optional[str] = None,
                               model: Any = "__unset__",
-                              azure_profile_id: Any = "__unset__") -> Dict[str, Any]:
+                              azure_profile_id: Any = "__unset__",
+                              claim_resources: Any = "__unset__") -> Dict[str, Any]:
         p = self.get(lab_id)
         if data_guard is not None:
             p.data_guard = bool(data_guard)
@@ -1433,6 +1434,12 @@ exec ssh -N \\
             new_script = (setup_script or "").strip() or None
             inrichting_changed = inrichting_changed or new_script != (p.setup_script or None)
             p.setup_script = new_script
+        if claim_resources != "__unset__":
+            # None = terug naar de standaard (alles wat default_on is), een
+            # lijst = precies deze. Een LEGE lijst betekent dus echt "niets te
+            # claimen hier", en dat is iets anders dan niets ingesteld hebben.
+            p.claim_resources = (None if claim_resources is None
+                                 else [str(x) for x in claim_resources])
         profile_changed = False
         if azure_profile_id != "__unset__":
             profile_changed = p.azure_profile_id != azure_profile_id
@@ -2063,6 +2070,7 @@ exec ssh -N \\
             "allowed_tools": list(getattr(p, "allowed_tools", None) or []),
             "allowed_skills": list(getattr(p, "allowed_skills", None) or []),
             "azure_profile_id": p.azure_profile_id,
+            "claim_resources": getattr(p, "claim_resources", None),
             "worker_count": int(getattr(p, "worker_count", 1) or 1),
             "min_workers": int(getattr(p, "min_workers", 1) or 1),
             "max_workers": int(getattr(p, "max_workers", 1) or 1),
