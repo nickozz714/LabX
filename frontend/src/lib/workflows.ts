@@ -16,6 +16,12 @@ export const workflowApi = {
   remove: (id: number) => api.delete<{ ok: boolean }>(`/workflows/${id}`),
   updateGraaf: (id: number, nodes: WorkflowNode[], edges: WorkflowEdge[]) =>
     api.patch<WorkflowDto>(`/workflows/${id}`, { nodes, edges }),
+  /** Alles in één keer: naam, omschrijving én de graaf. Twee losse verzoeken
+   *  voor één druk op 'opslaan' zijn twee keer wachten, en de tussentoestand
+   *  (naam opgeslagen, graaf nog niet) wil niemand. */
+  opslaan: (id: number, payload: {
+    name: string; description: string; nodes: WorkflowNode[]; edges: WorkflowEdge[];
+  }) => api.patch<WorkflowDto>(`/workflows/${id}`, payload),
   /** Starten geeft meteen de run terug; het werk loopt op de achtergrond. */
   run: (id: number, labId: string) =>
     api.post<WorkflowRunDto>(`/workflows/${id}/run`, { lab_id: labId }),

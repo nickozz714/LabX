@@ -102,12 +102,28 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
   // posities weer terugzetten naar waar ze stonden.
   const eigen = useRef<string>("");
 
+  // De graaf opnieuw opbouwen doen we ALLEEN als de graaf zelf veranderde.
+  // Stond `status` hier ook bij, dan bouwde elke verversing van de lopende run
+  // (elke drie seconden) het hele doek opnieuw op — met alle activiteiten
+  // erin. Dat is wat een editor traag laat aanvoelen zonder dat er iets
+  // gebeurt.
   useEffect(() => {
     const sleutel = JSON.stringify({ nodes, edges });
     if (sleutel === eigen.current) return;
+    eigen.current = sleutel;
     setRfNodes(naarFlow(nodes, status));
     setRfEdges(naarFlowEdges(edges));
-  }, [nodes, edges, status, setRfNodes, setRfEdges]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges, setRfNodes, setRfEdges]);
+
+  // De status hangt er los overheen: alleen het veld `status` van elke node
+  // bijwerken, zodat er niets opnieuw gemaakt of verplaatst wordt.
+  useEffect(() => {
+    setRfNodes((huidig) => huidig.map((n) => (
+      n.data?.status === status[n.id]
+        ? n
+        : { ...n, data: { ...n.data, status: status[n.id] } })));
+  }, [status, setRfNodes]);
 
   const stuurDoor = useCallback((vNodes: Node[], vEdges: Edge[]) => {
     const uit: WorkflowNode[] = vNodes.map((rn) => {

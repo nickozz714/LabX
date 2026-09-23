@@ -106,11 +106,18 @@ export function WorkflowEditorPage() {
   async function opslaan() {
     if (!wf) return;
     try {
-      await workflowApi.updateMeta(wf.id, { name: naam, description: omschrijving });
-      const bij = await workflowApi.updateGraaf(wf.id, nodes, edges);
+      const bij = await workflowApi.opslaan(wf.id, {
+        name: naam, description: omschrijving, nodes, edges });
       setWf(bij);
-      setNodes(bij.nodes);
-      setEdges(bij.edges);
+      // De graaf die terugkomt is dezelfde, alleen genormaliseerd. Hem
+      // terugzetten in de state laat het doek ALLE activiteiten opnieuw
+      // opbouwen — bij elke keer opslaan, en dat is precies wat opslaan traag
+      // laat aanvoelen. Alleen overnemen als er echt iets anders is.
+      if (JSON.stringify({ n: bij.nodes, e: bij.edges })
+          !== JSON.stringify({ n: nodes, e: edges })) {
+        setNodes(bij.nodes);
+        setEdges(bij.edges);
+      }
       setVuil(false);
       melding.ok("Workflow opgeslagen");
     } catch (e) {
@@ -129,12 +136,16 @@ export function WorkflowEditorPage() {
     }
   }
 
+  // Let op de afhankelijkheid: het ID, niet het hele workflow-object. Op `wf`
+  // hangen betekende dat elke keer opslaan deze lus opnieuw opzette — inclusief
+  // twee verzoeken, midden in het opslaan.
+  const wfId = wf?.id;
   useEffect(() => {
-    if (!wf) return;
+    if (!wfId) return;
     let weg = false;
     const kijk = async () => {
       try {
-        const runs = await workflowApi.runs(wf.id, 1);
+        const runs = await workflowApi.runs(wfId, 1);
         if (weg || runs.length === 0) return;
         const bezig = ["running", "pending"].includes(runs[0].status);
         setLoopt(bezig);
@@ -147,7 +158,7 @@ export function WorkflowEditorPage() {
     kijk();
     const t = setInterval(kijk, loopt ? 3000 : 15000);
     return () => { weg = true; clearInterval(t); };
-  }, [wf, loopt]);
+  }, [wfId, loopt]);
 
   const geselecteerd = useMemo(
     () => nodes.find((n) => n.id === selectie) || null, [nodes, selectie]);
