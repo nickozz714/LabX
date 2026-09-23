@@ -147,6 +147,22 @@ zou die anders vullen.
 - Een mislukte run meldt zichzelf via de gewone meldingen — een workflow die
   's nachts draait mag niet stil omvallen.
 
+## Wat er met je oude workflows gebeurt
+
+Een workflow van vóór de graaf wordt bij het opstarten **één keer echt
+omgezet**: zijn stappen worden opgeslagen als agent-activiteiten in een rechte
+keten, met een eigen plek op het doek. Daarvoor werd die keten wel afgeleid bij
+elk lezen en uitvoeren, maar nergens bewaard — dus verzon het doek telkens
+opnieuw waar de activiteiten stonden, en bleef een workflow die je nooit opende
+half in de oude wereld hangen.
+
+Heeft een workflow al een graaf (zelf getekend of eerder omgezet), dan wordt er
+niets aangeraakt. Dat is belangrijker dan het klinkt: deze omzetting draait bij
+élke start van de backend, dus zou hij overschrijven, dan was je eigen tekening
+na elke herstart weg.
+
+Markdown blijft daarnaast gewoon bestaan als im- en export.
+
 ## De editor
 
 Een workflow openen doet nu een eigen pagina open (`/workflows/<id>`), geen

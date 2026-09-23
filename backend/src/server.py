@@ -171,6 +171,11 @@ async def lifespan(_app: FastAPI):
         # update werkt alleen regels bij die niemand zelf heeft gewijzigd.
         from services.lab.classifier import seed_standaardregels
         seed_standaardregels(db)
+        # Workflows van vóór de graaf: hun stappen worden één keer echt
+        # opgeslagen als activiteiten, met een plek op het doek. Wie al een
+        # graaf heeft, wordt niet aangeraakt.
+        from services.workflows.migratie import zet_oude_workflows_om
+        zet_oude_workflows_om(db)
         fixed = await LabService(db).reconcile_on_start()
         if fixed:
             log.infox("Labs gereconcilieerd bij opstart", fixed=fixed)
