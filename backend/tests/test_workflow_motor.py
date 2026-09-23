@@ -376,3 +376,170 @@ def test_een_kringetje_loopt_niet_de_hele_nacht(db, monkeypatch):
     assert run.status == "failed"
     assert "kringetje" in (run.error or "")
     assert len(beurten) <= graph.MAX_ACTIVITEITEN_PER_RUN
+
+
+# ── bubbels: activiteiten die tegelijk draaien ──────────────────────────────
+
+def test_een_bubbel_draait_zijn_activiteiten_tegelijk(db, monkeypatch):
+    """De takken mogen niet op elkaar wachten. Draaien ze toch achter elkaar,
+    dan is de bubbel alleen een tekening en geen versnelling."""
+    from db import database
+
+    wf = _workflow(db, [
+        {"id": "b", "type": "parallel", "naam": "Tegelijk", "max_gelijktijdig": 3},
+        {"id": "x", "type": "agent", "naam": "Klant", "prompt": "laad klant", "groep": "b"},
+        {"id": "y", "type": "agent", "naam": "Order", "prompt": "laad order", "groep": "b"},
+        {"id": "z", "type": "agent", "naam": "Product", "prompt": "laad product", "groep": "b"},
+        {"id": "na", "type": "agent", "naam": "Samenvatten", "prompt": "vat samen"},
+    ], [{"van": "b", "naar": "na", "soort": "succes"}])
+
+    tegelijk, hoogste = 0, 0
+
+    async def _traag(_db, run, node, opdracht):
+        nonlocal tegelijk, hoogste
+        tegelijk += 1
+        hoogste = max(hoogste, tegelijk)
+        await asyncio.sleep(0.05)
+        tegelijk -= 1
+        return f"{node['naam']} klaar", [], {"input_tokens": 1, "output_tokens": 1}, "s", None
+
+    monkeypatch.setattr(engine, "_agent_beurt", _traag)
+    monkeypatch.setattr(engine, "_werkers_voor", lambda *a, **kw: [])
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    db.refresh(run)
+    assert run.status == "completed"
+    assert hoogste >= 2, "de takken hoorden tegelijk te lopen"
+    namen = [s.naam for s in _stappen(db, run)]
+    assert namen[0] == "Tegelijk"
+    assert set(namen[1:4]) == {"Klant", "Order", "Product"}
+    assert namen[-1] == "Samenvatten"
+
+
+def test_de_activiteiten_in_een_bubbel_draaien_niet_ook_nog_los(db, monkeypatch):
+    """Ze horen bij hun bubbel. Zou de gewone wandeling ze ook oppakken, dan
+    draait elke tak twee keer — en dat merk je pas aan een dubbel uitgevoerde
+    laadstap."""
+    wf = _workflow(db, [
+        {"id": "b", "type": "parallel", "naam": "Tegelijk"},
+        {"id": "x", "type": "agent", "naam": "Klant", "prompt": "laad", "groep": "b"},
+    ], [])
+    run, beurten = _draai(db, monkeypatch, wf, {})
+    assert [b["node"] for b in beurten] == ["Klant"]
+
+
+def test_een_tak_krijgt_altijd_een_eigen_sessie(db, monkeypatch):
+    """Eén CLI-sessie kan geen twee beurten tegelijk hebben. Een tak die de
+    gedeelde sessie zou hervatten, husselt de context van beide door elkaar."""
+    from db import database
+
+    wf = _workflow(db, [
+        {"id": "b", "type": "parallel", "naam": "Tegelijk"},
+        {"id": "x", "type": "agent", "naam": "Een", "prompt": "a", "groep": "b"},
+        {"id": "y", "type": "agent", "naam": "Twee", "prompt": "b", "groep": "b"},
+    ], [])
+    gezien = []
+
+    async def _kijk(_db, run, node, opdracht):
+        gezien.append(node.get("verse_sessie"))
+        return "ok", [], {}, "s", None
+
+    monkeypatch.setattr(engine, "_agent_beurt", _kijk)
+    monkeypatch.setattr(engine, "_werkers_voor", lambda *a, **kw: [])
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    assert gezien == [True, True]
+
+
+def test_de_uitvoer_van_elke_tak_is_daarna_bruikbaar(db, monkeypatch):
+    from db import database
+
+    wf = _workflow(db, [
+        {"id": "b", "type": "parallel", "naam": "Tegelijk"},
+        {"id": "x", "type": "agent", "naam": "Klant", "prompt": "laad", "groep": "b"},
+        {"id": "y", "type": "agent", "naam": "Order", "prompt": "laad", "groep": "b"},
+        {"id": "na", "type": "agent", "naam": "Samenvatten",
+         "prompt": "klant: {{ stap.klant.uitvoer }} / order: {{ stap.order.uitvoer }}"},
+    ], [{"van": "b", "naar": "na", "soort": "succes"}])
+
+    async def _antwoord(_db, run, node, opdracht):
+        return f"{node['naam'].lower()} ok", [], {}, "s", None
+
+    laatste = {}
+
+    async def _vang(_db, run, node, opdracht):
+        laatste[node["naam"]] = opdracht
+        return await _antwoord(_db, run, node, opdracht)
+
+    monkeypatch.setattr(engine, "_agent_beurt", _vang)
+    monkeypatch.setattr(engine, "_werkers_voor", lambda *a, **kw: [])
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    assert laatste["Samenvatten"] == "klant: klant ok / order: order ok"
+
+
+def test_een_omgevallen_tak_laat_de_bubbel_falen(db, monkeypatch):
+    from db import database
+
+    wf = _workflow(db, [
+        {"id": "b", "type": "parallel", "naam": "Tegelijk"},
+        {"id": "x", "type": "agent", "naam": "Goed", "prompt": "a", "groep": "b"},
+        {"id": "y", "type": "agent", "naam": "Fout", "prompt": "b", "groep": "b"},
+        {"id": "na", "type": "agent", "naam": "Daarna", "prompt": "c"},
+    ], [{"van": "b", "naar": "na", "soort": "succes"}])
+
+    async def _soms(_db, run, node, opdracht):
+        if node["naam"] == "Fout":
+            return "", [], {}, None, "boem"
+        return "ok", [], {}, "s", None
+
+    monkeypatch.setattr(engine, "_agent_beurt", _soms)
+    monkeypatch.setattr(engine, "_werkers_voor", lambda *a, **kw: [])
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    db.refresh(run)
+    assert run.status == "failed"
+    assert [s.naam for s in _stappen(db, run) if s.naam == "Daarna"] == []
+
+
+def test_met_fout_gedrag_doorgaan_loopt_de_bubbel_gewoon_door(db, monkeypatch):
+    """Voor een bubbel waar één mislukte tak geen ramp is — de rest is wel
+    gedaan, en de volgende stap mag daarover beslissen."""
+    from db import database
+
+    wf = _workflow(db, [
+        {"id": "b", "type": "parallel", "naam": "Tegelijk", "fout_gedrag": "doorgaan"},
+        {"id": "x", "type": "agent", "naam": "Goed", "prompt": "a", "groep": "b"},
+        {"id": "y", "type": "agent", "naam": "Fout", "prompt": "b", "groep": "b"},
+        {"id": "na", "type": "agent", "naam": "Daarna", "prompt": "c"},
+    ], [{"van": "b", "naar": "na", "soort": "succes"}])
+
+    async def _soms(_db, run, node, opdracht):
+        if node["naam"] == "Fout":
+            return "", [], {}, None, "boem"
+        return "ok", [], {}, "s", None
+
+    monkeypatch.setattr(engine, "_agent_beurt", _soms)
+    monkeypatch.setattr(engine, "_werkers_voor", lambda *a, **kw: [])
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    db.refresh(run)
+    assert run.status == "completed"
+    assert [s.naam for s in _stappen(db, run) if s.naam == "Daarna"]
+
+
+def test_validatie_meldt_een_lege_bubbel():
+    nodes, edges = graph.normaliseer(
+        [{"id": "b", "type": "parallel", "naam": "Leeg"}], [])
+    assert any("leeg" in m for m in graph.valideer(nodes, edges))

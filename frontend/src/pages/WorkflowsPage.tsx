@@ -7,6 +7,7 @@
  * a raw Markdown tab; editing either re-derives the other on save.
  */
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { workflowApi } from "@/lib/workflows";
 import { labsApi } from "@/lib/labs";
 import type { Lab, WorkflowDto, WorkflowStep } from "@/lib/types";
@@ -16,6 +17,7 @@ import { useBevestiging } from "@/components/Bevestiging";
 import { WorkflowRuns } from "@/components/WorkflowRuns";
 
 export function WorkflowsPage() {
+  const navigate = useNavigate();
   const bevestig = useBevestiging();
   const melding = useMelding();
   const [workflows, setWorkflows] = useState<WorkflowDto[]>([]);
@@ -43,7 +45,7 @@ export function WorkflowsPage() {
           {workflows.map((w) => (
             <Card key={w.id} className="p-4">
               <div className="flex items-center justify-between">
-                <span className="cursor-pointer font-medium" onClick={() => setEditing(w)}>{w.name}</span>
+                <span className="cursor-pointer font-medium" onClick={() => navigate(`/workflows/${w.id}`)}>{w.name}</span>
                 <button
                   onClick={() => workflowApi.updateMeta(w.id, { is_enabled: !w.is_enabled })
                     .then(refresh)
@@ -55,7 +57,7 @@ export function WorkflowsPage() {
                   <Badge tone={w.is_enabled ? "green" : "neutral"}>{w.is_enabled ? "aan" : "uit"}</Badge>
                 </button>
               </div>
-              <div className="cursor-pointer text-xs text-muted-foreground" onClick={() => setEditing(w)}>{w.description}</div>
+              <div className="cursor-pointer text-xs text-muted-foreground" onClick={() => navigate(`/workflows/${w.id}`)}>{w.description}</div>
               <div className="mt-1 flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">
                   {(w.nodes || []).length || w.steps.length} activiteit(en)
@@ -112,9 +114,12 @@ export function WorkflowsPage() {
       {creating && (
         <WorkflowEditor
           onClose={() => setCreating(false)}
-          onSaved={() => {
+          onSaved={(id) => {
             setCreating(false);
             refresh();
+            // Meteen het doek in: een nieuwe workflow bestaat uit activiteiten
+            // die je gaat tekenen, niet uit een naam.
+            if (id) navigate(`/workflows/${id}`);
           }}
         />
       )}
@@ -132,7 +137,7 @@ export function WorkflowsPage() {
   );
 }
 
-function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto; onClose: () => void; onSaved: () => void }) {
+function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto; onClose: () => void; onSaved: (id?: number) => void }) {
   const [name, setName] = useState(existing?.name || "");
   const [description, setDescription] = useState(existing?.description || "");
   const [tab, setTab] = useState<"steps" | "markdown">("steps");
@@ -177,7 +182,7 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
       await workflowApi.updateMeta(wf.id, { name, description });
       wf = tab === "steps" ? await workflowApi.updateSteps(wf.id, steps) : await workflowApi.updateMarkdown(wf.id, markdown);
     }
-    onSaved();
+    onSaved(wf?.id);
   }
 
   async function run() {

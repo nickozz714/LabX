@@ -18,6 +18,14 @@ een runverslag alle drie uit dezelfde verandering voort.
              alles waar geen model voor nodig is.
 - `als`    — splitst op een voorwaarde. Verbindingen `ja` en `nee`.
 - `wacht`  — een pauze, bijvoorbeeld tussen twee pogingen.
+- `parallel` — een BUBBEL waar activiteiten in zitten die gelijktijdig draaien.
+             De activiteiten erin hebben `groep` op de id van de bubbel, staan
+             niet in de gewone wandeling door de graaf (de bubbel voert ze uit)
+             en krijgen elk een EIGEN sessie: één CLI-sessie kan geen twee
+             beurten tegelijk hebben. Zitten er meer werkers in het lab, dan
+             worden ze over die containers verdeeld; anders draaien ze naast
+             elkaar in dezelfde — twee keer Claude op één pc, met dezelfde
+             afweging als bij een bundel in een planning.
 
 **Herhalen zit op de activiteit, niet op een aparte lus-activiteit.** Een node
 met `herhaal_over` draait één keer per element van die lijst (`item` is dan
@@ -36,7 +44,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-NODE_SOORTEN = ("agent", "shell", "als", "wacht")
+NODE_SOORTEN = ("agent", "shell", "als", "wacht", "parallel")
 EDGE_SOORTEN = ("succes", "fout", "altijd", "ja", "nee")
 
 # Een run stopt hier hoe dan ook. Vangnet tegen een graaf die in een kringetje
@@ -77,6 +85,15 @@ def normaliseer_node(ruw: Dict[str, Any], index: int) -> Dict[str, Any]:
         node["conditie"] = ruw.get("conditie") or {}
     elif soort == "wacht":
         node["seconden"] = max(1, min(int(ruw.get("seconden") or 30), 3600))
+    elif soort == "parallel":
+        # Hoeveel er tegelijk mogen. Niet ongelimiteerd: acht agents in één
+        # lab is acht keer hetzelfde geheugen en dezelfde processen.
+        node["max_gelijktijdig"] = max(1, min(int(ruw.get("max_gelijktijdig") or 4), 8))
+        # Wat er gebeurt als er één omvalt: "stop" laat de bubbel falen zodra
+        # de rest klaar is, "doorgaan" telt het als een geslaagde bubbel met
+        # een mislukte tak erin.
+        node["fout_gedrag"] = ("doorgaan" if str(ruw.get("fout_gedrag") or "stop") == "doorgaan"
+                               else "stop")
     # Herhalen kan op elke uitvoerende activiteit.
     if ruw.get("herhaal_over"):
         node["herhaal_over"] = str(ruw["herhaal_over"])
@@ -86,6 +103,11 @@ def normaliseer_node(ruw: Dict[str, Any], index: int) -> Dict[str, Any]:
     # Een activiteit die mag mislukken zonder de run te stoppen (dan telt de
     # `fout`-verbinding, of loopt hij gewoon door als die er niet is).
     node["mag_falen"] = bool(ruw.get("mag_falen"))
+    # In welke bubbel deze activiteit zit (de id van een `parallel`-activiteit).
+    # Zit hij in een bubbel, dan wandelt de motor er niet zelf naartoe: de
+    # bubbel start hem.
+    if ruw.get("groep"):
+        node["groep"] = str(ruw["groep"])
     return node
 
 
@@ -135,6 +157,19 @@ def zorg_voor_graaf(workflow) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]
     return uit_stappen(list(getattr(workflow, "steps_json", None) or []))
 
 
+def kinderen(nodes: List[Dict[str, Any]], groep_id: str) -> List[Dict[str, Any]]:
+    """De activiteiten in deze bubbel, in de volgorde waarin ze staan."""
+    return [n for n in nodes if n.get("groep") == groep_id]
+
+
+def losse(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Alles wat NIET in een bubbel zit — de gewone wandeling door de graaf.
+
+    Een activiteit in een bubbel wordt door die bubbel gestart; hem ook nog via
+    een verbinding laten lopen zou hem twee keer uitvoeren."""
+    return [n for n in nodes if not n.get("groep")]
+
+
 def startnode(nodes: List[Dict[str, Any]],
               edges: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Waar de run begint: de activiteit waar niets naartoe wijst.
@@ -143,11 +178,12 @@ def startnode(nodes: List[Dict[str, Any]],
     volgorde waarin ze getekend zijn. Wijst alles naar iets (een kringetje),
     dan nemen we ook gewoon de eerste; de bovengrens op het aantal
     activiteiten vangt de gevolgen op."""
-    if not nodes:
+    vrijstaand = losse(nodes)
+    if not vrijstaand:
         return None
     doelen = {e["naar"] for e in edges}
-    vrij = [n for n in nodes if n["id"] not in doelen]
-    return vrij[0] if vrij else nodes[0]
+    vrij = [n for n in vrijstaand if n["id"] not in doelen]
+    return vrij[0] if vrij else vrijstaand[0]
 
 
 def volgende(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
@@ -156,7 +192,9 @@ def volgende(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
 
     `altijd` telt bij elke uitkomst mee: dat is de verbinding voor "ruim op",
     "meld het" — het soort stap dat juist moet lopen als er iets misging."""
-    op_id = {n["id"]: n for n in nodes}
+    # Alleen losse activiteiten: een activiteit in een bubbel hoort door zijn
+    # bubbel gestart te worden, niet door een verbinding.
+    op_id = {n["id"]: n for n in losse(nodes)}
     uit = []
     for e in edges:
         if e["van"] != node_id:
@@ -194,8 +232,18 @@ def valideer(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> List[s
         if aantal > 1:
             meldingen.append(f"Meerdere activiteiten heten '{sleutel}'; in een expressie "
                              f"verwijs je dan naar de laatste die gedraaid heeft.")
+    ids = {n["id"] for n in nodes}
+    for n in nodes:
+        if n["type"] == "parallel" and not kinderen(nodes, n["id"]):
+            meldingen.append(f"De bubbel '{n['naam']}' is leeg — sleep er activiteiten in.")
+        if n.get("groep") and n["groep"] not in ids:
+            meldingen.append(f"'{n['naam']}' hoort bij een bubbel die niet meer bestaat.")
+        if n.get("groep") and n["type"] in ("als", "parallel"):
+            meldingen.append(f"'{n['naam']}' kan niet in een bubbel: vertakken en nog een "
+                             f"bubbel horen in de hoofdstroom thuis.")
     doelen = {e["naar"] for e in edges}
-    los = [n["naam"] for n in nodes[1:] if n["id"] not in doelen]
+    vrijstaand = losse(nodes)
+    los = [n["naam"] for n in vrijstaand[1:] if n["id"] not in doelen]
     if los:
         meldingen.append("Niet verbonden (draait nooit): " + ", ".join(los))
     return meldingen

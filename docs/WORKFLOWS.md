@@ -22,6 +22,7 @@ activiteit tegelijk, met een eigen invoer, uitvoer en status.
 | **shell** | een commando in de container — deterministisch, goedkoop, langs de guard |
 | **als** | splitst op een voorwaarde; verbindingen `ja` en `nee` |
 | **wacht** | een pauze, bijvoorbeeld tussen twee pogingen |
+| **bubbel** (`parallel`) | een omhulsel: alles wat erin ligt draait tegelijk |
 
 Verbindingen hebben een soort: **succes**, **fout** of **altijd** (na een
 gewone activiteit) en **ja** / **nee** (na een `als`). `altijd` telt bij elke
@@ -68,6 +69,26 @@ Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `bevat`, `bevat_niet`, `is_leeg`,
 want doorgaan alsof alles goed is, is precies wat je niet wilt als je niet weet
 wat er staat.
 
+### Tegelijk draaien: de bubbel
+
+Sleep activiteiten in een **bubbel** en ze draaien gelijktijdig. Wat je moet
+weten:
+
+- Elke tak krijgt **onvermijdelijk een eigen sessie**. Eén CLI-sessie kan geen
+  twee beurten tegelijk hebben; een tak die de gedeelde sessie zou hervatten,
+  husselt de context van beide door elkaar.
+- Heeft het lab meer werkers, dan worden de takken over die containers
+  verdeeld. Zijn er minder werkers dan takken, dan draaien ze naast elkaar in
+  dezelfde container — twee keer Claude op één pc, met dezelfde afweging als
+  een bundel in een planning.
+- Takken kunnen elkaars uitvoer niet gebruiken (ze lopen tegelijk), maar ná de
+  bubbel kan dat wel: `stap.<sleutel>.uitvoer` van elke tak staat klaar.
+- `hoeveel tegelijk` begrenst het aantal gelijktijdige takken; bij een mislukte
+  tak kies je tussen "de bubbel mislukt" (volg de fout-verbinding) en
+  "doorgaan".
+- Een activiteit in een bubbel wordt **alleen door die bubbel** gestart — hij
+  doet niet ook nog mee in de gewone wandeling door de graaf.
+
 ## Sessies
 
 Alle activiteiten van één run delen standaard **dezelfde sessie**: de agent
@@ -110,10 +131,24 @@ zou die anders vullen.
 - Een mislukte run meldt zichzelf via de gewone meldingen — een workflow die
   's nachts draait mag niet stil omvallen.
 
+## De editor
+
+Een workflow openen doet nu een eigen pagina open (`/workflows/<id>`), geen
+pop-up meer. Links de activiteiten die je kunt toevoegen, in het midden het
+doek, rechts de eigenschappen van wat je aanklikt.
+
+- **Verbinden** doe je door van een punt onder een activiteit te slepen: het
+  groene punt is "bij succes", het rode "bij fout". Een `als` heeft ja en nee.
+  De soort van de verbinding komt dus uit waar je begint te slepen — je hoeft
+  er achteraf niets aan in te stellen.
+- **Parallel maken** doe je door een activiteit in een bubbel te slepen. Eruit
+  slepen zet hem terug in de hoofdstroom.
+- **Terwijl een run loopt kleurt het doek mee**: geel is bezig, groen klaar,
+  rood mislukt. Onderin staat het verloop met per activiteit de invoer, de
+  tool-aanroepen, de uitvoer en de kosten.
+
 ## Wat er nog komt
 
-De canvas-editor (React Flow): activiteiten slepen, verbindingen tekenen,
-eigenschappen rechts, en hetzelfde beeld als runweergave zodat je de workflow
-ziet lopen. Tot die tijd bewerk je de stappen in het bestaande scherm; een
-bestaande workflow blijft gewoon werken en wordt ingelezen als een rechte keten
-van agent-activiteiten.
+Een sub-workflow-activiteit, zodat een lus over meerdere activiteiten kan (nu
+zit herhalen op één activiteit). En het doek als losse runweergave, met de
+geschiedenis van een specifieke run in beeld.

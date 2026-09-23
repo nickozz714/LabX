@@ -12,6 +12,7 @@ import { ChatPage } from "@/pages/ChatPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SkillsPage } from "@/pages/SkillsPage";
 import { WorkflowsPage } from "@/pages/WorkflowsPage";
+import { WorkflowEditorPage } from "@/pages/WorkflowEditorPage";
 import { SchedulesPage } from "@/pages/SchedulesPage";
 import { BoardsPage } from "@/pages/BoardsPage";
 import { BoardPage } from "@/pages/BoardPage";
@@ -45,6 +46,7 @@ function AppRoutes() {
         <Route path="boards" element={<BoardsPage />} />
         <Route path="boards/:boardId" element={<BoardPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
+        <Route path="workflows/:id" element={<WorkflowEditorPage />} />
         <Route path="schedules" element={<SchedulesPage />} />
         <Route path="azure-profiles" element={<AzureProfilesPage />} />
         <Route path="guard" element={<GuardPage />} />

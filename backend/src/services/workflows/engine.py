@@ -17,6 +17,14 @@ en meestal is wat je wilt. Een activiteit met `verse_sessie` begint met een
 schone lei — precies wat je nodig hebt voor een beoordelaar die niet door zijn
 eigen werk beïnvloed mag zijn.
 
+**Bubbels.** Een `parallel`-activiteit voert de activiteiten die erin zitten
+gelijktijdig uit. Elk daarvan krijgt onvermijdelijk een EIGEN sessie: één
+CLI-sessie kan geen twee beurten tegelijk hebben. Heeft het lab meer werkers,
+dan worden ze over die containers verdeeld; anders draaien ze naast elkaar in
+dezelfde container — twee keer Claude op één pc, met dezelfde afweging als bij
+een bundel in een planning. Elke tak krijgt ook zijn eigen databasesessie: één
+SQLAlchemy-sessie is niet gemaakt om door taken gedeeld te worden.
+
 **Waarom het in de achtergrond draait.** Een workflow van zeven activiteiten
 duurt minuten tot uren. Het HTTP-verzoek dat hem start, geeft daarom meteen
 een run-id terug; de voortgang lees je van de run en zijn stappen.
@@ -147,7 +155,13 @@ async def voer_uit(run_id: str) -> None:
 
             node = wachtrij.pop(0)
             volgnummer += 1
-            resultaat, tak = await _voer_node_uit(db, run, node, context, totalen, volgnummer)
+            if node["type"] == "parallel":
+                resultaat, tak = await _voer_bubbel_uit(db, run, node, nodes, context,
+                                                        totalen, volgnummer)
+                volgnummer += len(graph.kinderen(nodes, node["id"]))
+            else:
+                resultaat, tak = await _voer_node_uit(db, run, node, context, totalen,
+                                                      volgnummer)
             context["stap"][node["sleutel"]] = resultaat
             if resultaat.get("uitvoer"):
                 laatste_uitvoer = resultaat["uitvoer"]
@@ -252,6 +266,91 @@ async def _voer_node_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
     if node["type"] == "als":
         return resultaat, ("ja" if resultaat.get("waar") else "nee")
     return resultaat, ("fout" if resultaat.get("status") == "fout" else "succes")
+
+
+async def _voer_bubbel_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
+                           nodes: List[Dict[str, Any]], context: Dict[str, Any],
+                           totalen: Dict[str, Any],
+                           volgnummer: int) -> Tuple[Dict[str, Any], str]:
+    """De activiteiten in een bubbel tegelijk uitvoeren.
+
+    Elke tak krijgt zijn eigen databasesessie en zijn eigen CLI-sessie, en waar
+    mogelijk een eigen werker. De context die ze meekrijgen is een KOPIE van wat
+    er tot nu toe bekend is: takken die tegelijk lopen kunnen elkaars uitvoer
+    per definitie niet gebruiken, en doen alsof dat wel kan levert een workflow
+    op die soms werkt.
+    """
+    leden = graph.kinderen(nodes, node["id"])
+    if not leden:
+        _log_stap(db, run, node, volgnummer, status="overgeslagen",
+                  invoer="lege bubbel", uitvoer="geen activiteiten")
+        return {"status": "ok", "uitvoer": ""}, "succes"
+
+    werkers = _werkers_voor(db, run, len(leden))
+    grens = asyncio.Semaphore(max(1, int(node.get("max_gelijktijdig") or 4)))
+    _log_stap(db, run, node, volgnummer, status="ok",
+              invoer=f"{len(leden)} activiteiten tegelijk "
+                     f"(max {node.get('max_gelijktijdig')})",
+              uitvoer=", ".join(x["naam"] for x in leden))
+
+    async def _tak(index: int, kind: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        from db.database import SessionLocal
+        eigen_db = SessionLocal()
+        try:
+            eigen_run = eigen_db.get(WorkflowRun, run.id)
+            # Een tak praat nooit met de gedeelde sessie van de run: twee
+            # beurten in één CLI-sessie kan niet, en zou de context van beide
+            # door elkaar husselen.
+            tak_node = dict(kind, verse_sessie=True)
+            if werkers:
+                eigen_run.worker_id = werkers[index % len(werkers)]
+            async with grens:
+                resultaat = await _eenmaal(eigen_db, eigen_run, tak_node,
+                                           dict(context), totalen,
+                                           volgnummer + 1 + index, None, None)
+            return kind["sleutel"], resultaat
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("Tak in een bubbel viel om", run=run.id, node=kind["naam"],
+                         error=str(exc)[:200])
+            return kind["sleutel"], {"status": "fout", "uitvoer": "", "error": str(exc)[:500]}
+        finally:
+            eigen_db.close()
+
+    uitkomsten = await asyncio.gather(*[_tak(i, k) for i, k in enumerate(leden)])
+    per_sleutel = dict(uitkomsten)
+    context["stap"].update(per_sleutel)
+    mislukt = [k for k, v in per_sleutel.items() if v.get("status") == "fout"]
+    samen = {
+        "status": "fout" if (mislukt and node.get("fout_gedrag") != "doorgaan") else "ok",
+        "uitvoer": "\n\n".join(f"[{k}] {(v.get('uitvoer') or '').strip()}"
+                                for k, v in per_sleutel.items()).strip(),
+        "mislukt": mislukt,
+        "aantal": len(leden),
+    }
+    return samen, ("fout" if samen["status"] == "fout" else "succes")
+
+
+def _werkers_voor(db: Session, run: WorkflowRun, aantal: int) -> List[int]:
+    """Werkers om de takken over te verdelen, als het lab er meer heeft.
+
+    Best-effort: geen vrije werker is geen fout maar drukte — dan draaien de
+    takken naast elkaar in dezelfde container, wat de gebruiker bij bundels
+    ook al als aanvaard risico heeft aangemerkt. Nooit meer werkers dan takken,
+    en nooit een werker die niet ingericht is."""
+    try:
+        from models.lab import Lab
+        from services.lab.lab_service import LabService
+
+        lab = db.get(Lab, run.lab_id)
+        if lab is None:
+            return []
+        svc = LabService(db)
+        bezet = svc.bezette_werkers(lab.id)
+        vrij = [w.id for w in svc.claimbare_werkers(lab) if w.id not in bezet]
+        return vrij[:aantal]
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Werkers verdelen overgeslagen", run=run.id, error=str(exc)[:200])
+        return []
 
 
 async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],

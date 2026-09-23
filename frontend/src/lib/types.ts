@@ -293,7 +293,7 @@ export interface WorkflowDto {
   updated_at: string;
 }
 
-export type WorkflowNodeSoort = "agent" | "shell" | "als" | "wacht";
+export type WorkflowNodeSoort = "agent" | "shell" | "als" | "wacht" | "parallel";
 
 export interface WorkflowNode {
   id: string;
@@ -318,6 +318,13 @@ export interface WorkflowNode {
   herhaal_tot?: WorkflowConditie;
   herhaal_max?: number;
   mag_falen?: boolean;
+  /** In welke bubbel deze activiteit zit. Activiteiten in dezelfde bubbel
+   *  draaien tegelijk, elk met een eigen sessie. */
+  groep?: string;
+  /** Alleen op een bubbel: hoeveel takken tegelijk, en wat er gebeurt als er
+   *  één omvalt ("stop" of "doorgaan"). */
+  max_gelijktijdig?: number;
+  fout_gedrag?: string;
 }
 
 export interface WorkflowConditie {
