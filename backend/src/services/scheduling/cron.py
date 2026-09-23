@@ -86,19 +86,6 @@ async def _run_agent_schedule(db, sched: Schedule, run: ScheduleRun) -> None:
         run.status = "failed"
         run.error = "Het gekoppelde lab bestaat niet meer"
         return
-    if lab.status != "running":
-        # Een lab gaat vanzelf uit als er een tijd niet in gewerkt is — dat is
-        # de bedoeling. Maar een schedule die daardoor faalt, faalt precies op
-        # het moment waarvoor hij bestaat: 's nachts, als er niemand keek. Dus
-        # aanzetten; lukt dát niet, dan is er pas echt iets aan de hand.
-        from services.lab.lab_service import LabService
-        try:
-            await LabService(db).ensure_running(lab.id)
-        except Exception as exc:  # noqa: BLE001
-            run.status = "failed"
-            run.error = f"Het lab kon niet gestart worden: {str(exc)[:500]}"
-            return
-
     if _kind_of(sched) == "workflow" and sched.workflow_id:
         wf = db.get(Workflow, sched.workflow_id)
         if wf is None:
@@ -116,6 +103,25 @@ async def _run_agent_schedule(db, sched: Schedule, run: ScheduleRun) -> None:
         run.output = (f"Workflow '{wf.name}' gestart (run {wf_run.id[:8]}). "
                       f"Het verloop staat bij de workflow zelf.")
         return
+
+    # Vanaf hier: een prompt-schedule, die zelf een beurt draait. Een lab gaat
+    # vanzelf uit als er een tijd niet in gewerkt is — dat is de bedoeling.
+    # Maar een schedule die daardoor faalt, faalt precies op het moment
+    # waarvoor hij bestaat: 's nachts, als er niemand keek. Dus aanzetten.
+    #
+    # Een WORKFLOW-schedule komt hier niet langs: die laat de motor het lab
+    # starten, zodat 'lab gestart' ook als eerste regel in het runverslag van
+    # die workflow staat. Het hier ook doen zou dat verslag stilletjes leeg
+    # laten — het lab draaide dan immers al.
+    if lab.status != "running":
+        from services.lab.lab_service import LabService
+        try:
+            await LabService(db).ensure_running(lab.id)
+        except Exception as exc:  # noqa: BLE001
+            run.status = "failed"
+            run.error = f"Het lab kon niet gestart worden: {str(exc)[:500]}"
+            return
+
     prompt = sched.prompt or ""
     if not prompt.strip():
         run.status = "failed"
@@ -137,7 +143,14 @@ async def _run_schedule(schedule_id: int, scheduled_for: str) -> None:
     db = SessionLocal()
     try:
         sched = db.get(Schedule, schedule_id)
-        if not sched or not sched.is_enabled:
+        if not sched:
+            return
+        # "Nu uitvoeren" werkt ook op een schedule die uit staat. Dat is juist
+        # het moment waarop je hem wilt proberen: je bouwt hem, laat hem nog
+        # uit, en kijkt of hij doet wat je bedoelde. Zwijgend niets doen (wat
+        # hier gebeurde) leest als "mislukt".
+        handmatig = str(scheduled_for or "").startswith("manual:")
+        if not sched.is_enabled and not handmatig:
             return
         run = ScheduleRun(id=str(uuid4()), schedule_id=schedule_id, scheduled_for=scheduled_for,
                           status="running", created_at=_now_iso())
