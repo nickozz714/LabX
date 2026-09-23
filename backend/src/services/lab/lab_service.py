@@ -1007,6 +1007,7 @@ exec ssh -N \\
         max_workers: int = 1,
         security_profile: Optional[str] = None,
         model: Optional[str] = None,
+        chat_deelt_werker: bool = True,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -1051,6 +1052,7 @@ exec ssh -N \\
             provision_log=[],
             min_workers=max(1, min(int(min_workers or 1), 8)),
             max_workers=max(1, min(int(max_workers or 1), 8)),
+            chat_deelt_werker=bool(chat_deelt_werker),
             worker_count=1,
             # Wat dit lab over zijn eigen wereld weet; bepaalt welke guard-regels
             # zinnig zijn. Zie services/lab/profielen.py.
