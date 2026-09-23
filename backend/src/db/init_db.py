@@ -118,6 +118,21 @@ _ADDITIVE_COLUMNS = {
         ("intent", "VARCHAR(32)"),
         ("intent_mismatch", "JSON"),
     ],
+    "workflows": [
+        # De graaf. Leeg voor een workflow van vóór deze versie; die wordt uit
+        # zijn stappen afgeleid zodra hij bewerkt of uitgevoerd wordt.
+        ("nodes_json", "TEXT"),
+        ("edges_json", "TEXT"),
+    ],
+    "workflow_runs": [
+        ("worker_id", "INTEGER"),
+        ("trigger_ref", "VARCHAR(64)"),
+        ("thread_id", "VARCHAR(64)"),
+        ("cli_session_id", "VARCHAR(128)"),
+        ("input_json", "TEXT"),
+        ("totals_json", "TEXT"),
+        ("started_at", "VARCHAR(64)"),
+    ],
     "background_runs": [
         ("mode", "VARCHAR(16) NOT NULL DEFAULT 'background'"),
         # In welke werker (container) van het lab deze run draaide.

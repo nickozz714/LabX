@@ -32,7 +32,6 @@ from db.database import SessionLocal
 from models.lab import Lab
 from models.schedule import Schedule, ScheduleRun
 from models.workflow import Workflow
-from services.workflows.workflow_service import parse_markdown_to_steps, steps_as_agent_instructions
 
 log = get_logger(__name__)
 
@@ -94,10 +93,18 @@ async def _run_agent_schedule(db, sched: Schedule, run: ScheduleRun) -> None:
             run.status = "failed"
             run.error = "De gekoppelde workflow bestaat niet meer"
             return
-        steps = wf.steps_json or parse_markdown_to_steps(wf.markdown)
-        prompt = f"Voer deze workflow uit: {wf.name}\n\n{steps_as_agent_instructions(steps)}"
-    else:
-        prompt = sched.prompt or ""
+        # Door dezelfde motor als een handmatige run, en dus met hetzelfde
+        # verslag: één geschiedenis per workflow in plaats van twee (hier de
+        # cron, daar de workflow) waarvan je er altijd één mist.
+        from services.workflows import engine
+        wf_run = engine.maak_run(db, wf, lab_id=sched.lab_id, trigger_type="cron",
+                                 trigger_ref=str(sched.id))
+        engine.start_in_achtergrond(wf_run.id)
+        run.status = "completed"
+        run.output = (f"Workflow '{wf.name}' gestart (run {wf_run.id[:8]}). "
+                      f"Het verloop staat bij de workflow zelf.")
+        return
+    prompt = sched.prompt or ""
     if not prompt.strip():
         run.status = "failed"
         run.error = "Deze schedule heeft niets uit te voeren (lege prompt)"

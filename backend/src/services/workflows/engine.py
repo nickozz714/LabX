@@ -1,0 +1,416 @@
+"""
+services/workflows/engine.py
+
+Het uitvoeren van een workflow: LabX loopt de activiteiten langs, de agent
+voert er één tegelijk uit.
+
+**Wat er veranderde.** Vroeger gingen alle stappen in één prompt naar het
+model en was de rest aan hem. Daar viel niets op te vertakken (er was tijdens
+het draaien geen stap), niets te herhalen, en niets te loggen: een run bewaarde
+de eindtekst en verder niets. Nu voert LabX ze stuk voor stuk uit, en dus is er
+per activiteit een invoer, een uitvoer, een duur, een prijs en een tak die
+genomen is.
+
+**Sessies.** Alle activiteiten van één run delen standaard dezelfde
+CLI-sessie: de agent onthoudt wat hij in de vorige stap deed, wat goedkoper is
+en meestal is wat je wilt. Een activiteit met `verse_sessie` begint met een
+schone lei — precies wat je nodig hebt voor een beoordelaar die niet door zijn
+eigen werk beïnvloed mag zijn.
+
+**Waarom het in de achtergrond draait.** Een workflow van zeven activiteiten
+duurt minuten tot uren. Het HTTP-verzoek dat hem start, geeft daarom meteen
+een run-id terug; de voortgang lees je van de run en zijn stappen.
+
+**Waar hij stopt.** Bij een fout zonder `fout`- of `altijd`-verbinding, als de
+graaf op is, of bij de bovengrens uit graph.py — het vangnet tegen een
+kringetje dat anders een nacht doordraait.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
+
+from sqlalchemy.orm import Session
+
+from component_logging import get_logger
+from models.workflow import Workflow, WorkflowRun, WorkflowRunStep
+from services.workflows import expressies, graph
+
+log = get_logger(__name__)
+
+# Lopende runs, zodat afbreken meer kan zijn dan een vlag in de database.
+_TAKEN: Dict[str, asyncio.Task] = {}
+_AFGEBROKEN: set = set()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ── starten ─────────────────────────────────────────────────────────────────
+
+def maak_run(db: Session, workflow: Workflow, *, lab_id: str,
+             trigger_type: str = "manual", trigger_ref: Optional[str] = None,
+             invoer: Optional[Dict[str, Any]] = None,
+             worker_id: Optional[int] = None) -> WorkflowRun:
+    """De runregel en de sessie waarin hij gaat draaien.
+
+    De sessie is een gewone thread, zodat je achteraf in het gesprek kunt
+    terugkijken (en desnoods doorpraten) — maar hij staat niet in de chatlijst:
+    een workflow die elk uur draait zou die anders vullen."""
+    from models.thread import Thread
+
+    now = _now_iso()
+    thread = Thread(id=str(uuid4()), lab_id=lab_id,
+                    title=f"Workflow: {workflow.name}",
+                    source="workflow", created_at=now, updated_at=now)
+    db.add(thread)
+    run = WorkflowRun(id=str(uuid4()), workflow_id=workflow.id, lab_id=lab_id,
+                      worker_id=worker_id, trigger_type=trigger_type,
+                      trigger_ref=str(trigger_ref) if trigger_ref else None,
+                      status="pending", thread_id=thread.id,
+                      input_json=invoer or None, created_at=now)
+    db.add(run)
+    db.commit()
+    return run
+
+
+def start_in_achtergrond(run_id: str) -> bool:
+    """De run loslaten als taak. De referentie vasthouden, anders ruimt de
+    garbage collector hem halverwege op (zelfde patroon als background_runs)."""
+    if run_id in _TAKEN and not _TAKEN[run_id].done():
+        return False
+    try:
+        lus = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    taak = lus.create_task(voer_uit(run_id))
+    _TAKEN[run_id] = taak
+    taak.add_done_callback(lambda _t: _TAKEN.pop(run_id, None))
+    return True
+
+
+def breek_af(run_id: str) -> bool:
+    """Afbreken tussen twee activiteiten. De lopende activiteit maakt hij nog
+    af — een agent-beurt halverwege afkappen laat het lab in een toestand
+    achter waarvan niemand meer weet welke."""
+    _AFGEBROKEN.add(run_id)
+    return True
+
+
+# ── de wandeling door de graaf ──────────────────────────────────────────────
+
+async def voer_uit(run_id: str) -> None:
+    from db.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        run = db.get(WorkflowRun, run_id)
+        if run is None:
+            return
+        workflow = db.get(Workflow, run.workflow_id)
+        if workflow is None:
+            _rond_af(db, run, "failed", error="De workflow bestaat niet meer")
+            return
+        nodes, edges = graph.zorg_voor_graaf(workflow)
+        start = graph.startnode(nodes, edges)
+        if start is None:
+            _rond_af(db, run, "failed", error="Deze workflow heeft geen activiteiten")
+            return
+
+        run.status = "running"
+        run.started_at = _now_iso()
+        db.commit()
+        log.infox("Workflow gestart", run=run.id, workflow=workflow.name,
+                  activiteiten=len(nodes))
+
+        context: Dict[str, Any] = {"stap": {}, "invoer": run.input_json or {}}
+        totalen = {"stappen": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+        wachtrij: List[Dict[str, Any]] = [start]
+        laatste_uitvoer = ""
+        fout: Optional[str] = None
+        volgnummer = 0
+
+        while wachtrij:
+            if run.id in _AFGEBROKEN:
+                _AFGEBROKEN.discard(run.id)
+                _rond_af(db, run, "cancelled", output=laatste_uitvoer, totalen=totalen)
+                return
+            if totalen["stappen"] >= graph.MAX_ACTIVITEITEN_PER_RUN:
+                fout = (f"Gestopt na {graph.MAX_ACTIVITEITEN_PER_RUN} activiteiten — "
+                        f"loopt deze workflow in een kringetje?")
+                break
+
+            node = wachtrij.pop(0)
+            volgnummer += 1
+            resultaat, tak = await _voer_node_uit(db, run, node, context, totalen, volgnummer)
+            context["stap"][node["sleutel"]] = resultaat
+            if resultaat.get("uitvoer"):
+                laatste_uitvoer = resultaat["uitvoer"]
+
+            verder = graph.volgende(nodes, edges, node["id"], tak)
+            if resultaat.get("status") == "fout" and not node.get("mag_falen") and not verder:
+                fout = f"'{node['naam']}' mislukte: {resultaat.get('error') or 'onbekende fout'}"
+                break
+            wachtrij.extend(verder)
+
+        _rond_af(db, run, "failed" if fout else "completed",
+                 output=laatste_uitvoer, error=fout, totalen=totalen)
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Workflow-run viel om", run=run_id, error=str(exc)[:300])
+        try:
+            run = db.get(WorkflowRun, run_id)
+            if run is not None:
+                _rond_af(db, run, "failed", error=str(exc)[:2000])
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        db.close()
+
+
+def _rond_af(db: Session, run: WorkflowRun, status: str, *, output: Optional[str] = None,
+             error: Optional[str] = None, totalen: Optional[Dict[str, Any]] = None) -> None:
+    run.status = status
+    run.output = (output or None)
+    run.error = (error or None)
+    run.totals_json = totalen or run.totals_json
+    run.finished_at = _now_iso()
+    db.commit()
+    log.infox("Workflow klaar", run=run.id, status=status,
+              stappen=(totalen or {}).get("stappen"))
+    _meld(db, run, status, error)
+
+
+def _meld(db: Session, run: WorkflowRun, status: str, error: Optional[str]) -> None:
+    """Een workflow die 's nachts draait, mag niet stil mislukken."""
+    try:
+        from services.notify.notify_service import meld
+        wf = db.get(Workflow, run.workflow_id)
+        naam = wf.name if wf else f"workflow {run.workflow_id}"
+        if status == "failed":
+            meld("run_mislukt", f"Workflow '{naam}' mislukt",
+                 (error or "Geen verdere melding.")[:1500],
+                 {"workflow_run_id": run.id, "lab_id": run.lab_id})
+        elif status == "completed" and run.trigger_type != "manual":
+            meld("run_klaar", f"Workflow '{naam}' klaar",
+                 (run.output or "")[:1500], {"workflow_run_id": run.id})
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Melding over workflow overgeslagen", run=run.id, error=str(exc)[:200])
+
+
+# ── één activiteit ──────────────────────────────────────────────────────────
+
+async def _voer_node_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
+                         context: Dict[str, Any], totalen: Dict[str, Any],
+                         volgnummer: int) -> Tuple[Dict[str, Any], str]:
+    """Voert één activiteit uit — zo nodig meerdere keren — en geeft het
+    resultaat plus de tak die daarna genomen moet worden."""
+    herhaal_over = node.get("herhaal_over")
+    if herhaal_over:
+        items = expressies.los_op(herhaal_over, context)
+        if items is None:
+            items = []
+        elif not isinstance(items, list):
+            items = [items]
+        if not items:
+            # Niets te doen is niet hetzelfde als mislukt: een lijst die leeg
+            # is, is vaak precies het goede nieuws ("geen fouten gevonden").
+            _log_stap(db, run, node, volgnummer, status="overgeslagen",
+                      invoer=f"herhaal over {herhaal_over}", uitvoer="lege lijst")
+            return {"status": "ok", "uitvoer": "", "json": None, "aantal": 0}, "succes"
+        resultaten = []
+        for i, item in enumerate(items[: node["herhaal_max"]], start=1):
+            lokaal = dict(context, item=item, iteratie=i)
+            resultaat = await _eenmaal(db, run, node, lokaal, totalen, volgnummer, i, item)
+            resultaten.append(resultaat)
+            if resultaat.get("status") == "fout" and not node.get("mag_falen"):
+                return resultaat, "fout"
+        samen = {"status": "ok", "aantal": len(resultaten),
+                 "uitvoer": "\n\n".join(r.get("uitvoer") or "" for r in resultaten).strip(),
+                 "json": [r.get("json") for r in resultaten if r.get("json") is not None]}
+        return samen, "succes"
+
+    herhaal_tot = node.get("herhaal_tot")
+    if herhaal_tot:
+        laatste: Dict[str, Any] = {}
+        for i in range(1, node["herhaal_max"] + 1):
+            lokaal = dict(context, iteratie=i)
+            laatste = await _eenmaal(db, run, node, lokaal, totalen, volgnummer, i, None)
+            lokaal["stap"] = dict(context.get("stap") or {}, **{node["sleutel"]: laatste})
+            if expressies.evalueer(herhaal_tot, lokaal):
+                return laatste, "succes"
+            if laatste.get("status") == "fout" and not node.get("mag_falen"):
+                return laatste, "fout"
+        laatste["herhaal_grens_bereikt"] = True
+        return laatste, "succes" if laatste.get("status") != "fout" else "fout"
+
+    resultaat = await _eenmaal(db, run, node, context, totalen, volgnummer, None, None)
+    if node["type"] == "als":
+        return resultaat, ("ja" if resultaat.get("waar") else "nee")
+    return resultaat, ("fout" if resultaat.get("status") == "fout" else "succes")
+
+
+async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
+                   context: Dict[str, Any], totalen: Dict[str, Any],
+                   volgnummer: int, iteratie: Optional[int],
+                   item: Any) -> Dict[str, Any]:
+    soort = node["type"]
+    begin = time.monotonic()
+    totalen["stappen"] = totalen.get("stappen", 0) + 1
+
+    if soort == "als":
+        conditie = node.get("conditie") or {}
+        waar = expressies.evalueer(conditie, context)
+        _log_stap(db, run, node, volgnummer, status="ok", iteratie=iteratie, item=item,
+                  invoer=expressies.beschrijf(conditie),
+                  uitvoer="ja" if waar else "nee", tak="ja" if waar else "nee",
+                  duur_ms=int((time.monotonic() - begin) * 1000))
+        return {"status": "ok", "waar": waar, "uitvoer": "ja" if waar else "nee"}
+
+    if soort == "wacht":
+        await asyncio.sleep(int(node.get("seconden") or 30))
+        _log_stap(db, run, node, volgnummer, status="ok", iteratie=iteratie, item=item,
+                  invoer=f"{node.get('seconden')} seconden", uitvoer="gewacht",
+                  duur_ms=int((time.monotonic() - begin) * 1000))
+        return {"status": "ok", "uitvoer": ""}
+
+    if soort == "shell":
+        commando = expressies.vul_in(node.get("commando") or "", context)
+        rij = _log_stap(db, run, node, volgnummer, status="running", iteratie=iteratie,
+                        item=item, invoer=commando)
+        try:
+            from services.mcp.tool_execution_service import ToolExecutionService
+            res = await ToolExecutionService(db).execute_builtin_shell(
+                lab_id=run.lab_id, command=commando,
+                timeout=float(node.get("timeout") or 120), worker_id=run.worker_id,
+                intent="workflow")
+            uitvoer = str(res.get("output") or "")
+            code = int(res.get("exit_code") or 0)
+            status = "ok" if code == 0 else "fout"
+            _werk_stap_bij(db, rij, status=status, uitvoer=uitvoer, exit_code=code,
+                           duur_ms=int((time.monotonic() - begin) * 1000))
+            return {"status": status, "uitvoer": uitvoer, "exit_code": code, "json": None}
+        except Exception as exc:  # noqa: BLE001
+            _werk_stap_bij(db, rij, status="fout", error=str(exc)[:2000],
+                           duur_ms=int((time.monotonic() - begin) * 1000))
+            return {"status": "fout", "uitvoer": "", "error": str(exc)[:500]}
+
+    # agent
+    opdracht = expressies.vul_in(node.get("prompt") or "", context)
+    rol = (node.get("rol") or "").strip()
+    if rol:
+        opdracht = f"{rol}\n\n{opdracht}"
+    rij = _log_stap(db, run, node, volgnummer, status="running", iteratie=iteratie,
+                    item=item, invoer=opdracht)
+    antwoord, stappen, gebruik, sessie, fout = await _agent_beurt(
+        db, run, node, opdracht)
+    duur = int((time.monotonic() - begin) * 1000)
+    if fout:
+        _werk_stap_bij(db, rij, status="fout", error=fout, stappen=stappen, duur_ms=duur)
+        return {"status": "fout", "uitvoer": antwoord, "error": fout, "json": None}
+
+    gestructureerd = _als_json(antwoord) if node.get("json_schema") else None
+    if sessie and not node.get("verse_sessie"):
+        run.cli_session_id = sessie
+    totalen["input_tokens"] += int(gebruik.get("input_tokens") or 0)
+    totalen["output_tokens"] += int(gebruik.get("output_tokens") or 0)
+    totalen["cost_usd"] = round(totalen.get("cost_usd", 0.0)
+                                + float(gebruik.get("cost_usd") or 0.0), 4)
+    _werk_stap_bij(db, rij, status="ok", uitvoer=antwoord, stappen=stappen,
+                   resultaat=gestructureerd, duur_ms=duur,
+                   input_tokens=gebruik.get("input_tokens"),
+                   output_tokens=gebruik.get("output_tokens"),
+                   cost_usd=gebruik.get("cost_usd"))
+    return {"status": "ok", "uitvoer": antwoord, "json": gestructureerd}
+
+
+async def _agent_beurt(db: Session, run: WorkflowRun, node: Dict[str, Any],
+                       opdracht: str):
+    """Eén beurt van de agent, met alles wat eruit komt: het antwoord, de
+    tool-aanroepen (de redenatie), het verbruik en de sessie."""
+    from services.agent.chat_agent import ChatAgent
+
+    antwoord, stappen, gebruik, sessie, fout = "", [], {}, None, None
+    hervat = None if node.get("verse_sessie") else run.cli_session_id
+    try:
+        async for ev in ChatAgent(db).run_stream_events(
+                lab_id=run.lab_id, user_input=opdracht,
+                model=node.get("model"), resume_session_id=hervat,
+                json_schema=node.get("json_schema"),
+                thread_id=run.thread_id, is_background=True,
+                lab_worker_id=run.worker_id):
+            soort = ev.get("kind")
+            if soort == "answer":
+                antwoord = ev.get("text") or ""
+            elif soort in ("thinking", "tool"):
+                stappen.append(ev)
+            elif soort == "session":
+                sessie = ev.get("id")
+            elif soort == "usage":
+                gebruik = ev
+    except Exception as exc:  # noqa: BLE001
+        fout = str(exc)[:2000]
+    return antwoord, stappen, gebruik, sessie, fout
+
+
+def _als_json(tekst: str) -> Optional[Any]:
+    """Gestructureerde uitvoer uit het antwoord halen. Mislukt dat, dan is het
+    gewoon tekst — geen reden om de activiteit te laten falen."""
+    ruw = (tekst or "").strip()
+    if ruw.startswith("```"):
+        ruw = ruw.strip("`")
+        ruw = ruw.split("\n", 1)[1] if "\n" in ruw else ruw
+    try:
+        return json.loads(ruw)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# ── het spoor ───────────────────────────────────────────────────────────────
+
+def _log_stap(db: Session, run: WorkflowRun, node: Dict[str, Any], volgnummer: int, *,
+              status: str, invoer: Optional[str] = None, uitvoer: Optional[str] = None,
+              iteratie: Optional[int] = None, item: Any = None,
+              tak: Optional[str] = None, duur_ms: Optional[int] = None) -> WorkflowRunStep:
+    rij = WorkflowRunStep(
+        run_id=run.id, node_id=node["id"], naam=node["naam"], soort=node["type"],
+        volgnummer=volgnummer, iteratie=iteratie,
+        item=(json.dumps(item, ensure_ascii=False)[:2000] if item is not None else None),
+        status=status, invoer=(invoer or None)[:20000] if invoer else None,
+        uitvoer=(uitvoer or None), tak=tak, duur_ms=duur_ms,
+        created_at=_now_iso(),
+        finished_at=_now_iso() if status != "running" else None)
+    db.add(rij)
+    db.commit()
+    return rij
+
+
+def _werk_stap_bij(db: Session, rij: WorkflowRunStep, *, status: str,
+                   uitvoer: Optional[str] = None, error: Optional[str] = None,
+                   stappen: Optional[List[Dict[str, Any]]] = None,
+                   resultaat: Any = None, exit_code: Optional[int] = None,
+                   duur_ms: Optional[int] = None,
+                   input_tokens: Optional[int] = None,
+                   output_tokens: Optional[int] = None,
+                   cost_usd: Optional[float] = None) -> None:
+    rij.status = status
+    if uitvoer is not None:
+        rij.uitvoer = uitvoer
+    if error is not None:
+        rij.error = error
+    if stappen is not None:
+        rij.stappen_json = stappen
+    if resultaat is not None:
+        rij.resultaat_json = resultaat if isinstance(resultaat, dict) else {"waarde": resultaat}
+    if exit_code is not None:
+        rij.exit_code = exit_code
+    rij.duur_ms = duur_ms
+    rij.input_tokens = input_tokens
+    rij.output_tokens = output_tokens
+    rij.cost_usd = cost_usd
+    rij.finished_at = _now_iso()
+    db.commit()

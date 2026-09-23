@@ -281,9 +281,101 @@ export interface WorkflowDto {
   description: string | null;
   markdown: string;
   steps: WorkflowStep[];
+  /** De graaf: activiteiten en hun verbindingen. Een workflow van vóór de
+   *  graaf krijgt hier een rechte keten uit zijn stappen. */
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  /** Wat er nog mist (geen opdracht, losse activiteit, ...). Waarschuwingen,
+   *  geen fouten — je bent hem aan het bouwen. */
+  waarschuwingen: string[];
   is_enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export type WorkflowNodeSoort = "agent" | "shell" | "als" | "wacht";
+
+export interface WorkflowNode {
+  id: string;
+  type: WorkflowNodeSoort;
+  naam: string;
+  /** Waarmee je in een expressie naar deze activiteit verwijst. */
+  sleutel: string;
+  positie?: { x: number; y: number };
+  prompt?: string;
+  /** Een systeeminstructie voor deze ene stap ("je bent reviewer, wijzig niets"). */
+  rol?: string | null;
+  /** Begin deze stap met een schone lei in plaats van de sessie van de run. */
+  verse_sessie?: boolean;
+  json_schema?: string | null;
+  model?: string | null;
+  commando?: string;
+  timeout?: number;
+  conditie?: WorkflowConditie;
+  seconden?: number;
+  /** Verwijzing naar een lijst; de activiteit draait één keer per element. */
+  herhaal_over?: string;
+  herhaal_tot?: WorkflowConditie;
+  herhaal_max?: number;
+  mag_falen?: boolean;
+}
+
+export interface WorkflowConditie {
+  links: string;
+  operator: string;
+  rechts?: unknown;
+  rechts_is_verwijzing?: boolean;
+}
+
+export interface WorkflowEdge {
+  van: string;
+  naar: string;
+  soort: "succes" | "fout" | "altijd" | "ja" | "nee";
+}
+
+/** Eén uitvoering — handmatig of uit een schedule; dezelfde geschiedenis. */
+export interface WorkflowRunDto {
+  id: string;
+  workflow_id: number;
+  lab_id: string | null;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  trigger_type: string;
+  trigger_ref: string | null;
+  thread_id: string | null;
+  output: string | null;
+  error: string | null;
+  totals: { stappen?: number; input_tokens?: number; output_tokens?: number; cost_usd?: number };
+  input: Record<string, unknown>;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  stappen?: WorkflowRunStapDto[];
+}
+
+/** Wat er in één activiteit gebeurde: de invoer die het model kreeg, zijn
+ *  antwoord, de tool-aanroepen ertussenin, en wat het kostte. */
+export interface WorkflowRunStapDto {
+  id: number;
+  node_id: string;
+  naam: string;
+  soort: string;
+  volgnummer: number;
+  iteratie: number | null;
+  item: string | null;
+  status: string;
+  invoer: string | null;
+  uitvoer: string | null;
+  resultaat: unknown;
+  stappen: { kind: string; name?: string; text?: string; input?: unknown }[];
+  exit_code: number | null;
+  error: string | null;
+  tak: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+  duur_ms: number | null;
+  created_at: string;
+  finished_at: string | null;
 }
 
 export type ScheduleKind = "prompt" | "workflow" | "board";

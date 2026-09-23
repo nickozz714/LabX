@@ -77,7 +77,9 @@ def list_threads(include_board: bool = False, archived: bool = False,
     lopende gesprekken door staat, is geen archief."""
     q = db.query(Thread)
     if not include_board:
-        q = q.filter(Thread.source != "board")
+        # Board-runs en workflow-runs hebben allebei een sessie, maar horen niet
+        # in je chatlijst: één workflow die elk uur draait zou hem vullen.
+        q = q.filter(Thread.source.notin_(("board", "workflow")))
     q = (q.filter(Thread.archived_at.isnot(None)) if archived
          else q.filter(Thread.archived_at.is_(None)))
     kolom = Thread.archived_at if archived else Thread.updated_at
