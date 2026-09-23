@@ -23,9 +23,9 @@ export function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<WorkflowDto[]>([]);
   const [editing, setEditing] = useState<WorkflowDto | null>(null);
   const [creating, setCreating] = useState(false);
-  // Welke workflow zijn verloop laat zien. Eén tegelijk: het is een lange
+  // Welke workflow zijn runs laat zien. Eén tegelijk: het is een lange
   // lijst met uitklapbare activiteiten, en twee ervan naast elkaar leest niet.
-  const [verloopVoor, setVerloopVoor] = useState<WorkflowDto | null>(null);
+  const [monitoringVoor, setMonitoringVoor] = useState<WorkflowDto | null>(null);
 
   function refresh() {
     workflowApi.list().then(setWorkflows);
@@ -75,9 +75,9 @@ export function WorkflowsPage() {
                 <Button
                   variant="secondary"
                   className="px-2 py-0.5 text-xs"
-                  onClick={() => setVerloopVoor(verloopVoor?.id === w.id ? null : w)}
+                  onClick={() => setMonitoringVoor(monitoringVoor?.id === w.id ? null : w)}
                 >
-                  {verloopVoor?.id === w.id ? "Verloop sluiten" : "Verloop"}
+                  {monitoringVoor?.id === w.id ? "Monitoring sluiten" : "Monitoring"}
                 </Button>
                 <Button
                   variant="secondary"
@@ -109,18 +109,18 @@ export function WorkflowsPage() {
           ))}
         </div>
       )}
-      {verloopVoor && (
+      {monitoringVoor && (
         <div className="mt-4">
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Verloop van '{verloopVoor.name}'</h2>
-            <Button variant="ghost" onClick={() => setVerloopVoor(null)}>Sluiten</Button>
+            <h2 className="text-sm font-semibold">Monitoring — '{monitoringVoor.name}'</h2>
+            <Button variant="ghost" onClick={() => setMonitoringVoor(null)}>Sluiten</Button>
           </div>
           <p className="mb-2 text-xs text-muted-foreground">
             Handmatige én geplande runs staan hier door elkaar — het is hetzelfde ding. Klap een
             activiteit open voor de invoer die het model kreeg, wat het onderweg deed, en wat
             eruit kwam.
           </p>
-          <WorkflowRuns workflowId={verloopVoor.id} />
+          <WorkflowRuns workflowId={monitoringVoor.id} />
         </div>
       )}
       {creating && (
@@ -201,10 +201,10 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
     if (!existing || !runLabId) return;
     setRunResult("Starten…");
     // Uitvoeren geeft alleen de run terug: het werk loopt op de achtergrond,
-    // want zeven activiteiten duren minuten tot uren. Het verloop staat in het
-    // verslag (knop 'Verloop' bij de workflow).
+    // want zeven activiteiten duren minuten tot uren. De monitoring staat in het
+    // verslag (knop 'Monitoring' bij de workflow).
     const r = await workflowApi.run(existing.id, runLabId);
-    setRunResult(`Gestart (run ${r.id.slice(0, 8)}). Volg hem bij 'Verloop' — daar `
+    setRunResult(`Gestart (run ${r.id.slice(0, 8)}). Volg hem bij 'Monitoring' — daar `
                  + `staat per activiteit wat het model kreeg, deed en teruggaf.`);
   }
 

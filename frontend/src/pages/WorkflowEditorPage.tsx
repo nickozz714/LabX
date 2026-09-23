@@ -8,7 +8,7 @@
  *
  * Drie delen: een balk met wat er over de hele workflow gaat, het doek, en het
  * paneel rechts voor de geselecteerde activiteit. Onderin, op verzoek, het
- * verloop van eerdere runs — bij het bouwen kijk je afwisselend naar de
+ * monitoring van eerdere runs — bij het bouwen kijk je afwisselend naar de
  * tekening en naar wat er de vorige keer gebeurde.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -44,7 +44,7 @@ export function WorkflowEditorPage() {
   const [vuil, setVuil] = useState(false);
   const [labs, setLabs] = useState<Lab[]>([]);
   const [labId, setLabId] = useState("");
-  const [verloop, setVerloop] = useState(false);
+  const [monitoring, setMonitoring] = useState(false);
   // De status van de laatste run per activiteit, zodat het doek meekleurt: je
   // ziet de workflow lopen in plaats van hem te moeten volgen in een lijst.
   const [statusPerNode, setStatusPerNode] = useState<Record<string, string>>({});
@@ -129,8 +129,8 @@ export function WorkflowEditorPage() {
     if (!wf || !labId) return;
     try {
       const run = await workflowApi.run(wf.id, labId);
-      setVerloop(true);
-      melding.ok(`Gestart (run ${run.id.slice(0, 8)}) — het verloop staat hieronder.`);
+      setMonitoring(true);
+      melding.ok(`Gestart (run ${run.id.slice(0, 8)}) — de monitoring staat hieronder.`);
     } catch (e) {
       melding.fout("Starten mislukt", e instanceof ApiError ? e.message : String(e));
     }
@@ -194,7 +194,9 @@ export function WorkflowEditorPage() {
           ))}
         </Select>
         <Button variant="secondary" disabled={!labId} onClick={uitvoeren}>Uitvoeren</Button>
-        <Button variant="secondary" onClick={() => setVerloop(!verloop)}>Verloop</Button>
+        <Button variant="secondary" onClick={() => setMonitoring(!monitoring)}>
+          {monitoring ? "Monitoring sluiten" : "Monitoring"}
+        </Button>
         <Button onClick={opslaan} disabled={!vuil}>Opslaan</Button>
       </div>
 
@@ -226,11 +228,11 @@ export function WorkflowEditorPage() {
         </div>
       </div>
 
-      {verloop && (
+      {monitoring && (
         <div className="max-h-[40vh] overflow-y-auto border-t border-border p-3">
           <div className="mb-2 flex items-center justify-between">
-            <Label>Verloop — handmatige en geplande runs door elkaar</Label>
-            <Button variant="ghost" onClick={() => setVerloop(false)}>Sluiten</Button>
+            <Label>Monitoring — handmatige en geplande runs door elkaar</Label>
+            <Button variant="ghost" onClick={() => setMonitoring(false)}>Sluiten</Button>
           </div>
           <WorkflowRuns workflowId={wf.id} />
         </div>

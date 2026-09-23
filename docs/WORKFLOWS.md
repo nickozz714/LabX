@@ -129,7 +129,7 @@ model kreeg, de **tool-aanroepen** ertussenin, de **uitvoer**, het
 gestructureerde resultaat, de duur, het tokenverbruik en de kosten, plus welke
 **tak** er genomen is. Bij herhalingen staat elke ronde er apart in.
 
-Te vinden bij de workflow onder **Verloop**. Een lopende run ververst zichzelf;
+Te vinden bij de workflow onder **Monitoring**. Een lopende run ververst zichzelf;
 afbreken kan tussen twee activiteiten (de lopende maakt hij af — een agent-beurt
 halverwege afkappen laat het lab in een toestand achter waarvan niemand meer
 weet welke).
@@ -176,7 +176,7 @@ doek, rechts de eigenschappen van wat je aanklikt.
 - **Parallel maken** doe je door een activiteit in een bubbel te slepen. Eruit
   slepen zet hem terug in de hoofdstroom.
 - **Terwijl een run loopt kleurt het doek mee**: geel is bezig, groen klaar,
-  rood mislukt. Onderin staat het verloop met per activiteit de invoer, de
+  rood mislukt. Onderin staat de monitoring met per activiteit de invoer, de
   tool-aanroepen, de uitvoer en de kosten.
 
 ## Wat er nog komt
