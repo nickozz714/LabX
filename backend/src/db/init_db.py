@@ -216,6 +216,7 @@ def init_db() -> None:
         guard_rule,
         lab,
         lab_extra,
+        secret,
         lab_secret,
         lab_worker,
         mcp_server,

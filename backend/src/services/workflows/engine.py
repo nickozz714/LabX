@@ -17,7 +17,11 @@ en meestal is wat je wilt. Een activiteit met `verse_sessie` begint met een
 schone lei — precies wat je nodig hebt voor een beoordelaar die niet door zijn
 eigen werk beïnvloed mag zijn.
 
-**Bubbels.** Een `parallel`-activiteit voert de activiteiten die erin zitten
+**Lussen en bubbels.** Een `voorelk`-activiteit voert alles wat erin ligt één
+keer per element van een lijst uit, netjes achter elkaar, met `item` en
+`iteratie` in de context van elke activiteit in die ronde — ook van een `als`.
+Dat is wat `herhaal_over` op één activiteit niet kan: daar past maar één stap
+in. Een `parallel`-activiteit voert de activiteiten die erin zitten
 gelijktijdig uit. Elk daarvan krijgt onvermijdelijk een EIGEN sessie: één
 CLI-sessie kan geen twee beurten tegelijk hebben. Heeft het lab meer werkers,
 dan worden ze over die containers verdeeld; anders draaien ze naast elkaar in
@@ -165,7 +169,12 @@ async def voer_uit(run_id: str) -> None:
 
             node = wachtrij.pop(0)
             volgnummer += 1
-            if node["type"] == "parallel":
+            if node["type"] == "voorelk":
+                resultaat, tak = await _voer_lus_uit(db, run, node, nodes, edges, context,
+                                                     totalen, volgnummer)
+                volgnummer += int(resultaat.get("aantal") or 0) * max(
+                    1, len(graph.kinderen(nodes, node["id"])))
+            elif node["type"] == "parallel":
                 resultaat, tak = await _voer_bubbel_uit(db, run, node, nodes, context,
                                                         totalen, volgnummer)
                 volgnummer += len(graph.kinderen(nodes, node["id"]))
@@ -307,6 +316,89 @@ async def _voer_node_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
     if node["type"] == "als":
         return resultaat, ("ja" if resultaat.get("waar") else "nee")
     return resultaat, ("fout" if resultaat.get("status") == "fout" else "succes")
+
+
+async def _voer_lus_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
+                        nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
+                        context: Dict[str, Any], totalen: Dict[str, Any],
+                        volgnummer: int) -> Tuple[Dict[str, Any], str]:
+    """Alles in de lus één keer per element van een lijst.
+
+    Dit is wat `herhaal_over` op één activiteit niet kan: binnen de lus liggen
+    meerdere activiteiten, en die mogen onderling vertakken. Een `als` op
+    `item.complexity` doet dus per element iets anders — precies waarvoor je
+    een lus wilt.
+
+    De ronde loopt over de verbindingen BINNEN de groep; wat er ná de lus komt,
+    gebeurt één keer. `item` en `iteratie` staan in de context van elke
+    activiteit in de ronde, en de uitvoer van een activiteit blijft binnen die
+    ronde beschikbaar voor de volgende.
+    """
+    leden = graph.kinderen(nodes, node["id"])
+    bron = node.get("bron") or ""
+    items = expressies.los_op(bron, context) if bron else None
+    if items is None:
+        items = []
+    elif not isinstance(items, list):
+        items = [items]
+    items = items[: int(node.get("max_items") or 50)]
+
+    if not leden or not items:
+        # Een lege lijst is geen fout: "geen incidenten gevonden" is vaak juist
+        # het goede nieuws.
+        _log_stap(db, run, node, volgnummer, status="overgeslagen",
+                  invoer=f"lijst: {bron or '—'}",
+                  uitvoer=("geen activiteiten in de lus" if not leden else "lege lijst"))
+        return {"status": "ok", "uitvoer": "", "aantal": 0, "rondes": []}, "succes"
+
+    _log_stap(db, run, node, volgnummer, status="ok",
+              invoer=f"{len(items)} element(en) uit {bron}",
+              uitvoer=", ".join(x["naam"] for x in leden))
+
+    rondes: List[Dict[str, Any]] = []
+    mislukt = 0
+    nummer = volgnummer
+    for index, item in enumerate(items, start=1):
+        # Elke ronde begint met een SCHONE kopie van wat er buiten de lus bekend
+        # is, plus dit element. Zo lekt ronde 3 niet in ronde 4 — en kan een
+        # verwijzing naar `stap.x` binnen de lus nooit stiekem die van vorige
+        # ronde zijn.
+        lokaal = dict(context, item=item, iteratie=index)
+        lokaal["stap"] = dict(context.get("stap") or {})
+        start = graph.startnode_in_groep(nodes, edges, node["id"])
+        wachtrij = [start] if start else []
+        ronde_fout = None
+        while wachtrij:
+            kind = wachtrij.pop(0)
+            nummer += 1
+            if nummer - volgnummer > graph.MAX_ACTIVITEITEN_PER_RUN:
+                ronde_fout = "te veel activiteiten in deze lus"
+                break
+            resultaat, tak = await _voer_node_uit(db, run, kind, lokaal, totalen, nummer)
+            lokaal["stap"][kind["sleutel"]] = resultaat
+            verder = graph.volgende_in_groep(nodes, edges, kind["id"], tak, node["id"])
+            if resultaat.get("status") == "fout" and not kind.get("mag_falen") and not verder:
+                ronde_fout = f"'{kind['naam']}' mislukte: {resultaat.get('error') or 'onbekend'}"
+                break
+            wachtrij.extend(verder)
+        rondes.append({"iteratie": index, "fout": ronde_fout,
+                       "stap": {k: v for k, v in lokaal["stap"].items()}})
+        if ronde_fout:
+            mislukt += 1
+            if node.get("fout_gedrag") != "doorgaan":
+                return {"status": "fout", "uitvoer": ronde_fout, "aantal": index,
+                        "rondes": rondes, "error": ronde_fout}, "fout"
+
+    # Na de lus is de uitvoer van de LAATSTE ronde beschikbaar onder de sleutels
+    # van de activiteiten erin; dat is wat je verwacht als je erachter iets
+    # samenvat.
+    if rondes:
+        context["stap"].update(rondes[-1]["stap"])
+    samen = {"status": "fout" if mislukt and node.get("fout_gedrag") != "doorgaan" else "ok",
+             "aantal": len(items), "mislukt": mislukt,
+             "uitvoer": f"{len(items)} ronde(s) gedaan"
+                        + (f", {mislukt} mislukt" if mislukt else "")}
+    return samen, ("fout" if samen["status"] == "fout" else "succes")
 
 
 async def _voer_bubbel_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],

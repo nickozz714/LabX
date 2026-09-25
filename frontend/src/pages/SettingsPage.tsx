@@ -12,6 +12,7 @@ import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/component
 import { useMelding } from "@/components/Meldingen";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ClaimResourcesCard } from "@/components/ClaimResourcesCard";
+import { GeheimenCard } from "@/components/GeheimenCard";
 
 export function SettingsPage() {
   const melding = useMelding();
@@ -344,6 +345,7 @@ export function SettingsPage() {
       </Card>
 
       <LabExtrasCard />
+      <GeheimenCard />
       <ClaimResourcesCard />
 
       <NotificationsCard />

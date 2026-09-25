@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { workflowApi } from "@/lib/workflows";
 import { labsApi } from "@/lib/labs";
-import type { Lab, WorkflowDto, WorkflowEdge, WorkflowNode } from "@/lib/types";
+import type { Lab, Verwijzing, WorkflowDto, WorkflowEdge, WorkflowNode } from "@/lib/types";
 import { Badge, Button, Input, Label, Select } from "@/components/ui";
 import { WorkflowCanvas } from "@/components/workflow/WorkflowCanvas";
 import { Eigenschappen } from "@/components/workflow/Eigenschappen";
@@ -29,6 +29,7 @@ const NIEUW: Record<string, Partial<WorkflowNode>> = {
   als: { type: "als", naam: "Als", conditie: { links: "", operator: "==", rechts: "" } },
   wacht: { type: "wacht", naam: "Wachten", seconden: 30 },
   parallel: { type: "parallel", naam: "Tegelijk", max_gelijktijdig: 4 },
+  voorelk: { type: "voorelk", naam: "Voor elk", max_items: 50 },
 };
 
 export function WorkflowEditorPage() {
@@ -48,6 +49,10 @@ export function WorkflowEditorPage() {
   // De status van de laatste run per activiteit, zodat het doek meekleurt: je
   // ziet de workflow lopen in plaats van hem te moeten volgen in een lijst.
   const [statusPerNode, setStatusPerNode] = useState<Record<string, string>>({});
+  // Waar de geselecteerde activiteit naar kan verwijzen, afgeleid uit de
+  // schema's van de andere. Dit vult de keuzelijsten in het paneel.
+  const [verwijzingen, setVerwijzingen] = useState<Verwijzing[]>([]);
+  const [lijsten, setLijsten] = useState<Verwijzing[]>([]);
   const [loopt, setLoopt] = useState(false);
 
   useEffect(() => {
@@ -160,6 +165,14 @@ export function WorkflowEditorPage() {
     return () => { weg = true; clearInterval(t); };
   }, [wfId, loopt]);
 
+  useEffect(() => {
+    if (!wf) return;
+    workflowApi.verwijzingen(wf.id, selectie || undefined)
+      .then((r) => { setVerwijzingen(r.verwijzingen); setLijsten(r.lijsten); })
+      .catch(() => { setVerwijzingen([]); setLijsten([]); });
+    // Ook na een wijziging aan de graaf: een nieuw schema levert nieuwe velden.
+  }, [wf, selectie, nodes]);
+
   const geselecteerd = useMemo(
     () => nodes.find((n) => n.id === selectie) || null, [nodes, selectie]);
 
@@ -212,9 +225,13 @@ export function WorkflowEditorPage() {
           <Button variant="secondary" className="justify-start text-xs"
                   onClick={() => voegToe("wacht")}>⏱ Wachten</Button>
           <Button variant="secondary" className="justify-start text-xs"
+                  onClick={() => voegToe("voorelk")}>↻ Lus</Button>
+          <Button variant="secondary" className="justify-start text-xs"
                   onClick={() => voegToe("parallel")}>⇉ Bubbel</Button>
           <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-            Sleep activiteiten ín een bubbel om ze tegelijk te laten draaien.
+            Sleep activiteiten in een <strong>lus</strong> om ze per element van een lijst te
+            laten draaien — een <code>als</code> erin beslist dan per element. In een
+            <strong> bubbel</strong> draaien ze tegelijk.
           </p>
         </div>
 
@@ -224,7 +241,8 @@ export function WorkflowEditorPage() {
         </div>
 
         <div className="w-96 overflow-y-auto border-l border-border">
-          <Eigenschappen node={geselecteerd} onChange={wijzigNode} onDelete={verwijderNode} />
+          <Eigenschappen node={geselecteerd} onChange={wijzigNode} onDelete={verwijderNode}
+                         verwijzingen={verwijzingen} lijsten={lijsten} />
         </div>
       </div>
 

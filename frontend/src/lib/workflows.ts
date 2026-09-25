@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import type {
-  ScheduleDto, ScheduleRunDto, WorkflowDto, WorkflowEdge, WorkflowNode,
+  ScheduleDto, ScheduleRunDto, Verwijzing, WorkflowDto, WorkflowEdge, WorkflowNode,
   WorkflowRunDto, WorkflowStep,
 } from "@/lib/types";
 
@@ -29,6 +29,13 @@ export const workflowApi = {
   runs: (workflowId?: number, limit = 50) =>
     api.get<WorkflowRunDto[]>(
       `/workflows/runs?limit=${limit}` + (workflowId ? `&workflow_id=${workflowId}` : "")),
+  /** Waar je vanaf een activiteit naar kunt verwijzen, afgeleid uit de
+   *  JSON-schema's van de andere activiteiten — plus de lijsten waar een lus
+   *  langs kan lopen. Dit vult de keuzelijsten, zodat niemand
+   *  `stap.stap_2.json.rijen` uit zijn hoofd hoeft te typen. */
+  verwijzingen: (id: number, nodeId?: string) =>
+    api.get<{ verwijzingen: Verwijzing[]; lijsten: Verwijzing[] }>(
+      `/workflows/${id}/verwijzingen` + (nodeId ? `?node=${encodeURIComponent(nodeId)}` : "")),
   /** Het volledige verslag: per activiteit invoer, redenatie, uitvoer, prijs. */
   run_detail: (runId: string) => api.get<WorkflowRunDto>(`/workflows/runs/${runId}`),
   cancelRun: (runId: string) =>

@@ -615,3 +615,128 @@ def test_een_lab_dat_niet_wil_starten_stopt_de_run_met_een_reden(db, monkeypatch
     assert run.status == "failed"
     assert "niet gestart" in (run.error or "")
     assert beurten == [], "er hoort niets gedraaid te hebben in een lab dat er niet is"
+
+
+# ── lussen: alles in de lus, één keer per element ───────────────────────────
+
+def test_een_lus_draait_zijn_activiteiten_per_element(db, monkeypatch):
+    """Dit is wat `herhaal_over` op één activiteit niet kan: twee activiteiten
+    die samen per element draaien."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "analyseer",
+         "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.incidentGroups"},
+        {"id": "x", "type": "agent", "naam": "Bekijken",
+         "prompt": "bekijk {{ item.title }}", "groep": "lus"},
+        {"id": "y", "type": "agent", "naam": "Melden",
+         "prompt": "meld {{ item.title }} (ronde {{ iteratie }})", "groep": "lus"},
+        {"id": "na", "type": "agent", "naam": "Afronden", "prompt": "rond af"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"},
+        {"van": "x", "naar": "y", "soort": "succes"},
+        {"van": "lus", "naar": "na", "soort": "succes"}])
+
+    run, beurten = _draai(db, monkeypatch, wf, {
+        "Analyse": '{"incidentGroups": [{"title": "printer"}, {"title": "vpn"}]}'})
+    assert run.status == "completed"
+    namen = [b["node"] for b in beurten]
+    assert namen == ["Analyse", "Bekijken", "Melden", "Bekijken", "Melden", "Afronden"]
+    opdrachten = [b["opdracht"] for b in beurten if b["node"] == "Melden"]
+    assert opdrachten == ["meld printer (ronde 1)", "meld vpn (ronde 2)"]
+
+
+def test_een_als_in_een_lus_beslist_per_element(db, monkeypatch):
+    """Precies het geval waar dit voor gebouwd is: per incidentgroep kijken of
+    hij complex is, en dan iets anders doen."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.incidentGroups"},
+        {"id": "c", "type": "als", "naam": "Complex?", "groep": "lus",
+         "conditie": {"links": "item.complexity", "operator": "==", "rechts": "hoog"}},
+        {"id": "ja", "type": "agent", "naam": "Uitzoeken", "prompt": "zoek {{ item.title }} uit",
+         "groep": "lus"},
+        {"id": "nee", "type": "agent", "naam": "Afhandelen", "prompt": "handel {{ item.title }} af",
+         "groep": "lus"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"},
+        {"van": "c", "naar": "ja", "soort": "ja"},
+        {"van": "c", "naar": "nee", "soort": "nee"}])
+
+    run, beurten = _draai(db, monkeypatch, wf, {
+        "Analyse": '{"incidentGroups": [{"title": "printer", "complexity": "hoog"},'
+                   ' {"title": "vpn", "complexity": "laag"}]}'})
+    gedaan = [(b["node"], b["opdracht"]) for b in beurten if b["node"] != "Analyse"]
+    assert gedaan == [("Uitzoeken", "zoek printer uit"), ("Afhandelen", "handel vpn af")]
+    assert run.status == "completed"
+
+
+def test_een_lege_lijst_slaat_de_lus_over_en_gaat_door(db, monkeypatch):
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.incidentGroups"},
+        {"id": "x", "type": "agent", "naam": "Bekijken", "prompt": "b", "groep": "lus"},
+        {"id": "na", "type": "agent", "naam": "Afronden", "prompt": "rond af"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"},
+        {"van": "lus", "naar": "na", "soort": "succes"}])
+    run, beurten = _draai(db, monkeypatch, wf, {"Analyse": '{"incidentGroups": []}'})
+    assert [b["node"] for b in beurten] == ["Analyse", "Afronden"]
+    assert run.status == "completed"
+
+
+def test_een_ronde_ziet_de_vorige_ronde_niet(db, monkeypatch):
+    """Zonder schone context per ronde zou een verwijzing naar een stap in de
+    lus stiekem die van de vorige ronde kunnen zijn."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.lijst"},
+        {"id": "x", "type": "agent", "naam": "Eerste", "prompt": "eerste {{ item }}",
+         "groep": "lus"},
+        {"id": "y", "type": "agent", "naam": "Tweede",
+         "prompt": "vorige zei: [{{ stap.eerste.uitvoer }}]", "groep": "lus"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"},
+        {"van": "x", "naar": "y", "soort": "succes"}])
+    _, beurten = _draai(db, monkeypatch, wf,
+                        {"Analyse": '{"lijst": ["een", "twee"]}',
+                         "Eerste": "gedaan"})
+    tweede = [b["opdracht"] for b in beurten if b["node"] == "Tweede"]
+    assert tweede == ["vorige zei: [gedaan]", "vorige zei: [gedaan]"]
+
+
+def test_de_lus_stopt_bij_een_fout_tenzij_je_doorgaan_kiest(db, monkeypatch):
+    from db import database
+
+    def _maak(fout_gedrag):
+        wf = _workflow(db, [
+            {"id": "a", "type": "agent", "naam": f"Analyse{fout_gedrag}", "prompt": "x",
+             "json_schema": "{}"},
+            {"id": "lus", "type": "voorelk", "naam": f"Lus{fout_gedrag}",
+             "bron": f"stap.analyse{fout_gedrag}.json.lijst", "fout_gedrag": fout_gedrag},
+            {"id": "x", "type": "agent", "naam": f"Valt om{fout_gedrag}", "prompt": "p",
+             "groep": "lus"},
+        ], [{"van": "a", "naar": "lus", "soort": "succes"}])
+        return wf
+
+    async def _soms(_db, run, node, opdracht):
+        if node["naam"].startswith("Valt om"):
+            return "", [], {}, None, "boem"
+        return '{"lijst": ["een", "twee", "drie"]}', [], {}, "s", None
+
+    monkeypatch.setattr(engine, "_agent_beurt", _soms)
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+
+    wf = _maak("stop")
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    db.refresh(run)
+    assert run.status == "failed"
+
+    wf2 = _maak("doorgaan")
+    run2 = engine.maak_run(db, wf2, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run2.id))
+    db.refresh(run2)
+    assert run2.status == "completed"
+    rondes = [s for s in _stappen(db, run2) if s.naam == "Valt omdoorgaan"]
+    assert len(rondes) == 3, "alle drie de rondes horen geprobeerd te zijn"

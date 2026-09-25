@@ -34,13 +34,16 @@ function samenvatting(n: WorkflowNode): string {
   }
   if (n.type === "wacht") return `${n.seconden ?? 30} seconden`;
   if (n.type === "parallel") return "activiteiten hierin draaien tegelijk";
+  if (n.type === "voorelk") {
+    return n.bron ? `één ronde per element van ${n.bron}` : "— nog geen lijst gekozen —";
+  }
   return "";
 }
 
 /** De graaf van LabX → wat React Flow tekent. */
 function naarFlow(nodes: WorkflowNode[], status: Record<string, string>): Node[] {
-  const bubbels = nodes.filter((n) => n.type === "parallel");
-  const gewoon = nodes.filter((n) => n.type !== "parallel");
+  const bubbels = nodes.filter((n) => n.type === "parallel" || n.type === "voorelk");
+  const gewoon = nodes.filter((n) => n.type !== "parallel" && n.type !== "voorelk");
   // Bubbels eerst: React Flow wil een ouder vóór zijn kinderen in de lijst.
   return [
     ...bubbels.map((n) => ({

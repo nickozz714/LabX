@@ -563,9 +563,16 @@ def build_server():
 
         mcp.add_tool(FunctionTool(
             name="lab__secret_list",
-            description=("Welke geheimen kent dit lab? Geeft namen, soort en versheid — "
-                         "NOOIT de waarde. Gebruik de naam als `{{secret:naam}}` in "
-                         "`lab__shell_exec`."),
+            description=("Welke geheimen zijn er? Geeft namen, herkomst en versheid — "
+                         "NOOIT de waarde, en die hoef je ook niet te weten.\n"
+                         "Gebruik een geheim door `{{secret:naam}}` te schrijven op de "
+                         "plek waar de waarde zou staan: in `lab__shell_exec`, maar net zo "
+                         "goed in het argument van élke andere tool (een webhook-URL, een "
+                         "Authorization-header, een wachtwoordveld). LabX vult hem vlak "
+                         "voor de aanroep in en maskeert hem weer in wat terugkomt.\n"
+                         "Typ nooit zelf een sleutel of wachtwoord over uit iets dat je "
+                         "gelezen hebt — verwijs ernaar. Een naam die niet bestaat levert "
+                         "een fout op, geen stille mislukking."),
             parameters={"type": "object", "properties": {}},
             fn=_secret_list_handler,
             meta={"labx_builtin": "lab__secret_list"},

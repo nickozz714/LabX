@@ -151,13 +151,31 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
 
         if tool_name == "lab__secret_list":
             from services.lab.secrets import SecretService
+            from services.secrets.vault import VaultService
+
             svc_s = SecretService(db)
-            rijen = [svc_s.to_dict(r) for r in svc_s.lijst(str(lab_id))]
+            rijen = [{**svc_s.to_dict(r), "herkomst": "dit lab"}
+                     for r in svc_s.lijst(str(lab_id))]
+            # En de kluis die niet aan één lab hangt: dezelfde namen, dezelfde
+            # schrijfwijze, en bruikbaar op méér plekken dan een commando.
+            kluis = VaultService(db)
+            bestaand = {r["name"] for r in rijen}
+            for r in kluis.beschikbaar(str(lab_id) if lab_id else None):
+                if r.name in bestaand:
+                    continue        # het lab overschrijft de kluis
+                rijen.append({**kluis.to_dict(r), "herkomst": "kluis"})
             if not rijen:
-                return {"result": ("Dit lab heeft nog geen geheimen. Zet er een met "
-                                   "`lab__secret_put` en gebruik hem daarna als "
-                                   "{{secret:naam}} in je commando's.")}
-            return {"result": rijen}
+                return {"result": ("Er zijn nog geen geheimen. Zet er een met "
+                                   "`lab__secret_put` (voor dit lab) of laat er een "
+                                   "aanmaken bij Instellingen > Geheimen, en gebruik hem "
+                                   "daarna als {{secret:naam}}.")}
+            return {"result": {
+                "geheimen": rijen,
+                "hoe": ("Schrijf {{secret:naam}} waar de waarde zou staan — in een "
+                        "commando én in het argument van elke andere tool. LabX vult hem "
+                        "vlak voor de aanroep in; jij krijgt de waarde nooit te zien, en "
+                        "hij belandt ook niet in het audit-spoor."),
+            }}
 
         if tool_name == "lab__secret_put":
             from services.lab.secrets import SecretService
