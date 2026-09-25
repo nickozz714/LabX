@@ -17,9 +17,11 @@
  * ooit nog aan te denken.
  */
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { KeyRound, RefreshCw, Trash2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { labsApi, type LabGeheim } from "@/lib/labs";
+import { secretApi, type SecretDto } from "@/lib/secrets";
 import type { Lab } from "@/lib/types";
 import { Badge, Button, Input, Label, Select, TextArea } from "@/components/ui";
 import { useBevestiging } from "@/components/Bevestiging";
@@ -36,6 +38,9 @@ function tijd(waarde: string | null): string {
 export function LabGeheimen({ lab }: { lab: Lab }) {
   const bevestig = useBevestiging();
   const [rijen, setRijen] = useState<LabGeheim[]>([]);
+  // De kluis die niet aan één lab hangt. Hij werkte hier al — je kon alleen
+  // nergens zien dát hij bestond, dus hij werd niet gebruikt.
+  const [kluis, setKluis] = useState<SecretDto[]>([]);
   const [nieuw, setNieuw] = useState(false);
   const [naam, setNaam] = useState("");
   const [soort, setSoort] = useState<"commando" | "waarde">("commando");
@@ -51,6 +56,11 @@ export function LabGeheimen({ lab }: { lab: Lab }) {
       setRijen(await labsApi.secrets(lab.id));
     } catch {
       /* een lab zonder geheimen is geen fout */
+    }
+    try {
+      setKluis(await secretApi.list(lab.id));
+    } catch {
+      setKluis([]);
     }
   }
 
@@ -145,10 +155,42 @@ export function LabGeheimen({ lab }: { lab: Lab }) {
         ))}
         {rijen.length === 0 && (
           <p className="p-3 text-xs text-muted-foreground">
-            Nog geen geheimen. Voor een Azure- of Fabric-token kies je <em>commando</em>: LabX
-            haalt hem dan zelf op en ververst hem vanzelf.
+            Nog geen geheimen van dit lab. Voor een Azure- of Fabric-token kies je
+            <em> commando</em>: LabX haalt hem dan zelf op en ververst hem vanzelf.
           </p>
         )}
+      </div>
+
+      {/* De kluis erbij. Een geheim dat overal geldt is hier net zo goed te
+          gebruiken als een van dit lab; zonder deze lijst was dat alleen
+          nergens te zien, en dan bestaat het in de praktijk niet. */}
+      <div>
+        <div className="mb-1 flex items-center gap-2">
+          <Label>Uit de kluis — geldt in elk lab</Label>
+          <Link to="/settings" className="text-[11px] text-primary underline">beheren</Link>
+        </div>
+        <div className="divide-y divide-border rounded-md border border-dashed border-border">
+          {kluis.map((g) => (
+            <div key={g.name} className="flex flex-wrap items-center gap-2 p-2 text-sm">
+              <KeyRound size={13} className="text-muted-foreground" />
+              <code className="rounded bg-secondary px-1 text-xs">{g.placeholder}</code>
+              <Badge tone="neutral">kluis</Badge>
+              {g.lab_ids.length > 0 && <Badge tone="violet">alleen bepaalde labs</Badge>}
+              <span className="text-[11px] text-muted-foreground">
+                {g.description ? `${g.description} · ` : ""}{g.use_count}× gebruikt
+              </span>
+            </div>
+          ))}
+          {kluis.length === 0 && (
+            <p className="p-3 text-xs text-muted-foreground">
+              De kluis is leeg. Zet er bij <Link to="/settings" className="text-primary underline">
+              Instellingen &gt; Geheimen</Link> een webhook-URL, API-sleutel of wachtwoord in;
+              die is daarna in élk lab te gebruiken met <code>{"{{secret:naam}}"}</code> — in
+              een commando, een tool-argument, een skill of een workflow-stap. Een geheim van
+              één klant beperk je daar tot diens lab.
+            </p>
+          )}
+        </div>
       </div>
 
       {!nieuw ? (

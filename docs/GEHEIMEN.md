@@ -20,10 +20,23 @@ de verwijzing staan zoals hij is; het model ziet de naam en nooit de waarde.
 Ze gebruiken dezelfde vorm: `{{secret:naam}}`. Bestaat een naam in allebei, dan
 wint het lab-geheim — dat is de specifiekere afspraak.
 
+De kluis heeft een **eigen tab** (Kluis, in de balk bovenaan). Daar zet je ze
+neer, beperk je ze zo nodig tot bepaalde labs, en kopieer je de verwijzing.
+
+De kluis staat ook **bij elk lab** in beeld, onder de geheimen van dat lab:
+wat er geldt is daar te zien zonder eerst naar Instellingen te hoeven. Beheren
+gebeurt op één plek — Instellingen → Geheimen — want een geheim dat je op drie
+plekken kunt wijzigen, staat op drie plekken anders.
+
 ## Waar je ze kunt gebruiken
 
 - **Argumenten van elke tool.** Het model schrijft `{{secret:teams-webhook}}`
   in bijvoorbeeld een `url`-veld; LabX vult de waarde in vlak voor de aanroep.
+- **In een skill, een chatbericht of een board-ticket.** Schrijf er gewoon
+  `{{secret:naam}}` in. Die tekst reist als tekst naar het model — de waarde
+  dus niet — en het model geeft hem ongewijzigd door aan het commando of het
+  tool-argument waar hij hoort. Pas dáár wordt hij ingevuld. Dat het model dit
+  weet en niet om de waarde vraagt, staat in zijn systeemprompt.
 - **Shell-commando's in een lab.** Daar gaat de waarde niet eens in het
   commando: hij komt in een bestand in de container (mode 600) en het commando
   leest een omgevingsvariabele. Zo staat hij ook niet in `ps` op de host.
