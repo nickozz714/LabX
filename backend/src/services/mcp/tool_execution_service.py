@@ -117,6 +117,34 @@ class ToolExecutionService:
         self.db.add(ev)
         self.db.commit()
 
+    def _audit_geheimen(self, *, tool: Tool, lab_id: Optional[str],
+                        namen: list) -> None:
+        """Vastleggen DAT er een geheim is ingevuld, met welke naam — nooit met
+        welke waarde. Anders staat het geheim alsnog in het spoor dat juist
+        bedoeld is om achteraf te kunnen kijken."""
+        try:
+            self.db.add(AuditTraceEvent(
+                id=str(uuid4()), ts=_now_iso(), type="secret_used", level="info",
+                data_json=__import__("json").dumps({
+                    "lab_id": lab_id, "tool": tool.name, "secrets": list(namen),
+                })))
+            self.db.commit()
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("Geheim-gebruik niet vastgelegd", error=str(exc)[:200])
+
+    def _maskeer_resultaat(self, result: Any, *, lab_id: Optional[str]) -> Any:
+        from services.secrets.vault import VaultService
+        kluis = VaultService(self.db)
+        if isinstance(result, str):
+            return kluis.maskeer(result, lab_id=lab_id)
+        try:
+            import json as _json
+            tekst = _json.dumps(result, default=str)
+            gemaskeerd = kluis.maskeer(tekst, lab_id=lab_id)
+            return result if gemaskeerd == tekst else _json.loads(gemaskeerd)
+        except Exception:  # noqa: BLE001
+            return result
+
     async def execute_tool(self, tool_id: int, args: Dict[str, Any], *,
                            lab_id: Optional[str] = None,
                            worker_id: Optional[int] = None,
@@ -130,9 +158,31 @@ class ToolExecutionService:
         if not server:
             raise RuntimeError(f"Tool '{tool.name}' heeft geen MCP-server")
 
+        # Geheimen invullen VLAK voor de aanroep. Het model schrijft
+        # `{{secret:naam}}` in een argument — het kiest dus welk geheim, zonder
+        # te weten wat erin zit — en hier komt de waarde er pas in. Wat er in
+        # het audit-spoor en in de tool-invoer belandt, is de naam.
+        from services.secrets.vault import VaultService
+        kluis = VaultService(self.db)
+        args, gebruikte_geheimen, onbekend = kluis.vul_in(args, lab_id=lab_id)
+        if onbekend:
+            # Niet stil laten staan: `{{secret:typefout}}` zou letterlijk naar
+            # een externe dienst vertrekken, die er niets van begrijpt of hem
+            # opslaat. Het model hoort te weten wat er wél is.
+            namen = ", ".join(r.name for r in kluis.beschikbaar(lab_id)) or "geen"
+            raise RuntimeError(
+                f"Onbekend geheim: {', '.join(onbekend)}. Beschikbaar: {namen}. "
+                f"Gebruik lab__secret_list om te zien welke er zijn.")
+        if gebruikte_geheimen:
+            self._audit_geheimen(tool=tool, lab_id=lab_id, namen=gebruikte_geheimen)
+
         cid = self._lab_container_id(lab_id, worker_id) if server.location == "lab" else None
         result = await mcp_client.call_tool(server, tool.remote_name, args, lab_container_id=cid,
                                             db=self.db, lab_id=lab_id, sessie=sessie)
+        if gebruikte_geheimen:
+            # De andere kant: een dienst die je sleutel terugspiegelt in een
+            # foutmelding, of een tool die zijn eigen aanroep echoot.
+            result = self._maskeer_resultaat(result, lab_id=lab_id)
 
         if server.location != "lab":
             return result  # host-side: not customer data leaving a container

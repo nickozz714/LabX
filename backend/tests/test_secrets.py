@@ -73,11 +73,30 @@ class NepRuntime:
         return {"exit_code": 0, "output": "", "truncated": False}
 
 
+class _LegeQuery:
+    """Een lege kluis. Sinds lab-geheimen kunnen terugvallen op de kluis die
+    niet aan één lab hangt (services/secrets/vault.py), kijkt deze code daar
+    ook — deze tests gaan over de lab-kant, dus daar hoort niets te staan."""
+
+    def order_by(self, *a, **kw):
+        return self
+
+    def filter(self, *a, **kw):
+        return self
+
+    def all(self):
+        return []
+
+    def first(self):
+        return None
+
+
 def _svc(geheimen):
     svc = SecretService.__new__(SecretService)
     svc.haal = lambda lab_id, naam: geheimen.get(naam)
     svc.lijst = lambda lab_id: list(geheimen.values())
-    svc.db = SimpleNamespace(commit=lambda: None)
+    svc.db = SimpleNamespace(commit=lambda: None,
+                             query=lambda *a, **kw: _LegeQuery())
     return svc
 
 

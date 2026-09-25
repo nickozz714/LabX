@@ -226,17 +226,34 @@ class SecretService:
 
         gevonden: Dict[str, str] = {}
         onbekend: List[str] = []
+        # De kluis die niet aan dit lab hangt (services/secrets/vault.py). Een
+        # geheim van het lab zelf wint: dat is de specifiekere afspraak, en
+        # zo kan een lab een algemene waarde overschrijven zonder de kluis te
+        # hoeven aanpassen.
+        from services.secrets.vault import VaultService
+        kluis = VaultService(self.db)
+        uit_kluis = {r.name: r for r in kluis.beschikbaar(lab_id)}
         for naam in namen:
             rij = self.haal(lab_id, naam)
-            if rij is None:
+            if rij is not None:
+                waarde = await self.waarde(rij, runtime=runtime, container_id=container_id)
+                if waarde is None:
+                    onbekend.append(naam)
+                    continue
+                gevonden[naam] = waarde
+                rij.last_used_at = _now_iso()
+                continue
+            algemeen = uit_kluis.get(naam)
+            if algemeen is None:
                 onbekend.append(naam)
                 continue
-            waarde = await self.waarde(rij, runtime=runtime, container_id=container_id)
+            waarde = kluis.waarde_van(algemeen)
             if waarde is None:
                 onbekend.append(naam)
                 continue
             gevonden[naam] = waarde
-            rij.last_used_at = _now_iso()
+            algemeen.last_used_at = _now_iso()
+            algemeen.use_count = int(algemeen.use_count or 0) + 1
         if gevonden:
             self.db.commit()
             await self._schrijf_bestand(gevonden, runtime=runtime, container_id=container_id)
@@ -291,6 +308,10 @@ class SecretService:
         uit = tekst or ""
         if not uit:
             return uit
+        # Eerst de kluis: een algemeen geheim kan net zo goed in een uitvoer
+        # terugkomen als een dat aan dit lab hangt.
+        from services.secrets.vault import VaultService
+        uit = VaultService(self.db).maskeer(uit, lab_id=lab_id)
         for rij in self.lijst(lab_id):
             if not rij.value_encrypted:
                 continue
