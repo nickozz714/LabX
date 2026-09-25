@@ -9,7 +9,7 @@
  * — see index.css for that call).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, MouseEvent, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, MouseEvent, ReactNode, Ref, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { Loader2 } from "lucide-react";
 import { meldExtern } from "@/components/Meldingen";
 
@@ -96,9 +96,13 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
-export function TextArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function TextArea({ ref, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>
+                         & { ref?: Ref<HTMLTextAreaElement> }) {
+  // De ref is nodig om iets op de CURSORPOSITIE in te kunnen voegen; zonder
+  // dat zou een ingevoegde verwijzing altijd achteraan belanden.
   return (
     <textarea
+      ref={ref}
       {...props}
       className={`w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none transition focus:ring-2 focus:ring-ring ${props.className || ""}`}
     />

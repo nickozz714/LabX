@@ -15,6 +15,7 @@ import type { Verwijzing, WorkflowConditie, WorkflowNode } from "@/lib/types";
 import { Button, Input, Label, Select, TextArea, Toggle } from "@/components/ui";
 import { SchemaBouwer } from "@/components/workflow/SchemaBouwer";
 import { VerwijzingKiezer } from "@/components/workflow/VerwijzingKiezer";
+import { TekstMetVerwijzingen } from "@/components/workflow/TekstMetVerwijzingen";
 
 const OPERATOREN = ["==", "!=", ">", ">=", "<", "<=", "bevat", "bevat_niet",
                     "is_leeg", "is_niet_leeg"];
@@ -75,6 +76,9 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
     );
   }
   const zet = (velden: Partial<WorkflowNode>) => onChange({ ...node, ...velden });
+  // Zit deze activiteit in een lus? Dat weten we aan de verwijzingen die de
+  // server teruggeeft: `item` bestaat alleen binnen een lus.
+  const inLus = verwijzingen.some((v) => v.pad === "item");
 
   return (
     <div className="space-y-3 p-4">
@@ -88,23 +92,21 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
 
       {node.type === "agent" && (
         <>
-          <div>
-            <Label>Opdracht</Label>
-            <TextArea rows={7} value={node.prompt || ""}
-                      onChange={(e) => zet({ prompt: e.target.value })}
-                      placeholder={"Laad de tabel {{ item }} naar silver.\n\n"
-                                   + "Verwijs naar eerdere activiteiten met {{ stap.x.uitvoer }}"} />
-          </div>
-          <div>
-            <Label>Rol (optioneel)</Label>
-            <TextArea rows={2} value={node.rol || ""}
-                      onChange={(e) => zet({ rol: e.target.value })}
-                      placeholder="Je bent reviewer. Wees streng en wijzig niets." />
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Gaat vóór de opdracht mee. Zinvol bij een beoordelaar of een stap met een
-              andere houding dan de rest.
-            </p>
-          </div>
+          <TekstMetVerwijzingen
+            label="Opdracht" waarde={node.prompt || ""} opties={verwijzingen} rijen={7}
+            onChange={(tekst) => zet({ prompt: tekst })}
+            placeholder={inLus
+              ? "Werk dit element af: {{ item }}"
+              : "Wat moet de agent doen? Kies hierboven wat je uit een eerdere stap nodig hebt."}
+            hint={inLus
+              ? "Je zit in een lus: {{ item }} is het element van deze ronde, {{ iteratie }} de hoeveelste."
+              : undefined} />
+
+          <TekstMetVerwijzingen
+            label="Rol (optioneel)" waarde={node.rol || ""} opties={verwijzingen} rijen={2}
+            onChange={(tekst) => zet({ rol: tekst })}
+            placeholder="Je bent reviewer. Wees streng en wijzig niets."
+            hint="Gaat vóór de opdracht mee. Zinvol bij een beoordelaar of een stap met een andere houding dan de rest." />
           <Toggle checked={Boolean(node.verse_sessie)}
                   onChange={(v) => zet({ verse_sessie: v })}
                   label="Schone sessie (vergeet wat eerder in deze run gebeurde)" />
@@ -118,11 +120,10 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
 
       {node.type === "shell" && (
         <>
-          <div>
-            <Label>Commando</Label>
-            <TextArea rows={4} className="font-mono text-xs" value={node.commando || ""}
-                      onChange={(e) => zet({ commando: e.target.value })} />
-          </div>
+          <TekstMetVerwijzingen
+            label="Commando" waarde={node.commando || ""} opties={verwijzingen} rijen={4} mono
+            onChange={(tekst) => zet({ commando: tekst })}
+            placeholder="echo {{ item }}" />
           <div>
             <Label>Time-out (seconden)</Label>
             <Input type="number" value={node.timeout ?? 120}
@@ -202,7 +203,15 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
         </>
       )}
 
-      {node.type !== "parallel" && node.type !== "voorelk" && node.type !== "als" && (
+      {inLus && node.type !== "als" && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-[11px] leading-relaxed">
+          Deze activiteit zit in een lus en draait dus al één keer per element. Gebruik
+          <code className="mx-1">{"{{ item }}"}</code>om verder te werken met het element van
+          deze ronde.
+        </div>
+      )}
+
+      {!inLus && node.type !== "parallel" && node.type !== "voorelk" && node.type !== "als" && (
         <div className="space-y-2 rounded-md border border-border p-2">
           <div className="text-xs font-semibold">Herhalen</div>
           <div>
