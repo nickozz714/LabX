@@ -18,6 +18,11 @@ een runverslag alle drie uit dezelfde verandering voort.
              alles waar geen model voor nodig is.
 - `als`    — splitst op een voorwaarde. Verbindingen `ja` en `nee`.
 - `wacht`  — een pauze, bijvoorbeeld tussen twee pogingen.
+- `voorelk` — een LUS: alles wat erin zit draait één keer per element van een
+             lijst, netjes achter elkaar. Binnen de lus zijn `item` en
+             `iteratie` beschikbaar, óók in een `als` die erin ligt — dat is
+             het verschil met `herhaal_over` op één activiteit, dat maar één
+             stap kan herhalen.
 - `parallel` — een BUBBEL waar activiteiten in zitten die gelijktijdig draaien.
              De activiteiten erin hebben `groep` op de id van de bubbel, staan
              niet in de gewone wandeling door de graaf (de bubbel voert ze uit)
@@ -44,7 +49,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-NODE_SOORTEN = ("agent", "shell", "als", "wacht", "parallel")
+NODE_SOORTEN = ("agent", "shell", "als", "wacht", "parallel", "voorelk")
 EDGE_SOORTEN = ("succes", "fout", "altijd", "ja", "nee")
 
 # Een run stopt hier hoe dan ook. Vangnet tegen een graaf die in een kringetje
@@ -85,6 +90,15 @@ def normaliseer_node(ruw: Dict[str, Any], index: int) -> Dict[str, Any]:
         node["conditie"] = ruw.get("conditie") or {}
     elif soort == "wacht":
         node["seconden"] = max(1, min(int(ruw.get("seconden") or 30), 3600))
+    elif soort == "voorelk":
+        # Waar de lijst vandaan komt: een verwijzing naar eerdere uitvoer,
+        # bijvoorbeeld stap.analyse.json.incidentGroups.
+        node["bron"] = str(ruw.get("bron") or "")
+        # Een bovengrens, want een lijst die onverwacht duizend lang is, is
+        # duizend agent-beurten.
+        node["max_items"] = max(1, min(int(ruw.get("max_items") or 50), 200))
+        node["fout_gedrag"] = ("doorgaan" if str(ruw.get("fout_gedrag") or "stop") == "doorgaan"
+                               else "stop")
     elif soort == "parallel":
         # Hoeveel er tegelijk mogen. Niet ongelimiteerd: acht agents in één
         # lab is acht keer hetzelfde geheugen en dezelfde processen.
@@ -206,6 +220,37 @@ def volgende(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
     return uit
 
 
+def volgende_in_groep(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
+                      node_id: str, tak: str, groep_id: str) -> List[Dict[str, Any]]:
+    """Zoals `volgende`, maar dan binnen een lus of bubbel.
+
+    Een verbinding die de groep uit wijst telt hier niet: wat er ná de lus
+    gebeurt, gebeurt één keer — niet bij elke ronde."""
+    op_id = {n["id"]: n for n in kinderen(nodes, groep_id)}
+    uit = []
+    for e in edges:
+        if e["van"] != node_id:
+            continue
+        if e["soort"] == tak or e["soort"] == "altijd":
+            doel = op_id.get(e["naar"])
+            if doel is not None:
+                uit.append(doel)
+    return uit
+
+
+def startnode_in_groep(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
+                       groep_id: str) -> Optional[Dict[str, Any]]:
+    """Waar een ronde begint: de activiteit in de groep waar binnen die groep
+    niets naartoe wijst."""
+    leden = kinderen(nodes, groep_id)
+    if not leden:
+        return None
+    ids = {n["id"] for n in leden}
+    doelen = {e["naar"] for e in edges if e["van"] in ids and e["naar"] in ids}
+    vrij = [n for n in leden if n["id"] not in doelen]
+    return vrij[0] if vrij else leden[0]
+
+
 def valideer(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> List[str]:
     """Wat er mis is aan deze graaf, in gewone taal.
 
@@ -234,13 +279,20 @@ def valideer(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> List[s
                              f"verwijs je dan naar de laatste die gedraaid heeft.")
     ids = {n["id"] for n in nodes}
     for n in nodes:
-        if n["type"] == "parallel" and not kinderen(nodes, n["id"]):
-            meldingen.append(f"De bubbel '{n['naam']}' is leeg — sleep er activiteiten in.")
+        if n["type"] in ("parallel", "voorelk") and not kinderen(nodes, n["id"]):
+            woord = "bubbel" if n["type"] == "parallel" else "lus"
+            meldingen.append(f"De {woord} '{n['naam']}' is leeg — sleep er activiteiten in.")
+        if n["type"] == "voorelk" and not (n.get("bron") or "").strip():
+            meldingen.append(f"'{n['naam']}' heeft geen lijst om langs te lopen.")
         if n.get("groep") and n["groep"] not in ids:
-            meldingen.append(f"'{n['naam']}' hoort bij een bubbel die niet meer bestaat.")
-        if n.get("groep") and n["type"] in ("als", "parallel"):
-            meldingen.append(f"'{n['naam']}' kan niet in een bubbel: vertakken en nog een "
-                             f"bubbel horen in de hoofdstroom thuis.")
+            meldingen.append(f"'{n['naam']}' hoort bij een groep die niet meer bestaat.")
+        if n.get("groep") and n["type"] in ("parallel", "voorelk"):
+            meldingen.append(f"'{n['naam']}' kan niet in een andere groep: een lus of bubbel "
+                             f"hoort in de hoofdstroom.")
+        ouder = next((x for x in nodes if x["id"] == n.get("groep")), None)
+        if ouder is not None and ouder["type"] == "parallel" and n["type"] == "als":
+            meldingen.append(f"'{n['naam']}' kan niet in een bubbel: een tak die tegelijk "
+                             f"draait heeft geen volgende stap om naartoe te vertakken.")
     doelen = {e["naar"] for e in edges}
     vrijstaand = losse(nodes)
     los = [n["naam"] for n in vrijstaand[1:] if n["id"] not in doelen]

@@ -150,6 +150,25 @@ def cancel_run(run_id: str, db: Session = Depends(get_db)):
     return {"ok": True, "status": "afbreken gevraagd"}
 
 
+@router.get("/{workflow_id}/verwijzingen")
+def workflow_verwijzingen(workflow_id: int, node: Optional[str] = None,
+                          db: Session = Depends(get_db)):
+    """Waar je vanaf deze activiteit naar kunt verwijzen, en welke lijsten er
+    zijn om met een lus langs te lopen.
+
+    Dit is wat een keuzelijst vult in plaats van een veld waar je
+    `stap.stap_2.json.rijen` uit je hoofd moet typen — een typefout daarin
+    levert geen foutmelding op maar een voorwaarde die altijd onwaar is."""
+    from services.workflows import verwijzingen as vw
+
+    w = db.get(Workflow, workflow_id)
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow niet gevonden")
+    nodes, edges = graph.zorg_voor_graaf(w)
+    return {"verwijzingen": vw.beschikbaar(nodes, edges, node),
+            "lijsten": vw.lijsten(nodes)}
+
+
 @router.get("/{workflow_id}")
 def get_workflow(workflow_id: int, db: Session = Depends(get_db)):
     w = db.get(Workflow, workflow_id)

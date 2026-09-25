@@ -303,7 +303,16 @@ export interface WorkflowDto {
   updated_at: string;
 }
 
-export type WorkflowNodeSoort = "agent" | "shell" | "als" | "wacht" | "parallel";
+export type WorkflowNodeSoort =
+  "agent" | "shell" | "als" | "wacht" | "parallel" | "voorelk";
+
+/** Eén pad waar je met {{ ... }} naar kunt verwijzen, met waar het vandaan
+ *  komt. Afgeleid uit de JSON-schema's die de activiteiten al hebben. */
+export interface Verwijzing {
+  pad: string;
+  soort: string;
+  omschrijving: string;
+}
 
 export interface WorkflowNode {
   id: string;
@@ -335,6 +344,10 @@ export interface WorkflowNode {
    *  één omvalt ("stop" of "doorgaan"). */
   max_gelijktijdig?: number;
   fout_gedrag?: string;
+  /** Alleen op een lus: de lijst waar hij langs loopt, en hoeveel elementen
+   *  hoogstens. Binnen de lus zijn `item` en `iteratie` beschikbaar. */
+  bron?: string;
+  max_items?: number;
 }
 
 export interface WorkflowConditie {

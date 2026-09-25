@@ -22,6 +22,7 @@ activiteit tegelijk, met een eigen invoer, uitvoer en status.
 | **shell** | een commando in de container — deterministisch, goedkoop, langs de guard |
 | **als** | splitst op een voorwaarde; verbindingen `ja` en `nee` |
 | **wacht** | een pauze, bijvoorbeeld tussen twee pogingen |
+| **lus** (`voorelk`) | een omhulsel: alles wat erin ligt draait één keer per element van een lijst |
 | **bubbel** (`parallel`) | een omhulsel: alles wat erin ligt draait tegelijk |
 
 Verbindingen hebben een soort: **succes**, **fout** of **altijd** (na een
@@ -68,6 +69,23 @@ Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `bevat`, `bevat_niet`, `is_leeg`,
 `is_niet_leeg`. Een voorwaarde die nergens op slaat is `false` — de `nee`-tak,
 want doorgaan alsof alles goed is, is precies wat je niet wilt als je niet weet
 wat er staat.
+
+### Per element: de lus
+
+Sleep activiteiten in een **lus** en alles wat erin ligt draait één keer per
+element van een lijst. Binnen de lus zijn `{{ item }}` (met zijn velden, zoals
+`{{ item.title }}`) en `{{ iteratie }}` beschikbaar — óók in een `als` die
+erin ligt. Dat is precies het verschil met `herhaal_over` op één activiteit:
+daar past maar één stap in, in een lus past een hele kleine workflow.
+
+Het typische geval: een analysestap levert `incidentGroups` op, de lus loopt
+daarlangs, en een `als` op `item.complexity` stuurt elke groep de goede kant
+op.
+
+Verder: er zit een bovengrens op het aantal elementen (een lijst die onverwacht
+duizend lang is, is duizend agent-beurten), elke ronde begint met een schone
+kopie van wat er buiten de lus bekend is (zodat ronde 3 niet in ronde 4 lekt),
+en bij een mislukte ronde kies je tussen stoppen en doorgaan.
 
 ### Tegelijk draaien: de bubbel
 
@@ -162,6 +180,25 @@ niets aangeraakt. Dat is belangrijker dan het klinkt: deze omzetting draait bij
 na elke herstart weg.
 
 Markdown blijft daarnaast gewoon bestaan als im- en export.
+
+## Verwijzingen kies je, je typt ze niet
+
+Een voorwaarde en een lus verwijzen naar eerdere uitvoer. Die verwijzing uit je
+hoofd typen is vragen om fouten: een typefout levert geen foutmelding op maar
+een voorwaarde die altijd onwaar is, en dat merk je pas als de verkeerde tak
+loopt.
+
+LabX kent de JSON-schema's van de activiteiten, dus de velden staan in een
+keuzelijst — inclusief de uitleg die je bij een veld hebt gezet. Binnen een lus
+staan `item` en zijn velden bovenaan. Zelf typen kan nog steeds (niet alle
+uitvoer heeft een schema); staat je verwijzing niet in de lijst, dan zegt het
+scherm dat erbij.
+
+Het **uitvoerschema** van een agent-stap teken je ook: velden met een naam, een
+soort en een uitleg, met geneste objecten en lijsten. Die uitleg is geen
+franje — het model leest hem, én hij komt terug in de keuzelijst hierboven. Een
+schema dat niet in velden te vatten is (anyOf, patronen, $ref) blijft gewoon
+als JSON bewerkbaar.
 
 ## De editor
 

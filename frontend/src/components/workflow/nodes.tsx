@@ -14,11 +14,12 @@ import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 
 const ICOON: Record<string, string> = {
-  agent: "🤖", shell: ">_", als: "?", wacht: "⏱", parallel: "⇉",
+  agent: "🤖", shell: ">_", als: "?", wacht: "⏱", parallel: "⇉", voorelk: "↻",
 };
 
 const SOORT_LABEL: Record<string, string> = {
   agent: "agent", shell: "shell", als: "als", wacht: "wacht", parallel: "tegelijk",
+  voorelk: "voor elk",
 };
 
 /** De kleuren van de verbindingen: groen lukt, rood mislukt, blauw altijd. */
@@ -105,20 +106,29 @@ export function ActiviteitNode({ data, selected }: NodeProps) {
 
 export function BubbelNode({ data, selected }: NodeProps) {
   const d = data as unknown as Data;
+  // Een lus en een bubbel zien er bewust anders uit: de een doet alles ACHTER
+  // elkaar per element, de ander alles TEGELIJK. Dat verschil moet je op het
+  // doek kunnen zien zonder het paneel te openen.
+  const lus = d.soort === "voorelk";
   return (
     <div
-      className={`h-full w-full rounded-xl border-2 border-dashed bg-violet-500/5 ${
-        selected ? "border-primary" : "border-violet-400/60"
+      className={`h-full w-full rounded-xl border-2 border-dashed ${
+        lus ? "bg-amber-500/5" : "bg-violet-500/5"
+      } ${selected ? "border-primary" : lus ? "border-amber-400/70" : "border-violet-400/60"
       } ${d.status === "running" ? "animate-pulse" : ""}`}
     >
       <Handle type="target" position={Position.Top} className="!h-2 !w-2 !bg-muted-foreground" />
       <div className="flex items-center gap-2 px-3 py-1.5">
-        <span className="text-sm">⇉</span>
+        <span className="text-sm">{lus ? "↻" : "⇉"}</span>
         <span className="flex-1 truncate text-xs font-semibold">{d.naam}</span>
-        <span className="rounded bg-violet-500/20 px-1 text-[10px] text-violet-700">
-          {d.aantal ?? 0} tegelijk
+        <span className={`rounded px-1 text-[10px] ${
+          lus ? "bg-amber-500/20 text-amber-700" : "bg-violet-500/20 text-violet-700"}`}>
+          {lus ? `${d.aantal ?? 0} per element` : `${d.aantal ?? 0} tegelijk`}
         </span>
       </div>
+      {lus && d.samenvatting && (
+        <div className="truncate px-3 text-[10px] text-muted-foreground">{d.samenvatting}</div>
+      )}
       <Handle id="succes" type="source" position={Position.Bottom}
               style={{ left: "35%", background: TAK_KLEUR.succes }}
               className="!h-2.5 !w-2.5" />

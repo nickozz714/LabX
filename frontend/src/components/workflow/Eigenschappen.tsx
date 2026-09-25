@@ -11,25 +11,28 @@
  * tekst. Dat is niet alleen veiliger, het is ook in te vullen zonder te weten
  * hoe je een expressie schrijft.
  */
-import type { WorkflowConditie, WorkflowNode } from "@/lib/types";
+import type { Verwijzing, WorkflowConditie, WorkflowNode } from "@/lib/types";
 import { Button, Input, Label, Select, TextArea, Toggle } from "@/components/ui";
+import { SchemaBouwer } from "@/components/workflow/SchemaBouwer";
+import { VerwijzingKiezer } from "@/components/workflow/VerwijzingKiezer";
 
 const OPERATOREN = ["==", "!=", ">", ">=", "<", "<=", "bevat", "bevat_niet",
                     "is_leeg", "is_niet_leeg"];
 
-function Conditie({ waarde, onChange, titel, hint }: {
+function Conditie({ waarde, onChange, titel, hint, opties }: {
   waarde: WorkflowConditie | undefined;
   onChange: (c: WorkflowConditie) => void;
   titel: string;
   hint?: string;
+  opties: Verwijzing[];
 }) {
   const c = waarde || { links: "", operator: "==", rechts: "" };
   const zonderRechts = ["is_leeg", "is_niet_leeg"].includes(c.operator);
   return (
     <div className="space-y-1">
       <Label>{titel}</Label>
-      <Input value={c.links} placeholder="stap.tellen.json.rijen"
-             onChange={(e) => onChange({ ...c, links: e.target.value })} />
+      <VerwijzingKiezer waarde={c.links} opties={opties}
+                        onChange={(pad) => onChange({ ...c, links: pad })} />
       <div className="flex gap-1">
         <Select value={c.operator} className="w-32"
                 onChange={(e) => onChange({ ...c, operator: e.target.value })}>
@@ -45,17 +48,24 @@ function Conditie({ waarde, onChange, titel, hint }: {
   );
 }
 
-export function Eigenschappen({ node, onChange, onDelete }: {
+export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lijsten = [] }: {
   node: WorkflowNode | null;
   onChange: (n: WorkflowNode) => void;
   onDelete: (id: string) => void;
+  /** Waar deze activiteit naar kan verwijzen — uit de schema's van de andere
+   *  activiteiten. Vult de keuzelijsten, zodat niemand een pad hoeft te raden. */
+  verwijzingen?: Verwijzing[];
+  /** De lijsten waar een lus langs kan lopen. */
+  lijsten?: Verwijzing[];
 }) {
   if (!node) {
     return (
       <div className="space-y-2 p-4 text-xs text-muted-foreground">
         <p className="font-medium text-foreground">Niets geselecteerd</p>
         <p>
-          Klik een activiteit aan om hem in te stellen. Verbind ze door van het
+          Klik een activiteit aan om hem in te stellen. Sleep activiteiten in een <strong>lus</strong>
+          om ze per element van een lijst te laten draaien, of in een <strong>bubbel</strong> om ze
+          tegelijk te doen. Verbind ze door van het
           <span className="mx-1 rounded bg-green-500/20 px-1">groene</span>punt te slepen
           (bij succes) of van het<span className="mx-1 rounded bg-red-500/20 px-1">rode</span>
           (bij fout). Een <strong>bubbel</strong> voert alles wat erin ligt tegelijk uit —
@@ -99,16 +109,9 @@ export function Eigenschappen({ node, onChange, onDelete }: {
                   onChange={(v) => zet({ verse_sessie: v })}
                   label="Schone sessie (vergeet wat eerder in deze run gebeurde)" />
           <div>
-            <Label>JSON-schema (optioneel)</Label>
-            <TextArea rows={3} className="font-mono text-[11px]"
-                      value={node.json_schema || ""}
-                      onChange={(e) => zet({ json_schema: e.target.value })}
-                      placeholder='{"type":"object","properties":{"rijen":{"type":"integer"}}}' />
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Met een schema komt het antwoord gestructureerd terug en kan een volgende
-              <code className="mx-1">als</code>erop beslissen:
-              <code className="ml-1">stap.{node.sleutel}.json.rijen</code>
-            </p>
+            <Label>Uitvoer van deze stap (optioneel)</Label>
+            <SchemaBouwer waarde={node.json_schema}
+                          onChange={(json) => zet({ json_schema: json })} />
           </div>
         </>
       )}
@@ -129,7 +132,7 @@ export function Eigenschappen({ node, onChange, onDelete }: {
       )}
 
       {node.type === "als" && (
-        <Conditie titel="Voorwaarde" waarde={node.conditie}
+        <Conditie titel="Voorwaarde" waarde={node.conditie} opties={verwijzingen}
                   onChange={(c) => zet({ conditie: c })}
                   hint="Klopt hij, dan gaat de run verder langs 'ja' — anders langs 'nee'." />
       )}
@@ -140,6 +143,40 @@ export function Eigenschappen({ node, onChange, onDelete }: {
           <Input type="number" value={node.seconden ?? 30}
                  onChange={(e) => zet({ seconden: Number(e.target.value) })} />
         </div>
+      )}
+
+      {node.type === "voorelk" && (
+        <>
+          <div>
+            <Label>Loop langs deze lijst</Label>
+            <VerwijzingKiezer waarde={node.bron || ""} opties={lijsten}
+                              onChange={(pad) => zet({ bron: pad })}
+                              placeholder="stap.analyse.json.incidentGroups" />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Alles wat je in deze lus sleept draait één keer per element. Binnen de lus
+              gebruik je <code>{"{{ item }}"}</code> (en zijn velden, zoals
+              <code className="ml-1">{"{{ item.title }}"}</code>) en
+              <code className="ml-1">{"{{ iteratie }}"}</code>. Een <code>als</code> mag erin:
+              die beslist dan per element.
+            </p>
+          </div>
+          <div>
+            <Label>Hoogstens zoveel elementen</Label>
+            <Input type="number" value={node.max_items ?? 50}
+                   onChange={(e) => zet({ max_items: Number(e.target.value) })} />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Een lijst die onverwacht duizend lang is, is duizend agent-beurten.
+            </p>
+          </div>
+          <div>
+            <Label>Als een ronde mislukt</Label>
+            <Select value={node.fout_gedrag || "stop"}
+                    onChange={(e) => zet({ fout_gedrag: e.target.value })}>
+              <option value="stop">Stoppen (volg de fout-verbinding)</option>
+              <option value="doorgaan">Doorgaan met de volgende elementen</option>
+            </Select>
+          </div>
+        </>
       )}
 
       {node.type === "parallel" && (
@@ -165,20 +202,22 @@ export function Eigenschappen({ node, onChange, onDelete }: {
         </>
       )}
 
-      {node.type !== "parallel" && node.type !== "als" && (
+      {node.type !== "parallel" && node.type !== "voorelk" && node.type !== "als" && (
         <div className="space-y-2 rounded-md border border-border p-2">
           <div className="text-xs font-semibold">Herhalen</div>
           <div>
             <Label>Voor elk element van</Label>
-            <Input value={node.herhaal_over || ""} placeholder="stap.lijst.json.tabellen"
-                   onChange={(e) => zet({ herhaal_over: e.target.value })} />
+            <VerwijzingKiezer waarde={node.herhaal_over || ""} opties={lijsten}
+                              onChange={(pad) => zet({ herhaal_over: pad })}
+                              placeholder="stap.lijst.json.tabellen" />
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Eén ronde per element; gebruik <code>{"{{ item }}"}</code> en
-              <code className="ml-1">{"{{ iteratie }}"}</code> in de opdracht. Lege lijst =
-              overslaan, en dat is geen fout.
+              Herhaalt DEZE ene activiteit per element. Moeten er meerdere stappen per
+              element gebeuren (of een <code>als</code> ertussen), gebruik dan een
+              <strong> lus</strong> uit de balk links. Lege lijst = overslaan, en dat is
+              geen fout.
             </p>
           </div>
-          <Conditie titel="Of: herhalen tot" waarde={node.herhaal_tot}
+          <Conditie titel="Of: herhalen tot" waarde={node.herhaal_tot} opties={verwijzingen}
                     onChange={(c) => zet({ herhaal_tot: c })} />
           <div>
             <Label>Hoogstens zoveel rondes</Label>
