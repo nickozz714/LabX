@@ -70,6 +70,17 @@ Operators: `==`, `!=`, `>`, `>=`, `<`, `<=`, `bevat`, `bevat_niet`, `is_leeg`,
 want doorgaan alsof alles goed is, is precies wat je niet wilt als je niet weet
 wat er staat.
 
+Zet **geen aanhalingstekens** om de rechterwaarde: het veld is een waarde, geen
+code. `'simpel'` wordt gelezen als `simpel` — de editor waarschuwt erbij, en de
+motor negeert ze, zodat je vergelijking niet stil op de letterlijke tekst
+mislukt.
+
+Wat een `als` besloot, staat achteraf in het runverslag: niet alleen de tak,
+maar ook de waarde waarop hij besloot, de waarde waarmee hij vergeleek, en — als
+de linkerverwijzing niets opleverde — welke velden er wél in zaten. Een
+voorwaarde op `item.complexiteit` terwijl het veld `complexity` heet, is
+daardoor geen stille `nee` meer.
+
 ### Per element: de lus
 
 Sleep activiteiten in een **lus** en alles wat erin ligt draait één keer per
@@ -77,6 +88,17 @@ element van een lijst. Binnen de lus zijn `{{ item }}` (met zijn velden, zoals
 `{{ item.title }}`) en `{{ iteratie }}` beschikbaar — óók in een `als` die
 erin ligt. Dat is precies het verschil met `herhaal_over` op één activiteit:
 daar past maar één stap in, in een lus past een hele kleine workflow.
+
+Een lus en een bubbel zijn **van maat te veranderen**: selecteer hem op het
+doek en sleep aan een rand of een hoek (of tik de getallen in het paneel).
+Kleiner dan wat erin ligt kan niet — dan zou er een activiteit buiten vallen.
+De maat wordt met de workflow bewaard.
+
+Elke activiteit in de lus wordt gelogd met de ronde en het element waarin hij
+draaide, zodat het verslag van dertien rondes leesbaar blijft. De lus zelf
+staat op *bezig* tot de laatste ronde klaar is, en sluit af met hoeveel rondes
+er gedraaid zijn. Draait hij nul rondes, dan staat erbij waarom: geen lijst
+gekozen, lege lijst, of een verwijzing die niets opleverde.
 
 Het typische geval: een analysestap levert `incidentGroups` op, de lus loopt
 daarlangs, en een `als` op `item.complexity` stuurt elke groep de goede kant

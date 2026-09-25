@@ -123,6 +123,25 @@ function RunDetail({ runId }: { runId: string }) {
   );
 }
 
+/** Een korte aanduiding van het element van deze ronde, zodat je in de lijst
+ *  ziet wélk incident (of welke klant) er langskwam en niet alleen "ronde 7". */
+function kortItem(item: string | null): string {
+  if (!item) return "";
+  try {
+    const waarde = JSON.parse(item);
+    if (typeof waarde === "string") return waarde.slice(0, 40);
+    if (waarde && typeof waarde === "object") {
+      for (const sleutel of ["title", "titel", "naam", "name", "id"]) {
+        const v = (waarde as Record<string, unknown>)[sleutel];
+        if (typeof v === "string" && v) return v.slice(0, 40);
+      }
+    }
+  } catch {
+    return item.slice(0, 40);
+  }
+  return "";
+}
+
 function Stap({ stap }: { stap: WorkflowRunStapDto }) {
   const [open, setOpen] = useState(false);
   return (
@@ -133,7 +152,12 @@ function Stap({ stap }: { stap: WorkflowRunStapDto }) {
         <Badge tone={TOON[stap.status] || "neutral"}>{stap.status}</Badge>
         <span className="font-medium">{stap.naam}</span>
         <span className="text-muted-foreground">{stap.soort}</span>
-        {stap.iteratie && <span className="text-muted-foreground">ronde {stap.iteratie}</span>}
+        {stap.iteratie ? (
+          <span className="text-muted-foreground">
+            ronde {stap.iteratie}
+            {kortItem(stap.item) && <span className="ml-1">· {kortItem(stap.item)}</span>}
+          </span>
+        ) : null}
         {stap.tak && <span className="text-muted-foreground">→ {stap.tak}</span>}
         <span className="flex-1" />
         {stap.duur_ms ? <span className="text-muted-foreground">{duur(stap.duur_ms)}</span> : null}
@@ -146,7 +170,14 @@ function Stap({ stap }: { stap: WorkflowRunStapDto }) {
           {stap.item && (
             <Blok titel="Element van deze ronde" tekst={stap.item} />
           )}
-          <Blok titel="Invoer (wat het model kreeg)" tekst={stap.invoer} />
+          <Blok
+            titel={stap.soort === "als"
+              ? "Waarop de keuze viel"
+              : stap.soort === "voorelk"
+                ? "De lijst waar hij langs liep"
+                : "Invoer (wat het model kreeg)"}
+            tekst={stap.invoer}
+          />
           {stap.stappen?.length > 0 && (
             <div>
               <div className="mb-1 font-semibold text-muted-foreground">
@@ -164,7 +195,7 @@ function Stap({ stap }: { stap: WorkflowRunStapDto }) {
             </div>
           )}
           <Blok titel="Uitvoer" tekst={stap.uitvoer} />
-          {stap.resultaat != null && (
+          {stap.resultaat != null && stap.soort !== "als" && (
             <Blok titel="Gestructureerd resultaat"
                   tekst={JSON.stringify(stap.resultaat, null, 2)} />
           )}

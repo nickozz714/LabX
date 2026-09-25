@@ -312,7 +312,12 @@ async def _voer_node_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
         laatste["herhaal_grens_bereikt"] = True
         return laatste, "succes" if laatste.get("status") != "fout" else "fout"
 
-    resultaat = await _eenmaal(db, run, node, context, totalen, volgnummer, None, None)
+    # Binnen een `voorelk` staan de ronde en het element in de context. Zonder
+    # ze hier door te geven wordt elke activiteit in de lus gelogd alsof hij
+    # één keer gebeurde: in het runverslag is dan niet te zien dát er gelust
+    # werd, laat staan bij welk element iets misging.
+    resultaat = await _eenmaal(db, run, node, context, totalen, volgnummer,
+                               context.get("iteratie"), context.get("item"))
     if node["type"] == "als":
         return resultaat, ("ja" if resultaat.get("waar") else "nee")
     return resultaat, ("fout" if resultaat.get("status") == "fout" else "succes")
@@ -336,24 +341,41 @@ async def _voer_lus_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
     """
     leden = graph.kinderen(nodes, node["id"])
     bron = node.get("bron") or ""
-    items = expressies.los_op(bron, context) if bron else None
-    if items is None:
+    rauw = expressies.los_op(bron, context) if bron else None
+    if rauw is None:
         items = []
-    elif not isinstance(items, list):
-        items = [items]
+    elif not isinstance(rauw, list):
+        items = [rauw]
+    else:
+        items = rauw
     items = items[: int(node.get("max_items") or 50)]
 
     if not leden or not items:
         # Een lege lijst is geen fout: "geen incidenten gevonden" is vaak juist
-        # het goede nieuws.
+        # het goede nieuws. Maar een lus die nul rondes draait omdat de
+        # verwijzing niet bestaat, ziet er precies hetzelfde uit — dus staat
+        # erbij wat de bron opleverde.
+        if not leden:
+            reden = "er ligt geen activiteit in de lus"
+        elif not bron:
+            reden = "er is geen lijst gekozen om langs te lopen"
+        elif rauw is None:
+            reden = f"de verwijzing {bron} leverde niets op"
+            velden = expressies.beschikbaar_naast(bron, context)
+            if velden:
+                reden += " — wel aanwezig: " + ", ".join(velden)
+        else:
+            reden = "de lijst was leeg"
         _log_stap(db, run, node, volgnummer, status="overgeslagen",
-                  invoer=f"lijst: {bron or '—'}",
-                  uitvoer=("geen activiteiten in de lus" if not leden else "lege lijst"))
+                  invoer=f"lijst: {bron or '—'}", uitvoer=reden)
         return {"status": "ok", "uitvoer": "", "aantal": 0, "rondes": []}, "succes"
 
-    _log_stap(db, run, node, volgnummer, status="ok",
-              invoer=f"{len(items)} element(en) uit {bron}",
-              uitvoer=", ".join(x["naam"] for x in leden))
+    # De lus blijft "bezig" zolang de rondes lopen. Stond hij meteen op "ok",
+    # dan las het runverslag alsof de lus klaar was voordat er één ronde was
+    # gedraaid — en dus alsof er niet gelust werd.
+    lusrij = _log_stap(db, run, node, volgnummer, status="running",
+                       invoer=f"{len(items)} element(en) uit {bron}\n\n"
+                              + "in de lus: " + ", ".join(x["naam"] for x in leden))
 
     rondes: List[Dict[str, Any]] = []
     mislukt = 0
@@ -386,6 +408,8 @@ async def _voer_lus_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
         if ronde_fout:
             mislukt += 1
             if node.get("fout_gedrag") != "doorgaan":
+                _werk_stap_bij(db, lusrij, status="fout", error=ronde_fout,
+                               uitvoer=f"gestopt in ronde {index} van {len(items)}")
                 return {"status": "fout", "uitvoer": ronde_fout, "aantal": index,
                         "rondes": rondes, "error": ronde_fout}, "fout"
 
@@ -398,6 +422,10 @@ async def _voer_lus_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
              "aantal": len(items), "mislukt": mislukt,
              "uitvoer": f"{len(items)} ronde(s) gedaan"
                         + (f", {mislukt} mislukt" if mislukt else "")}
+    _werk_stap_bij(db, lusrij, status=samen["status"], uitvoer=samen["uitvoer"],
+                   resultaat={"aantal": len(items), "mislukt": mislukt,
+                              "bron": bron,
+                              "activiteiten": [x["naam"] for x in leden]})
     return samen, ("fout" if samen["status"] == "fout" else "succes")
 
 
@@ -496,12 +524,16 @@ async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
 
     if soort == "als":
         conditie = node.get("conditie") or {}
-        waar = expressies.evalueer(conditie, context)
+        # Niet alleen de uitkomst maar ook de waarden waarop hij besloot: een
+        # `als` die achteraf alleen "nee" zegt, is niet na te rekenen.
+        waar, uitleg = expressies.evalueer_uitgelegd(conditie, context)
         _log_stap(db, run, node, volgnummer, status="ok", iteratie=iteratie, item=item,
-                  invoer=expressies.beschrijf(conditie),
+                  invoer=expressies.beschrijf_uitkomst(uitleg),
                   uitvoer="ja" if waar else "nee", tak="ja" if waar else "nee",
+                  resultaat=uitleg,
                   duur_ms=int((time.monotonic() - begin) * 1000))
-        return {"status": "ok", "waar": waar, "uitvoer": "ja" if waar else "nee"}
+        return {"status": "ok", "waar": waar, "uitvoer": "ja" if waar else "nee",
+                "uitleg": uitleg}
 
     if soort == "wacht":
         await asyncio.sleep(int(node.get("seconden") or 30))
@@ -607,13 +639,15 @@ def _als_json(tekst: str) -> Optional[Any]:
 def _log_stap(db: Session, run: WorkflowRun, node: Dict[str, Any], volgnummer: int, *,
               status: str, invoer: Optional[str] = None, uitvoer: Optional[str] = None,
               iteratie: Optional[int] = None, item: Any = None,
-              tak: Optional[str] = None, duur_ms: Optional[int] = None) -> WorkflowRunStep:
+              tak: Optional[str] = None, duur_ms: Optional[int] = None,
+              resultaat: Any = None) -> WorkflowRunStep:
     rij = WorkflowRunStep(
         run_id=run.id, node_id=node["id"], naam=node["naam"], soort=node["type"],
         volgnummer=volgnummer, iteratie=iteratie,
         item=(json.dumps(item, ensure_ascii=False)[:2000] if item is not None else None),
         status=status, invoer=(invoer or None)[:20000] if invoer else None,
         uitvoer=(uitvoer or None), tak=tak, duur_ms=duur_ms,
+        resultaat_json=(resultaat if isinstance(resultaat, dict) else None),
         created_at=_now_iso(),
         finished_at=_now_iso() if status != "running" else None)
     db.add(rij)

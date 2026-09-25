@@ -14,7 +14,7 @@
  * Wat niet in velden te vatten is (een schema met anyOf, patronen, $ref) laten
  * we met rust: dan blijft de JSON-weergave staan en zegt het scherm waarom.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Input, Label, Select, TextArea } from "@/components/ui";
 
 type Soort = "tekst" | "getal" | "waar/onwaar" | "lijst van tekst" | "object" | "lijst van objecten";
@@ -139,27 +139,47 @@ export function SchemaBouwer({ waarde, onChange }: {
   waarde: string | null | undefined;
   onChange: (json: string) => void;
 }) {
-  const gelezen = useMemo(() => uitSchema(waarde), [waarde]);
-  const [ruw, setRuw] = useState(gelezen === null);
-  const velden = gelezen || [];
+  // De velden staan HIER, en worden niet elke render opnieuw uit de JSON
+  // gelezen. Dat laatste deed het eerst, en daardoor kon je niets toevoegen: een
+  // veld zonder naam bestaat niet in JSON-schema, dus een verse rij was na de
+  // heen-en-terugvertaling meteen weer weg. Je typte in een rij die er niet was.
+  const [velden, setVelden] = useState<Veld[]>(() => uitSchema(waarde) || []);
+  const [ruw, setRuw] = useState(uitSchema(waarde) === null);
+  // De laatste JSON die we ZELF schreven, zodat het teruggekaatste schema de
+  // rij waar je in staat te typen niet opnieuw opbouwt.
+  const eigen = useRef<string>(waarde || "");
+
+  useEffect(() => {
+    if ((waarde || "") === eigen.current) return;
+    eigen.current = waarde || "";
+    const gelezen = uitSchema(waarde);
+    setVelden(gelezen || []);
+    setRuw(gelezen === null);
+  }, [waarde]);
 
   function zet(nieuw: Veld[]) {
-    onChange(nieuw.length ? JSON.stringify(naarSchema(nieuw), null, 2) : "");
+    setVelden(nieuw);
+    const json = nieuw.length ? JSON.stringify(naarSchema(nieuw), null, 2) : "";
+    eigen.current = json;
+    onChange(json);
   }
 
-  if (ruw || gelezen === null) {
+  const naamloos = velden.some((v) => !v.naam.trim());
+
+  if (ruw) {
     return (
       <div className="space-y-1">
         <TextArea rows={8} className="font-mono text-[11px]" value={waarde || ""}
                   onChange={(e) => onChange(e.target.value)} />
         <div className="flex items-center justify-between">
           <p className="text-[11px] text-muted-foreground">
-            {gelezen === null
+            {uitSchema(waarde) === null
               ? "Dit schema gebruikt iets dat niet in velden te tekenen is — daarom de JSON zelf."
               : "JSON-weergave."}
           </p>
-          {gelezen !== null && (
-            <Button variant="ghost" className="text-[11px]" onClick={() => setRuw(false)}>
+          {uitSchema(waarde) !== null && (
+            <Button variant="ghost" className="text-[11px]"
+                    onClick={() => { setVelden(uitSchema(waarde) || []); setRuw(false); }}>
               Terug naar velden
             </Button>
           )}
@@ -185,6 +205,11 @@ export function SchemaBouwer({ waarde, onChange }: {
           JSON tonen
         </Button>
       </div>
+      {naamloos && (
+        <p className="text-[11px] text-amber-600">
+          Een veld zonder naam staat nog niet in het schema — geef het een naam.
+        </p>
+      )}
       <p className="text-[11px] text-muted-foreground">
         Deze velden komen terug als keuzelijst bij een voorwaarde en als lijst om met een lus
         langs te lopen — dus wat je hier neerzet, hoef je verderop niet meer over te typen.

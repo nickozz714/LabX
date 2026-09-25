@@ -20,6 +20,14 @@ import { TekstMetVerwijzingen } from "@/components/workflow/TekstMetVerwijzingen
 const OPERATOREN = ["==", "!=", ">", ">=", "<", "<=", "bevat", "bevat_niet",
                     "is_leeg", "is_niet_leeg"];
 
+/** Een waarde waar de gebruiker quotes omheen tikte omdat het veld op code
+ *  lijkt. De motor negeert ze; hier staat waarom er dan toch iets anders
+ *  vergeleken wordt dan er staat. */
+function geciteerd(waarde: unknown): boolean {
+  const t = String(waarde ?? "").trim();
+  return t.length >= 2 && t[0] === t[t.length - 1] && (t[0] === "'" || t[0] === '"');
+}
+
 function Conditie({ waarde, onChange, titel, hint, opties }: {
   waarde: WorkflowConditie | undefined;
   onChange: (c: WorkflowConditie) => void;
@@ -40,11 +48,44 @@ function Conditie({ waarde, onChange, titel, hint, opties }: {
           {OPERATOREN.map((o) => <option key={o} value={o}>{o}</option>)}
         </Select>
         {!zonderRechts && (
-          <Input value={String(c.rechts ?? "")} placeholder="0"
+          <Input value={String(c.rechts ?? "")} placeholder="simpel"
                  onChange={(e) => onChange({ ...c, rechts: e.target.value })} />
         )}
       </div>
+      {!zonderRechts && geciteerd(c.rechts) && (
+        <p className="text-[11px] text-amber-600">
+          Hier hoeven geen aanhalingstekens omheen — LabX vergelijkt met{" "}
+          <code>{String(c.rechts).trim().slice(1, -1)}</code>, niet met de tekst
+          inclusief quotes.
+        </p>
+      )}
       {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+/** De maat van een lus of bubbel. Slepen aan de randen op het doek is het
+ *  snelst, maar dat is niet te zien tot je hem selecteert — dus staat hij hier
+ *  ook, met de getallen erbij. */
+function Maat({ node, onChange, wat }: {
+  node: WorkflowNode;
+  onChange: (v: Partial<WorkflowNode>) => void;
+  wat: string;
+}) {
+  return (
+    <div>
+      <Label>Grootte op het doek</Label>
+      <div className="flex items-center gap-1">
+        <Input type="number" value={node.breedte ?? 620} className="w-24"
+               onChange={(e) => onChange({ breedte: Number(e.target.value) })} />
+        <span className="text-xs text-muted-foreground">×</span>
+        <Input type="number" value={node.hoogte ?? 220} className="w-24"
+               onChange={(e) => onChange({ hoogte: Number(e.target.value) })} />
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Selecteer de {wat} op het doek en sleep aan een rand of een hoek. Kleiner dan wat
+        erin ligt kan niet — dan zou er een activiteit buiten vallen.
+      </p>
     </div>
   );
 }
@@ -207,6 +248,7 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
               Een lijst die onverwacht duizend lang is, is duizend agent-beurten.
             </p>
           </div>
+          <Maat node={node} onChange={zet} wat="lus" />
           <div>
             <Label>Als een ronde mislukt</Label>
             <Select value={node.fout_gedrag || "stop"}
@@ -238,6 +280,7 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
               <option value="doorgaan">Doorgaan; de rest telt gewoon</option>
             </Select>
           </div>
+          <Maat node={node} onChange={zet} wat="bubbel" />
         </>
       )}
 
