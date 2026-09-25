@@ -11,11 +11,12 @@
  * tekst. Dat is niet alleen veiliger, het is ook in te vullen zonder te weten
  * hoe je een expressie schrijft.
  */
-import type { Verwijzing, WorkflowConditie, WorkflowNode } from "@/lib/types";
+import type { Verwijzing, WorkflowConditie, WorkflowNode, WorkflowParameter } from "@/lib/types";
 import { Button, Input, Label, Select, TextArea, Toggle } from "@/components/ui";
 import { SchemaBouwer } from "@/components/workflow/SchemaBouwer";
 import { VerwijzingKiezer } from "@/components/workflow/VerwijzingKiezer";
 import { TekstMetVerwijzingen } from "@/components/workflow/TekstMetVerwijzingen";
+import { ParameterBouwer } from "@/components/workflow/Parameters";
 
 const OPERATOREN = ["==", "!=", ">", ">=", "<", "<=", "bevat", "bevat_niet",
                     "is_leeg", "is_niet_leeg"];
@@ -91,7 +92,7 @@ function Maat({ node, onChange, wat }: {
 }
 
 export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lijsten = [],
-                                groepen = [] }: {
+                                groepen = [], parameters = [], onParameters }: {
   node: WorkflowNode | null;
   onChange: (n: WorkflowNode) => void;
   onDelete: (id: string) => void;
@@ -103,10 +104,20 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
   verwijzingen?: Verwijzing[];
   /** De lijsten waar een lus langs kan lopen. */
   lijsten?: Verwijzing[];
+  /** De invoer die deze workflow verwacht. Staat hier omdat dit het paneel is
+   *  dat toch al open is als je niets geselecteerd hebt. */
+  parameters?: WorkflowParameter[];
+  onParameters?: (p: WorkflowParameter[]) => void;
 }) {
   if (!node) {
     return (
-      <div className="space-y-2 p-4 text-xs text-muted-foreground">
+      <div className="space-y-3 p-4 text-xs text-muted-foreground">
+        {onParameters && (
+          <div className="space-y-2 border-b border-border pb-3">
+            <Label>Invoer van deze workflow</Label>
+            <ParameterBouwer waarde={parameters} onChange={onParameters} />
+          </div>
+        )}
         <p className="font-medium text-foreground">Niets geselecteerd</p>
         <p>
           Klik een activiteit aan om hem in te stellen. Sleep activiteiten in een <strong>lus</strong>

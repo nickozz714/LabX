@@ -115,6 +115,17 @@ function RunDetail({ runId }: { runId: string }) {
         ) : null}
         {run.thread_id && <span>sessie {run.thread_id.slice(0, 8)}</span>}
       </div>
+      {/* Waarmee hij draaide. Twee runs van dezelfde workflow kunnen voor een
+          andere klant zijn geweest; zonder dit is achteraf niet te zien welke. */}
+      {Object.keys(run.input || {}).length > 0 && (
+        <div className="flex flex-wrap gap-1 text-[11px]">
+          {Object.entries(run.input).map(([k, v]) => (
+            <span key={k} className="rounded bg-secondary px-1.5 py-0.5">
+              <span className="text-muted-foreground">{k}</span> {String(v)}
+            </span>
+          ))}
+        </div>
+      )}
       {(run.stappen || []).map((s) => <Stap key={s.id} stap={s} />)}
       {(run.stappen || []).length === 0 && (
         <p className="text-xs text-muted-foreground">Nog geen activiteiten gedraaid.</p>

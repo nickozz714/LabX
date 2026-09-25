@@ -15,6 +15,8 @@ import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { WorkflowRuns } from "@/components/WorkflowRuns";
+import { ParameterInvuller } from "@/components/workflow/Parameters";
+import { ApiError } from "@/lib/api";
 
 export function WorkflowsPage() {
   const navigate = useNavigate();
@@ -158,6 +160,7 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
   const [labs, setLabs] = useState<Lab[]>([]);
   const [runLabId, setRunLabId] = useState("");
   const [runResult, setRunResult] = useState<string | null>(null);
+  const [invoer, setInvoer] = useState<Record<string, string>>({});
   // Is er iets veranderd sinds het openen? Zo ja, dan gooit een klik naast het
   // venster dit niet meer weg — zie Modal.
   const gewijzigd =
@@ -203,9 +206,13 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
     // Uitvoeren geeft alleen de run terug: het werk loopt op de achtergrond,
     // want zeven activiteiten duren minuten tot uren. De monitoring staat in het
     // verslag (knop 'Monitoring' bij de workflow).
-    const r = await workflowApi.run(existing.id, runLabId);
-    setRunResult(`Gestart (run ${r.id.slice(0, 8)}). Volg hem bij 'Monitoring' — daar `
-                 + `staat per activiteit wat het model kreeg, deed en teruggaf.`);
+    try {
+      const r = await workflowApi.run(existing.id, runLabId, invoer);
+      setRunResult(`Gestart (run ${r.id.slice(0, 8)}). Volg hem bij 'Monitoring' — daar `
+                   + `staat per activiteit wat het model kreeg, deed en teruggaf.`);
+    } catch (e) {
+      setRunResult(e instanceof ApiError ? e.message : "Starten mislukt");
+    }
   }
 
   return (
@@ -277,6 +284,12 @@ function WorkflowEditor({ existing, onClose, onSaved }: { existing?: WorkflowDto
                 Uitvoeren
               </Button>
             </div>
+            {existing.parameters?.length ? (
+              <div className="mb-2">
+                <ParameterInvuller parameters={existing.parameters}
+                                   waarden={invoer} onChange={setInvoer} />
+              </div>
+            ) : null}
             {runResult && <pre className="max-h-48 overflow-auto rounded bg-secondary p-2 text-xs whitespace-pre-wrap">{runResult}</pre>}
           </Card>
         )}

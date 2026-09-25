@@ -22,7 +22,7 @@ from authentication import require_user
 from db.database import get_db
 from models.lab import Lab
 from models.workflow import Workflow, WorkflowRun, WorkflowRunStep
-from services.workflows import engine, graph
+from services.workflows import engine, graph, parameters as params
 from services.workflows.workflow_service import (
     parse_markdown_to_steps, render_steps_to_markdown,
 )
@@ -40,6 +40,7 @@ def _to_dict(w: Workflow) -> Dict[str, Any]:
         "id": w.id, "name": w.name, "description": w.description,
         "markdown": w.markdown, "steps": w.steps_json or [],
         "nodes": nodes, "edges": edges,
+        "parameters": w.parameters_json or [],
         # Waarschuwingen, geen fouten: een workflow mag half af opgeslagen
         # worden — je bent hem aan het bouwen.
         "waarschuwingen": graph.valideer(nodes, edges),
@@ -103,6 +104,7 @@ def create_workflow(payload: Dict[str, Any], db: Session = Depends(get_db)):
     w = Workflow(name=name, description=payload.get("description"),
                 markdown=markdown, steps_json=steps,
                 nodes_json=nodes, edges_json=edges,
+                parameters_json=params.normaliseer(payload.get("parameters")),
                 is_enabled=bool(payload.get("is_enabled", True)),
                 created_at=now, updated_at=now)
     db.add(w)
@@ -165,7 +167,8 @@ def workflow_verwijzingen(workflow_id: int, node: Optional[str] = None,
     if not w:
         raise HTTPException(status_code=404, detail="Workflow niet gevonden")
     nodes, edges = graph.zorg_voor_graaf(w)
-    return {"verwijzingen": vw.beschikbaar(nodes, edges, node),
+    return {"verwijzingen": params.verwijzingen(w.parameters_json or [])
+                            + vw.beschikbaar(nodes, edges, node),
             "lijsten": vw.lijsten(nodes)}
 
 
@@ -184,11 +187,17 @@ def workflow_verwijzingen_live(workflow_id: int, payload: Dict[str, Any],
     niets opgeslagen."""
     from services.workflows import verwijzingen as vw
 
-    if not db.get(Workflow, workflow_id):
+    w = db.get(Workflow, workflow_id)
+    if not w:
         raise HTTPException(status_code=404, detail="Workflow niet gevonden")
     nodes, edges = graph.normaliseer(payload.get("nodes") or [], payload.get("edges") or [])
     node = (payload.get("node") or None)
-    return {"verwijzingen": vw.beschikbaar(nodes, edges, node),
+    # Ook de parameters komen uit het scherm als ze meegestuurd worden: een
+    # parameter die je net hebt aangemaakt hoort meteen te kiezen te zijn.
+    lijst = (params.normaliseer(payload["parameters"])
+             if payload.get("parameters") is not None else (w.parameters_json or []))
+    return {"verwijzingen": params.verwijzingen(lijst)
+                            + vw.beschikbaar(nodes, edges, node),
             "lijsten": vw.lijsten(nodes)}
 
 
@@ -214,6 +223,8 @@ def update_workflow(workflow_id: int, payload: Dict[str, Any], db: Session = Dep
         w.description = payload["description"]
     if "is_enabled" in payload:
         w.is_enabled = bool(payload["is_enabled"])
+    if "parameters" in payload and payload["parameters"] is not None:
+        w.parameters_json = params.normaliseer(payload["parameters"])
     if "nodes" in payload and payload["nodes"] is not None:
         # De graaf is leidend zodra hij meekomt; markdown en stappen lopen mee
         # als leesbare export van de agent-activiteiten.
@@ -262,8 +273,16 @@ async def run_workflow(workflow_id: int, payload: Dict[str, Any], db: Session = 
     # (en zet dat ook in het verslag). Weigeren zou betekenen dat een workflow
     # precies niet draait op het moment waarvoor hij bestaat — 's nachts, als
     # het lab al uren niet gebruikt is.
+    # De opgegeven waarden aangevuld met de standaardwaarden. Een verplichte
+    # parameter die leeg blijft stopt hier, en niet halverwege bij een opdracht
+    # die "haal de incidenten op van " zegt — dat kost een agent-beurt en levert
+    # niets op.
+    invoer, ontbreekt = params.waarden(w.parameters_json or [], payload.get("invoer"))
+    if ontbreekt:
+        raise HTTPException(status_code=400,
+                            detail="Deze invoer is verplicht: " + ", ".join(ontbreekt))
     run = engine.maak_run(db, w, lab_id=lab_id, trigger_type="manual",
-                          invoer=payload.get("invoer") or None,
+                          invoer=invoer or None,
                           worker_id=payload.get("worker_id"))
     if not engine.start_in_achtergrond(run.id):
         raise HTTPException(status_code=500, detail="De run kon niet gestart worden")

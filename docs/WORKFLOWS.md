@@ -45,6 +45,33 @@ Herhalen zit op de activiteit zelf, niet in een aparte lus:
 
 Een lus over meerdere activiteiten hoort in een sub-workflow; die komt later.
 
+### Invoer van een workflow
+
+Een workflow kan **parameters** hebben: wat je bij het starten meegeeft, en wat
+elke activiteit gebruikt als `{{ invoer.<naam> }}`. Zonder dat stond "Swinkels"
+in de opdracht van elke activiteit, kopieerde je de workflow voor de volgende
+klant, en liepen er daarna twee uit elkaar.
+
+Een parameter is een naam (kleine letters, cijfers en `_`), een soort (tekst,
+getal, waar/onwaar of een keuze uit opties), een omschrijving en een
+standaardwaarde. Je zet ze in het rechterpaneel van de editor, als er geen
+activiteit geselecteerd is. Ze staan daarna in dezelfde keuzelijsten als de
+uitvoer van eerdere activiteiten, dus je hoeft `invoer.klant` niet over te
+typen.
+
+Bij het starten vraagt LabX om de waarden. Wat je leeg laat valt terug op de
+standaardwaarde; een **verplichte** parameter die leeg blijft laat de run niet
+starten — halverwege ontdekken dat een opdracht "haal de incidenten op van "
+zei, kost een agent-beurt en levert niets op.
+
+In een **schedule** zet je de waarden bij de schedule zelf, niet bij de
+workflow. Zo draait dezelfde workflow elke nacht voor een andere klant zonder
+dat je hem kopieert. Een verplichte parameter die daar leeg blijft, laat die
+schedule mislukken met een melding in plaats van half draaien.
+
+In het runverslag staat bovenaan waarmee die run gedraaid heeft, zodat twee
+runs van dezelfde workflow achteraf uit elkaar te houden zijn.
+
 ### Verwijzen naar eerdere activiteiten
 
 In de tekst van een activiteit met `{{ ... }}`, en in voorwaarden als losse

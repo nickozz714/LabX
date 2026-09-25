@@ -95,13 +95,25 @@ async def _run_agent_schedule(db, sched: Schedule, run: ScheduleRun) -> None:
         # Door dezelfde motor als een handmatige run, en dus met hetzelfde
         # verslag: één geschiedenis per workflow in plaats van twee (hier de
         # cron, daar de workflow) waarvan je er altijd één mist.
-        from services.workflows import engine
+        from services.workflows import engine, parameters as params
+        # De waarden die bij DEZE schedule horen, aangevuld met de
+        # standaardwaarden van de workflow. Ontbreekt er een verplichte, dan
+        # start de run niet: een nachtelijke run die met een half ingevulde
+        # opdracht begint, kost een agent-beurt en levert niets op.
+        invoer, ontbreekt = params.waarden(wf.parameters_json or [],
+                                           sched.parameters_json or {})
+        if ontbreekt:
+            run.status = "failed"
+            run.error = ("Deze invoer van de workflow is niet ingevuld in de schedule: "
+                         + ", ".join(ontbreekt))
+            return
         wf_run = engine.maak_run(db, wf, lab_id=sched.lab_id, trigger_type="cron",
-                                 trigger_ref=str(sched.id))
+                                 trigger_ref=str(sched.id), invoer=invoer or None)
         engine.start_in_achtergrond(wf_run.id)
         run.status = "completed"
-        run.output = (f"Workflow '{wf.name}' gestart (run {wf_run.id[:8]}). "
-                      f"Het verloop staat bij de workflow zelf.")
+        run.output = (f"Workflow '{wf.name}' gestart (run {wf_run.id[:8]})"
+                      + (f" met {', '.join(f'{k}={v}' for k, v in invoer.items())}" if invoer else "")
+                      + ". Het verloop staat bij de workflow zelf.")
         return
 
     # Vanaf hier: een prompt-schedule, die zelf een beurt draait. Een lab gaat

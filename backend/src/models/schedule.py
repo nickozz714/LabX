@@ -4,7 +4,7 @@
 # runs the lab TTL-reaper.
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.database import Base
@@ -28,6 +28,10 @@ class Schedule(Base):
     # exactly one of prompt / workflow_id / board_id is used
     prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     workflow_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)
+    # De waarden voor de parameters van die workflow. Hier en niet op de
+    # workflow zelf: dezelfde workflow hoort elke nacht voor een andere klant
+    # te kunnen draaien zonder dat je hem kopieert.
+    parameters_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # kind="board": welk board, uit welke kolom, en hoeveel tickets per keer.
     # De kolom is optioneel — leeg = de agent-kolom van het board zelf.
     board_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=True)

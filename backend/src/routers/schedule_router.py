@@ -36,11 +36,26 @@ def _kind_of(s: Schedule) -> str:
     return "workflow" if s.workflow_id else "prompt"
 
 
+def _parameters(payload: Dict[str, Any]) -> Dict[str, Any] | None:
+    """De invoerwaarden waarmee deze schedule zijn workflow start.
+
+    Hier staan ze, en niet op de workflow: dezelfde workflow hoort elke nacht
+    voor een andere klant te kunnen draaien zonder dat je hem kopieert. Wat je
+    leeg laat, valt terug op de standaardwaarde van de parameter."""
+    ruw = payload.get("parameters")
+    if not isinstance(ruw, dict):
+        return None
+    schoon = {str(k): v for k, v in ruw.items()
+              if v is not None and not (isinstance(v, str) and not v.strip())}
+    return schoon or None
+
+
 def _to_dict(s: Schedule) -> Dict[str, Any]:
     return {
         "id": s.id, "name": s.name, "cron_expression": s.cron_expression, "lab_id": s.lab_id,
         "kind": _kind_of(s),
         "prompt": s.prompt, "workflow_id": s.workflow_id,
+        "parameters": s.parameters_json or {},
         "board_id": s.board_id, "board_column": s.board_column,
         "board_max_tickets": s.board_max_tickets,
         "is_enabled": s.is_enabled,
@@ -101,6 +116,7 @@ def create_schedule(payload: Dict[str, Any], db: Session = Depends(get_db)):
                 board_id=payload.get("board_id"), board_column=payload.get("board_column"),
                 board_max_tickets=int(payload.get("board_max_tickets") or 1),
                 json_schema=payload.get("json_schema"),
+                parameters_json=_parameters(payload),
                 is_enabled=bool(payload.get("is_enabled", True)), created_at=now, updated_at=now)
     db.add(s)
     db.commit()
@@ -125,6 +141,8 @@ def update_schedule(schedule_id: int, payload: Dict[str, Any], db: Session = Dep
                   "board_id", "board_column", "board_max_tickets", "is_enabled", "json_schema"):
         if field in payload:
             setattr(s, field, payload[field])
+    if "parameters" in payload:
+        s.parameters_json = _parameters(payload)
     _assert_target(_kind_of(s), {"prompt": s.prompt, "workflow_id": s.workflow_id,
                                  "board_id": s.board_id})
     s.updated_at = _now_iso()

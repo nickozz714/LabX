@@ -15,10 +15,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { workflowApi } from "@/lib/workflows";
 import { labsApi } from "@/lib/labs";
-import type { Lab, Verwijzing, WorkflowDto, WorkflowEdge, WorkflowNode } from "@/lib/types";
-import { Badge, Button, Input, Label, Select } from "@/components/ui";
+import type { Lab, Verwijzing, WorkflowDto, WorkflowEdge, WorkflowNode,
+              WorkflowParameter } from "@/lib/types";
+import { Badge, Button, Input, Label, Modal, Select } from "@/components/ui";
 import { WorkflowCanvas } from "@/components/workflow/WorkflowCanvas";
 import { Eigenschappen } from "@/components/workflow/Eigenschappen";
+import { ParameterInvuller } from "@/components/workflow/Parameters";
 import { WorkflowRuns } from "@/components/WorkflowRuns";
 import { useMelding } from "@/components/Meldingen";
 import { ApiError } from "@/lib/api";
@@ -41,6 +43,10 @@ export function WorkflowEditorPage() {
   const [omschrijving, setOmschrijving] = useState("");
   const [nodes, setNodes] = useState<WorkflowNode[]>([]);
   const [edges, setEdges] = useState<WorkflowEdge[]>([]);
+  // De invoer die deze workflow verwacht, en — bij het starten — de waarden.
+  const [parameters, setParameters] = useState<WorkflowParameter[]>([]);
+  const [invoerOpen, setInvoerOpen] = useState(false);
+  const [invoer, setInvoer] = useState<Record<string, string>>({});
   const [selectie, setSelectie] = useState<string | null>(null);
   const [vuil, setVuil] = useState(false);
   const [labs, setLabs] = useState<Lab[]>([]);
@@ -63,6 +69,7 @@ export function WorkflowEditorPage() {
       setOmschrijving(w.description || "");
       setNodes(w.nodes || []);
       setEdges(w.edges || []);
+      setParameters(w.parameters || []);
     }).catch(() => navigate("/workflows"));
     labsApi.list().then(setLabs).catch(() => {});
   }, [id, navigate]);
@@ -112,7 +119,7 @@ export function WorkflowEditorPage() {
     if (!wf) return;
     try {
       const bij = await workflowApi.opslaan(wf.id, {
-        name: naam, description: omschrijving, nodes, edges });
+        name: naam, description: omschrijving, nodes, edges, parameters });
       setWf(bij);
       // De graaf die terugkomt is dezelfde, alleen genormaliseerd. Hem
       // terugzetten in de state laat het doek ALLE activiteiten opnieuw
@@ -123,6 +130,7 @@ export function WorkflowEditorPage() {
         setNodes(bij.nodes);
         setEdges(bij.edges);
       }
+      setParameters(bij.parameters || []);
       setVuil(false);
       melding.ok("Workflow opgeslagen");
     } catch (e) {
@@ -130,10 +138,19 @@ export function WorkflowEditorPage() {
     }
   }
 
+  /** Verwacht deze workflow invoer, dan vragen we die eerst. Zonder dat zou
+   *  een verplichte parameter de run pas bij de server laten stranden. */
+  function start() {
+    if (!wf || !labId) return;
+    if (parameters.length) { setInvoerOpen(true); return; }
+    void uitvoeren();
+  }
+
   async function uitvoeren() {
     if (!wf || !labId) return;
     try {
-      const run = await workflowApi.run(wf.id, labId);
+      const run = await workflowApi.run(wf.id, labId, invoer);
+      setInvoerOpen(false);
       setMonitoring(true);
       melding.ok(`Gestart (run ${run.id.slice(0, 8)}) — de monitoring staat hieronder.`);
     } catch (e) {
@@ -174,12 +191,12 @@ export function WorkflowEditorPage() {
     // Even wachten met versturen, want `nodes` verandert bij elke toetsaanslag
     // in een opdrachtveld.
     const t = setTimeout(() => {
-      workflowApi.verwijzingenLive(wf.id, nodes, edges, selectie || undefined)
+      workflowApi.verwijzingenLive(wf.id, nodes, edges, selectie || undefined, parameters)
         .then((r) => { setVerwijzingen(r.verwijzingen); setLijsten(r.lijsten); })
         .catch(() => { setVerwijzingen([]); setLijsten([]); });
     }, 250);
     return () => clearTimeout(t);
-  }, [wf, selectie, nodes, edges]);
+  }, [wf, selectie, nodes, edges, parameters]);
 
   const geselecteerd = useMemo(
     () => nodes.find((n) => n.id === selectie) || null, [nodes, selectie]);
@@ -214,7 +231,7 @@ export function WorkflowEditorPage() {
             </option>
           ))}
         </Select>
-        <Button variant="secondary" disabled={!labId} onClick={uitvoeren}>Uitvoeren</Button>
+        <Button variant="secondary" disabled={!labId} onClick={start}>Uitvoeren</Button>
         <Button variant="secondary" onClick={() => setMonitoring(!monitoring)}>
           {monitoring ? "Monitoring sluiten" : "Monitoring"}
         </Button>
@@ -250,11 +267,29 @@ export function WorkflowEditorPage() {
 
         <div className="w-96 overflow-y-auto border-l border-border">
           <Eigenschappen node={geselecteerd} onChange={wijzigNode} onDelete={verwijderNode}
+                         parameters={parameters}
+                         onParameters={(p) => { setParameters(p); setVuil(true); }}
                          verwijzingen={verwijzingen} lijsten={lijsten}
                          groepen={nodes.filter((n) => n.type === "voorelk"
                                                       || n.type === "parallel")} />
         </div>
       </div>
+
+      {invoerOpen && (
+        <Modal open onClose={() => setInvoerOpen(false)} title="Waarmee moet hij draaien?">
+          <div className="space-y-3">
+            <ParameterInvuller parameters={parameters} waarden={invoer} onChange={setInvoer} />
+            <p className="text-[11px] text-muted-foreground">
+              Wat je leeg laat, valt terug op de standaardwaarde. Een veld met een{" "}
+              <span className="text-amber-600">*</span> is verplicht.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setInvoerOpen(false)}>Annuleren</Button>
+              <Button onClick={uitvoeren}>Uitvoeren</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {monitoring && (
         <div className="max-h-[40vh] overflow-y-auto border-t border-border p-3">

@@ -285,6 +285,17 @@ export interface WorkflowStep {
   instruction: string;
 }
 
+/** Een invoerparameter van een workflow: wat je bij het starten meegeeft en
+ *  wat elke activiteit met `{{ invoer.<naam> }}` kan gebruiken. */
+export interface WorkflowParameter {
+  naam: string;
+  soort: "tekst" | "getal" | "waar/onwaar" | "keuze";
+  omschrijving: string;
+  standaard: string | number | boolean | null;
+  verplicht: boolean;
+  opties: string[];
+}
+
 export interface WorkflowDto {
   id: number;
   name: string;
@@ -295,6 +306,8 @@ export interface WorkflowDto {
    *  graaf krijgt hier een rechte keten uit zijn stappen. */
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
+  /** De invoer die deze workflow verwacht. Leeg = hij verwacht niets. */
+  parameters: WorkflowParameter[];
   /** Wat er nog mist (geen opdracht, losse activiteit, ...). Waarschuwingen,
    *  geen fouten — je bent hem aan het bouwen. */
   waarschuwingen: string[];
@@ -431,6 +444,8 @@ export interface ScheduleDto {
   last_run_at: string | null;
   created_at: string;
   updated_at: string;
+  /** De waarden waarmee deze schedule zijn workflow start. */
+  parameters?: Record<string, string | number | boolean>;
 }
 
 export interface ScheduleRunDto {

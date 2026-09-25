@@ -33,6 +33,9 @@ class Workflow(Base):
     # eerste gebruik uit `steps_json` afgeleid (zie services/workflows/graph.py).
     nodes_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     edges_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Wat je bij het starten meegeeft, en wat elke activiteit met
+    # `{{ invoer.<naam> }}` kan gebruiken. Zie services/workflows/parameters.py.
+    parameters_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
