@@ -36,6 +36,31 @@ def _skill_dict(s: Skill) -> Dict[str, Any]:
     }
 
 
+def _linked_tools_per_skill(db: Session, skill_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+    """Dezelfde gegevens als `_linked_tools`, maar voor een hele lijst skills
+    in één keer — inclusief de servers, die anders per tool opnieuw opgehaald
+    zouden worden."""
+    uit: Dict[int, List[Dict[str, Any]]] = {sid: [] for sid in skill_ids}
+    if not skill_ids:
+        return uit
+    rows = (db.query(SkillTool, Tool).join(Tool, Tool.id == SkillTool.tool_id)
+            .filter(SkillTool.skill_id.in_(skill_ids)).all())
+    server_ids = {t.mcp_server_id for _l, t in rows if t.mcp_server_id}
+    servers = {s.id: s for s in db.query(MCPServer).filter(MCPServer.id.in_(server_ids)).all()} \
+        if server_ids else {}
+    for link, tool in rows:
+        server = servers.get(tool.mcp_server_id) if tool.mcp_server_id else None
+        uit.setdefault(link.skill_id, []).append({
+            "link_id": link.id, "tool_id": tool.id, "tool_name": tool.name,
+            "tool_description": tool.description,
+            "argument": tool.argument or {"type": "object", "properties": {}},
+            "mcp_server": {"id": server.id, "name": server.name,
+                           "location": server.location} if server else None,
+            "is_enabled": link.is_enabled, "instructions": link.instructions,
+        })
+    return uit
+
+
 def _linked_tools(db: Session, skill_id: int) -> List[Dict[str, Any]]:
     rows = (db.query(SkillTool, Tool).join(Tool, Tool.id == SkillTool.tool_id)
             .filter(SkillTool.skill_id == skill_id).all())
@@ -54,8 +79,16 @@ def _linked_tools(db: Session, skill_id: int) -> List[Dict[str, Any]]:
 
 @router.get("")
 def list_skills(db: Session = Depends(get_db)):
+    """De lijst geeft de gekoppelde tools MEE.
+
+    Hij deed dat niet, terwijl het scherm er wel het aantal van toont — met
+    nul skills viel dat niemand op (die regel draait dan nooit), en bij de
+    eerste skill werd het een wit scherm. Eén query voor alle koppelingen
+    samen, geen query per skill: een lijst hoort niet duurder te worden naarmate
+    je er meer hebt."""
     rows = db.query(Skill).order_by(Skill.priority.desc(), Skill.name.asc()).all()
-    return [_skill_dict(s) for s in rows]
+    per_skill = _linked_tools_per_skill(db, [s.id for s in rows])
+    return [{**_skill_dict(s), "tools": per_skill.get(s.id, [])} for s in rows]
 
 
 @router.post("")

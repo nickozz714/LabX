@@ -779,7 +779,9 @@ function SkillsSection() {
                 {s.description}
               </div>
               <div className="mt-1 flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">{s.tools.length} gekoppelde tool(s)</span>
+                <span className="text-xs text-muted-foreground">
+                  {(s.tools || []).length} gekoppelde tool(s)
+                </span>
                 <Button
                   variant="danger"
                   className="px-2 py-0.5 text-xs"

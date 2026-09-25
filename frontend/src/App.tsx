@@ -2,6 +2,7 @@ import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Shell } from "@/components/Shell";
+import { Foutvanger } from "@/components/Foutvanger";
 import { BevestigingProvider } from "@/components/Bevestiging";
 import { MeldingProvider } from "@/components/Meldingen";
 import { LoginPage } from "@/pages/LoginPage";
@@ -34,7 +35,10 @@ function AppRoutes() {
         path="/"
         element={
           <ProtectedRoute>
-            <Shell />
+            {/* Eén kapot veld in één scherm mag niet de hele app wit maken. */}
+            <Foutvanger>
+              <Shell />
+            </Foutvanger>
           </ProtectedRoute>
         }
       >
