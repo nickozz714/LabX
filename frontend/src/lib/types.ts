@@ -348,6 +348,11 @@ export interface WorkflowNode {
    *  hoogstens. Binnen de lus zijn `item` en `iteratie` beschikbaar. */
   bron?: string;
   max_items?: number;
+  /** Alleen op een bubbel of lus: hoe groot het vlak op het doek is. Puur
+   *  tekening, maar wel bewaard — een lus die je groter maakte omdat er zes
+   *  activiteiten in liggen, hoort dat na opslaan nog te zijn. */
+  breedte?: number;
+  hoogte?: number;
 }
 
 export interface WorkflowConditie {

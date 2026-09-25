@@ -108,6 +108,14 @@ def normaliseer_node(ruw: Dict[str, Any], index: int) -> Dict[str, Any]:
         # een mislukte tak erin.
         node["fout_gedrag"] = ("doorgaan" if str(ruw.get("fout_gedrag") or "stop") == "doorgaan"
                                else "stop")
+    if soort in ("parallel", "voorelk"):
+        # De maat van het vlak waar je activiteiten in sleept. Dit is puur
+        # tekening — de motor doet er niets mee — maar hij hoort wél bewaard te
+        # blijven: een lus die je groter maakte omdat er zes activiteiten in
+        # liggen, moet dat na opslaan nog zijn.
+        node["breedte"] = max(280, min(int(ruw.get("breedte") or 620), 2000))
+        node["hoogte"] = max(140, min(int(ruw.get("hoogte") or 220), 1600))
+
     # Herhalen kan op elke uitvoerende activiteit.
     if ruw.get("herhaal_over"):
         node["herhaal_over"] = str(ruw["herhaal_over"])

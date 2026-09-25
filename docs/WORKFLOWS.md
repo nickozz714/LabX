@@ -89,6 +89,11 @@ element van een lijst. Binnen de lus zijn `{{ item }}` (met zijn velden, zoals
 erin ligt. Dat is precies het verschil met `herhaal_over` op één activiteit:
 daar past maar één stap in, in een lus past een hele kleine workflow.
 
+Een lus en een bubbel zijn **van maat te veranderen**: selecteer hem op het
+doek en sleep aan een rand of een hoek (of tik de getallen in het paneel).
+Kleiner dan wat erin ligt kan niet — dan zou er een activiteit buiten vallen.
+De maat wordt met de workflow bewaard.
+
 Elke activiteit in de lus wordt gelogd met de ronde en het element waarin hij
 draaide, zodat het verslag van dertien rondes leesbaar blijft. De lus zelf
 staat op *bezig* tot de laatste ronde klaar is, en sluit af met hoeveel rondes

@@ -20,10 +20,32 @@ import {
 import type { Connection, Edge, Node, NodeChange, EdgeChange } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/types";
-import { NODE_TYPES, TAK_KLEUR } from "@/components/workflow/nodes";
+import { MaatContext, NODE_TYPES, TAK_KLEUR } from "@/components/workflow/nodes";
 
 const BUBBEL_BREEDTE = 620;
 const BUBBEL_HOOGTE = 220;
+/** De maat van een activiteitkaart (w-56 plus wat hij hoog wordt), waarmee we
+ *  uitrekenen hoe klein een bubbel nog mag worden. */
+const KAART_BREEDTE = 224;
+const KAART_HOOGTE = 104;
+const KANTLIJN = 16;
+
+/** Hoe groot dit omhulsel is: wat je zelf instelde, anders de standaardmaat. */
+function maatVan(n: WorkflowNode): { breedte: number; hoogte: number } {
+  return { breedte: n.breedte || BUBBEL_BREEDTE, hoogte: n.hoogte || BUBBEL_HOOGTE };
+}
+
+/** De kleinste maat waarbij alles wat erin ligt nog binnen de rand past.
+ *  Kleiner mogen maken zou een activiteit uit beeld duwen. */
+function minimumMaat(nodes: WorkflowNode[], groep: string) {
+  const kinderen = nodes.filter((n) => n.groep === groep);
+  return {
+    breedte: Math.max(280, ...kinderen.map(
+      (k) => (k.positie?.x ?? 0) + KAART_BREEDTE + KANTLIJN)),
+    hoogte: Math.max(140, ...kinderen.map(
+      (k) => (k.positie?.y ?? 0) + KAART_HOOGTE + KANTLIJN)),
+  };
+}
 
 function samenvatting(n: WorkflowNode): string {
   if (n.type === "agent") return (n.prompt || "").slice(0, 120) || "— nog geen opdracht —";
@@ -46,17 +68,24 @@ function naarFlow(nodes: WorkflowNode[], status: Record<string, string>): Node[]
   const gewoon = nodes.filter((n) => n.type !== "parallel" && n.type !== "voorelk");
   // Bubbels eerst: React Flow wil een ouder vóór zijn kinderen in de lijst.
   return [
-    ...bubbels.map((n) => ({
-      id: n.id,
-      type: "bubbel",
-      position: n.positie || { x: 0, y: 0 },
-      style: { width: BUBBEL_BREEDTE, height: BUBBEL_HOOGTE },
-      data: {
-        naam: n.naam, soort: n.type, samenvatting: samenvatting(n),
-        status: status[n.id],
-        aantal: nodes.filter((k) => k.groep === n.id).length,
-      },
-    })),
+    ...bubbels.map((n) => {
+      const maat = maatVan(n);
+      const minimum = minimumMaat(nodes, n.id);
+      return {
+        id: n.id,
+        type: "bubbel",
+        position: n.positie || { x: 0, y: 0 },
+        style: { width: maat.breedte, height: maat.hoogte },
+        width: maat.breedte,
+        height: maat.hoogte,
+        data: {
+          naam: n.naam, soort: n.type, samenvatting: samenvatting(n),
+          status: status[n.id],
+          aantal: nodes.filter((k) => k.groep === n.id).length,
+          minBreedte: minimum.breedte, minHoogte: minimum.hoogte,
+        },
+      };
+    }),
     ...gewoon.map((n) => ({
       id: n.id,
       type: "activiteit",
@@ -162,8 +191,9 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
     const doel = zelfEenGroep ? undefined : groepen.find((g) => {
       const gx = g.positie?.x ?? 0;
       const gy = g.positie?.y ?? 0;
-      return midden.x >= gx && midden.x <= gx + BUBBEL_BREEDTE
-          && midden.y >= gy && midden.y <= gy + BUBBEL_HOOGTE;
+      const { breedte, hoogte } = maatVan(g);
+      return midden.x >= gx && midden.x <= gx + breedte
+          && midden.y >= gy && midden.y <= gy + hoogte;
     });
     const nieuweGroep = doel?.id;
     const positie = nieuweGroep
@@ -174,6 +204,16 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
     stuur(nodes.map((n) => (n.id === gesleept.id
       ? { ...n, positie, groep: nieuweGroep }
       : n)), edges, veranderdeOuder);
+  }, [edges, nodes, stuur]);
+
+  /** Een bubbel is van maat veranderd. Slepen aan de bovenkant of de
+   *  linkerkant verplaatst hem óók, dus we leggen positie én maat vast. */
+  const opMaat = useCallback((id: string,
+                              maat: { x: number; y: number; width: number; height: number }) => {
+    stuur(nodes.map((n) => (n.id === id
+      ? { ...n, positie: { x: Math.round(maat.x), y: Math.round(maat.y) },
+          breedte: Math.round(maat.width), hoogte: Math.round(maat.height) }
+      : n)), edges);
   }, [edges, nodes, stuur]);
 
   const opNodesChange = useCallback((changes: NodeChange<Node>[]) => {
@@ -217,6 +257,7 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
     [rfNodes, geselecteerd]);
 
   return (
+    <MaatContext.Provider value={opMaat}>
     <ReactFlow
       nodes={gekleurd}
       edges={rfEdges}
@@ -234,6 +275,7 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
       <Controls />
       <MiniMap pannable zoomable className="!bg-card" />
     </ReactFlow>
+    </MaatContext.Provider>
   );
 }
 

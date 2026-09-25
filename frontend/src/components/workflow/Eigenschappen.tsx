@@ -64,6 +64,32 @@ function Conditie({ waarde, onChange, titel, hint, opties }: {
   );
 }
 
+/** De maat van een lus of bubbel. Slepen aan de randen op het doek is het
+ *  snelst, maar dat is niet te zien tot je hem selecteert — dus staat hij hier
+ *  ook, met de getallen erbij. */
+function Maat({ node, onChange, wat }: {
+  node: WorkflowNode;
+  onChange: (v: Partial<WorkflowNode>) => void;
+  wat: string;
+}) {
+  return (
+    <div>
+      <Label>Grootte op het doek</Label>
+      <div className="flex items-center gap-1">
+        <Input type="number" value={node.breedte ?? 620} className="w-24"
+               onChange={(e) => onChange({ breedte: Number(e.target.value) })} />
+        <span className="text-xs text-muted-foreground">×</span>
+        <Input type="number" value={node.hoogte ?? 220} className="w-24"
+               onChange={(e) => onChange({ hoogte: Number(e.target.value) })} />
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Selecteer de {wat} op het doek en sleep aan een rand of een hoek. Kleiner dan wat
+        erin ligt kan niet — dan zou er een activiteit buiten vallen.
+      </p>
+    </div>
+  );
+}
+
 export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lijsten = [],
                                 groepen = [] }: {
   node: WorkflowNode | null;
@@ -222,6 +248,7 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
               Een lijst die onverwacht duizend lang is, is duizend agent-beurten.
             </p>
           </div>
+          <Maat node={node} onChange={zet} wat="lus" />
           <div>
             <Label>Als een ronde mislukt</Label>
             <Select value={node.fout_gedrag || "stop"}
@@ -253,6 +280,7 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
               <option value="doorgaan">Doorgaan; de rest telt gewoon</option>
             </Select>
           </div>
+          <Maat node={node} onChange={zet} wat="bubbel" />
         </>
       )}
 

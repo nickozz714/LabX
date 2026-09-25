@@ -132,6 +132,27 @@ def test_een_verbinding_naar_een_verwijderde_activiteit_verdwijnt():
     assert edges == []
 
 
+def test_de_maat_van_een_lus_blijft_bewaard():
+    """Hoeveel er in een lus moet passen weet alleen de tekenaar. Een maat die
+    het opslaan niet overleeft, zet je elke keer opnieuw."""
+    nodes, _ = graph.normaliseer(
+        [{"id": "lus", "type": "voorelk", "naam": "Per groep",
+          "breedte": 900, "hoogte": 420},
+         {"id": "bub", "type": "parallel", "naam": "Tegelijk"},
+         {"id": "a", "type": "agent", "naam": "A"}], [])
+    lus, bubbel, activiteit = nodes
+    assert (lus["breedte"], lus["hoogte"]) == (900, 420)
+    assert (bubbel["breedte"], bubbel["hoogte"]) == (620, 220)   # standaardmaat
+    assert "breedte" not in activiteit                            # alleen omhulsels
+
+
+def test_een_onzinnige_maat_wordt_teruggebracht():
+    nodes, _ = graph.normaliseer(
+        [{"id": "lus", "type": "voorelk", "naam": "L", "breedte": 5, "hoogte": 99999}], [])
+    assert nodes[0]["breedte"] == 280
+    assert nodes[0]["hoogte"] == 1600
+
+
 def test_validatie_benoemt_wat_er_mist():
     nodes, edges = graph.normaliseer(
         [{"id": "a", "type": "agent", "naam": "Leeg"},
