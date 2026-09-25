@@ -244,6 +244,44 @@ class PlanService:
         self._vraag_werker_bij(lab.id)
         return None, next((r[1] for r in bezet_rijen), None)
 
+    @staticmethod
+    def bundelsleutel(item: TicketPlanItem) -> str:
+        """Waar dit ticket bij hoort. Zonder bundelnummer: bij zichzelf.
+
+        Eén sleutel voor beide gevallen scheelt overal een uitzondering — en
+        maakt meteen waar dat een planning zonder bundels zich precies gedraagt
+        als vroeger: elk ticket is dan zijn eigen bundel, dus elk ticket krijgt
+        zijn eigen werker."""
+        bundel = getattr(item, "bundel", None)
+        return f"bundel:{int(bundel)}" if bundel else f"item:{item.id}"
+
+    def _plek_voor_item(self, plan: TicketPlan,
+                        item: TicketPlanItem) -> Tuple[bool, Optional[int], Optional[int]]:
+        """Waar dit ticket mag draaien: (mag starten, werker-id, bezet door).
+
+        Dit is de kern van het bundelen. Het tweede ticket van een bundel gaat
+        NIET op zoek naar een vrije werker — het gaat naar de werker waar zijn
+        bundelgenoot al zit, en draait daar naast hem. Naar buiten toe is die
+        werker gewoon bezet: andere planningen, handmatig gestarte tickets en
+        chats zien hem als in gebruik, precies als voorheen.
+
+        Een ticket dat als eerste van zijn bundel start, volgt de oude weg: een
+        vrije werker claimen, of wachten tot er een is."""
+        sleutel = self.bundelsleutel(item)
+        for it in self.items(plan.id):
+            if it.state == "running" and self.bundelsleutel(it) == sleutel:
+                # Bundelgenoot draait al. Ook als die zonder werker draait (een
+                # lab dat bij de eerste start nog geen werkers had): dan is de
+                # plek "de container van het lab", en daar hoort deze dus ook.
+                if it.worker_id:
+                    from services.lab.lab_service import LabService
+                    LabService(self.db).touch_worker(it.worker_id)
+                return True, it.worker_id, None
+        werker, bezet_door = self._claim_worker(plan)
+        if werker is None and bezet_door is not None:
+            return False, None, bezet_door
+        return True, (werker.id if werker is not None else None), None
+
     def _vraag_werker_bij(self, lab_id: str) -> None:
         """Bijschalen op de achtergrond: een container starten en inrichten
         duurt te lang om een planning-tick op te laten wachten."""
@@ -358,12 +396,20 @@ class PlanService:
             self._meld_planning(plan, items)
             return {"plan": plan.id, "state": "done", "gestart": None}
 
-        ruimte = self._vrije_ruimte(plan, len(lopend))
+        # Een bundel bezet één werker, ongeacht hoeveel tickets erin zitten.
+        # De ruimte telt dus bundels: drie tickets die samen in één container
+        # draaien zijn samen één plek.
+        lopende_bundels = {self.bundelsleutel(i) for i in lopend}
+        ruimte = self._vrije_ruimte(plan, len(lopende_bundels))
         gestart: List[str] = []
         uitslag: Dict[str, Any] = {"plan": plan.id, "state": plan.state, "gestart": None}
 
         for volgende in wachtend:
-            if ruimte <= 0:
+            sleutel = self.bundelsleutel(volgende)
+            # Een ticket dat bij een al lopende bundel hoort, kost geen nieuwe
+            # plek: het schuift aan in de werker waar zijn bundelgenoot zit.
+            nieuwe_plek = sleutel not in lopende_bundels
+            if nieuwe_plek and ruimte <= 0:
                 break
             ticket = self.db.get(Ticket, volgende.ticket_id)
             if ticket is None:
@@ -398,8 +444,8 @@ class PlanService:
                     {"ticket": ticket.key, **botsing})
                 continue
 
-            werker, bezet_door = self._claim_worker(plan)
-            if werker is None and bezet_door is not None:
+            mag, werker_id, bezet_door = self._plek_voor_item(plan, volgende)
+            if not mag:
                 # Geen werker vrij: geen probleem maar een wachtrij. Zodra er
                 # een vrijkomt — of de autoscaler er een heeft bijgezet en
                 # ingericht — komt deze planning vanzelf aan bod.
@@ -415,7 +461,7 @@ class PlanService:
             volgende.error = None
             volgende.resume_at = None
             volgende.wait_reason = None
-            volgende.worker_id = werker.id if werker is not None else None
+            volgende.worker_id = werker_id
             volgende.started_at = _now_iso()
             plan.note = None
             plan.updated_at = _now_iso()
@@ -424,9 +470,9 @@ class PlanService:
             try:
                 res = await start_ticket_run(
                     self.db, ticket.id,
-                    extra_instruction=self._instructie_voor(plan, ticket),
+                    extra_instruction=self._instructie_voor(plan, ticket, volgende),
                     trigger=f"planning '{plan.name}'",
-                    lab_worker_id=werker.id if werker is not None else None)
+                    lab_worker_id=werker_id)
             except HTTPException as exc:
                 volgende.state = "failed"
                 volgende.error = str(exc.detail)[:2000]
@@ -445,7 +491,12 @@ class PlanService:
             self.db.commit()
             background_runs.on_finish(res["run_id"], _maak_afloop_hook(plan.id, volgende.id))
             gestart.append(ticket.key)
-            ruimte -= 1
+            # Pas NA een geslaagde start telt de bundel als lopend: anders zou
+            # een ticket dat niet startte zijn bundelgenoten meeslepen naar een
+            # werker die niemand heeft geclaimd.
+            if nieuwe_plek:
+                lopende_bundels.add(sleutel)
+                ruimte -= 1
 
         if gestart:
             uitslag["gestart"] = gestart[0] if len(gestart) == 1 else gestart
@@ -533,10 +584,15 @@ class PlanService:
         self.db.commit()
 
     def _vrije_ruimte(self, plan: TicketPlan, lopend: int) -> int:
-        """Hoeveel tickets er nog bij mogen.
+        """Hoeveel BUNDELS er nog bij mogen (`lopend` = lopende bundels).
+
+        Het telt bundels en geen tickets, omdat een bundel de eenheid is die
+        een werker bezet: drie tickets in één bundel zijn samen één plek. Voor
+        een planning zonder bundels verandert dat niets — daar is elk ticket
+        zijn eigen bundel, en telt dit dus gewoon tickets.
 
         Zonder eigen plafond is het antwoord "zoveel als er werkers vrij zijn",
-        en dat regelt `_claim_worker` toch al per ticket. Dan is dit alleen een
+        en dat regelt `_claim_worker` toch al per bundel. Dan is dit alleen een
         bovengrens tegen een lus die honderd keer probeert: meer dan er werkers
         kunnen zijn heeft geen zin.
         """
@@ -548,10 +604,12 @@ class PlanService:
         plafond = int(getattr(lab, "max_workers", 1) or 1) if lab is not None else 1
         return max(0, plafond - lopend)
 
-    def _instructie_voor(self, plan: TicketPlan, ticket: Ticket) -> Optional[str]:
+    def _instructie_voor(self, plan: TicketPlan, ticket: Ticket,
+                         item: Optional[TicketPlanItem] = None) -> Optional[str]:
         """De instructie van de planning, plus wat dit ticket over ZIJN plek
-        moet weten als de planning met aparte werkmappen draait."""
+        moet weten: met wie het de container deelt, en waar het werkt."""
         delen = [ (plan.instruction or "").strip() ]
+        delen.append(self._bundelgenoten_tekst(plan, item))
         if (plan.workspace_mode or "gedeeld") == "apart":
             map_ = self.werkmap(plan, ticket)
             delen.append(
@@ -563,6 +621,41 @@ class PlanService:
                 f"hetzelfde moment aan een ander ticket werkt.")
         tekst = "\n\n".join(d for d in delen if d)
         return tekst or None
+
+    def _bundelgenoten_tekst(self, plan: TicketPlan,
+                             item: Optional[TicketPlanItem]) -> str:
+        """Met wie dit ticket zijn container deelt.
+
+        Een agent die niet weet dat er een collega in dezelfde container zit,
+        doet precies de dingen die het misgaan: `pkill -f python`, een
+        dev-server op dezelfde poort, de browser afsluiten "want ik was klaar".
+        Hij hoeft er niet bang van te worden — hij moet het wéten, en hij moet
+        weten hoe hij het deelbare spul reserveert."""
+        if item is None or not getattr(item, "bundel", None):
+            return ""
+        genoten = [it for it in self.items(plan.id)
+                   if it.id != item.id and getattr(it, "bundel", None) == item.bundel
+                   and it.state in ("running", "waiting", "blocked")]
+        if not genoten:
+            return ""
+        tickets = {t.id: t for t in self.db.query(Ticket)
+                   .filter(Ticket.id.in_([g.ticket_id for g in genoten])).all()}
+        namen = ", ".join(
+            f"{tickets[g.ticket_id].key} ({tickets[g.ticket_id].title})"
+            for g in genoten if g.ticket_id in tickets)
+        return (
+            "### Je deelt deze container\n"
+            f"Dit ticket draait gelijktijdig met: {namen}. Jullie zitten in DEZELFDE "
+            "container en delen dus /workspace, de processen, de poorten, de browser en "
+            "de az-sessie — als twee mensen op één pc.\n\n"
+            "Wat dat van je vraagt:\n"
+            "- Raak geen processen van een ander aan. Geen `pkill`/`killall` op iets dat "
+            "je niet zelf startte.\n"
+            "- Wil je iets exclusiefs gebruiken (de browser, een vaste poort, een "
+            "playground), claim het dan eerst met `lab__resource__claim` en geef het vrij "
+            "met `lab__resource__release` zodra je klaar bent. Is het bezet, dan wacht je "
+            "of doe je eerst iets anders.\n"
+            "- Bestanden buiten je eigen werk laat je met rust.")
 
     @staticmethod
     def werkmap(plan: TicketPlan, ticket: Ticket) -> str:
@@ -851,6 +944,30 @@ class PlanService:
         self.db.commit()
         return self.items(plan_id)
 
+    def set_bundels(self, plan_id: int, bundels: Dict[int, Optional[int]]) -> List[TicketPlanItem]:
+        """Welke tickets samen in één werker mogen: {item_id: bundelnummer}.
+
+        Een leeg (None/0) bundelnummer betekent "in zijn eentje" — dat is de
+        standaard en het gedrag van vóór de bundels.
+
+        Een LOPEND item laten we met rust: dat zit al ergens, en zijn bundel
+        verplaatsen zou betekenen dat het volgens de administratie ineens in
+        een andere container draait dan waar het echt is."""
+        rijen = {i.id: i for i in self.items(plan_id)}
+        gewijzigd = []
+        for item_id, bundel in (bundels or {}).items():
+            it = rijen.get(int(item_id))
+            if it is None or it.state == "running":
+                continue
+            nieuw = int(bundel) if bundel else None
+            if nieuw != getattr(it, "bundel", None):
+                it.bundel = nieuw
+                gewijzigd.append(it.id)
+        if gewijzigd:
+            self.db.commit()
+            log.infox("Bundels bijgewerkt", plan=plan_id, regels=len(gewijzigd))
+        return self.items(plan_id)
+
     def remove_item(self, plan_id: int, item_id: int) -> None:
         it = self.db.get(TicketPlanItem, item_id)
         if it is None or it.plan_id != plan_id:
@@ -891,7 +1008,8 @@ class PlanService:
                     "ticket_key": t.key if t else None,
                     "ticket_title": t.title if t else "(verwijderd)",
                     "depends_on": list(getattr(t, "depends_on", None) or []) if t else [],
-                    "position": it.position, "state": it.state, "run_id": it.run_id,
+                    "position": it.position, "bundel": getattr(it, "bundel", None),
+                    "state": it.state, "run_id": it.run_id,
                     "error": it.error, "started_at": it.started_at,
                     "finished_at": it.finished_at,
                     # Wacht dit ticket op een tijdstip, en waar zit het aan?

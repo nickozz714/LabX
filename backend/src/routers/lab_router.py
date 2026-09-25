@@ -321,6 +321,7 @@ async def update_lab(lab_id: str, payload: Dict[str, Any], db: Session = Depends
         security_profile=payload.get("security_profile") if "security_profile" in payload else None,
         model=payload.get("model") if "model" in payload else "__unset__",
         azure_profile_id=payload.get("azure_profile_id") if "azure_profile_id" in payload else "__unset__",
+        claim_resources=payload.get("claim_resources") if "claim_resources" in payload else "__unset__",
     )
 
 
@@ -344,6 +345,41 @@ async def provision_lab(lab_id: str, payload: Optional[Dict[str, Any]] = None,
     lab.provision_status = "pending"
     db.commit()
     return {"ok": True, "provision_status": "pending"}
+
+
+@router.get("/{lab_id}/claims")
+def lab_claims(lab_id: str, db: Session = Depends(get_db)):
+    """Wat er nu gereserveerd is in dit lab, en wat er te reserveren valt."""
+    from models.lab import Lab
+    from services.lab.resources import ResourceService
+
+    lab = db.get(Lab, lab_id)
+    if lab is None:
+        raise HTTPException(status_code=404, detail="Lab niet gevonden")
+    svc = ResourceService(db)
+    return {"beschikbaar": [svc.to_dict(r) for r in svc.voor_lab(lab)],
+            "actief": svc.actief(lab_id)}
+
+
+@router.delete("/{lab_id}/claims/{resource_key}")
+def lab_claim_losbreken(lab_id: str, resource_key: str, db: Session = Depends(get_db)):
+    """Een reservering met de hand losbreken.
+
+    Bedoeld voor het geval dat een agent is vastgelopen of afgebroken en zijn
+    claim niet meer zelf vrijgeeft. De houdbaarheid vangt dat vanzelf op, maar
+    niet altijd snel genoeg als jij nu verder wilt."""
+    from models.claim_resource import ResourceClaim
+    from services.lab.resources import ResourceService
+
+    rijen = (db.query(ResourceClaim)
+             .filter(ResourceClaim.lab_id == lab_id,
+                     ResourceClaim.resource_key == resource_key.strip().lower(),
+                     ResourceClaim.released_at.is_(None)).all())
+    houders = {r.houder for r in rijen}
+    svc = ResourceService(db)
+    aantal = sum(svc.release(lab_id=lab_id, houder=h, resource_keys=[resource_key],
+                             reden="met de hand losgebroken") for h in houders)
+    return {"ok": True, "vrijgegeven": aantal}
 
 
 @router.get("/{lab_id}/tunnel")

@@ -61,6 +61,10 @@ export const boardApi = {
     api.post<PlanDto>(`/boards/${boardId}/plans/${planId}/cancel`),
   reorderPlan: (boardId: number, planId: number, itemIds: number[]) =>
     api.post<PlanDto>(`/boards/${boardId}/plans/${planId}/reorder`, { item_ids: itemIds }),
+  /** Welke tickets samen in één werker draaien: {item_id: bundelnummer}.
+   *  Een leeg nummer betekent "alleen". */
+  setPlanBundels: (boardId: number, planId: number, bundels: Record<number, number | null>) =>
+    api.post<PlanDto>(`/boards/${boardId}/plans/${planId}/bundels`, { bundels }),
   removePlanItem: (boardId: number, planId: number, itemId: number) =>
     api.delete<PlanDto>(`/boards/${boardId}/plans/${planId}/items/${itemId}`),
 

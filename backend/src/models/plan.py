@@ -112,6 +112,21 @@ class TicketPlanItem(Base):
     # Volgorde binnen de planning. Float, zodat herschikken geen hernummering
     # van de hele lijst vraagt — zelfde truc als Ticket.position.
     position: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Met welke andere tickets dit ticket in DEZELFDE werker mag draaien.
+    #
+    # Tickets met hetzelfde bundelnummer starten samen in één container en
+    # lopen daar naast elkaar; de bundels zelf gaan op volgorde. Zo kun je zes
+    # tickets oppakken en ze toch per twee laten lopen — parallel waar het mag,
+    # volgordelijk waar het moet.
+    #
+    # NULL = dit ticket vormt zijn eigen bundel, en dat is precies het gedrag
+    # van vóór deze kolom: één ticket per werker. Een bestaande planning
+    # verandert dus niet.
+    #
+    # Wat een bundel NIET is: isolatie. De tickets delen /workspace, de
+    # processen en de az-sessie van die container — net als twee mensen op één
+    # pc. Wie ze bij elkaar zet, zegt daarmee dat ze elkaar verdragen.
+    bundel: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="waiting")
 
     # De achtergrondrun die dit ticket heeft uitgevoerd, zodat het overzicht

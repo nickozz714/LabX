@@ -23,6 +23,9 @@ export interface Lab {
   allowed_tools: string[];
   allowed_skills: string[];
   azure_profile_id: number | null;
+  /** Welke resources in dit lab te reserveren zijn (sleutels uit de catalogus).
+   *  null = de meegeleverde standaard; een lege lijst = bewust niets. */
+  claim_resources: string[] | null;
   /** Aantal containers dat dit lab NU heeft (de autoscaler beweegt het). */
   worker_count: number;
   /** Ondergrens: zoveel werkers blijven altijd staan. */
@@ -508,6 +511,9 @@ export interface PlanItemDto {
   ticket_title: string;
   depends_on: string[];
   position: number;
+  /** Tickets met hetzelfde nummer draaien samen in ÉÉN werker; de bundels
+   *  zelf gaan op volgorde. null = dit ticket draait alleen (de standaard). */
+  bundel: number | null;
   state: "waiting" | "blocked" | "running" | "done" | "failed" | "skipped";
   run_id: string | null;
   error: string | null;

@@ -15,6 +15,7 @@ import { Download, Loader2, RefreshCw } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
+import { LabResources } from "@/components/LabResources";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { LabGeheimen } from "@/components/LabGeheimen";
 import { HostMeter } from "@/components/HostMeter";
@@ -573,6 +574,9 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
           </div>
           <div className="border-t border-border pt-3">
             <WerkerRegel lab={lab} onChanged={onChanged} />
+          </div>
+          <div className="border-t border-border pt-3">
+            <LabResources lab={lab} onChanged={onChanged} />
           </div>
           <div className="border-t border-border pt-3">
             <AzureProfilePicker

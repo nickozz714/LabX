@@ -321,6 +321,63 @@ def build_server():
             meta={"labx_builtin": "lab__start"},
         ))
 
+        # Reserveren van het spul waar er maar één van is in deze container.
+        # Nodig sinds een planning meerdere tickets in dezelfde werker kan
+        # zetten: dan zitten er twee agents achter dezelfde sandbox-pc. Dit
+        # staat NAAST board__claim — dat gaat over logische bronnen die de
+        # agent zelf benoemt (een pipeline, een tabel), dit over het fysieke
+        # spul dat LabX kent en de mens beheert.
+        mcp.add_tool(FunctionTool(
+            name="lab__resource__claim",
+            description=("Reserveer iets waar er in deze container maar ÉÉN van is — de "
+                         "browser, een playground, een vaste poort — vóórdat je het gebruikt. "
+                         "Nodig omdat er tegelijk een andere agent in dezelfde container kan "
+                         "werken: jullie delen processen, poorten en de browser.\n"
+                         "Welke namen er zijn, zie je met lab__resource__status. Een naam die "
+                         "niet bestaat wordt niet stilzwijgend geaccepteerd — je krijgt de "
+                         "lijst terug.\n"
+                         "Is hij bezet, dan hoor je door wie en sinds wanneer. Met wait_seconds "
+                         "blijf je hangen tot hij vrijkomt (hoogstens 300 seconden); zonder dat "
+                         "krijg je meteen antwoord en kun je zelf iets anders doen.\n"
+                         "Geef hem vrij met lab__resource__release zodra je klaar bent. Vergeet "
+                         "je dat, dan vervalt de claim vanzelf na de tijd die bij de resource "
+                         "staat — maar dan heeft je collega intussen wel zitten wachten.\n"
+                         "Args: resource* (string), reason (string), wait_seconds (number)"),
+            parameters={"type": "object", "properties": {
+                "resource": {"type": "string", "description": "Sleutel, bv. chrome-browser"},
+                "reason": {"type": "string", "description": "Waarvoor, kort"},
+                "wait_seconds": {"type": "number",
+                                 "description": "Hoe lang wachten als hij bezet is (0 = niet wachten)"},
+            }, "required": ["resource"]},
+            fn=_lab_env_handler("lab__resource__claim"),
+            meta={"labx_builtin": "lab__resource__claim"},
+        ))
+
+        mcp.add_tool(FunctionTool(
+            name="lab__resource__release",
+            description=("Geef een gereserveerde resource weer vrij zodra je hem niet meer "
+                         "nodig hebt. Zonder argument geef je alles vrij wat jij vasthield. "
+                         "Doe dit ook als je klaar bent met de browser maar nog even doorwerkt "
+                         "— een collega die staat te wachten kan dan meteen door.\n"
+                         "Args: resource (string, leeg = alles)"),
+            parameters={"type": "object", "properties": {
+                "resource": {"type": "string"},
+            }},
+            fn=_lab_env_handler("lab__resource__release"),
+            meta={"labx_builtin": "lab__resource__release"},
+        ))
+
+        mcp.add_tool(FunctionTool(
+            name="lab__resource__status",
+            description=("Wat er in dit lab te reserveren valt, en wie er nu op zit. Gebruik "
+                         "dit als je niet zeker weet welke naam je moet claimen, of om te zien "
+                         "of je alleen in deze container zit.\n"
+                         "Args: geen"),
+            parameters={"type": "object", "properties": {}},
+            fn=_lab_env_handler("lab__resource__status"),
+            meta={"labx_builtin": "lab__resource__status"},
+        ))
+
         mcp.add_tool(FunctionTool(
             name="lab__write_file",
             description=("Schrijf een bestand IN de lab-container, byte-exact (betrouwbaarder dan "

@@ -69,6 +69,8 @@ _ADDITIVE_COLUMNS = {
     ],
     "ticket_plan_items": [
         ("worker_id", "INTEGER"),
+        # NULL = eigen bundel; bestaande planningen draaien dus onveranderd.
+        ("bundel", "INTEGER"),
         # Dit ITEM ligt stil tot dit moment; de planning loopt door.
         ("resume_at", "VARCHAR(64)"),
         # En waaróm het stilligt, in de woorden van de agent.
@@ -86,6 +88,8 @@ _ADDITIVE_COLUMNS = {
         ("max_workers", "INTEGER NOT NULL DEFAULT 1"),
         ("security_profile", "VARCHAR(32) NOT NULL DEFAULT 'generiek'"),
         ("model", "VARCHAR(128)"),
+        # NULL = de meegeleverde standaard (zie services/lab/resources.py).
+        ("claim_resources", "TEXT"),
     ],
     "schedules": [
         ("json_schema", "TEXT"),
@@ -203,6 +207,7 @@ def init_db() -> None:
         azure_profile,
         background_run,
         board,
+        claim_resource,
         guard_audit,
         guard_rule,
         lab,
