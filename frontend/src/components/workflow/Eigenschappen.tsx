@@ -49,10 +49,14 @@ function Conditie({ waarde, onChange, titel, hint, opties }: {
   );
 }
 
-export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lijsten = [] }: {
+export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lijsten = [],
+                                groepen = [] }: {
   node: WorkflowNode | null;
   onChange: (n: WorkflowNode) => void;
   onDelete: (id: string) => void;
+  /** De lussen en bubbels op het doek, om een activiteit in te kunnen zetten
+   *  zonder te slepen. */
+  groepen?: WorkflowNode[];
   /** Waar deze activiteit naar kan verwijzen — uit de schema's van de andere
    *  activiteiten. Vult de keuzelijsten, zodat niemand een pad hoeft te raden. */
   verwijzingen?: Verwijzing[];
@@ -89,6 +93,40 @@ export function Eigenschappen({ node, onChange, onDelete, verwijzingen = [], lij
           Verwijzen doe je met <code>stap.{node.sleutel}.uitvoer</code>
         </p>
       </div>
+
+      {node.type !== "parallel" && node.type !== "voorelk" && groepen.length > 0 && (
+        <div>
+          <Label>Zit in</Label>
+          <Select
+            value={node.groep || ""}
+            onChange={(e) => {
+              const id = e.target.value || undefined;
+              const doel = groepen.find((g) => g.id === id);
+              // Een nieuwe plek erbij: binnen een groep is de positie relatief
+              // aan die groep, daarbuiten aan het doek. Zonder dit zou hij op
+              // een onzichtbare plek belanden.
+              const positie = doel
+                ? { x: 24, y: 56 }
+                : { x: (node.positie?.x ?? 0) + ((groepen.find(
+                      (g) => g.id === node.groep)?.positie?.x) ?? 0) + 40,
+                    y: (node.positie?.y ?? 0) + ((groepen.find(
+                      (g) => g.id === node.groep)?.positie?.y) ?? 0) + 40 };
+              zet({ groep: id, positie });
+            }}
+          >
+            <option value="">De hoofdstroom</option>
+            {groepen.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.type === "voorelk" ? "↻ lus" : "⇉ bubbel"} — {g.naam}
+              </option>
+            ))}
+          </Select>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            In een lus draait deze activiteit één keer per element; in een bubbel tegelijk
+            met de andere. Slepen op het doek doet hetzelfde.
+          </p>
+        </div>
+      )}
 
       {node.type === "agent" && (
         <>

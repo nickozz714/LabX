@@ -242,7 +242,9 @@ export function WorkflowEditorPage() {
 
         <div className="w-96 overflow-y-auto border-l border-border">
           <Eigenschappen node={geselecteerd} onChange={wijzigNode} onDelete={verwijderNode}
-                         verwijzingen={verwijzingen} lijsten={lijsten} />
+                         verwijzingen={verwijzingen} lijsten={lijsten}
+                         groepen={nodes.filter((n) => n.type === "voorelk"
+                                                      || n.type === "parallel")} />
         </div>
       </div>
 

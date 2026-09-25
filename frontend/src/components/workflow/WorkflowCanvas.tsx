@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider,
-  addEdge, useEdgesState, useNodesState, useReactFlow,
+  addEdge, useEdgesState, useNodesState,
 } from "@xyflow/react";
 import type { Connection, Edge, Node, NodeChange, EdgeChange } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -99,17 +99,14 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
 }) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<Node>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const { getIntersectingNodes } = useReactFlow();
   // De laatste graaf die we ZELF naar buiten stuurden. Zonder dit zou elke
   // wijziging van buiten (opslaan geeft de genormaliseerde graaf terug) de
   // posities weer terugzetten naar waar ze stonden.
   const eigen = useRef<string>("");
+  const edgesRef = useRef<Edge[]>([]);
+  edgesRef.current = rfEdges;
 
   // De graaf opnieuw opbouwen doen we ALLEEN als de graaf zelf veranderde.
-  // Stond `status` hier ook bij, dan bouwde elke verversing van de lopende run
-  // (elke drie seconden) het hele doek opnieuw op — met alle activiteiten
-  // erin. Dat is wat een editor traag laat aanvoelen zonder dat er iets
-  // gebeurt.
   useEffect(() => {
     const sleutel = JSON.stringify({ nodes, edges });
     if (sleutel === eigen.current) return;
@@ -128,79 +125,92 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
         : { ...n, data: { ...n.data, status: status[n.id] } })));
   }, [status, setRfNodes]);
 
-  const stuurDoor = useCallback((vNodes: Node[], vEdges: Edge[]) => {
-    const uit: WorkflowNode[] = vNodes.map((rn) => {
-      const origineel = nodes.find((n) => n.id === rn.id);
-      return {
-        ...(origineel as WorkflowNode),
-        positie: { x: Math.round(rn.position.x), y: Math.round(rn.position.y) },
-        groep: (rn.parentId as string) || undefined,
-      };
+  /** De graaf naar buiten sturen. `herbouw` als de OUDERS veranderd zijn: dan
+   *  moet React Flow zijn nodes opnieuw opbouwen, want een kind verhuizen is
+   *  meer dan een positie. */
+  const stuur = useCallback((uitNodes: WorkflowNode[], uitEdges: WorkflowEdge[],
+                             herbouw = false) => {
+    eigen.current = herbouw ? "" : JSON.stringify({ nodes: uitNodes, edges: uitEdges });
+    onChange(uitNodes, uitEdges);
+  }, [onChange]);
+
+  /**
+   * Loslaten na het slepen. Dit is de enige plek waar een positie of een groep
+   * wordt vastgelegd — eerder deed `onNodesChange` dat óók, met de nodes van
+   * vóór de herindeling, en dan won die: je activiteit sprong meteen de lus
+   * weer uit.
+   *
+   * We rekenen met de graaf van LabX zelf en niet met wat React Flow in zijn
+   * state heeft: die lijst is in deze callback een render oud, en een groep
+   * heeft daar geen betrouwbare afmeting.
+   */
+  const opDragStop = useCallback((_e: unknown, rfNode: Node) => {
+    const gesleept = nodes.find((n) => n.id === rfNode.id);
+    if (!gesleept) return;
+    const groepen = nodes.filter((n) => n.type === "parallel" || n.type === "voorelk");
+    const ouderNu = nodes.find((n) => n.id === gesleept.groep);
+    // De positie van React Flow is relatief aan de huidige ouder; wij rekenen
+    // alles om naar het doek zelf.
+    const abs = {
+      x: rfNode.position.x + (ouderNu?.positie?.x ?? 0),
+      y: rfNode.position.y + (ouderNu?.positie?.y ?? 0),
+    };
+    // Het MIDDEN van de kaart bepaalt waar hij in valt — een hoek die net over
+    // de rand steekt hoort niet te tellen.
+    const midden = { x: abs.x + 112, y: abs.y + 40 };
+    const zelfEenGroep = gesleept.type === "parallel" || gesleept.type === "voorelk";
+    const doel = zelfEenGroep ? undefined : groepen.find((g) => {
+      const gx = g.positie?.x ?? 0;
+      const gy = g.positie?.y ?? 0;
+      return midden.x >= gx && midden.x <= gx + BUBBEL_BREEDTE
+          && midden.y >= gy && midden.y <= gy + BUBBEL_HOOGTE;
     });
-    const uitEdges: WorkflowEdge[] = vEdges.map((re) => ({
-      van: re.source,
-      naar: re.target,
-      soort: ((re.data as { soort?: string })?.soort
-              || re.sourceHandle
-              || "succes") as WorkflowEdge["soort"],
-    }));
-    eigen.current = JSON.stringify({ nodes: uit, edges: uitEdges });
-    onChange(uit, uitEdges);
-  }, [nodes, onChange]);
+    const nieuweGroep = doel?.id;
+    const positie = nieuweGroep
+      ? { x: Math.max(12, Math.round(abs.x - (doel?.positie?.x ?? 0))),
+          y: Math.max(44, Math.round(abs.y - (doel?.positie?.y ?? 0))) }
+      : { x: Math.round(abs.x), y: Math.round(abs.y) };
+    const veranderdeOuder = (nieuweGroep || undefined) !== (gesleept.groep || undefined);
+    stuur(nodes.map((n) => (n.id === gesleept.id
+      ? { ...n, positie, groep: nieuweGroep }
+      : n)), edges, veranderdeOuder);
+  }, [edges, nodes, stuur]);
 
   const opNodesChange = useCallback((changes: NodeChange<Node>[]) => {
     onNodesChange(changes);
-    // Alleen doorsturen als er iets BLIJVENDS veranderde: een selectie of een
-    // muisbeweging is geen wijziging van de workflow.
-    if (changes.some((c) => c.type === "position" && !c.dragging)) {
-      setRfNodes((huidig) => { stuurDoor(huidig, rfEdges); return huidig; });
-    }
-  }, [onNodesChange, rfEdges, setRfNodes, stuurDoor]);
+    // Alleen verwijderen hoort hier nog door te gaan; posities en groepen gaan
+    // via opDragStop, zodat er maar één plek is die ze vastlegt.
+    const weg = new Set(changes.filter((c) => c.type === "remove").map((c) => c.id));
+    if (!weg.size) return;
+    const over = nodes.filter((n) => !weg.has(n.id) && !weg.has(n.groep || ""));
+    const ids = new Set(over.map((n) => n.id));
+    queueMicrotask(() => stuur(over, edges.filter((e) => ids.has(e.van) && ids.has(e.naar)),
+                               true));
+  }, [edges, nodes, onNodesChange, stuur]);
 
   const opEdgesChange = useCallback((changes: EdgeChange<Edge>[]) => {
     onEdgesChange(changes);
-    if (changes.some((c) => c.type === "remove")) {
-      setRfEdges((huidig) => { stuurDoor(rfNodes, huidig); return huidig; });
-    }
-  }, [onEdgesChange, rfNodes, setRfEdges, stuurDoor]);
+    const weg = new Set(changes.filter((c) => c.type === "remove").map((c) => c.id));
+    if (!weg.size) return;
+    const over = edgesRef.current.filter((e) => !weg.has(e.id));
+    queueMicrotask(() => stuur(nodes, over.map((re) => ({
+      van: re.source, naar: re.target,
+      soort: ((re.data as { soort?: string })?.soort || re.sourceHandle
+              || "succes") as WorkflowEdge["soort"],
+    }))));
+  }, [nodes, onEdgesChange, stuur]);
 
   const opVerbinden = useCallback((verbinding: Connection) => {
     const soort = (verbinding.sourceHandle || "succes") as WorkflowEdge["soort"];
-    const nieuw = addEdge({
+    stuur(nodes, [...edges, { van: verbinding.source, naar: verbinding.target, soort }]);
+    setRfEdges((huidig) => addEdge({
       ...verbinding,
       label: soort,
       style: { stroke: TAK_KLEUR[soort] || "#94a3b8", strokeWidth: 2 },
       labelStyle: { fontSize: 10, fill: TAK_KLEUR[soort] || "#94a3b8" },
       data: { soort },
-    }, rfEdges);
-    setRfEdges(nieuw);
-    stuurDoor(rfNodes, nieuw);
-  }, [rfEdges, rfNodes, setRfEdges, stuurDoor]);
-
-  /** Een activiteit die op een bubbel valt, wordt er kind van — en andersom. */
-  const opDragStop = useCallback((_e: unknown, node: Node) => {
-    if (node.type === "bubbel") { stuurDoor(rfNodes, rfEdges); return; }
-    const overlap = getIntersectingNodes(node).filter((n) => n.type === "bubbel");
-    const nieuweOuder = overlap[0]?.id;
-    if (nieuweOuder === node.parentId) { stuurDoor(rfNodes, rfEdges); return; }
-
-    const bijgewerkt = rfNodes.map((n) => {
-      if (n.id !== node.id) return n;
-      const bubbel = rfNodes.find((b) => b.id === (nieuweOuder || n.parentId));
-      if (nieuweOuder && bubbel) {
-        // Positie wordt relatief aan de bubbel.
-        return { ...n, parentId: nieuweOuder, extent: "parent" as const,
-                 position: { x: Math.max(8, node.position.x - bubbel.position.x),
-                             y: Math.max(32, node.position.y - bubbel.position.y) } };
-      }
-      // Eruit gesleept: terug naar absolute positie.
-      return { ...n, parentId: undefined, extent: undefined,
-               position: { x: node.position.x + (bubbel?.position.x || 0),
-                           y: node.position.y + (bubbel?.position.y || 0) } };
-    });
-    setRfNodes(bijgewerkt);
-    stuurDoor(bijgewerkt, rfEdges);
-  }, [getIntersectingNodes, rfEdges, rfNodes, setRfNodes, stuurDoor]);
+    }, huidig));
+  }, [edges, nodes, setRfEdges, stuur]);
 
   const gekleurd = useMemo(
     () => rfNodes.map((n) => ({ ...n, selected: n.id === geselecteerd })),
