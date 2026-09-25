@@ -12,6 +12,7 @@ element één stap oplevert, en dat er van élke activiteit een spoor overblijft
 met invoer, uitvoer en verbruik.
 """
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -740,3 +741,96 @@ def test_de_lus_stopt_bij_een_fout_tenzij_je_doorgaan_kiest(db, monkeypatch):
     assert run2.status == "completed"
     rondes = [s for s in _stappen(db, run2) if s.naam == "Valt omdoorgaan"]
     assert len(rondes) == 3, "alle drie de rondes horen geprobeerd te zijn"
+
+
+# ── het spoor van een lus en een keuze ──────────────────────────────────────
+#
+# Een run waarin een lus dertien rondes draaide, was in het verslag niet van
+# een rechte keten te onderscheiden: elke activiteit stond er los onder, zonder
+# ronde en zonder element. En een `als` schreef alleen zijn voorwaarde en
+# "nee" op — niet de waarde waarop hij besloot. Daardoor was aan een workflow
+# die stil de verkeerde tak nam, niets te zien.
+
+def test_een_activiteit_in_een_lus_weet_in_welke_ronde_hij_zat(db, monkeypatch):
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.groepen"},
+        {"id": "x", "type": "agent", "naam": "Bekijken", "prompt": "b", "groep": "lus"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"}])
+    run, _ = _draai(db, monkeypatch, wf, {
+        "Analyse": '{"groepen": [{"title": "printer"}, {"title": "vpn"}]}'})
+    stappen = [s for s in _stappen(db, run) if s.naam == "Bekijken"]
+    assert [s.iteratie for s in stappen] == [1, 2]
+    assert [json.loads(s.item)["title"] for s in stappen] == ["printer", "vpn"]
+
+
+def test_een_als_in_een_lus_legt_vast_waarop_hij_besloot(db, monkeypatch):
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.groepen"},
+        {"id": "c", "type": "als", "naam": "Simpel?", "groep": "lus",
+         "conditie": {"links": "item.complexity", "operator": "==", "rechts": "simpel"}},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"}])
+    run, _ = _draai(db, monkeypatch, wf, {
+        "Analyse": '{"groepen": [{"complexity": "complex"}, {"complexity": "simpel"}]}'})
+    keuzes = [s for s in _stappen(db, run) if s.soort == "als"]
+    assert [s.tak for s in keuzes] == ["nee", "ja"]
+    assert [s.resultaat_json["links_waarde"] for s in keuzes] == ["complex", "simpel"]
+    assert [s.iteratie for s in keuzes] == [1, 2]
+    # en het staat ook leesbaar in het verslag, niet alleen als json
+    assert 'item.complexity → "complex"' in keuzes[0].invoer
+
+
+def test_de_lus_staat_pas_op_klaar_als_de_rondes_gedraaid_zijn(db, monkeypatch):
+    """Stond hij meteen op "ok", dan las het verslag alsof de lus klaar was
+    voordat er één ronde was gedraaid — alsof er niet gelust werd."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.groepen"},
+        {"id": "x", "type": "agent", "naam": "Bekijken", "prompt": "b", "groep": "lus"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"}])
+    run, _ = _draai(db, monkeypatch, wf, {"Analyse": '{"groepen": [1, 2, 3]}'})
+    lus = [s for s in _stappen(db, run) if s.soort == "voorelk"][0]
+    assert lus.status == "ok"
+    assert lus.uitvoer == "3 ronde(s) gedaan"
+    assert lus.resultaat_json["aantal"] == 3
+
+
+def test_een_lus_zonder_lijst_zegt_waarom_hij_niets_deed(db, monkeypatch):
+    """Nul rondes omdat de lijst leeg was, en nul rondes omdat de verwijzing
+    niet bestaat, zagen er precies hetzelfde uit."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.incidenten"},
+        {"id": "x", "type": "agent", "naam": "Bekijken", "prompt": "b", "groep": "lus"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"}])
+    run, _ = _draai(db, monkeypatch, wf, {"Analyse": '{"groepen": [1]}'})
+    lus = [s for s in _stappen(db, run) if s.soort == "voorelk"][0]
+    assert "leverde niets op" in lus.uitvoer
+    assert "groepen" in lus.uitvoer  # wat er wél in zat
+
+
+# ── de aanhalingstekensval ──────────────────────────────────────────────────
+
+def test_aanhalingstekens_om_een_waarde_worden_genegeerd():
+    """`'simpel'` in een schermpje betekent simpel. Vergelijken met de
+    letterlijke tekst levert een `nee` waar niets aan te zien is."""
+    ctx = {"item": {"complexity": "simpel"}}
+    for rechts in ("'simpel'", '"simpel"', "simpel"):
+        assert expressies.evalueer(
+            {"links": "item.complexity", "operator": "==", "rechts": rechts}, ctx) is True
+
+
+def test_de_uitleg_noemt_de_velden_die_er_wel_zijn():
+    """Een voorwaarde op `item.complexiteit` terwijl het veld `complexity`
+    heet, was een stille nee-tak."""
+    _, uitleg = expressies.evalueer_uitgelegd(
+        {"links": "item.complexiteit", "operator": "==", "rechts": "simpel"},
+        {"item": {"complexity": "simpel", "title": "printer"}})
+    assert uitleg["links_bestaat"] is False
+    assert uitleg["beschikbare_velden"] == ["complexity", "title"]
+    assert "wel aanwezig" in expressies.beschrijf_uitkomst(uitleg)

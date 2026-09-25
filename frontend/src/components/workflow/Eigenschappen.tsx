@@ -20,6 +20,14 @@ import { TekstMetVerwijzingen } from "@/components/workflow/TekstMetVerwijzingen
 const OPERATOREN = ["==", "!=", ">", ">=", "<", "<=", "bevat", "bevat_niet",
                     "is_leeg", "is_niet_leeg"];
 
+/** Een waarde waar de gebruiker quotes omheen tikte omdat het veld op code
+ *  lijkt. De motor negeert ze; hier staat waarom er dan toch iets anders
+ *  vergeleken wordt dan er staat. */
+function geciteerd(waarde: unknown): boolean {
+  const t = String(waarde ?? "").trim();
+  return t.length >= 2 && t[0] === t[t.length - 1] && (t[0] === "'" || t[0] === '"');
+}
+
 function Conditie({ waarde, onChange, titel, hint, opties }: {
   waarde: WorkflowConditie | undefined;
   onChange: (c: WorkflowConditie) => void;
@@ -40,10 +48,17 @@ function Conditie({ waarde, onChange, titel, hint, opties }: {
           {OPERATOREN.map((o) => <option key={o} value={o}>{o}</option>)}
         </Select>
         {!zonderRechts && (
-          <Input value={String(c.rechts ?? "")} placeholder="0"
+          <Input value={String(c.rechts ?? "")} placeholder="simpel"
                  onChange={(e) => onChange({ ...c, rechts: e.target.value })} />
         )}
       </div>
+      {!zonderRechts && geciteerd(c.rechts) && (
+        <p className="text-[11px] text-amber-600">
+          Hier hoeven geen aanhalingstekens omheen — LabX vergelijkt met{" "}
+          <code>{String(c.rechts).trim().slice(1, -1)}</code>, niet met de tekst
+          inclusief quotes.
+        </p>
+      )}
       {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
