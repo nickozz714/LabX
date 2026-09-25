@@ -302,3 +302,37 @@ def test_een_kluiswaarde_die_terugkomt_wordt_ook_in_een_lab_gemaskeerd(labdb):
     VaultService(labdb).zet(naam="teams-webhook", waarde=WEBHOOK)
     uit = SecretService(labdb).maskeer_in("lab-1", f"curl gaf 202 voor {WEBHOOK}")
     assert WEBHOOK not in uit
+
+
+# ── de weg van de verwijzing door het gesprek ───────────────────────────────
+#
+# Een `{{secret:naam}}` die je in een skill, een chatbericht of een
+# board-ticket schrijft, reist als TEKST naar het model en wordt pas bij de
+# tool of het commando ingevuld. Dat werkt alleen als het model weet dat hij
+# hem ongewijzigd moet doorgeven; anders vraagt hij jou om de waarde, en dan is
+# de hele kluis een omweg. Die afspraak staat in de systeemprompt, en hoort
+# daar niet stilletjes uit te verdwijnen.
+
+def test_de_agent_krijgt_te_horen_wat_een_verwijzing_is():
+    from services.agent.chat_agent import AGENT_PREAMBLE
+
+    assert "{{secret:name}}" in AGENT_PREAMBLE
+    tekst = AGENT_PREAMBLE.lower()
+    # verbatim doorgeven, niet invullen en niet om de waarde vragen
+    assert "verbatim" in tekst
+    assert "never ask the user for the value" in tekst
+    assert "lab__secret_list" in AGENT_PREAMBLE
+
+
+def test_de_verwijzing_gaat_ongewijzigd_naar_het_model(kluis):
+    """Wat in een ticket of een bericht staat, gaat zoals het er staat naar het
+    model: de kluis vult alleen in op weg naar BUITEN."""
+    ticket = ("Stuur een samenvatting naar het incidentenkanaal met "
+              "`curl -X POST \"{{secret:teams-webhook}}\" -d @bericht.json`")
+    # niets in de gespreksweg raakt de tekst aan — dit is de invariant, en de
+    # tegenhanger van test_een_tool_krijgt_de_waarde_het_model_nooit.
+    assert WEBHOOK not in ticket
+    assert "{{secret:teams-webhook}}" in ticket
+    # en pas bij de aanroep komt de waarde erin
+    ingevuld, gebruikt, onbekend = kluis.vul_in({"url": "{{secret:teams-webhook}}"})
+    assert ingevuld["url"] == WEBHOOK and gebruikt == ["teams-webhook"] and onbekend == []

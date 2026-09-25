@@ -3,6 +3,7 @@
  * oauth token is write-only (same pattern as an Azure profile secret).
  */
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { settingsApi } from "@/lib/settings";
 import { labsApi } from "@/lib/labs";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,7 +13,6 @@ import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/component
 import { useMelding } from "@/components/Meldingen";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ClaimResourcesCard } from "@/components/ClaimResourcesCard";
-import { GeheimenCard } from "@/components/GeheimenCard";
 
 export function SettingsPage() {
   const melding = useMelding();
@@ -345,7 +345,17 @@ export function SettingsPage() {
       </Card>
 
       <LabExtrasCard />
-      <GeheimenCard />
+      {/* De kluis heeft een eigen tab gekregen: het is iets dat je erbij pakt
+          terwijl je een skill schrijft, niet iets dat je één keer instelt. Hier
+          blijft een wegwijzer staan, want hier zocht je hem. */}
+      <Card className="p-4">
+        <h2 className="text-sm font-semibold">Geheimen</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          De kluis staat nu onder <Link to="/kluis" className="text-primary underline">Kluis</Link>{" "}
+          in de balk bovenaan — één plek voor webhook-URL&apos;s, sleutels en wachtwoorden, te
+          gebruiken in elk lab met <code>{"{{secret:naam}}"}</code>.
+        </p>
+      </Card>
       <ClaimResourcesCard />
 
       <NotificationsCard />

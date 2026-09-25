@@ -8,6 +8,7 @@ import { MeldingProvider } from "@/components/Meldingen";
 import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { GuardPage } from "@/pages/GuardPage";
+import { KluisPage } from "@/pages/KluisPage";
 import { LabsPage } from "@/pages/LabsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -53,6 +54,7 @@ function AppRoutes() {
         <Route path="workflows/:id" element={<WorkflowEditorPage />} />
         <Route path="schedules" element={<SchedulesPage />} />
         <Route path="azure-profiles" element={<AzureProfilesPage />} />
+        <Route path="kluis" element={<KluisPage />} />
         <Route path="guard" element={<GuardPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

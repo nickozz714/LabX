@@ -8,7 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
-import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench } from "lucide-react";
+import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench } from "lucide-react";
 import { chatApi } from "@/lib/chat";
 
 const WIZARD_DISMISSED_KEY = "labx_wizard_dismissed";
@@ -24,6 +24,9 @@ const NAV = [
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/schedules", label: "Scheduling", icon: CalendarClock },
   { to: "/azure-profiles", label: "Azure-profielen", icon: KeyRound },
+  // Eigen tab en geen kaartje in de instellingen: dit pak je erbij terwijl je
+  // een skill schrijft of een ticket opstelt.
+  { to: "/kluis", label: "Kluis", icon: Lock },
   { to: "/guard", label: "Data-guard", icon: ShieldCheck },
   { to: "/settings", label: "Instellingen", icon: Settings },
 ];
