@@ -95,3 +95,31 @@ def test_zonder_schema_blijft_er_gewoon_uitvoer_over():
          {"id": "b", "type": "als", "naam": "Check"}], [])
     paden = {v["pad"] for v in vw.beschikbaar(nodes, edges, "b")}
     assert paden == {"stap.doen.uitvoer", "stap.doen.status"}
+
+
+# ── de graaf die NU in het scherm staat ─────────────────────────────────────
+
+def test_de_live_graaf_levert_item_op_ook_als_er_nog_niets_is_opgeslagen():
+    """Het geval waar dit voor bestaat: je sleept een `als` in een lus en de
+    keuzelijst moet meteen `item` tonen. Rekende hij met de opgeslagen versie,
+    dan stond daar nog niets van die lus in — en kreeg je een lijst zonder het
+    element waar je juist mee verder wilde."""
+    nodes, edges = _graaf([
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.root_cause_analyse.json.incidentGroups"},
+        {"id": "c", "type": "als", "naam": "Complex?", "groep": "lus"},
+    ])
+    paden = [v["pad"] for v in vw.beschikbaar(nodes, edges, "c")]
+    assert paden[0] == "item"
+    assert "item.complexity" in paden
+
+
+def test_een_lus_zonder_bron_geeft_in_elk_geval_item_en_iteratie():
+    """Je zet de lus neer, sleept er iets in, en kiest de lijst pas daarna. Ook
+    dan hoort `item` te bestaan — anders lijkt de lus niet te werken."""
+    nodes, edges = _graaf([
+        {"id": "lus", "type": "voorelk", "naam": "Per groep"},
+        {"id": "c", "type": "agent", "naam": "Doen", "prompt": "x", "groep": "lus"},
+    ])
+    paden = [v["pad"] for v in vw.beschikbaar(nodes, edges, "c")]
+    assert "item" in paden and "iteratie" in paden

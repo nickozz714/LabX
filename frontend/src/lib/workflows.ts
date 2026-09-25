@@ -36,6 +36,13 @@ export const workflowApi = {
   verwijzingen: (id: number, nodeId?: string) =>
     api.get<{ verwijzingen: Verwijzing[]; lijsten: Verwijzing[] }>(
       `/workflows/${id}/verwijzingen` + (nodeId ? `?node=${encodeURIComponent(nodeId)}` : "")),
+  /** Hetzelfde, maar over de graaf die NU in het scherm staat — inclusief wat
+   *  je net hebt gesleept en nog niet hebt opgeslagen. Anders ontbreekt `item`
+   *  precies op het moment dat je een activiteit in een lus zet. */
+  verwijzingenLive: (id: number, nodes: WorkflowNode[], edges: WorkflowEdge[],
+                     nodeId?: string) =>
+    api.post<{ verwijzingen: Verwijzing[]; lijsten: Verwijzing[] }>(
+      `/workflows/${id}/verwijzingen`, { nodes, edges, node: nodeId || null }),
   /** Het volledige verslag: per activiteit invoer, redenatie, uitvoer, prijs. */
   run_detail: (runId: string) => api.get<WorkflowRunDto>(`/workflows/runs/${runId}`),
   cancelRun: (runId: string) =>

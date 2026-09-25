@@ -169,6 +169,29 @@ def workflow_verwijzingen(workflow_id: int, node: Optional[str] = None,
             "lijsten": vw.lijsten(nodes)}
 
 
+@router.post("/{workflow_id}/verwijzingen")
+def workflow_verwijzingen_live(workflow_id: int, payload: Dict[str, Any],
+                               db: Session = Depends(get_db)):
+    """Dezelfde vraag, maar over de graaf die NU in het scherm staat.
+
+    De GET hierboven rekent met de opgeslagen workflow, en dat is precies fout
+    op het moment dat je aan het bouwen bent: sleep je een activiteit in een
+    lus, dan bestaat `item` in je scherm allang terwijl de server nog de oude
+    versie kent. Je kreeg dan een keuzelijst zonder het element waar je juist
+    mee verder wilde — en de enige uitweg was eerst opslaan.
+
+    De graaf gaat dus mee in het verzoek. Hij wordt alleen gelezen; er wordt
+    niets opgeslagen."""
+    from services.workflows import verwijzingen as vw
+
+    if not db.get(Workflow, workflow_id):
+        raise HTTPException(status_code=404, detail="Workflow niet gevonden")
+    nodes, edges = graph.normaliseer(payload.get("nodes") or [], payload.get("edges") or [])
+    node = (payload.get("node") or None)
+    return {"verwijzingen": vw.beschikbaar(nodes, edges, node),
+            "lijsten": vw.lijsten(nodes)}
+
+
 @router.get("/{workflow_id}")
 def get_workflow(workflow_id: int, db: Session = Depends(get_db)):
     w = db.get(Workflow, workflow_id)
