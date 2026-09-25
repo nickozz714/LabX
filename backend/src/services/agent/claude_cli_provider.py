@@ -215,7 +215,12 @@ class ClaudeCliProvider:
         if instructions:
             cmd += ["--append-system-prompt", instructions]
         cmd += ["--permission-mode", "bypassPermissions"]
-        cmd += ["--allowedTools", "mcp__labx WebSearch Task ToolSearch"]
+        # `Skill` hoort erbij sinds LabX-skills ook als echte skill-bestanden
+        # in de skills-map van de CLI staan (services/skills/cli_skills.py).
+        # Stond hij er niet, dan kon de agent een skill die hij ZAG niet
+        # aanroepen — en dat was precies het raadsel "ik heb een skill
+        # toegevoegd en de chat kan hem niet vinden".
+        cmd += ["--allowedTools", "mcp__labx WebSearch Task ToolSearch Skill"]
         cmd += ["--disallowedTools", _NATIVE_TOOLS_DICHT]
         if self._max_turns:
             cmd += ["--max-turns", str(int(self._max_turns))]

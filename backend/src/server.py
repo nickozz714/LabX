@@ -196,6 +196,10 @@ async def lifespan(_app: FastAPI):
         # graaf heeft, wordt niet aangeraakt.
         from services.workflows.migratie import zet_oude_workflows_om
         zet_oude_workflows_om(db)
+        # Skills als echte skill-bestanden neerzetten, zodat de agent ze kan
+        # vinden in plaats van ze alleen in zijn prompt te krijgen.
+        from services.skills.cli_skills import sync_cli_skills
+        sync_cli_skills(db)
         fixed = await LabService(db).reconcile_on_start()
         if fixed:
             log.infox("Labs gereconcilieerd bij opstart", fixed=fixed)

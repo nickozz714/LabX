@@ -267,10 +267,17 @@ export interface SkillDto {
   is_system: boolean;
   is_enabled: boolean;
   priority: number;
+  /** Waar deze skill geldt: "sessie" (altijd bij het gesprek), "lab" (alleen
+   *  in een lab dat hem toelaat) of "beide". Leeg/onbekend = "beide". */
+  usage_scope: SkillScope;
   created_at: string;
   updated_at: string;
+  /** De lijst-endpoint stuurt dit mee; ouder gedrag deed dat niet en maakte
+   *  het scherm wit. Blijf hem dus defensief lezen. */
   tools: SkillToolLink[];
 }
+
+export type SkillScope = "sessie" | "lab" | "beide";
 
 export interface WorkflowStep {
   index: number;

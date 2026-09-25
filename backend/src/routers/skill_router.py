@@ -26,12 +26,35 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _sync(db: Session) -> None:
+    """De skills-map van de CLI gelijktrekken. Best-effort: een skill opslaan
+    mag nooit falen omdat een map niet te schrijven is — de instructies gaan
+    sowieso mee in de prompt."""
+    try:
+        from services.skills.cli_skills import sync_cli_skills
+        sync_cli_skills(db)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _scope(waarde: Any) -> str:
+    """Een onbekende waarde valt terug op "beide" in plaats van te weigeren:
+    waar een skill geldt is een instelling, en die hoort nooit de reden te zijn
+    dat opslaan faalt."""
+    from models.skill import SKILL_USAGE_SCOPES
+
+    tekst = str(waarde or "").strip().lower()
+    return tekst if tekst in SKILL_USAGE_SCOPES else "beide"
+
+
 def _skill_dict(s: Skill) -> Dict[str, Any]:
     return {
         "id": s.id, "name": s.name, "display_name": s.display_name,
         "description": s.description, "instructions": s.instructions,
         "input_schema": s.input_schema, "output_schema": s.output_schema,
         "is_system": s.is_system, "is_enabled": s.is_enabled, "priority": s.priority,
+        # sessie | lab | beide — leeg betekent "beide" (zie models/skill.py).
+        "usage_scope": (s.usage_scope or "beide"),
         "created_at": s.created_at, "updated_at": s.updated_at,
     }
 
@@ -105,6 +128,7 @@ def create_skill(payload: Dict[str, Any], db: Session = Depends(get_db)):
         instructions=payload.get("instructions") or "",
         input_schema=payload.get("input_schema"), output_schema=payload.get("output_schema"),
         is_enabled=bool(payload.get("is_enabled", True)), priority=int(payload.get("priority") or 0),
+        usage_scope=_scope(payload.get("usage_scope")),
         created_at=now, updated_at=now,
     )
     db.add(s)
@@ -118,6 +142,7 @@ def create_skill(payload: Dict[str, Any], db: Session = Depends(get_db)):
                          is_enabled=bool(entry.get("is_enabled", True)),
                          instructions=(entry.get("instructions") or None)))
     db.commit()
+    _sync(db)
     return {**_skill_dict(s), "tools": _linked_tools(db, s.id)}
 
 
@@ -138,8 +163,11 @@ def update_skill(skill_id: int, payload: Dict[str, Any], db: Session = Depends(g
                   "output_schema", "is_enabled", "priority"):
         if field in payload:
             setattr(s, field, payload[field])
+    if "usage_scope" in payload:
+        s.usage_scope = _scope(payload["usage_scope"])
     s.updated_at = _now_iso()
     db.commit()
+    _sync(db)
     return {**_skill_dict(s), "tools": _linked_tools(db, s.id)}
 
 
@@ -151,6 +179,9 @@ def delete_skill(skill_id: int, db: Session = Depends(get_db)):
     db.query(SkillTool).filter(SkillTool.skill_id == skill_id).delete(synchronize_session=False)
     db.delete(s)
     db.commit()
+    # Ook zijn skill-bestand hoort weg: een verwijderde skill die de agent nog
+    # kan vinden is erger dan een die er nooit was.
+    _sync(db)
     return {"ok": True}
 
 
@@ -171,4 +202,5 @@ def set_skill_tools(skill_id: int, payload: Dict[str, Any], db: Session = Depend
                          instructions=(entry.get("instructions") or None)))
     s.updated_at = _now_iso()
     db.commit()
+    _sync(db)
     return {**_skill_dict(s), "tools": _linked_tools(db, s.id)}
