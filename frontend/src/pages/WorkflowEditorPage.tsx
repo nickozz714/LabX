@@ -167,11 +167,19 @@ export function WorkflowEditorPage() {
 
   useEffect(() => {
     if (!wf) return;
-    workflowApi.verwijzingen(wf.id, selectie || undefined)
-      .then((r) => { setVerwijzingen(r.verwijzingen); setLijsten(r.lijsten); })
-      .catch(() => { setVerwijzingen([]); setLijsten([]); });
-    // Ook na een wijziging aan de graaf: een nieuw schema levert nieuwe velden.
-  }, [wf, selectie, nodes]);
+    // De graaf gaat MEE in het verzoek, ook als hij nog niet is opgeslagen:
+    // sleep je een activiteit in een lus, dan hoort `item` meteen in de
+    // keuzelijst te staan — niet pas na opslaan.
+    //
+    // Even wachten met versturen, want `nodes` verandert bij elke toetsaanslag
+    // in een opdrachtveld.
+    const t = setTimeout(() => {
+      workflowApi.verwijzingenLive(wf.id, nodes, edges, selectie || undefined)
+        .then((r) => { setVerwijzingen(r.verwijzingen); setLijsten(r.lijsten); })
+        .catch(() => { setVerwijzingen([]); setLijsten([]); });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [wf, selectie, nodes, edges]);
 
   const geselecteerd = useMemo(
     () => nodes.find((n) => n.id === selectie) || null, [nodes, selectie]);
