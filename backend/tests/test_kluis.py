@@ -223,3 +223,82 @@ def test_het_gebruik_belandt_in_het_auditspoor_zonder_de_waarde(tool_db, monkeyp
 def test_zonder_geheimen_verandert_er_niets_aan_de_aanroep(tool_db, monkeypatch):
     _, doorgegeven = _voer_uit(tool_db, {"tekst": "gewoon een bericht"}, monkeypatch)
     assert doorgegeven == {"tekst": "gewoon een bericht"}
+
+
+# ── de kluis in een lab ─────────────────────────────────────────────────────
+#
+# Dit is wat "overal te gebruiken" waard maakt: een geheim uit de kluis hoort
+# in een shell-commando in élk lab te werken, langs dezelfde weg als een geheim
+# van het lab zelf — dus via een bestand in de container en nooit als tekst op
+# een commandoregel.
+
+@pytest.fixture()
+def labdb():
+    from db.database import Base
+    from models.lab import Lab
+    from models.lab_secret import LabSecret
+    motor = create_engine("sqlite://")
+    Base.metadata.create_all(motor, tables=[
+        Secret.__table__, LabSecret.__table__, Lab.__table__])
+    sessie = sessionmaker(bind=motor)()
+    yield sessie
+    sessie.close()
+
+
+class _NepRuntime:
+    """Onthoudt wat er de container in ging, zonder er een te hebben."""
+
+    def __init__(self):
+        self.stdin = []
+
+    async def exec(self, _cid, _argv, stdin=None, timeout=None):
+        if stdin:
+            self.stdin.append(stdin.decode())
+        return {"output": "", "exit_code": 0}
+
+
+def _bereid_voor(db, commando, lab_id="lab-1"):
+    import asyncio
+    from services.lab.secrets import SecretService
+    runtime = _NepRuntime()
+    uit = asyncio.run(SecretService(db).bereid_voor(
+        lab_id, commando, runtime=runtime, container_id="c1"))
+    return uit, runtime
+
+
+def test_een_geheim_uit_de_kluis_werkt_in_een_shell_commando(labdb):
+    VaultService(labdb).zet(naam="teams-webhook", waarde=WEBHOOK)
+    (commando, gebruikt, onbekend), runtime = _bereid_voor(
+        labdb, 'curl -X POST "{{secret:teams-webhook}}" -d @bericht.json')
+    assert gebruikt == ["teams-webhook"] and onbekend == []
+    # De waarde staat NIET in het commando — daar staat de variabele.
+    assert WEBHOOK not in commando
+    assert "${LABX_SECRET_TEAMS_WEBHOOK}" in commando
+    # En hij ging via stdin naar het bestand in de container.
+    assert any(WEBHOOK in s for s in runtime.stdin)
+
+
+def test_een_geheim_van_een_andere_klant_werkt_hier_niet(labdb):
+    VaultService(labdb).zet(naam="klantsleutel", waarde=WEBHOOK, lab_ids=["ander-lab"])
+    (commando, gebruikt, onbekend), _ = _bereid_voor(labdb, 'curl "{{secret:klantsleutel}}"')
+    assert onbekend == ["klantsleutel"] and gebruikt == []
+    assert "{{secret:klantsleutel}}" in commando      # en dus geen waarde
+
+
+def test_het_lab_wint_van_de_kluis(labdb):
+    """De specifiekere afspraak telt: zo overschrijft een lab een algemene
+    waarde zonder dat de kluis aangepast hoeft te worden."""
+    from services.lab.secrets import SecretService
+    VaultService(labdb).zet(naam="token", waarde="uit-de-kluis-maar-lang-genoeg")
+    SecretService(labdb).zet("lab-1", naam="token", waarde="van-het-lab-zelf-en-lang")
+    (_, gebruikt, _), runtime = _bereid_voor(labdb, 'echo "{{secret:token}}"')
+    assert gebruikt == ["token"]
+    assert any("van-het-lab-zelf-en-lang" in s for s in runtime.stdin)
+    assert not any("uit-de-kluis-maar-lang-genoeg" in s for s in runtime.stdin)
+
+
+def test_een_kluiswaarde_die_terugkomt_wordt_ook_in_een_lab_gemaskeerd(labdb):
+    from services.lab.secrets import SecretService
+    VaultService(labdb).zet(naam="teams-webhook", waarde=WEBHOOK)
+    uit = SecretService(labdb).maskeer_in("lab-1", f"curl gaf 202 voor {WEBHOOK}")
+    assert WEBHOOK not in uit

@@ -20,6 +20,11 @@ de verwijzing staan zoals hij is; het model ziet de naam en nooit de waarde.
 Ze gebruiken dezelfde vorm: `{{secret:naam}}`. Bestaat een naam in allebei, dan
 wint het lab-geheim — dat is de specifiekere afspraak.
 
+De kluis staat ook **bij elk lab** in beeld, onder de geheimen van dat lab:
+wat er geldt is daar te zien zonder eerst naar Instellingen te hoeven. Beheren
+gebeurt op één plek — Instellingen → Geheimen — want een geheim dat je op drie
+plekken kunt wijzigen, staat op drie plekken anders.
+
 ## Waar je ze kunt gebruiken
 
 - **Argumenten van elke tool.** Het model schrijft `{{secret:teams-webhook}}`
