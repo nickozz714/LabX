@@ -13,6 +13,7 @@
  */
 import { useEffect, useState } from "react";
 import { scheduleApi, workflowApi } from "@/lib/workflows";
+import { ParameterInvuller } from "@/components/workflow/Parameters";
 import { boardApi } from "@/lib/boards";
 import { labsApi } from "@/lib/labs";
 import type { BoardDto, Lab, ScheduleDto, ScheduleKind, ScheduleRunDto, WorkflowDto } from "@/lib/types";
@@ -190,9 +191,16 @@ function ScheduleModal({
   const [boardColumn, setBoardColumn] = useState(existing?.board_column || "");
   const [maxTickets, setMaxTickets] = useState(existing?.board_max_tickets ?? 1);
   const [jsonSchema, setJsonSchema] = useState(existing?.json_schema || "");
+  // De invoer waarmee DEZE schedule zijn workflow start. Hier en niet op de
+  // workflow: dezelfde workflow hoort elke nacht voor een andere klant te
+  // kunnen draaien zonder dat je hem kopieert.
+  const [parameters, setParameters] = useState<Record<string, string>>(
+    Object.fromEntries(Object.entries(existing?.parameters || {})
+      .map(([k, v]) => [k, String(v)])));
   const [error, setError] = useState<string | null>(null);
 
   const board = boards.find((b) => b.id === boardId);
+  const gekozenWorkflow = workflows.find((w) => w.id === workflowId);
 
   // Het lab volgt het board: board-werk draait per definitie in het lab van
   // dat board, dus die twee uit elkaar laten lopen levert alleen verwarring op.
@@ -213,6 +221,7 @@ function ScheduleModal({
       board_column: kind === "board" ? boardColumn || null : null,
       board_max_tickets: kind === "board" ? Number(maxTickets) || 1 : 1,
       json_schema: kind === "prompt" ? jsonSchema.trim() || null : null,
+      parameters: kind === "workflow" ? parameters : {},
     };
     try {
       if (existing) await scheduleApi.update(existing.id, payload);
@@ -262,16 +271,32 @@ function ScheduleModal({
         )}
 
         {kind === "workflow" && (
-          <div>
-            <Label>Workflow</Label>
-            <Select value={workflowId} onChange={(e) => setWorkflowId(Number(e.target.value))}>
-              <option value="">Kies een workflow…</option>
-              {workflows.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </Select>
+          <div className="space-y-3">
+            <div>
+              <Label>Workflow</Label>
+              <Select value={workflowId} onChange={(e) => setWorkflowId(Number(e.target.value))}>
+                <option value="">Kies een workflow…</option>
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {gekozenWorkflow?.parameters?.length ? (
+              <div className="rounded-md border border-border p-2">
+                <Label>Waarmee moet hij draaien?</Label>
+                <div className="mt-2">
+                  <ParameterInvuller parameters={gekozenWorkflow.parameters}
+                                     waarden={parameters} onChange={setParameters} />
+                </div>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Wat je leeg laat, valt terug op de standaardwaarde van de workflow. Een
+                  verplicht veld dat leeg blijft, laat deze schedule mislukken in plaats van
+                  half draaien.
+                </p>
+              </div>
+            ) : null}
           </div>
         )}
 

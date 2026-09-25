@@ -1,7 +1,7 @@
 import { api } from "@/lib/api";
 import type {
   ScheduleDto, ScheduleRunDto, Verwijzing, WorkflowDto, WorkflowEdge, WorkflowNode,
-  WorkflowRunDto, WorkflowStep,
+  WorkflowParameter, WorkflowRunDto, WorkflowStep,
 } from "@/lib/types";
 
 export const workflowApi = {
@@ -21,10 +21,13 @@ export const workflowApi = {
    *  (naam opgeslagen, graaf nog niet) wil niemand. */
   opslaan: (id: number, payload: {
     name: string; description: string; nodes: WorkflowNode[]; edges: WorkflowEdge[];
+    parameters: WorkflowParameter[];
   }) => api.patch<WorkflowDto>(`/workflows/${id}`, payload),
-  /** Starten geeft meteen de run terug; het werk loopt op de achtergrond. */
-  run: (id: number, labId: string) =>
-    api.post<WorkflowRunDto>(`/workflows/${id}/run`, { lab_id: labId }),
+  /** Starten geeft meteen de run terug; het werk loopt op de achtergrond.
+   *  `invoer` zijn de waarden voor de parameters van deze workflow; wat je
+   *  weglaat valt terug op de standaardwaarde. */
+  run: (id: number, labId: string, invoer?: Record<string, unknown>) =>
+    api.post<WorkflowRunDto>(`/workflows/${id}/run`, { lab_id: labId, invoer: invoer || {} }),
   /** De laatste runs — handmatig én gepland, want dat is hetzelfde ding. */
   runs: (workflowId?: number, limit = 50) =>
     api.get<WorkflowRunDto[]>(
@@ -40,9 +43,10 @@ export const workflowApi = {
    *  je net hebt gesleept en nog niet hebt opgeslagen. Anders ontbreekt `item`
    *  precies op het moment dat je een activiteit in een lus zet. */
   verwijzingenLive: (id: number, nodes: WorkflowNode[], edges: WorkflowEdge[],
-                     nodeId?: string) =>
+                     nodeId?: string, parameters?: WorkflowParameter[]) =>
     api.post<{ verwijzingen: Verwijzing[]; lijsten: Verwijzing[] }>(
-      `/workflows/${id}/verwijzingen`, { nodes, edges, node: nodeId || null }),
+      `/workflows/${id}/verwijzingen`,
+      { nodes, edges, node: nodeId || null, parameters: parameters ?? null }),
   /** Het volledige verslag: per activiteit invoer, redenatie, uitvoer, prijs. */
   run_detail: (runId: string) => api.get<WorkflowRunDto>(`/workflows/runs/${runId}`),
   cancelRun: (runId: string) =>

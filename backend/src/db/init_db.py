@@ -101,6 +101,8 @@ _ADDITIVE_COLUMNS = {
         ("board_id", "INTEGER"),
         ("board_column", "VARCHAR(64)"),
         ("board_max_tickets", "INTEGER NOT NULL DEFAULT 1"),
+        # De parameterwaarden waarmee deze schedule zijn workflow start.
+        ("parameters_json", "TEXT"),
     ],
     "threads": [
         ("model", "VARCHAR(128)"),
@@ -131,6 +133,9 @@ _ADDITIVE_COLUMNS = {
         # zijn stappen afgeleid zodra hij bewerkt of uitgevoerd wordt.
         ("nodes_json", "TEXT"),
         ("edges_json", "TEXT"),
+        # De invoerparameters. Leeg voor een bestaande workflow: die verwacht
+        # geen invoer en blijft dus draaien zoals hij deed.
+        ("parameters_json", "TEXT"),
     ],
     "workflow_runs": [
         ("worker_id", "INTEGER"),

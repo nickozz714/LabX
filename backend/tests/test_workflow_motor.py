@@ -201,9 +201,9 @@ def _workflow(db, nodes, edges):
     return w
 
 
-def _draai(db, monkeypatch, workflow, antwoorden):
-    """De run helemaal doorlopen, met een agent die vooraf bepaalde antwoorden
-    geeft. Zo test dit de MOTOR en niet het model."""
+def _neem_beurten_over(db, monkeypatch, antwoorden):
+    """De agent vervangen door vooraf bepaalde antwoorden, en teruggeven wat
+    hij te zien kreeg. Zo testen deze tests de MOTOR en niet het model."""
     from db import database
     beurten = []
 
@@ -218,8 +218,13 @@ def _draai(db, monkeypatch, workflow, antwoorden):
     monkeypatch.setattr(engine, "_agent_beurt", _nep_beurt)
     monkeypatch.setattr(database, "SessionLocal", lambda: db)
     monkeypatch.setattr(db, "close", lambda: None)
+    return beurten
 
-    run = engine.maak_run(db, workflow, lab_id="lab-1")
+
+def _draai(db, monkeypatch, workflow, antwoorden, invoer=None):
+    """De run helemaal doorlopen."""
+    beurten = _neem_beurten_over(db, monkeypatch, antwoorden)
+    run = engine.maak_run(db, workflow, lab_id="lab-1", invoer=invoer)
     asyncio.run(engine.voer_uit(run.id))
     db.refresh(run)
     return run, beurten
@@ -855,3 +860,99 @@ def test_de_uitleg_noemt_de_velden_die_er_wel_zijn():
     assert uitleg["links_bestaat"] is False
     assert uitleg["beschikbare_velden"] == ["complexity", "title"]
     assert "wel aanwezig" in expressies.beschrijf_uitkomst(uitleg)
+
+
+# ── invoerparameters ────────────────────────────────────────────────────────
+#
+# Een workflow die "de incidenten van Swinkels" ophaalt, had die klantnaam in
+# de opdracht van elke activiteit staan. Voor de volgende klant kopieerde je
+# hem, en daarna liepen er twee uit elkaar. De motor kende `invoer.x` al; wat
+# ontbrak was een manier om te zeggen wélke invoer een workflow verwacht.
+
+from services.workflows import parameters as params  # noqa: E402
+
+
+def test_een_parameter_zonder_bruikbare_naam_wordt_niet_bewaard():
+    """`invoer.klant naam` valt niet te schrijven; zo'n rij hoort niet in de
+    opslag terecht te komen als iets waar nooit naar te verwijzen valt."""
+    uit = params.normaliseer([
+        {"naam": "klant"}, {"naam": "Klant Naam"}, {"naam": ""},
+        {"naam": "klant", "omschrijving": "dubbel"},   # al gezien
+        {"naam": "jaar", "soort": "getal", "standaard": "2026"},
+    ])
+    assert [p["naam"] for p in uit] == ["klant", "jaar"]
+    assert uit[1]["standaard"] == 2026          # getal, geen tekst
+
+
+def test_standaardwaarden_vullen_aan_wat_je_niet_opgeeft():
+    lijst = params.normaliseer([
+        {"naam": "klant", "standaard": "Swinkels"},
+        {"naam": "diepgang", "soort": "getal", "standaard": 3},
+        {"naam": "droogdraaien", "soort": "waar/onwaar", "standaard": True},
+    ])
+    waarden, ontbreekt = params.waarden(lijst, {"klant": "Vion"})
+    assert waarden == {"klant": "Vion", "diepgang": 3, "droogdraaien": True}
+    assert ontbreekt == []
+
+
+def test_een_verplichte_parameter_die_leeg_blijft_wordt_gemeld():
+    """Halverwege ontdekken dat een opdracht 'haal de incidenten op van '
+    zei, kost een agent-beurt en levert niets op."""
+    lijst = params.normaliseer([{"naam": "klant", "verplicht": True}])
+    _, ontbreekt = params.waarden(lijst, {"klant": "   "})
+    assert ontbreekt == ["klant"]
+
+
+def test_invoer_die_geen_parameter_is_blijft_staan():
+    """Een run die van buiten iets extra's meekrijgt (een ticket, een id uit
+    een koppeling) hoort daar niet op te stuiten."""
+    waarden, _ = params.waarden(params.normaliseer([{"naam": "klant"}]),
+                                {"klant": "Vion", "ticket": "SWI-104"})
+    assert waarden == {"klant": "Vion", "ticket": "SWI-104"}
+
+
+def test_de_parameters_staan_in_de_keuzelijst():
+    lijst = params.normaliseer([
+        {"naam": "klant", "omschrijving": "welke klant", "standaard": "Swinkels"},
+        {"naam": "omgeving", "soort": "keuze", "opties": ["dev", "prd"]},
+    ])
+    paden = {v["pad"]: v["omschrijving"] for v in params.verwijzingen(lijst)}
+    assert "standaard: Swinkels" in paden["invoer.klant"]
+    assert "dev, prd" in paden["invoer.omgeving"]
+
+
+def test_een_activiteit_gebruikt_de_invoer_van_de_run(db, monkeypatch):
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Ophalen",
+         "prompt": "haal de incidenten op van {{ invoer.klant }} ({{ invoer.omgeving }})"},
+    ], [])
+    from models.workflow import Workflow
+    w = db.get(Workflow, wf.id)
+    w.parameters_json = params.normaliseer([
+        {"naam": "klant", "verplicht": True},
+        {"naam": "omgeving", "soort": "keuze", "opties": ["dev", "prd"], "standaard": "prd"}])
+    db.commit()
+    waarden, _ = params.waarden(w.parameters_json, {"klant": "Vion"})
+    run = engine.maak_run(db, w, lab_id="lab-1", invoer=waarden)
+    beurten = _neem_beurten_over(db, monkeypatch, {})
+    asyncio.run(engine.voer_uit(run.id))
+    assert beurten[0]["opdracht"] == "haal de incidenten op van Vion (prd)"
+
+
+def test_ook_in_een_lus_blijft_de_invoer_bereikbaar(db, monkeypatch):
+    """Elke ronde begint met een schone kopie van de context — de invoer van de
+    run hoort daar gewoon in te zitten."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Analyse", "prompt": "x", "json_schema": "{}"},
+        {"id": "lus", "type": "voorelk", "naam": "Per groep",
+         "bron": "stap.analyse.json.groepen"},
+        {"id": "x", "type": "agent", "naam": "Bekijken", "groep": "lus",
+         "prompt": "{{ invoer.klant }}: {{ item }}"},
+    ], [{"van": "a", "naar": "lus", "soort": "succes"}])
+    from models.workflow import Workflow
+    w = db.get(Workflow, wf.id)
+    run = engine.maak_run(db, w, lab_id="lab-1", invoer={"klant": "Vion"})
+    beurten = _neem_beurten_over(db, monkeypatch, {"Analyse": '{"groepen": ["a", "b"]}'})
+    asyncio.run(engine.voer_uit(run.id))
+    assert [b["opdracht"] for b in beurten if b["node"] == "Bekijken"] \
+        == ["Vion: a", "Vion: b"]
