@@ -99,12 +99,42 @@ class ChatAgent:
     def __init__(self, db: Session):
         self.db = db
 
-    def _enabled_domain_skill_names(self) -> List[str]:
+    def _enabled_domain_skill_names(self, lab_id: Optional[str] = None) -> List[str]:
+        """De skills die in DEZE beurt gelden.
+
+        Een skill zegt zelf waar hij hoort (`usage_scope`, zie models/skill.py):
+
+        - `sessie` — bij het gesprek: altijd mee, ongeacht het lab.
+        - `lab`    — bij een lab: alleen als dat lab hem in zijn lijst heeft.
+                     Anders zou een skill die over één omgeving gaat in elke
+                     chat meepraten.
+        - `beide` (en leeg, dus alles van vóór deze keuze) — altijd mee, en
+          daarnaast bij een lab aan te vinken. Dat is het oude gedrag, en dus
+          verandert er niets aan wat er al stond.
+        """
         from models.skill import Skill
         rows = (self.db.query(Skill)
                 .filter(Skill.is_enabled == True, Skill.is_system == False)  # noqa: E712
                 .order_by(Skill.name.asc()).all())
-        return [s.name for s in rows if s.name]
+        toegestaan = self._lab_skill_allowlist(lab_id)
+        namen = []
+        for s in rows:
+            if not s.name:
+                continue
+            scope = (getattr(s, "usage_scope", None) or "beide").lower()
+            if scope == "lab" and s.name not in toegestaan:
+                continue
+            namen.append(s.name)
+        return namen
+
+    def _lab_skill_allowlist(self, lab_id: Optional[str]) -> set:
+        """Welke skills dit lab expliciet toelaat. Leeg als er geen lab is of
+        er niets is aangevinkt — en dan telt alleen wat sowieso overal geldt."""
+        if not lab_id:
+            return set()
+        from models.lab import Lab
+        lab = self.db.get(Lab, lab_id)
+        return {str(x).strip() for x in (getattr(lab, "allowed_skills", None) or [])}
 
     def _skill_instructions_block(self, skill_names: List[str]) -> str:
         """How-to guidance for enabled skills, including each linked tool's
@@ -139,8 +169,17 @@ class ChatAgent:
             used += len(block)
         if not parts:
             return ""
-        head = ("LabX skill guidance — how to use specific mcp__labx tools. "
-               "Discover a tool's schema with tool search, then call it directly:")
+        # De kop zei dat dit over mcp__labx-tools ging. Dat klopte niet meer:
+        # een skill is net zo vaak een werkwijze zonder tools, en wie er een
+        # SKILL.md in plakte zag die als losse tekst voorbijkomen zonder te
+        # weten wat hij ermee moest. Nu staat er wat het is, en dat dezelfde
+        # skills ook als echte skill-bestanden klaarstaan — dan hoeft het model
+        # de tekst hier niet als enige aanknopingspunt te gebruiken.
+        head = ("LabX-skills die voor dit gesprek gelden. Een skill is een werkwijze: "
+               "volg hem als de taak erbij past. Hangen er mcp__labx-tools aan, zoek dan "
+               "eerst het schema op met tool search en roep ze daarna direct aan. "
+               "Dezelfde skills staan ook als skill-bestand klaar, dus je kunt er met de "
+               "Skill-tool naartoe:")
         if truncated:
             head += "\n(Some skills' guidance was omitted to stay within budget.)"
         return head + "\n\n" + "\n\n".join(parts)
@@ -280,7 +319,7 @@ class ChatAgent:
         instructions = AGENT_PREAMBLE
         from services.lab.governed_policy import PLANNER_POLICY
         instructions += "\n\n" + PLANNER_POLICY
-        domain_skills = self._enabled_domain_skill_names()
+        domain_skills = self._enabled_domain_skill_names(lab_id)
         skills_block = self._skill_instructions_block(domain_skills)
         if skills_block:
             instructions += "\n\n" + skills_block

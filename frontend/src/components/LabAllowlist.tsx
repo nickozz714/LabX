@@ -28,7 +28,11 @@ export function LabAllowlist({ lab, onSaved }: { lab: Lab; onSaved: (updated: La
   useEffect(() => {
     mcpServerApi.list().then((all) => setServers(all.filter((s) => s.location === "host")));
     toolApi.list().then(setTools);
-    skillApi.list().then(setSkills);
+    // Alleen skills die bij een lab kunnen horen. Een skill met "alleen in een
+    // sessie" hoort bij het gesprek en gaat sowieso mee — hem hier aanvinken
+    // zou suggereren dat het iets uitmaakt.
+    skillApi.list().then((alle) =>
+      setSkills(alle.filter((x) => (x.usage_scope || "beide") !== "sessie")));
   }, []);
 
   const alwaysAllowed = servers.filter((s) => s.always_allowed);
@@ -143,12 +147,21 @@ export function LabAllowlist({ lab, onSaved }: { lab: Lab; onSaved: (updated: La
                   onChange={() => toggle(allowSkills, setAllowSkills, s.name)}
                 />
                 {s.display_name || s.name}
+                {(s.usage_scope || "beide") === "lab" && (
+                  <span className="text-[11px] text-muted-foreground"
+                        title="Deze skill telt alleen in labs waar hij is aangevinkt">
+                    alleen hier
+                  </span>
+                )}
               </label>
             ))}
           </div>
         )}
         <p className="mt-1 text-xs text-muted-foreground">
-          Leeg = geen extra restrictie op skills (alle ingeschakelde skills leveren how-to-guidance).
+          Leeg = geen extra restrictie: elke ingeschakelde skill levert how-to-guidance. Een skill
+          die op <strong>alleen in een lab</strong> staat doet dat niet — die telt pas als hij hier
+          is aangevinkt. Skills die op <strong>alleen in een sessie</strong> staan gaan sowieso mee
+          en staan daarom niet in deze lijst.
         </p>
       </div>
 

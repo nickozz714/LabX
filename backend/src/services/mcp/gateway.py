@@ -149,6 +149,13 @@ def _validate_args(kwargs: Dict[str, Any], schema: Dict[str, Any], tool_name: st
 
 
 def _skill_scoped_tool_ids(db) -> Dict[int, set]:
+    """Welke skills aan een tool hangen — alleen de skills die aan een LAB
+    gekoppeld kunnen zijn.
+
+    Een skill met `usage_scope = "sessie"` hoort bij het gesprek en niet bij
+    een lab; zijn tools mogen dus niet achter de lijst van een lab verdwijnen.
+    Zou hij hier wel meetellen, dan zou "alleen in een sessie" in de praktijk
+    "nergens" betekenen zodra een lab een lijst heeft."""
     from models.skill import Skill
     from models.skill_tool import SkillTool
     out: Dict[int, set] = {}
@@ -157,7 +164,8 @@ def _skill_scoped_tool_ids(db) -> Dict[int, set]:
             .filter(SkillTool.is_enabled == True, Skill.is_enabled == True)  # noqa: E712
             .all())
     for link, skill in rows:
-        if skill.name:
+        scope = (getattr(skill, "usage_scope", None) or "beide").lower()
+        if skill.name and scope != "sessie":
             out.setdefault(link.tool_id, set()).add(skill.name)
     return out
 

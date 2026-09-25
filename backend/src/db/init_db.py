@@ -52,6 +52,10 @@ _ADDITIVE_COLUMNS = {
         ("admin_username", "VARCHAR(128)"),
         ("admin_password_hash", "VARCHAR(512)"),
     ],
+    "skills": [
+        # NULL = "beide": een bestaande skill geldt overal, net als voorheen.
+        ("usage_scope", "VARCHAR(16)"),
+    ],
     "lab_extras": [
         ("mcp_server", "TEXT"),
         ("builtin_hash", "VARCHAR(64)"),

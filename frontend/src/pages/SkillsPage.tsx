@@ -8,8 +8,8 @@
  */
 import { useEffect, useState } from "react";
 import { mcpServerApi, skillApi, toolApi, type CatalogEntry } from "@/lib/skills";
-import type { MCPServerDto, SkillDto, SkillToolLink, ToolDto } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea, Toggle } from "@/components/ui";
+import type { MCPServerDto, SkillDto, SkillScope, SkillToolLink, ToolDto } from "@/lib/types";
+import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { ApiError } from "@/lib/api";
 import { useMelding } from "@/components/Meldingen";
@@ -779,8 +779,13 @@ function SkillsSection() {
                 {s.description}
               </div>
               <div className="mt-1 flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">
+                <span className="flex items-center gap-2 text-xs text-muted-foreground">
                   {(s.tools || []).length} gekoppelde tool(s)
+                  {s.usage_scope && s.usage_scope !== "beide" && (
+                    <Badge tone={s.usage_scope === "lab" ? "violet" : "neutral"}>
+                      {s.usage_scope === "lab" ? "alleen in een lab" : "alleen in een sessie"}
+                    </Badge>
+                  )}
                 </span>
                 <Button
                   variant="danger"
@@ -836,6 +841,7 @@ function SkillWizard({ existing, onClose, onSaved }: { existing?: SkillDto; onCl
   const [description, setDescription] = useState(existing?.description || "");
   const [instructions, setInstructions] = useState(existing?.instructions || "");
   const [isEnabled, setIsEnabled] = useState(existing?.is_enabled ?? true);
+  const [scope, setScope] = useState<SkillScope>(existing?.usage_scope || "beide");
   const [allTools, setAllTools] = useState<ToolDto[]>([]);
   const [choices, setChoices] = useState<WizardToolChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -867,7 +873,8 @@ function SkillWizard({ existing, onClose, onSaved }: { existing?: SkillDto; onCl
   async function save() {
     try {
       let skill = existing;
-      const payload = { name, description, instructions, is_enabled: isEnabled };
+      const payload = { name, description, instructions, is_enabled: isEnabled,
+                        usage_scope: scope };
       if (existing) {
         skill = await skillApi.update(existing.id, payload);
       } else {
@@ -906,6 +913,23 @@ function SkillWizard({ existing, onClose, onSaved }: { existing?: SkillDto; onCl
           <div>
             <Label>Algemene instructies (how-to, altijd meegegeven als de skill aan staat)</Label>
             <TextArea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
+          </div>
+          <div>
+            <Label>Waar geldt deze skill</Label>
+            <Select value={scope} onChange={(e) => setScope(e.target.value as SkillScope)}>
+              <option value="beide">Overal — in elk gesprek, en aan te vinken bij een lab</option>
+              <option value="sessie">Alleen in een sessie — altijd mee, ongeacht het lab</option>
+              <option value="lab">Alleen in een lab — alleen waar hij is aangevinkt</option>
+            </Select>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {scope === "lab"
+                ? "Zijn instructies en tools tellen alleen in een lab dat hem toelaat "
+                  + "(lab → tabblad Toegang). Bedoeld voor een skill die over één omgeving gaat."
+                : scope === "sessie"
+                ? "Hoort bij het gesprek: gaat in elke beurt mee en blijft buiten de "
+                  + "lijst van een lab. Bedoeld voor een manier van werken of een schrijfstijl."
+                : "Het gedrag van vóór deze keuze: altijd mee, en daarnaast per lab aan te vinken."}
+            </p>
           </div>
           <Toggle checked={isEnabled} onChange={setIsEnabled} label="Skill ingeschakeld" />
         </div>
