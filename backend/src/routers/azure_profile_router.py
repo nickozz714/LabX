@@ -144,6 +144,33 @@ async def device_login_poll(profile_id: int, payload: Dict[str, Any],
     return await _svc(db).device_login_poll(profile_id, code)
 
 
+# ── de publieke issuer van een gefedereerde managed identity ───────────────
+#
+# Twee statische bestanden, en dat is het enige dat de buitenwereld van LabX
+# ziet. Ze hier laten ophalen in plaats van een script: je publiceert ze één
+# keer, en daarna alleen nog bij een sleutelrotatie.
+
+@router.get("/{profile_id}/issuer-bestanden")
+def issuer_bestanden(profile_id: int, db: Session = Depends(get_db)):
+    return _svc(db).issuer_bestanden(profile_id)
+
+
+@router.post("/{profile_id}/roteer-sleutel")
+def roteer_sleutel(profile_id: int, db: Session = Depends(get_db)):
+    """Een nieuwe sleutel ernaast zetten en daarmee gaan tekenen.
+
+    De oude blijft in de JWKS: publiceer het nieuwe bestand VOORDAT je erop
+    vertrouwt, want Entra haalt de sleutels op wanneer het hém uitkomt."""
+    return _svc(db).roteer_sleutel(profile_id)
+
+
+@router.post("/{profile_id}/oude-sleutels-weg")
+def oude_sleutels_weg(profile_id: int, db: Session = Depends(get_db)):
+    """De oude sleutels uit de JWKS halen. Pas doen als de nieuwe gepubliceerd
+    is en er weer tokens binnenkomen."""
+    return _svc(db).vergeet_oude_sleutels(profile_id)
+
+
 @router.post("/{profile_id}/token-test")
 async def token_test(profile_id: int, payload: Dict[str, Any],
                      db: Session = Depends(get_db)):

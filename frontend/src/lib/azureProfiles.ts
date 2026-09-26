@@ -1,6 +1,15 @@
 import { api } from "@/lib/api";
 import type { AzureProfileDto } from "@/lib/types";
 
+/** Wat er publiek moet staan voor een gefedereerde managed identity. */
+export type UamiIssuer = {
+  issuer: string;
+  subject: string;
+  audience: string;
+  actieve_kid: string;
+  bestanden: Record<string, unknown>;
+};
+
 export const AZURE_BUNDLE_FILES = ["msal_token_cache.json", "azureProfile.json", "service_principal_entries.json"];
 
 /** Eén doel waar een profiel naartoe gezet is: de host, of een lab. */
@@ -27,6 +36,15 @@ export const azureProfilesApi = {
     api.post<AzureProfileDto>("/azure-profiles/capture-host", { name, description }),
   update: (id: number, payload: Record<string, any>) => api.put<AzureProfileDto>(`/azure-profiles/${id}`, payload),
   remove: (id: number) => api.delete<{ ok: boolean }>(`/azure-profiles/${id}`),
+  /** De twee statische bestanden die publiek moeten staan voor een
+   *  gefedereerde managed identity. Dit is het enige dat de buitenwereld van
+   *  LabX ziet; de privésleutel blijft op de server. */
+  issuerBestanden: (id: number) =>
+    api.get<UamiIssuer>(`/azure-profiles/${id}/issuer-bestanden`),
+  roteerSleutel: (id: number) =>
+    api.post<UamiIssuer>(`/azure-profiles/${id}/roteer-sleutel`),
+  oudeSleutelsWeg: (id: number) =>
+    api.post<UamiIssuer>(`/azure-profiles/${id}/oude-sleutels-weg`),
   verify: (id: number) => api.post<{ ok: boolean; identity: Record<string, any> }>(`/azure-profiles/${id}/verify`),
   // Wisselt het refresh token in voor een vers paar; een profiel dat alleen in
   // de kluis ligt verloopt juist, want refresh tokens verlopen op stilte.

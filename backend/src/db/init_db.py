@@ -97,6 +97,10 @@ _ADDITIVE_COLUMNS = {
         # NULL = de meegeleverde standaard (zie services/lab/resources.py).
         ("claim_resources", "TEXT"),
     ],
+    "lab_secrets": [
+        # Van welk Azure-profiel dit geheim komt; leeg = met de hand gezet.
+        ("azure_profile_id", "INTEGER"),
+    ],
     "schedules": [
         ("json_schema", "TEXT"),
         ("kind", "VARCHAR(16) NOT NULL DEFAULT 'prompt'"),

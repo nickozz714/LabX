@@ -59,6 +59,11 @@ class LabSecret(Base):
     refreshed_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_used_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Dit geheim komt van een Azure-profiel en wordt daar ook weer ververst.
+    # Zonder deze verwijzing zou LabX na een uur een verlopen token blijven
+    # aanbieden: een geheim van het soort `waarde` ververst zichzelf niet, en
+    # een token van een managed identity leeft een uur.
+    azure_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)

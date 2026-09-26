@@ -35,6 +35,32 @@ AZ_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 AZ_REFRESH_SCOPE = "https://management.azure.com/.default offline_access openid profile"
 
 
+def _actieve_sleutel(payload: Dict[str, Any]) -> Dict[str, str]:
+    """De sleutel waarmee we NU tekenen.
+
+    Er kunnen er meer zijn: bij een rotatie staat de nieuwe alvast in de JWKS
+    naast de oude, zodat er geen moment is waarop niets werkt."""
+    sleutels = payload.get("sleutels") or []
+    if not sleutels:
+        raise HTTPException(status_code=400, detail=(
+            "Dit profiel heeft geen sleutel. Maak hem opnieuw aan."))
+    kid = payload.get("actieve_kid")
+    return next((s for s in sleutels if s.get("kid") == kid), sleutels[-1])
+
+
+def _geheimnaam(profielnaam: str) -> str:
+    """De naam waarmee de agent dit token aanhaalt.
+
+    Uit de profielnaam en niet zelf verzonnen: `{{secret:fabric-swinkels}}`
+    leest als wat het is, en wie twee klanten naast elkaar heeft, ziet aan de
+    verwijzing welke hij pakt."""
+    schoon = "".join(c if c.isalnum() or c in "-_" else "-"
+                     for c in (profielnaam or "").strip().lower())
+    while "--" in schoon:
+        schoon = schoon.replace("--", "-")
+    return schoon.strip("-")[:64]
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -117,6 +143,19 @@ class AzureProfileService:
                     "entra_app vereist tenant_id en client_id van je eigen app-registratie."))
             return {"tenant_id": data.tenant_id, "client_id": data.client_id,
                     "scopes": [s for s in (data.scopes or []) if s]}
+        if kind == "uami_federated":
+            from services.azure import uami_federated as uf
+            config = uf.normaliseer(data)
+            fouten = uf.controleer(config)
+            if fouten:
+                raise HTTPException(status_code=400, detail=" ".join(fouten))
+            # De sleutel maakt LabX zelf; die hoort niet in een formulier en
+            # mag de server nooit verlaten. De publieke helft gaat straks in
+            # het bestand dat je publiceert.
+            sleutel = uf.nieuwe_sleutel()
+            config["sleutels"] = [sleutel]
+            config["actieve_kid"] = sleutel["kid"]
+            return config
         raise HTTPException(status_code=400, detail=f"kind moet een van {AZURE_PROFILE_KINDS} zijn")
 
 
@@ -184,6 +223,12 @@ class AzureProfileService:
         row = (profile_id_or_row if isinstance(profile_id_or_row, AzureProfile)
                else self.get_or_404(int(profile_id_or_row)))
         payload = self._decrypt(row)
+        if row.kind == "uami_federated":
+            # Hier valt niets te verversen: elke aanvraag tekent een verse
+            # assertie en wisselt die in.
+            from services.azure import uami_federated as uf
+            res = await uf.haal_token(payload, _actieve_sleutel(payload), scope=scope)
+            return res["token"]
         token, nieuw = await entra_app_login.token_voor_scope(payload, scope)
         if nieuw != payload:
             row.secret_encrypted = encrypt(json.dumps(nieuw))
@@ -462,6 +507,21 @@ class AzureProfileService:
                 identity.update({k: claims.get(k) for k in ("tid", "appid", "aud") if claims.get(k)})
             except Exception as exc:  # noqa: BLE001 — verify is best-effort
                 identity["error"] = f"kon geen SP-token minten: {exc}"
+        elif row.kind == "uami_federated":
+            # Proberen of Entra ons token accepteert, en WIE we dan blijken te
+            # zijn. Dat laatste is de vraag: staat straks bij de klant de
+            # managed identity op de actie, of iets anders?
+            from services.azure import uami_federated as uf
+            identity.update({"issuer": payload.get("issuer"),
+                             "subject": payload.get("subject"),
+                             "client_id": payload.get("client_id"),
+                             "kid": payload.get("actieve_kid")})
+            try:
+                res = await uf.haal_token(payload, _actieve_sleutel(payload))
+                identity.update(res.get("identity") or {})
+                identity["expires_on"] = res.get("expires_on")
+            except Exception as exc:  # noqa: BLE001 — verify is best-effort
+                identity["error"] = str(exc)[:900]
         else:  # msal_bundle
             try:
                 prof = json.loads(payload.get("azureProfile.json") or "{}")
@@ -541,6 +601,95 @@ class AzureProfileService:
                  if identity.get(k)]
         return " · ".join(parts) or "geverifieerd"
 
+    async def _uami_naar_lab(self, row: AzureProfile, payload: Dict[str, Any],
+                             lab_id: str) -> Dict[str, Any]:
+        """Een vers token als LAB-GEHEIM neerzetten.
+
+        Niet als `az login`: er valt niets in te loggen — de identiteit blijft
+        van de klant en wij hebben alleen een token. Als lab-geheim past het
+        wél precies: het model schrijft `{{secret:naam}}`, LabX vult het in
+        vlak voor het commando via een bestand in de container, en de waarde
+        staat dus op geen enkele commandoregel en niet in het spoor.
+        """
+        from services.azure import uami_federated as uf
+        from services.lab.secrets import SecretService, geldige_naam
+
+        naam = _geheimnaam(row.name)
+        if not geldige_naam(naam):
+            raise HTTPException(status_code=400, detail=(
+                f"De naam '{row.name}' levert geen bruikbare geheimnaam op. "
+                "Gebruik letters, cijfers, - of _ in de profielnaam."))
+        try:
+            res = await uf.haal_token(payload, _actieve_sleutel(payload))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=str(exc)[:900])
+        svc = SecretService(self.db)
+        rij = svc.zet(lab_id, naam=naam, waarde=res["token"],
+                      omschrijving=(f"Token van '{row.name}' voor {res['scope']} "
+                                    "— automatisch ververst"),
+                      ttl_minuten=uf.minuten_geldig(res.get("expires_on")))
+        rij.azure_profile_id = row.id
+        self.db.commit()
+        return {"ok": True, "target": "lab", "detail": {
+            "geheim": naam, "gebruik": f"{{{{secret:{naam}}}}}",
+            "scope": res["scope"], "identity": res.get("identity") or {},
+            "geldig_tot": res.get("expires_on"),
+        }}
+
+    def issuer_bestanden(self, profile_id: int) -> Dict[str, Any]:
+        """De twee bestanden die publiek moeten staan.
+
+        Dit is het enige dat de buitenwereld van LabX ziet, en het is statisch.
+        Ze hier laten zien in plaats van een script: je publiceert ze één keer
+        en daarna nooit meer, behalve bij een rotatie."""
+        from services.azure import uami_federated as uf
+
+        row = self.get_or_404(profile_id)
+        if row.kind != "uami_federated":
+            raise HTTPException(status_code=400, detail=(
+                "Alleen een gefedereerde managed identity heeft issuer-bestanden."))
+        payload = self._decrypt(row)
+        bestanden = uf.issuer_bestanden(payload, payload.get("sleutels") or [])
+        return {"issuer": payload.get("issuer"), "actieve_kid": payload.get("actieve_kid"),
+                "bestanden": bestanden,
+                "subject": payload.get("subject"),
+                "audience": uf.TOKEN_EXCHANGE_AUDIENCE}
+
+    def roteer_sleutel(self, profile_id: int) -> Dict[str, Any]:
+        """Een nieuwe sleutel ernáást zetten en daarmee gaan tekenen.
+
+        De oude blijft in de JWKS staan: publiceer het nieuwe bestand eerst,
+        want Entra haalt de sleutels op wanneer het hém uitkomt. Pas als alles
+        weer loopt haal je de oude eruit met `vergeet_oude_sleutels`."""
+        from services.azure import uami_federated as uf
+
+        row = self.get_or_404(profile_id)
+        if row.kind != "uami_federated":
+            raise HTTPException(status_code=400, detail="Dit profiel heeft geen sleutel.")
+        payload = self._decrypt(row)
+        nieuw = uf.nieuwe_sleutel()
+        payload["sleutels"] = (payload.get("sleutels") or []) + [nieuw]
+        payload["actieve_kid"] = nieuw["kid"]
+        row.secret_encrypted = encrypt(json.dumps(payload))
+        row.updated_at = _now_iso()
+        self.db.commit()
+        return self.issuer_bestanden(profile_id)
+
+    def vergeet_oude_sleutels(self, profile_id: int) -> Dict[str, Any]:
+        """Alles behalve de actieve sleutel weggooien.
+
+        Pas doen als de nieuwe JWKS gepubliceerd is en er weer tokens
+        binnenkomen — anders haal je de sleutel weg waar Entra nog mee rekent."""
+        row = self.get_or_404(profile_id)
+        payload = self._decrypt(row)
+        kid = payload.get("actieve_kid")
+        payload["sleutels"] = [s for s in (payload.get("sleutels") or [])
+                               if s.get("kid") == kid]
+        row.secret_encrypted = encrypt(json.dumps(payload))
+        row.updated_at = _now_iso()
+        self.db.commit()
+        return self.issuer_bestanden(profile_id)
+
     async def sync(self, profile_id: int, *, target: str, lab_id: Optional[str] = None,
                    az_dir: str = "/root/.azure",
                    worker_id: Optional[int] = None) -> Dict[str, Any]:
@@ -574,6 +723,8 @@ class AzureProfileService:
     async def _sync_to_lab(self, row: AzureProfile, payload: Dict[str, Any],
                            lab_id: str, az_dir: str,
                            worker_id: Optional[int] = None) -> Dict[str, Any]:
+        if row.kind == "uami_federated":
+            return await self._uami_naar_lab(row, payload, lab_id)
         if row.kind != "msal_bundle":
             raise HTTPException(status_code=400, detail=(
                 "Alleen een 'msal_bundle'-profiel kan naar een lab gesynct worden. "

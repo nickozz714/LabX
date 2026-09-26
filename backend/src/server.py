@@ -50,6 +50,24 @@ async def _dode_runs_tick() -> None:
         db.close()
 
 
+async def _uami_tokens_tick() -> None:
+    """Tokens van een managed identity vers houden.
+
+    Ze leven een uur. Een lab-geheim van het soort `waarde` ververst zichzelf
+    niet, dus zonder deze ronde zou LabX na dat uur een verlopen token blijven
+    aanbieden — en krijgt een agent een 401 op een moment dat niemand keek.
+    """
+    from services.azure.uami_federated import ververs_labgeheimen
+
+    db = SessionLocal()
+    try:
+        await ververs_labgeheimen(db)
+    except Exception as exc:  # noqa: BLE001 — nooit de scheduler slopen
+        log.warningx("UAMI-tokens verversen mislukt", error=str(exc)[:200])
+    finally:
+        db.close()
+
+
 async def _lab_reaper_tick() -> None:
     db = SessionLocal()
     try:
@@ -230,6 +248,10 @@ async def lifespan(_app: FastAPI):
     scheduler.register(name="ticket_plans", interval_seconds=20, fn=_plan_tick,
                        run_immediately=True)
     scheduler.register(name="board_sync", interval_seconds=60, fn=_board_sync_tick,
+                       run_immediately=False)
+    # Elke vijf minuten: een token leeft een uur en wordt met tien minuten
+    # marge vervangen, dus dit is ruim op tijd zonder Entra te belasten.
+    scheduler.register(name="uami_tokens", interval_seconds=300, fn=_uami_tokens_tick,
                        run_immediately=False)
     scheduler.register(name="mcp_lab_sessions", interval_seconds=300, fn=_mcp_session_tick,
                        run_immediately=False)

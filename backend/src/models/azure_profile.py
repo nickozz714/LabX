@@ -17,7 +17,15 @@ from db.database import Base
 # de Azure CLI niet mag — Work IQ weigert de CLI met AADSTS65002, en zijn
 # permissies bestaan alleen als delegated, dus een service principal helpt daar
 # ook niet. Zie services/azure/entra_app_login.py.
-AZURE_PROFILE_KINDS = ("msal_bundle", "service_principal", "bearer", "entra_app")
+# uami_federated: de managed identity van een klant gebruiken vanaf een server
+# die NIET in Azure draait. Een UAMI-token komt normaal van het
+# metadata-endpoint ín een Azure-resource; workload identity federation draait
+# dat om — op de UAMI staat een federated credential met een issuer en een
+# subject, en wie een getekend token van die issuer kan tonen, krijgt een token
+# als die identiteit. LabX is dan zelf die issuer (twee statische bestanden
+# publiek, de privésleutel hier). Zie services/azure/uami_federated.py.
+AZURE_PROFILE_KINDS = ("msal_bundle", "service_principal", "bearer", "entra_app",
+                       "uami_federated")
 AZURE_SYNC_TARGETS = ("host", "lab")
 
 

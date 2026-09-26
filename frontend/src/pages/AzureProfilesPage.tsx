@@ -24,6 +24,7 @@ import { labsApi } from "@/lib/labs";
 import type { AzureProfileDto, Lab } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { AzureBundlePicker, bundleComplete } from "@/components/AzureBundlePicker";
+import { UamiVelden, UamiPubliceren } from "@/components/UamiFederatie";
 import { EntraAppLogin, EntraStappen } from "@/components/EntraAppLogin";
 import type { ApplyStep } from "@/lib/azureProfiles";
 import { ApiError } from "@/lib/api";
@@ -238,6 +239,47 @@ export function AzureProfilesPage() {
                   wél heeft is een inlog, en die staat hier. */}
               {p.kind === "entra_app" ? (
                 <EntraAppLogin profiel={p} onKlaar={refresh} />
+              ) : p.kind === "uami_federated" ? (
+                /* Een gefedereerd profiel kent de az-bewerkingen niet: er valt
+                   niets in te loggen, niets te vernieuwen en niets naar de host
+                   te zetten — de identiteit is van de klant. Wat het wél kan is
+                   een token halen, en dat in een lab zetten. */
+                <div className="space-y-3">
+                  <details className="rounded-md border border-border p-2">
+                    <summary className="cursor-pointer select-none text-xs text-muted-foreground">
+                      Publiceren en registreren bij de klant
+                    </summary>
+                    <div className="mt-2">
+                      <UamiPubliceren profiel={p} />
+                    </div>
+                  </details>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <Button variant="secondary" disabled={busyId === p.id}
+                            title="Wisselt een verse assertie in bij Entra en laat zien wie we dan zijn"
+                            onClick={() => verify(p)}>
+                      Controleren
+                    </Button>
+                    <select
+                      disabled={busyId === p.id}
+                      onChange={(e) => syncToLab(p, e.target.value)}
+                      value=""
+                      className="rounded border border-input bg-background px-2 py-1"
+                    >
+                      <option value="">Naar lab…</option>
+                      {labs.map((l) => (
+                        <option key={l.id} value={l.id}>{l.name} ({l.status})</option>
+                      ))}
+                    </select>
+                    <span className="text-muted-foreground">
+                      het token komt daar als geheim te staan en wordt vanzelf ververst
+                    </span>
+                    <span className="flex-1" />
+                    <Button variant="danger"
+                            onClick={() => azureProfilesApi.remove(p.id).then(refresh)}>
+                      Verwijderen
+                    </Button>
+                  </div>
+                </div>
               ) : (
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {p.kind !== "bearer" && (
@@ -327,12 +369,19 @@ export function AzureProfilesPage() {
 
 function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<"msal_bundle" | "service_principal" | "bearer" | "entra_app">("msal_bundle");
+  const [kind, setKind] = useState<
+    "msal_bundle" | "service_principal" | "bearer" | "entra_app" | "uami_federated">("msal_bundle");
   const [files, setFiles] = useState<Record<string, string>>({});
   const [tenantId, setTenantId] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [token, setToken] = useState("");
+  // Een gefedereerde managed identity: geen secret, wel een issuer en een
+  // subject die straks letterlijk bij de klant geregistreerd worden.
+  const [uami, setUami] = useState({
+    tenant_id: "", client_id: "", issuer: "", subject: "labx",
+    scope: "https://api.fabric.microsoft.com/.default",
+  });
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
@@ -342,6 +391,7 @@ function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCre
       if (kind === "service_principal") Object.assign(payload, { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret });
       if (kind === "bearer") payload.token = token;
       if (kind === "entra_app") Object.assign(payload, { tenant_id: tenantId, client_id: clientId });
+      if (kind === "uami_federated") Object.assign(payload, uami);
       await azureProfilesApi.create(payload);
       onCreated();
     } catch (err) {
@@ -363,6 +413,7 @@ function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCre
             <option value="service_principal">Service principal</option>
             <option value="bearer">Bearer-token</option>
             <option value="entra_app">Entra-app (device code) — voor Work IQ, Teams en Outlook</option>
+            <option value="uami_federated">Managed identity van de klant (federatie) — voor Fabric zonder secret</option>
           </select>
         </div>
         {kind === "msal_bundle" && (
@@ -392,13 +443,16 @@ function CreateProfileModal({ onClose, onCreated }: { onClose: () => void; onCre
             <EntraStappen />
           </>
         )}
+        {kind === "uami_federated" && <UamiVelden waarde={uami} onChange={setUami} />}
         {kind === "bearer" && <TextArea rows={3} placeholder="access token" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono text-xs" />}
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button
           className="w-full"
           onClick={submit}
           disabled={!name || (kind === "msal_bundle" && !bundleComplete(files))
-                    || (kind === "entra_app" && !(tenantId && clientId))}
+                    || (kind === "entra_app" && !(tenantId && clientId))
+                    || (kind === "uami_federated"
+                        && !(uami.tenant_id && uami.client_id && uami.issuer))}
         >
           Aanmaken
         </Button>

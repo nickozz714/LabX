@@ -466,7 +466,7 @@ export interface ScheduleRunDto {
 export interface AzureProfileDto {
   id: number;
   name: string;
-  kind: "msal_bundle" | "service_principal" | "bearer" | "entra_app";
+  kind: "msal_bundle" | "service_principal" | "bearer" | "entra_app" | "uami_federated";
   description: string | null;
   has_secret: boolean;
   identity: Record<string, any> | null;

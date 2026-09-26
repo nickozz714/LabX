@@ -19,6 +19,11 @@ class AzureProfileCreate(BaseModel):
     # entra_app: de app-registratie waar de gebruiker zich bij aanmeldt. Geen
     # secret nodig — een device-code-login is een public client.
     scopes: Optional[List[str]] = None
+    # uami_federated: waar onze issuer staat en welke identiteit we willen
+    # zijn. De sleutel maakt LabX zelf; die hoort niet in een formulier.
+    issuer: Optional[str] = None
+    subject: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class AzureProfileUpdate(BaseModel):
@@ -30,6 +35,11 @@ class AzureProfileUpdate(BaseModel):
     client_secret: Optional[str] = None
     token: Optional[str] = None
     scopes: Optional[List[str]] = None
+    # uami_federated: waar onze issuer staat en welke identiteit we willen
+    # zijn. De sleutel maakt LabX zelf; die hoort niet in een formulier.
+    issuer: Optional[str] = None
+    subject: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class AzureProfileRead(BaseModel):
