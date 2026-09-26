@@ -11,7 +11,15 @@ prima met z'n tweeën in één container — net zoals je op je eigen pc twee ke
 Claude Code kunt starten. Of dat handig is, weet jij; LabX weet dat niet en
 gaat het ook niet raden.
 
-Daarom twee dingen:
+Daarom drie dingen:
+
+- **Sessies per werker** — een getal bij het lab (standaard 1). Zet je het op
+  2, dan passen er twee sessies in dezelfde container: een chat naast een
+  ticket, twee tickets, een workflow naast een chat. Werk gaat altijd eerst
+  naar een lege werker; delen is het vangnet, niet de eerste keuze. Bij elke
+  werker staat `n/m`, zodat je ziet wat er draait in plaats van het te moeten
+  geloven.
+
 
 - **Bundels** — in een planning sleep je tickets op elkaar. Tickets in dezelfde
   bundel draaien tegelijk in één werker; de bundels zelf gaan op volgorde. Zes

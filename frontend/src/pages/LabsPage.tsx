@@ -624,6 +624,9 @@ function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
   const [onder, setOnder] = useState(lab.min_workers || 1);
   const [boven, setBoven] = useState(lab.max_workers || 1);
   const [deelt, setDeelt] = useState(lab.chat_deelt_werker !== false);
+  // Hoeveel sessies er tegelijk in ÉÉN container mogen. Een lab is een
+  // sandbox-pc; op een pc kun je ook twee keer Claude draaien.
+  const [sessies, setSessies] = useState(lab.sessies_per_werker || 1);
   const [busy, setBusy] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
 
@@ -631,17 +634,19 @@ function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
     setOnder(lab.min_workers || 1);
     setBoven(lab.max_workers || 1);
     setDeelt(lab.chat_deelt_werker !== false);
-  }, [lab.min_workers, lab.max_workers, lab.chat_deelt_werker]);
+    setSessies(lab.sessies_per_werker || 1);
+  }, [lab.min_workers, lab.max_workers, lab.chat_deelt_werker, lab.sessies_per_werker]);
 
   const gewijzigd = onder !== (lab.min_workers || 1)
     || boven !== (lab.max_workers || 1)
-    || deelt !== (lab.chat_deelt_werker !== false);
+    || deelt !== (lab.chat_deelt_werker !== false)
+    || sessies !== (lab.sessies_per_werker || 1);
 
   async function schalen() {
     setBusy(true);
     setFout(null);
     try {
-      await labsApi.scaleWorkers(lab.id, onder, Math.max(onder, boven), deelt);
+      await labsApi.scaleWorkers(lab.id, onder, Math.max(onder, boven), deelt, sessies);
       onChanged();
     } catch (err) {
       setFout(err instanceof ApiError ? err.message : "Schalen mislukt");
@@ -667,6 +672,17 @@ function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
           werkers na een half uur op. Ze delen /workspace.
         </span>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Label>Sessies tegelijk per werker</Label>
+        <Input type="number" min={1} max={8} className="w-20" value={sessies}
+               onChange={(e) => setSessies(Number(e.target.value))} />
+        <span className="max-w-xl text-xs text-muted-foreground">
+          Een lab is een sandbox-pc, en op een pc kun je ook twee keer Claude draaien. Op 1
+          krijgt elke sessie een eigen container en wacht de rest. Hoger betekent dat twee
+          sessies dezelfde bestanden, processen en az-sessie delen — soms precies wat je
+          wilt, soms precies niet. Werk gaat altijd eerst naar een lege werker.
+        </span>
+      </div>
       <label className="flex cursor-pointer items-start gap-2 rounded-md bg-secondary/40 p-2 text-xs">
         <input type="checkbox" className="mt-0.5" checked={deelt}
                onChange={(e) => setDeelt(e.target.checked)} />
@@ -689,6 +705,11 @@ function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
             werker {w.index}
             <Badge tone={w.status === "running" ? "green" : w.status === "error" ? "red" : "neutral"}>
               {w.status}
+            </Badge>
+            {/* Zonder dit getal is "twee sessies tegelijk" iets wat je moet geloven. */}
+            <Badge tone={(w.sessies || 0) >= (lab.sessies_per_werker || 1) ? "yellow"
+                         : (w.sessies || 0) > 0 ? "violet" : "neutral"}>
+              {w.sessies || 0}/{lab.sessies_per_werker || 1}
             </Badge>
             {w.provision_status === "error" && <Badge tone="red">inrichten</Badge>}
           </span>

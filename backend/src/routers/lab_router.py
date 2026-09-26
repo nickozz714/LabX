@@ -420,11 +420,14 @@ async def scale_workers(lab_id: str, payload: Dict[str, Any], db: Session = Depe
     Werkers delen /workspace — één werkplaats met meer handen, geen losse
     labs. Afschalen raakt alleen werkers die niets doen, en nooit de eerste."""
     svc = _service(db)
-    if "chat_deelt_werker" in payload:
-        # Hoort bij dezelfde knop in de interface: hoeveel werkers, en wat er
-        # gebeurt als ze allemaal bezet zijn.
+    if "chat_deelt_werker" in payload or "sessies_per_werker" in payload:
+        # Horen bij dezelfde knop in de interface: hoeveel werkers, hoeveel
+        # sessies er in één werker passen, en wat er gebeurt als alles vol zit.
         p = svc.get(lab_id)
-        p.chat_deelt_werker = bool(payload.get("chat_deelt_werker"))
+        if "chat_deelt_werker" in payload:
+            p.chat_deelt_werker = bool(payload.get("chat_deelt_werker"))
+        if "sessies_per_werker" in payload:
+            p.sessies_per_werker = max(1, min(int(payload.get("sessies_per_werker") or 1), 8))
         db.commit()
     return await svc.scale(lab_id,
                            min_workers=payload.get("min_workers"),

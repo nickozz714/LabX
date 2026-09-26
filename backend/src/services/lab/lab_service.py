@@ -766,7 +766,16 @@ exec ssh -N \\
                 and (w.index == 1 or w.provision_status in ("ok", "skipped"))]
 
     def bezette_werkers(self, lab_id: str) -> set:
-        """Werker-id's waar NU een agent-run op draait — chat inbegrepen.
+        """Werker-id's die VOL zitten — er kan geen sessie meer bij.
+
+        Vroeger betekende dit "er draait iets". Met `sessies_per_werker` is dat
+        niet meer hetzelfde: een werker waar één van de twee plekken bezet is,
+        draait wél maar is niet vol. Alles wat hierop afgaat — een planning die
+        een ticket plaatst, een bubbel die zijn takken verdeelt, de teller op
+        het board — bedoelt "waar kan niets meer bij", dus dat is wat het nu
+        zegt.
+
+        Hieronder staat nog steeds waaróm een lopende chat meetelt.
 
         Uit `background_runs` en niet uit de planningen, en dat is de kern van
         de reparatie: een handmatig gestart ticket heeft geen planningsregel.
@@ -784,54 +793,86 @@ exec ssh -N \\
         Een run zonder werker draait per definitie in werker 1 (zie
         `container_for`), dus zo telt hij hier ook mee.
         """
+        p = self.db.get(Lab, lab_id)
+        ruimte = self.sessies_per_werker(p) if p is not None else 1
+        return {wid for wid, aantal in self.bezetting(lab_id).items() if aantal >= ruimte}
+
+    def bezetting(self, lab_id: str) -> Dict[int, int]:
+        """Hoeveel runs er NU op elke werker draaien.
+
+        De tegenhanger van `bezette_werkers`, die alleen ja/nee zegt. Dat was
+        genoeg zolang een werker één run tegelijk aankon; met
+        `sessies_per_werker` is de vraag niet meer "zit er iemand" maar "hoeveel
+        passen er nog bij".
+        """
         from models.background_run import BackgroundRun
         from models.lab_worker import LabWorker
         from models.thread import Thread
 
-        # Via de werker naar het lab: een run weet wélke werker hij gebruikt,
-        # niet bij welk lab die hoort.
-        bezet = {r[0] for r in
-                 (self.db.query(BackgroundRun.lab_worker_id)
-                  .join(LabWorker, LabWorker.id == BackgroundRun.lab_worker_id)
-                  .filter(LabWorker.lab_id == lab_id,
-                          BackgroundRun.status.in_(("running", "queued"))).all())
-                 if r[0]}
+        telling: Dict[int, int] = {}
+        rijen = (self.db.query(BackgroundRun.lab_worker_id)
+                 .join(LabWorker, LabWorker.id == BackgroundRun.lab_worker_id)
+                 .filter(LabWorker.lab_id == lab_id,
+                         BackgroundRun.status.in_(("running", "queued"))).all())
+        for (wid,) in rijen:
+            if wid:
+                telling[wid] = telling.get(wid, 0) + 1
 
-        # En de runs zonder werker: die zitten in werker 1. Via de thread, want
-        # dat is het enige wat zo'n run aan een lab bindt.
-        zonder = (self.db.query(BackgroundRun.id)
-                  .join(Thread, Thread.id == BackgroundRun.thread_id)
-                  .filter(Thread.lab_id == lab_id,
-                          BackgroundRun.lab_worker_id.is_(None),
-                          BackgroundRun.status.in_(("running", "queued"))).first())
-        if zonder is not None:
+        # Runs zonder werker draaien in werker 1 (zie `container_for`), dus zo
+        # tellen ze hier ook mee.
+        losse = (self.db.query(BackgroundRun.id)
+                 .join(Thread, Thread.id == BackgroundRun.thread_id)
+                 .filter(Thread.lab_id == lab_id,
+                         BackgroundRun.lab_worker_id.is_(None),
+                         BackgroundRun.status.in_(("running", "queued"))).count())
+        if losse:
             eerste = (self.db.query(LabWorker)
                       .filter(LabWorker.lab_id == lab_id, LabWorker.index == 1).first())
             if eerste is not None:
-                bezet.add(eerste.id)
-        return bezet
+                telling[eerste.id] = telling.get(eerste.id, 0) + losse
+        return telling
+
+    @staticmethod
+    def sessies_per_werker(p: Lab) -> int:
+        """Hoeveel sessies er tegelijk in één container mogen.
+
+        Een lab is een sandbox-pc, en op een pc kun je ook twee keer Claude
+        draaien. Of dat handig is, hangt af van het werk: twee runs delen de
+        bestanden, de processen en de `az`-sessie van die container. Dat is
+        soms precies wat je wilt (twee onderzoeken naast elkaar) en soms
+        precies niet (twee runs in dezelfde git-repo). Die keuze hoort bij de
+        gebruiker, niet bij LabX — vandaar een getal per lab in plaats van een
+        vaste 1.
+        """
+        return max(1, min(int(getattr(p, "sessies_per_werker", 1) or 1), 8))
 
     def vrije_werker(self, p: Lab) -> Optional[Any]:
-        """Een werker waar nu geen run op draait, of None.
+        """De werker met de meeste ruimte, of None als alles vol zit.
 
         Dit is de enige plek waar "welke container krijgt dit werk" beslist
-        wordt, voor planningen én voor handmatig gestarte tickets. Twee runs in
-        dezelfde container vechten om dezelfde bestanden, processen en
-        `az`-sessie — dus als er een vrije is, hoort het werk daarheen.
+        wordt, voor planningen én voor handmatig gestarte tickets. Werk gaat
+        naar de RUSTIGSTE werker: eerst een lege, en pas als die er niet is
+        eentje waar nog ruimte over is. Zo blijft "twee sessies tegelijk"
+        iets dat je krijgt als het nodig is, niet iets dat meteen gebeurt
+        omdat werker 1 toevallig vooraan staat.
 
-        Geen vrije werker is geen fout: dan valt de aanroeper terug op werker 1
-        (handmatig: de gebruiker drukte bewust op start) of gaat hij wachten
-        (een planning: die heeft geen haast).
+        Vol is geen fout: dan valt de aanroeper terug op werker 1 (handmatig:
+        de gebruiker drukte bewust op start) of gaat hij wachten (een planning:
+        die heeft geen haast).
         """
         werkers = self.claimbare_werkers(p)
         if not werkers:
             return None
-        bezet = self.bezette_werkers(p.id)
-        vrij = [w for w in werkers if w.id not in bezet]
-        if not vrij:
+        ruimte = self.sessies_per_werker(p)
+        telling = self.bezetting(p.id)
+        met_ruimte = [(telling.get(w.id, 0), w) for w in werkers
+                      if telling.get(w.id, 0) < ruimte]
+        if not met_ruimte:
             return None
-        self.touch_worker(vrij[0].id)
-        return vrij[0]
+        met_ruimte.sort(key=lambda x: x[0])
+        gekozen = met_ruimte[0][1]
+        self.touch_worker(gekozen.id)
+        return gekozen
 
     async def reap_idle_workers(self, idle_minutes: int = 30) -> int:
         """Extra werkers opruimen die een tijd niets deden.
@@ -958,16 +999,21 @@ exec ssh -N \\
         return {"ok": True, "workers": p.worker_count, "min": onder, "max": boven,
                 "toegevoegd": toegevoegd, "verwijderd": verwijderd}
 
-    def _bezette_werkers(self, lab_id: str) -> set:
-        """Zelfde vraag, oude naam.
+    def werkers_met_werk(self, lab_id: str) -> set:
+        """Werker-id's waar IETS op draait — hoe weinig ook.
 
-        Dit was ooit een tweede, eigen definitie van "bezet" die alleen naar
-        lopende PLANNING-items keek. Twee antwoorden op dezelfde vraag is er
-        een te veel: het opruimen van werkers kon er een weghalen waar een
-        handmatig ticket of een chat in zat, en het overzicht telde anders dan
-        de planner. Er is er nu nog één.
+        Dit is een andere vraag dan `bezette_werkers` (= vol). Voor het
+        opruimen van werkers is dit de juiste: een werker met één van de twee
+        plekken bezet, is niet vol maar mag zeker niet weg. Toen "bezet" nog
+        hetzelfde betekende als "er draait iets" viel dat samen; met
+        `sessies_per_werker` niet meer, en dan is een container wegzetten waar
+        iemand in werkt precies het soort fout dat je pas achteraf ziet.
         """
-        return self.bezette_werkers(lab_id)
+        return {wid for wid, aantal in self.bezetting(lab_id).items() if aantal > 0}
+
+    def _bezette_werkers(self, lab_id: str) -> set:
+        """Oude naam; wijst naar de vraag die de aanroepers bedoelden."""
+        return self.werkers_met_werk(lab_id)
 
     def container_for(self, p: Lab, worker_id: Optional[int] = None) -> Optional[str]:
         """De container waarin een handeling hoort te landen.
@@ -2056,6 +2102,9 @@ exec ssh -N \\
         return out
 
     def _to_dict(self, p: Lab) -> Dict[str, Any]:
+        # Eén telling voor alle werkers samen; per werker vragen zou een query
+        # per container zijn op een lijst die bij elke verversing langskomt.
+        _bezetting_nu = self.bezetting(p.id)
         return {
             "id": p.id, "name": p.name,
             "status": p.status, "image": p.image,
@@ -2075,9 +2124,13 @@ exec ssh -N \\
             "min_workers": int(getattr(p, "min_workers", 1) or 1),
             "max_workers": int(getattr(p, "max_workers", 1) or 1),
             "chat_deelt_werker": bool(getattr(p, "chat_deelt_werker", True)),
+            "sessies_per_werker": self.sessies_per_werker(p),
             "security_profile": getattr(p, "security_profile", None) or "generiek",
             "model": getattr(p, "model", None),
+            # Hoeveel sessies er NU in elke werker draaien. Zonder dit getal
+            # is "twee sessies tegelijk" iets wat je moet geloven.
             "workers": [{"id": w.id, "index": w.index, "status": w.status,
+                         "sessies": _bezetting_nu.get(w.id, 0),
                          "container_id": (w.container_id or "")[:12] or None,
                          "network_alias": w.network_alias,
                          "provision_status": w.provision_status,

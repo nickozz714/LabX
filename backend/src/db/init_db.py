@@ -89,6 +89,8 @@ _ADDITIVE_COLUMNS = {
         ("provision_log", "TEXT"),
         ("worker_count", "INTEGER NOT NULL DEFAULT 1"),
         ("min_workers", "INTEGER NOT NULL DEFAULT 1"),
+        # Hoeveel sessies tegelijk in één werker. 1 = zoals het altijd was.
+        ("sessies_per_werker", "INTEGER NOT NULL DEFAULT 1"),
         ("max_workers", "INTEGER NOT NULL DEFAULT 1"),
         ("security_profile", "VARCHAR(32) NOT NULL DEFAULT 'generiek'"),
         ("model", "VARCHAR(128)"),

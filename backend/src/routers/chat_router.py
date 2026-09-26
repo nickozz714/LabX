@@ -197,11 +197,15 @@ async def _werker_voor_chat(db: Session, lab: Lab) -> Optional[int]:
     eigen werker te claimen, zodat een ticket dat straks start er niet bovenop
     gaat zitten — en zodat het overzicht klopt.
 
-    Is alles bezet en zit het plafond vast, dan beslist `chat_deelt_werker` van
-    het lab wat er gebeurt: meedoen in werker 1 (standaard, en hoe het altijd
-    werkte) of wachten tot er een werker vrijkomt. Dat is een afweging tussen
-    "jij drukte op verzenden en krijgt antwoord" en "geen twee runs in dezelfde
-    bestanden", en die valt niet voor elk lab hetzelfde uit.
+    "Vrij" hangt af van `sessies_per_werker` van het lab: staat dat op meer dan
+    één, dan past er meer dan één sessie in dezelfde container en krijgt deze
+    beurt gewoon een plek — bij voorkeur in de rustigste werker.
+
+    Is álles vol en zit het werkerplafond vast, dan beslist `chat_deelt_werker`
+    wat er gebeurt: meedoen in werker 1 (standaard, en hoe het altijd werkte)
+    of wachten tot er iets vrijkomt. Dat is een afweging tussen "jij drukte op
+    verzenden en krijgt antwoord" en "geen twee runs in dezelfde bestanden",
+    en die valt niet voor elk lab hetzelfde uit.
     """
     from services.lab.lab_service import LabService
 
@@ -224,12 +228,12 @@ async def _werker_voor_chat(db: Session, lab: Lab) -> Optional[int]:
         return None          # meedoen in werker 1, zoals het altijd ging
     raise HTTPException(
         status_code=409,
-        detail=("Alle werkers van dit lab zijn bezig"
+        detail=("Alle werkers van dit lab zitten vol"
                 + (" — er wordt er een bijgezet, probeer het zo opnieuw."
                    if erbij is not None else
                    " en het werkerplafond is bereikt. Wacht tot er een vrijkomt, verhoog "
-                   "het plafond bij het lab, of zet daar 'chat mag een bezette werker "
-                   "delen' aan.")))
+                   "het plafond of het aantal sessies per werker bij het lab, of zet daar "
+                   "'chat mag een bezette werker delen' aan.")))
 
 
 @router.post("/threads/{thread_id}/background")

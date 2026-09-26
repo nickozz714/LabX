@@ -80,6 +80,18 @@ class Lab(Base):
     # de knop van de mens: een agent die het druk heeft mag niet ongelimiteerd
     # containers op deze machine zetten. max = min betekent: niet schalen.
     max_workers: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Hoeveel sessies er TEGELIJK in één werker mogen draaien.
+    #
+    # Een lab is een sandbox-pc, en op een pc kun je ook twee keer Claude
+    # draaien. Of dat handig is hangt af van het werk: twee sessies delen de
+    # bestanden, de processen en de az-sessie van die container. Soms is dat
+    # precies wat je wilt (twee onderzoeken naast elkaar in dezelfde omgeving),
+    # soms precies niet (twee runs in dezelfde git-repo). Die afweging hoort
+    # bij de gebruiker; LabX legt er alleen een plafond omheen.
+    #
+    # 1 = zoals het altijd was: één sessie per container, en werk wacht of
+    # krijgt een eigen werker.
+    sessies_per_werker: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # Mag een chatbeurt bij een vol lab in een bezette werker landen?
     #
     # Een chat bezet net zo goed een container als een ticket, dus normaal
