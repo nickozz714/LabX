@@ -17,7 +17,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Activity, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
-import { auditApi, type AuditAggregatie, type AuditGebeurtenis } from "@/lib/audit";
+import { auditApi, type AuditAggregatie, type AuditGebeurtenis,
+         type AuditVerloop } from "@/lib/audit";
 import { labsApi } from "@/lib/labs";
 import type { Lab } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Label, Select } from "@/components/ui";
@@ -123,7 +124,6 @@ export function AuditPage() {
             <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
               <span><strong className="text-foreground">{agg.totaal_beurten}</strong> beurten</span>
               <span><strong className="text-foreground">{agg.totaal_acties}</strong> acties</span>
-              <span><strong className="text-foreground">${agg.totaal_kosten.toFixed(2)}</strong></span>
             </div>
           )}
         </div>
@@ -135,7 +135,7 @@ export function AuditPage() {
               <Staafjes eenheid="beurten"
                         staven={agg.emmers.map((e) => ({
                           label: e.label, waarde: e.beurten, fouten: e.fouten,
-                          detail: e.cost_usd ? `$${e.cost_usd.toFixed(2)}` : undefined }))} />
+                          detail: e.acties ? `${e.acties} acties` : undefined }))} />
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Het rode deel van een staaf is wat misging.
               </p>
@@ -201,11 +201,6 @@ export function AuditPage() {
                   )}
                   <span className="font-mono text-[11px] text-muted-foreground">{g.model}</span>
                   <span className="text-[11px] text-muted-foreground">{duur(g.duur_ms)}</span>
-                  {g.cost_usd > 0 && (
-                    <span className="text-[11px] text-muted-foreground">
-                      ${g.cost_usd.toFixed(3)}
-                    </span>
-                  )}
                 </button>
 
                 {open === g.id && (
@@ -238,12 +233,61 @@ export function AuditPage() {
                         geantwoord.
                       </p>
                     )}
+                    <Verloop stappen={g.verloop || []} />
                   </div>
                 )}
               </div>
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Wat er tussen de opdracht en het antwoord gebeurde: de overwegingen en de
+ *  aanroepen mét hun argumenten. De telling hierboven zegt DAT er een
+ *  shell-commando was; hier staat welk commando, en dus welke data is
+ *  opgevraagd. */
+function Verloop({ stappen }: { stappen: AuditVerloop[] }) {
+  const [alles, setAlles] = useState(false);
+  if (!stappen.length) return null;
+  const tonen = alles ? stappen : stappen.slice(0, 12);
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-2">
+        <div className="text-[11px] font-semibold text-muted-foreground">
+          Verloop ({stappen.length})
+        </div>
+        {stappen.length > tonen.length && (
+          <button className="text-[11px] text-primary underline"
+                  onClick={() => setAlles(true)}>alles tonen</button>
+        )}
+      </div>
+      <div className="space-y-1">
+        {tonen.map((v, i) => (
+          <div key={i} className="rounded bg-background p-1.5 text-[11px]">
+            {v.soort === "denken" ? (
+              <div className="flex gap-2">
+                <span title="overweging">💭</span>
+                <span className="whitespace-pre-wrap text-muted-foreground">{v.tekst}</span>
+              </div>
+            ) : v.soort === "afgekapt" ? (
+              <div className="text-muted-foreground">{v.tekst}</div>
+            ) : (
+              <div className="flex gap-2">
+                <span title="aanroep">🔧</span>
+                <div className="min-w-0 flex-1">
+                  <span className="font-mono font-medium">{v.naam}</span>
+                  {v.invoer && (
+                    <pre className="mt-0.5 max-h-32 overflow-auto whitespace-pre-wrap
+                                    text-muted-foreground">{v.invoer}</pre>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );

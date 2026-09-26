@@ -23,9 +23,15 @@ staan in één lijst omdat je bij het terugkijken niet eerst wilt kiezen:
 - **workflow** — één activiteit uit een workflow, met zijn ronde erbij als hij
   in een lus zat.
 
-Per beurt staat er: het moment, het lab, het model, de status, de duur, de
-tokens en de kosten. Klap hem open en je ziet de opdracht die het model kreeg,
-het antwoord dat eruit kwam, en de acties ertussenin.
+Per beurt staat er: het moment, het lab, het model, de status, de duur en de
+tokens. Klap hem open en je ziet de opdracht die het model kreeg, het antwoord
+dat eruit kwam, en het **verloop** ertussenin: wat hij overwoog, en welke
+aanroepen hij deed mét hun argumenten. Dat laatste is waar de vraag "welke data
+is opgevraagd" beantwoord wordt — bij de invoer van een aanroep, niet bij de
+naam ervan. Een lange beurt wordt afgekapt; de rest staat in het gesprek zelf.
+
+Kosten staan er bewust niet: ze worden wel bijgehouden (per beurt, zie
+hieronder), maar het scherm gaat over wat er gebeurde.
 
 ## Wat een actie is
 

@@ -9,6 +9,15 @@ import { api } from "@/lib/api";
 
 export type AuditActie = { naam: string; aantal: number };
 
+/** Eén stap uit de beurt: wat de agent dacht, of wat hij opvroeg. De telling
+ *  per tool zegt DAT er een aanroep was; dit zegt welke data erin ging. */
+export type AuditVerloop = {
+  soort: "denken" | "actie" | "afgekapt";
+  tekst?: string;
+  naam?: string;
+  invoer?: string;
+};
+
 export type AuditGebeurtenis = {
   id: string;
   /** chat | taak | workflow — hoe deze beurt ontstond. */
@@ -24,6 +33,7 @@ export type AuditGebeurtenis = {
   uitvoer: string | null;
   acties: AuditActie[];
   acties_totaal: number;
+  verloop: AuditVerloop[];
   duur_ms: number | null;
   input_tokens: number;
   output_tokens: number;

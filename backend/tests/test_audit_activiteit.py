@@ -167,3 +167,55 @@ def test_een_mislukte_beurt_telt_als_fout_in_het_vakje(db):
     db.commit()
     uit = AuditService(db).aggregatie(lab_id="lab-1", periode="dag", aantal=2)
     assert uit["emmers"][-1]["fouten"] == 1
+
+
+# ── het verloop: wat hij dacht en wat hij opvroeg ───────────────────────────
+#
+# De telling per tool zegt DAT er een shell-commando was. De vraag die je bij
+# een audit stelt is welk commando, met welke parameters, en wat hij ertussenin
+# overwoog — dus dat hoort erbij.
+
+def test_het_verloop_toont_denken_en_de_opgevraagde_data(db):
+    _run(db, stappen=[
+        {"kind": "thinking", "text": "Eerst kijken welke tabellen er zijn."},
+        {"kind": "tool", "name": "lab__shell_exec",
+         "input": {"command": "az fabric workspace list", "timeout": 60}},
+        {"kind": "tool", "name": "mcp__zoho__search",
+         "input": {"query": "status:open account:Swinkels"}},
+        {"kind": "usage", "input_tokens": 5, "output_tokens": 1, "cost_usd": 0.01},
+    ])
+    verloop = AuditService(db).gebeurtenissen(lab_id="lab-1")["items"][0]["verloop"]
+    assert [v["soort"] for v in verloop] == ["denken", "actie", "actie"]
+    assert verloop[0]["tekst"].startswith("Eerst kijken")
+    # het commando zelf, niet {"command": ...}
+    assert verloop[1]["invoer"].startswith("az fabric workspace list")
+    assert '"timeout": 60' in verloop[1]["invoer"]
+    assert verloop[2]["invoer"] == "status:open account:Swinkels"
+
+
+def test_een_heel_lange_beurt_wordt_afgekapt(db):
+    _run(db, stappen=[{"kind": "tool", "name": "t", "input": {"a": i}} for i in range(200)])
+    verloop = AuditService(db).gebeurtenissen(lab_id="lab-1")["items"][0]["verloop"]
+    assert len(verloop) == 121                  # 120 stappen plus de melding
+    assert verloop[-1]["soort"] == "afgekapt"
+
+
+def test_een_workflow_activiteit_heeft_ook_een_verloop(db):
+    wf = Workflow(id=1, name="Incidenten", markdown="", steps_json=[], nodes_json=[
+        {"id": "n1", "type": "agent", "naam": "Ophalen", "model": "claude-opus-5"}],
+        edges_json=[], is_enabled=True, created_at="nu", updated_at="nu")
+    db.add(wf)
+    db.add(WorkflowRun(id="wr1", workflow_id=1, lab_id="lab-1", status="completed",
+                       trigger_type="cron", created_at=_nu(hours=1)))
+    db.add(WorkflowRunStep(run_id="wr1", node_id="n1", naam="Ophalen", soort="agent",
+                           volgnummer=1, status="ok", invoer="haal op", uitvoer="klaar",
+                           stappen_json=[
+                               {"kind": "thinking", "text": "Ik begin bij de open tickets."},
+                               {"kind": "tool", "name": "mcp__zoho__list",
+                                "input": {"limit": 50}}],
+                           created_at=_nu(hours=1)))
+    db.commit()
+    item = AuditService(db).gebeurtenissen(lab_id="lab-1")["items"][0]
+    assert item["model"] == "claude-opus-5"      # van de activiteit zelf
+    assert [v["soort"] for v in item["verloop"]] == ["denken", "actie"]
+    assert item["verloop"][1]["invoer"] == '{"limit": 50}'
