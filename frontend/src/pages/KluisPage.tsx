@@ -23,6 +23,7 @@ import { Badge, Button, Card, EmptyState, Input, Label, TextArea } from "@/compo
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
+import { vergeetGeheimen } from "@/components/GeheimInvoegen";
 
 const LEEG = { name: "", value: "", description: "", lab_ids: [] as string[] };
 
@@ -41,6 +42,10 @@ export function KluisPage() {
   const [fout, setFout] = useState<string | null>(null);
 
   function laad() {
+    // De kiezer in andere schermen deelt één opgehaalde lijst; na een
+    // wijziging hoort die opnieuw opgehaald te worden, anders kun je een
+    // zojuist toegevoegd geheim daar nog niet kiezen.
+    vergeetGeheimen();
     secretApi.list().then(setRijen).catch(() => setRijen([]));
   }
   useEffect(() => {
