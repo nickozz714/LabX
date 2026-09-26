@@ -572,6 +572,7 @@ async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
                     item=item, invoer=opdracht)
     antwoord, stappen, gebruik, sessie, fout = await _agent_beurt(
         db, run, node, opdracht)
+    gebruik = _kosten_van_deze_beurt(gebruik, node, totalen)
     duur = int((time.monotonic() - begin) * 1000)
     if fout:
         _werk_stap_bij(db, rij, status="fout", error=fout, stappen=stappen, duur_ms=duur)
@@ -619,6 +620,34 @@ async def _agent_beurt(db: Session, run: WorkflowRun, node: Dict[str, Any],
     except Exception as exc:  # noqa: BLE001
         fout = str(exc)[:2000]
     return antwoord, stappen, gebruik, sessie, fout
+
+
+def _kosten_van_deze_beurt(gebruik: Dict[str, Any], node: Dict[str, Any],
+                           totalen: Dict[str, Any]) -> Dict[str, Any]:
+    """Wat DEZE activiteit kostte, niet wat de sessie tot nu toe kostte.
+
+    De CLI meldt `total_cost_usd`: het totaal van de hele sessie. Alle
+    activiteiten van een run delen standaard één sessie, dus dat getal loopt
+    per stap op — 13,35 dan 13,56 dan 13,81. Dat per stap opslaan en daarna
+    optellen telt dezelfde beurten tien keer mee, en dat viel niet op omdat
+    het er per stap plausibel uitziet.
+
+    Dus: het verschil met de vorige melding in dezelfde sessie. Een activiteit
+    met een verse sessie begint bij nul en heeft geen aftrek nodig.
+    """
+    gemeld = gebruik.get("cost_usd")
+    if gemeld is None:
+        return gebruik
+    gemeld = float(gemeld)
+    if node.get("verse_sessie"):
+        # Eigen sessie, eigen teller: wat er gemeld wordt IS wat het kostte.
+        return {**gebruik, "cost_usd": round(gemeld, 6)}
+    vorig = float(totalen.get("sessiekosten") or 0.0)
+    totalen["sessiekosten"] = max(vorig, gemeld)
+    # max(0, ...) omdat een verse sessie tussendoor de teller terugzet; dan is
+    # het verschil negatief en is de melding zelf de kostprijs.
+    verschil = gemeld - vorig
+    return {**gebruik, "cost_usd": round(verschil if verschil >= 0 else gemeld, 6)}
 
 
 def _als_json(tekst: str) -> Optional[Any]:

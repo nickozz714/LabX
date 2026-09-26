@@ -47,6 +47,20 @@ Een periode zonder werk blijft als leeg vakje staan. Hem weglaten zou de
 grafiek over het tempo laten liegen — twee drukke dagen naast elkaar zien er
 anders hetzelfde uit als twee drukke dagen met een stille week ertussen.
 
+## Over de kosten
+
+De CLI meldt per beurt het totaal van de hele **sessie**, niet wat die beurt
+kostte. Activiteiten van één workflow delen standaard één sessie, dus dat getal
+loopt op: 13,35 — 13,56 — 13,81. Opgeslagen zoals het binnenkomt en daarna
+opgeteld, telt hetzelfde geld vijf keer mee, en dat valt niet op omdat elk
+bedrag op zichzelf plausibel is. Er wordt daarom het verschil met de vorige
+melding bewaard; een activiteit met een verse sessie begint bij nul en telt
+gewoon zijn eigen bedrag.
+
+Beurten van vóór deze correctie staan nog met het sessietotaal in de
+geschiedenis. Die zijn niet met terugwerkende kracht te herstellen — het
+verschil is niet meer af te leiden zodra de melding zelf weg is.
+
 ## Waar het vandaan komt
 
 Niets hiervan is apart bijgehouden: het komt uit `background_runs` (de beurten

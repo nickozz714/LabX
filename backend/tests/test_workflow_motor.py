@@ -956,3 +956,61 @@ def test_ook_in_een_lus_blijft_de_invoer_bereikbaar(db, monkeypatch):
     asyncio.run(engine.voer_uit(run.id))
     assert [b["opdracht"] for b in beurten if b["node"] == "Bekijken"] \
         == ["Vion: a", "Vion: b"]
+
+
+# ── wat een activiteit kostte, en niet wat de sessie kostte ─────────────────
+
+def test_de_kosten_per_activiteit_zijn_niet_het_sessietotaal(db, monkeypatch):
+    """De CLI meldt `total_cost_usd`: het totaal van de hele sessie. Alle
+    activiteiten van een run delen er standaard één, dus dat getal loopt per
+    stap op — 0,10 dan 0,25 dan 0,40. Dat zo opslaan en daarna optellen telt
+    dezelfde beurten meerdere keren mee, en dat valt niet op omdat elk getal
+    er op zichzelf plausibel uitziet."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Een", "prompt": "x"},
+        {"id": "b", "type": "agent", "naam": "Twee", "prompt": "y"},
+        {"id": "c", "type": "agent", "naam": "Drie", "prompt": "z"},
+    ], [{"van": "a", "naar": "b", "soort": "succes"},
+        {"van": "b", "naar": "c", "soort": "succes"}])
+
+    from db import database
+    oplopend = [0.10, 0.25, 0.40]          # zoals de CLI het meldt
+
+    async def _beurt(_db, _run, node, opdracht):
+        i = {"Een": 0, "Twee": 1, "Drie": 2}[node["naam"]]
+        return ("klaar", [], {"input_tokens": 10, "output_tokens": 5,
+                              "cost_usd": oplopend[i]}, "sessie-1", None)
+
+    monkeypatch.setattr(engine, "_agent_beurt", _beurt)
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    db.refresh(run)
+
+    kosten = [s.cost_usd for s in _stappen(db, run) if s.soort == "agent"]
+    assert kosten == [0.10, 0.15, 0.15]          # het verschil, niet het totaal
+    assert run.totals_json["cost_usd"] == 0.40   # en samen weer het sessietotaal
+
+
+def test_een_verse_sessie_begint_met_een_eigen_teller(db, monkeypatch):
+    """Een activiteit met een schone sessie telt vanaf nul, dus wat er gemeld
+    wordt IS wat hij kostte — aftrekken zou hem gratis maken."""
+    wf = _workflow(db, [
+        {"id": "a", "type": "agent", "naam": "Een", "prompt": "x"},
+        {"id": "b", "type": "agent", "naam": "Beoordelaar", "prompt": "y",
+         "verse_sessie": True},
+    ], [{"van": "a", "naar": "b", "soort": "succes"}])
+
+    from db import database
+
+    async def _beurt(_db, _run, node, opdracht):
+        bedrag = 0.30 if node["naam"] == "Een" else 0.05
+        return ("klaar", [], {"cost_usd": bedrag}, "s", None)
+
+    monkeypatch.setattr(engine, "_agent_beurt", _beurt)
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    asyncio.run(engine.voer_uit(run.id))
+    assert [s.cost_usd for s in _stappen(db, run) if s.soort == "agent"] == [0.30, 0.05]

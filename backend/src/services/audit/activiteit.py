@@ -162,7 +162,18 @@ class AuditService:
 
     def _uit_workflows(self, lab_id, van, tot) -> List[Dict[str, Any]]:
         namen = self._labnamen()
-        wfnamen = {w.id: w.name for w in self.db.query(Workflow.id, Workflow.name).all()}
+        wfnamen: Dict[int, str] = {}
+        # Welk model een activiteit gebruikte staat op de node; staat daar
+        # niets, dan draaide hij op de standaard van het lab. Zonder deze
+        # opzoeking zou er "—" staan bij precies de vraag die gesteld wordt.
+        modellen: Dict[Tuple[int, str], str] = {}
+        for w in self.db.query(Workflow).all():
+            wfnamen[w.id] = w.name
+            for n in (w.nodes_json or []):
+                if isinstance(n, dict) and n.get("model"):
+                    modellen[(w.id, str(n.get("id")))] = str(n["model"])
+        labmodellen = {l.id: (l.model or None)
+                       for l in self.db.query(Lab.id, Lab.model).all()}
         q = (self.db.query(WorkflowRunStep, WorkflowRun)
              .join(WorkflowRun, WorkflowRun.id == WorkflowRunStep.run_id))
         if lab_id:
@@ -182,9 +193,8 @@ class AuditService:
                 "lab_id": run.lab_id,
                 "lab_naam": namen.get(run.lab_id or "", "—"),
                 "werker": run.worker_id,
-                # Een activiteit erft het model van de run; staat er geen, dan
-                # draaide hij op de standaard van het lab.
-                "model": "—",
+                "model": (modellen.get((run.workflow_id, stap.node_id))
+                          or labmodellen.get(run.lab_id or "") or "standaard"),
                 "titel": f"{wfnamen.get(run.workflow_id, 'Workflow')} · {stap.naam}",
                 "status": stap.status,
                 "invoer": _knip(stap.invoer),
