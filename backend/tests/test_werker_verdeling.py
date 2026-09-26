@@ -13,6 +13,12 @@ iemand aan het werk was — twee runs in dezelfde container vechten om dezelfde
 bestanden, processen en az-sessie.
 
 Beide kanten lopen nu via LabService: één plek die weet wie bezet is.
+
+Later kwam daar `sessies_per_werker` bij: een lab is een sandbox-pc, en op een
+pc kun je twee keer Claude draaien. "Bezet" betekent sindsdien VOL, niet "er
+draait iets", en werk gaat naar de rustigste werker in plaats van naar de
+eerste vrije — anders zou een tweede sessie meteen bovenop de eerste landen
+terwijl werker 2 leegstaat.
 """
 import sys
 from pathlib import Path
@@ -28,12 +34,20 @@ def _werker(wid, index):
                            container_id=f"c{wid}", provision_status="ok")
 
 
-def _svc(werkers, bezet):
+def _svc(werkers, bezet=None, bezetting=None, ruimte=1):
+    """`bezet` is de korte vorm: die werkers zitten vol. `bezetting` is het
+    echte getal per werker, nodig zodra er meer dan één sessie in mag."""
+    telling = dict(bezetting or {})
+    for wid in (bezet or set()):
+        telling[wid] = ruimte
     svc = LabService.__new__(LabService)
     svc.claimbare_werkers = lambda _p: werkers
-    svc.bezette_werkers = lambda _lab_id: set(bezet)
+    svc.bezetting = lambda _lab_id: dict(telling)
     svc.touch_worker = lambda _wid: None
     return svc
+
+
+LAB_RUIM = SimpleNamespace(id="lab-1", sessies_per_werker=2)
 
 
 LAB = SimpleNamespace(id="lab-1")
@@ -119,7 +133,46 @@ def test_bezetting_komt_uit_de_runs_en_niet_uit_de_planningen():
     `ticket_plan_items` alleen die van een planning."""
     import inspect
 
-    bron = inspect.getsource(LabService.bezette_werkers)
+    bron = inspect.getsource(LabService.bezetting)
     assert "BackgroundRun" in bron
     assert "LabWorker.lab_id == lab_id" in bron, "bezetting moet per lab zijn"
     assert '"running", "queued"' in bron
+
+
+# ── meer dan één sessie in dezelfde werker ──────────────────────────────────
+
+def test_een_tweede_sessie_mag_erbij_als_het_lab_dat_toestaat():
+    """Eén werker, ruimte voor twee: de tweede sessie hoeft niet te wachten."""
+    svc = _svc([_werker(4, 1)], bezetting={4: 1}, ruimte=2)
+    assert svc.vrije_werker(LAB_RUIM).id == 4
+
+
+def test_een_tweede_sessie_gaat_liever_naar_een_lege_werker():
+    """Anders zou "twee tegelijk" meteen gebeuren omdat werker 1 vooraan staat,
+    terwijl werker 2 leegstaat. Delen is het vangnet, niet de eerste keuze."""
+    svc = _svc([_werker(4, 1), _werker(5, 2)], bezetting={4: 1}, ruimte=2)
+    assert svc.vrije_werker(LAB_RUIM).id == 5
+
+
+def test_vol_is_vol_ook_met_ruimte_voor_twee():
+    svc = _svc([_werker(4, 1), _werker(5, 2)], bezetting={4: 2, 5: 2}, ruimte=2)
+    assert svc.vrije_werker(LAB_RUIM) is None
+
+
+def test_standaard_blijft_een_sessie_per_werker():
+    """Een lab dat niets ingesteld heeft, gedraagt zich zoals het altijd deed."""
+    zonder = SimpleNamespace(id="lab-1")
+    assert LabService.sessies_per_werker(zonder) == 1
+    svc = _svc([_werker(4, 1)], bezetting={4: 1})
+    assert svc.vrije_werker(zonder) is None
+
+
+def test_een_werker_met_ruimte_over_mag_niet_opgeruimd_worden():
+    """`bezette_werkers` betekent nu VOL. Het opruimen van werkers moet naar de
+    andere vraag kijken — anders zet je een container weg waar iemand in
+    werkt."""
+    import inspect
+
+    bron = inspect.getsource(LabService.scale)
+    assert "_bezette_werkers" in bron
+    assert "aantal > 0" in inspect.getsource(LabService.werkers_met_werk)

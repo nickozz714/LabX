@@ -34,12 +34,17 @@ export interface Lab {
   max_workers: number;
   /** Mag een chatbeurt bij een vol lab in een bezette werker landen? */
   chat_deelt_werker?: boolean;
+  /** Hoeveel sessies er tegelijk in één werker mogen. 1 = elke sessie een
+   *  eigen container, zoals het altijd was. */
+  sessies_per_werker?: number;
   workers: {
     id: number;
     index: number;
     status: string;
     container_id: string | null;
     network_alias: string | null;
+    /** Hoeveel sessies er NU in deze werker draaien. */
+    sessies?: number;
     provision_status: string | null;
     last_used_at: string | null;
     error: string | null;

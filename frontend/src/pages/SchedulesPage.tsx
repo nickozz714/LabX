@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { scheduleApi, workflowApi } from "@/lib/workflows";
 import { ParameterInvuller } from "@/components/workflow/Parameters";
+import { TekstMetGeheimen } from "@/components/GeheimInvoegen";
 import { boardApi } from "@/lib/boards";
 import { labsApi } from "@/lib/labs";
 import type { BoardDto, Lab, ScheduleDto, ScheduleKind, ScheduleRunDto, WorkflowDto } from "@/lib/types";
@@ -259,15 +260,8 @@ function ScheduleModal({
         </div>
 
         {kind === "prompt" && (
-          <div>
-            <Label>Prompt</Label>
-            <TextArea
-              rows={3}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Wat moet de agent doen?"
-            />
-          </div>
+          <TekstMetGeheimen label="Prompt" waarde={prompt} onChange={setPrompt} rijen={3}
+                            placeholder="Wat moet de agent doen?" />
         )}
 
         {kind === "workflow" && (

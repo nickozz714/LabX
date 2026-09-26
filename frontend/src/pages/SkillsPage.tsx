@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { mcpServerApi, skillApi, toolApi, type CatalogEntry } from "@/lib/skills";
 import type { MCPServerDto, SkillDto, SkillScope, SkillToolLink, ToolDto } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
+import { TekstMetGeheimen } from "@/components/GeheimInvoegen";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { ApiError } from "@/lib/api";
 import { useMelding } from "@/components/Meldingen";
@@ -911,8 +912,11 @@ function SkillWizard({ existing, onClose, onSaved }: { existing?: SkillDto; onCl
             <TextArea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
           <div>
-            <Label>Algemene instructies (how-to, altijd meegegeven als de skill aan staat)</Label>
-            <TextArea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
+            <TekstMetGeheimen
+              label="Algemene instructies (how-to, altijd meegegeven als de skill aan staat)"
+              waarde={instructions} onChange={setInstructions} rijen={3}
+              hint="Een geheim uit de kluis voeg je in als verwijzing; de agent geeft die
+                    ongewijzigd door aan het commando of de tool, en LabX vult hem daar in." />
           </div>
           <div>
             <Label>Waar geldt deze skill</Label>
@@ -975,8 +979,11 @@ function SkillWizard({ existing, onClose, onSaved }: { existing?: SkillDto; onCl
                   <summary className="cursor-pointer text-muted-foreground">Input-schema (leidraad voor de instructie)</summary>
                   <pre className="mt-1 overflow-auto rounded bg-secondary p-2">{JSON.stringify(c.tool.argument, null, 2)}</pre>
                 </details>
-                <Label>Instructie voor de agent bij het gebruik van deze tool</Label>
-                <TextArea rows={2} value={c.instructions} onChange={(e) => setChoice(c.tool.id, { instructions: e.target.value })} placeholder="bv. 'Roep dit altijd eerst aan met limit=5.'" />
+                <TekstMetGeheimen
+                  label="Instructie voor de agent bij het gebruik van deze tool"
+                  waarde={c.instructions} rijen={2}
+                  onChange={(t) => setChoice(c.tool.id, { instructions: t })}
+                  placeholder="bv. 'Roep dit altijd eerst aan met limit=5.'" />
               </Card>
             ))}
         </div>

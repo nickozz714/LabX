@@ -18,6 +18,7 @@
 import { useRef } from "react";
 import type { Verwijzing } from "@/lib/types";
 import { Label, Select, TextArea } from "@/components/ui";
+import { GeheimKiezer } from "@/components/GeheimInvoegen";
 
 export function TekstMetVerwijzingen({
   label, waarde, onChange, opties, rijen = 6, placeholder, hint, mono,
@@ -35,7 +36,12 @@ export function TekstMetVerwijzingen({
 
   function voegIn(pad: string) {
     if (!pad) return;
-    const fragment = `{{ ${pad} }}`;
+    prik(`{{ ${pad} }}`);
+  }
+
+  /** Een stukje tekst op de cursorpositie zetten. Gedeeld met de kluis-kiezer:
+   *  een geheim voeg je op precies dezelfde manier in als een verwijzing. */
+  function prik(fragment: string) {
     const el = veld.current;
     // Zonder cursorpositie (het veld had geen focus) plakken we achteraan —
     // beter dan de tekst stilletjes ergens anders neerzetten.
@@ -58,6 +64,7 @@ export function TekstMetVerwijzingen({
     <div>
       <div className="mb-1 flex items-end justify-between gap-2">
         <Label>{label}</Label>
+        <GeheimKiezer onKies={prik} />
         <Select
           value=""
           className="h-7 w-52 py-0 text-[11px]"
