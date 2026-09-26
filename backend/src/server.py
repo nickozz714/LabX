@@ -275,7 +275,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import (  # noqa: E402
+from routers import (
+    audit_router,  # noqa: E402
     auth_router, system_router, lab_router, chat_router, internal_router, settings_router,
     skill_router, tool_router, mcp_router, workflow_router, schedule_router, azure_profile_router,
     board_router, notify_router, guard_router, resource_router, secret_router,
@@ -302,3 +303,4 @@ app.include_router(notify_router.router, prefix="/api")
 app.include_router(guard_router.router, prefix="/api")
 app.include_router(resource_router.router, prefix="/api")
 app.include_router(secret_router.router, prefix="/api")
+app.include_router(audit_router.router, prefix="/api")
