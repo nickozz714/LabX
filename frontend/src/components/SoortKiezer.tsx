@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { boardApi, type ItemSoort } from "@/lib/boards";
 import { Label, Select } from "@/components/ui";
+import { ApiError } from "@/lib/api";
 
 /** De soorten van één bord, één keer opgehaald per bord. */
 export function useItemSoorten(boardId: number | null) {
@@ -28,7 +29,16 @@ export function useItemSoorten(boardId: number | null) {
         setSoorten(r.soorten || []);
         setMelding(r.melding || null);
       })
-      .catch(() => { if (!weg) setSoorten([]); });
+      // Stil falen betekende hier: geen lijst, dus geen keuzelijst, dus een
+      // scherm waarop het vak gewoon niet bestaat. Zo bleef een kapot endpoint
+      // dagen onopgemerkt — de fout hoort in beeld te staan.
+      .catch((e) => {
+        if (weg) return;
+        setSoorten([]);
+        setMelding(e instanceof ApiError
+          ? `De soorten konden niet opgehaald worden: ${e.message}`
+          : "De soorten konden niet opgehaald worden.");
+      });
     return () => { weg = true; };
   }, [boardId]);
 
@@ -43,15 +53,19 @@ export function SoortKiezer({ boardId, waarde, onChange, label = "Soort", hint }
   hint?: string;
 }) {
   const { soorten, melding } = useItemSoorten(boardId);
-  if (!soorten.length && !melding) return null;
-
+  // Ook zonder lijst blijven staan: een veld dat er niet is, is niet te
+  // onderscheiden van een veld dat er nooit was — en dan ga je zoeken naar
+  // iets wat er hoort te zijn.
   const gekozen = soorten.find((s) => s.naam === waarde);
 
   return (
     <div>
       <Label>{label}</Label>
-      <Select value={waarde} onChange={(e) => onChange(e.target.value)}>
-        <option value="">— wat het bord gebruikt —</option>
+      <Select value={waarde} onChange={(e) => onChange(e.target.value)}
+              disabled={!soorten.length}>
+        <option value="">
+          {soorten.length ? "— wat het bord gebruikt —" : "— geen soorten opgehaald —"}
+        </option>
         {soorten.map((s) => (
           <option key={s.id} value={s.naam} disabled={s.subtaak}>
             {s.naam}{s.subtaak ? " (subtaak — kan niet zonder bovenliggend issue)" : ""}

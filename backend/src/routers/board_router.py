@@ -230,9 +230,9 @@ async def item_types(board_id: int, db: Session = Depends(get_db)):
     Vragen in plaats van gokken: bij Swinkels stond het bord op "Task", wat in
     dat project een SUBTAAK bleek — en dan weigert Jira élke aanmaak met een
     melding die niet zegt dat je instelling fout staat."""
-    from services.boards.sync_service import SyncService
+    from services.boards.sync_service import BoardSyncService
 
-    adapter = SyncService(db).adapter_voor(board_id)
+    adapter = BoardSyncService(db).adapter_voor(board_id)
     if adapter is None:
         return {"soorten": [], "melding": "Dit bord is niet aan een bron gekoppeld."}
     try:
