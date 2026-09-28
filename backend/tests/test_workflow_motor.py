@@ -1014,3 +1014,64 @@ def test_een_verse_sessie_begint_met_een_eigen_teller(db, monkeypatch):
     run = engine.maak_run(db, wf, lab_id="lab-1")
     asyncio.run(engine.voer_uit(run.id))
     assert [s.cost_usd for s in _stappen(db, run) if s.soort == "agent"] == [0.30, 0.05]
+
+
+# ── runs die "running" heten terwijl er niets meer draait ───────────────────
+#
+# Een herstart van de backend laat de taak van een lopende workflow verdampen,
+# maar de rij bleef staan zoals hij was. Voor chatbeurten werd dat al
+# rechtgezet, voor workflows niet — en sinds een draaiende workflow meetelt
+# voor de werkerbezetting houdt zo'n rij permanent een container bezet.
+
+def test_een_herstart_zet_lopende_runs_recht(db):
+    from models.workflow import WorkflowRunStep
+
+    wf = _workflow(db, [{"id": "a", "type": "agent", "naam": "A", "prompt": "x"}], [])
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    run.status = "running"
+    db.add(WorkflowRunStep(run_id=run.id, node_id="a", naam="A", soort="agent",
+                           volgnummer=1, status="running", created_at="nu"))
+    db.commit()
+
+    assert engine.reconcile_on_start(db) == 1
+    db.refresh(run)
+    assert run.status == "interrupted"
+    assert "herstart" in (run.error or "")
+    assert run.finished_at
+    # en de activiteit die liep, anders houdt díé de werker bezet
+    stap = db.query(WorkflowRunStep).filter(WorkflowRunStep.run_id == run.id).one()
+    assert stap.status == "interrupted"
+
+
+def test_een_afgeronde_run_blijft_met_rust(db):
+    wf = _workflow(db, [{"id": "a", "type": "agent", "naam": "A", "prompt": "x"}], [])
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    run.status = "completed"
+    db.commit()
+    assert engine.reconcile_on_start(db) == 0
+    db.refresh(run)
+    assert run.status == "completed"
+
+
+def test_een_run_zonder_taak_wordt_opgeruimd(db):
+    """Als de backend wél blijft draaien maar de taak eronder wegvalt."""
+    wf = _workflow(db, [{"id": "a", "type": "agent", "naam": "A", "prompt": "x"}], [])
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    run.status = "running"
+    run.started_at = "2020-01-01T00:00:00+00:00"      # ruim buiten het respijt
+    db.commit()
+    assert engine.ruim_dode_runs_op(db) == 1
+    db.refresh(run)
+    assert run.status == "interrupted"
+
+
+def test_een_run_die_net_gestart_is_krijgt_respijt(db):
+    """Anders ruim je hem op voordat hij in de takenlijst staat."""
+    from datetime import datetime, timezone
+
+    wf = _workflow(db, [{"id": "a", "type": "agent", "naam": "A", "prompt": "x"}], [])
+    run = engine.maak_run(db, wf, lab_id="lab-1")
+    run.status = "running"
+    run.started_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    assert engine.ruim_dode_runs_op(db) == 0

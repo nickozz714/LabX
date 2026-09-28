@@ -44,6 +44,12 @@ async def _dode_runs_tick() -> None:
         aantal = ruim_dode_runs_op(db)
         if aantal:
             log.infox("Dode runs opgeruimd", aantal=aantal)
+        # Workflows lopen niet via background_runs, en bleven daardoor voor
+        # altijd "running" staan — inclusief de werker die ze bezet hielden.
+        from services.workflows.engine import ruim_dode_runs_op as _wf_dood
+        wf = _wf_dood(db)
+        if wf:
+            log.infox("Dode workflow-runs opgeruimd", aantal=wf)
     except Exception as exc:  # noqa: BLE001 — een opruiming mag nooit de scheduler slopen
         log.warningx("Opruimen van dode runs mislukt", error=str(exc)[:200])
     finally:
@@ -203,6 +209,8 @@ async def lifespan(_app: FastAPI):
         fixed = await LabService(db).reconcile_on_start()
         if fixed:
             log.infox("Labs gereconcilieerd bij opstart", fixed=fixed)
+        from services.workflows.engine import reconcile_on_start as _wf_reconcile
+        _wf_reconcile(db)
         from services.agent.background_runs import reconcile_on_start as _bg_reconcile
         interrupted = _bg_reconcile(db)
         if interrupted:

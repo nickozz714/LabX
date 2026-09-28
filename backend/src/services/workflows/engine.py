@@ -107,6 +107,69 @@ def maak_run(db: Session, workflow: Workflow, *, lab_id: str,
     return run
 
 
+def reconcile_on_start(db: Session) -> int:
+    """Runs die "running" heten terwijl hun taak niet meer bestaat.
+
+    Een herstart van de backend laat de taak van een lopende workflow
+    verdampen, maar de rij blijft staan zoals hij was. Voor chatbeurten werd
+    dat al rechtgezet (`background_runs.reconcile_on_start`); voor workflows
+    niet, en dus bleef zo'n run voor altijd "running".
+
+    Dat was al vervelend in het overzicht, maar sinds een draaiende workflow
+    meetelt voor de werkerbezetting is het erger: die rij houdt dan permanent
+    een container bezet, en bij één werker betekent dat dat er nooit meer iets
+    kan starten.
+    """
+    rijen = (db.query(WorkflowRun)
+             .filter(WorkflowRun.status.in_(("running", "pending"))).all())
+    for run in rijen:
+        run.status = "interrupted"
+        run.error = "Backend herstart tijdens de run"
+        run.finished_at = _now_iso()
+        # En de activiteit die op dat moment liep; anders blijft díé de werker
+        # bezet houden via de stap-telling.
+        (db.query(WorkflowRunStep)
+         .filter(WorkflowRunStep.run_id == run.id, WorkflowRunStep.status == "running")
+         .update({"status": "interrupted", "finished_at": _now_iso()},
+                 synchronize_session=False))
+    if rijen:
+        db.commit()
+        log.infox("Onderbroken workflow-runs rechtgezet", aantal=len(rijen))
+    return len(rijen)
+
+
+def ruim_dode_runs_op(db: Session, *, respijt_seconden: int = 120) -> int:
+    """Runs die "running" heten terwijl er in dit proces niets meer draait.
+
+    De tegenhanger van `reconcile_on_start` voor het geval de backend wél
+    blijft draaien maar de taak eronder wegvalt — afgebroken, gecrasht, of
+    gestopt zonder dat de motor eraan toekwam. `_TAKEN` weet wat er echt loopt;
+    het respijt is er zodat een run die nét gestart is niet opgeruimd wordt
+    voordat hij in die lijst staat.
+    """
+    from datetime import timedelta
+
+    grens = (datetime.now(timezone.utc) - timedelta(seconds=respijt_seconden)).isoformat()
+    aantal = 0
+    for run in db.query(WorkflowRun).filter(WorkflowRun.status == "running").all():
+        if run.id in _TAKEN and not _TAKEN[run.id].done():
+            continue
+        if (run.started_at or run.created_at or "") > grens:
+            continue
+        run.status = "interrupted"
+        run.error = "De run viel weg zonder af te ronden"
+        run.finished_at = _now_iso()
+        (db.query(WorkflowRunStep)
+         .filter(WorkflowRunStep.run_id == run.id, WorkflowRunStep.status == "running")
+         .update({"status": "interrupted", "finished_at": _now_iso()},
+                 synchronize_session=False))
+        aantal += 1
+    if aantal:
+        db.commit()
+        log.infox("Dode workflow-runs opgeruimd", aantal=aantal)
+    return aantal
+
+
 def start_in_achtergrond(run_id: str) -> bool:
     """De run loslaten als taak. De referentie vasthouden, anders ruimt de
     garbage collector hem halverwege op (zelfde patroon als background_runs)."""
