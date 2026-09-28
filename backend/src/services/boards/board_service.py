@@ -252,6 +252,7 @@ class BoardService:
             status=status,
             priority=payload.get("priority") or "normal",
             item_type=(payload.get("item_type") or None),
+            sync_naar_bron=(False if payload.get("sync_naar_bron") is False else True),
             assignee=payload.get("assignee"),
             labels=payload.get("labels") or [],
             depends_on=[str(x) for x in (payload.get("depends_on") or [])],
@@ -281,7 +282,7 @@ class BoardService:
         if "depends_on" in payload:
             t.depends_on = [str(x).strip() for x in (payload.get("depends_on") or []) if str(x).strip()]
         for field in ("title", "description", "acceptance_criteria", "priority",
-                      "assignee", "labels", "item_type"):
+                      "assignee", "labels", "item_type", "sync_naar_bron"):
             if field in payload:
                 new_value = payload[field]
                 if getattr(t, field) != new_value:
@@ -423,6 +424,7 @@ class BoardService:
             "description": t.description, "acceptance_criteria": t.acceptance_criteria,
             "status": t.status, "priority": t.priority,
             "item_type": getattr(t, "item_type", None),
+            "sync_naar_bron": bool(getattr(t, "sync_naar_bron", True)),
             "assignee": t.assignee, "labels": t.labels or [], "position": t.position,
             "depends_on": list(getattr(t, "depends_on", None) or []),
             "agent_state": t.agent_state, "agent_run_id": t.agent_run_id,

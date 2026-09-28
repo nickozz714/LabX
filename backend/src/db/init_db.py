@@ -127,6 +127,8 @@ _ADDITIVE_COLUMNS = {
         ("external_snapshot", "TEXT"),
         # Het soort werkitem in de bron (Jira-issuetype / ADO work item type).
         ("item_type", "VARCHAR(64)"),
+        # Bestaande tickets synchroniseerden al, dus 1 is de juiste standaard.
+        ("sync_naar_bron", "BOOLEAN NOT NULL DEFAULT 1"),
     ],
     "guard_audit": [
         ("intent", "VARCHAR(32)"),

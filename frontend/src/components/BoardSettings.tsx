@@ -24,6 +24,7 @@ import { labsApi } from "@/lib/labs";
 import type { BoardColumnDto, BoardDto, ExternalBoardColumn, Lab, ProviderSpec } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { SoortKiezer } from "@/components/SoortKiezer";
+import { VerplichteVelden } from "@/components/VerplichteVelden";
 import { ApiError } from "@/lib/api";
 import { Info } from "lucide-react";
 import { useBevestiging } from "@/components/Bevestiging";
@@ -361,6 +362,16 @@ export function BoardSettings({
                 </div>
                 )
               ))}
+
+              {/* De velden die de bron verplicht stelt en die LabX niet kent.
+                  Zonder een waarde hiervoor is zo'n issuetype onbruikbaar. */}
+              {(spec.fields.some((f) => f.key === "issue_type" || f.key === "work_item_type")) && (
+                <VerplichteVelden
+                  boardId={board.id}
+                  waarden={(config.field_defaults as Record<string, unknown>) || {}}
+                  onChange={(w) => setConfig({ ...config, field_defaults: w })}
+                />
+              )}
 
               {spec.secret_label && (
                 <div>

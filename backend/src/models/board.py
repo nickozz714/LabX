@@ -115,6 +115,17 @@ class Ticket(Base):
     # TICKET en niet alleen per bord, want een bug en een taak horen op
     # hetzelfde bord te kunnen staan.
     item_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Mag dit ticket naar de bron? Uit = het blijft in LabX staan.
+    #
+    # Niet elk ticket hoort bij de klant op het bord: eigen aantekeningen,
+    # vervolgwerk dat de agent bedacht, iets dat je eerst wilt uitzoeken. Die
+    # naar Jira duwen maakt daar rommel die een ander moet opruimen.
+    #
+    # Staat hij AAN en bestaat het ticket al in de bron, dan blijft alles zoals
+    # het was. Zet je hem daarna uit, dan stopt het bijwerken — wat er in Jira
+    # staat blijft staan, en die twee lopen vanaf dat moment uit elkaar. Dat is
+    # een bewuste keuze en geen ongeluk, dus het scherm zegt het erbij.
+    sync_naar_bron: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     assignee: Mapped[str | None] = mapped_column(String(255), nullable=True)
     labels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # Sorteervolgorde binnen een kolom; floats zodat "tussenvoegen" geen
