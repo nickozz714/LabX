@@ -23,6 +23,7 @@ import { boardApi } from "@/lib/boards";
 import { labsApi } from "@/lib/labs";
 import type { BoardColumnDto, BoardDto, ExternalBoardColumn, Lab, ProviderSpec } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea } from "@/components/ui";
+import { SoortKiezer } from "@/components/SoortKiezer";
 import { ApiError } from "@/lib/api";
 import { Info } from "lucide-react";
 import { useBevestiging } from "@/components/Bevestiging";
@@ -324,6 +325,19 @@ export function BoardSettings({
           {spec && spec.fields.length > 0 && (
             <div className="mt-3 space-y-2">
               {spec.fields.map((f) => (
+                f.key === "issue_type" || f.key === "work_item_type" ? (
+                  /* Niet als vrij tekstveld: alleen de bron weet hoe de
+                     soorten daar heten. Bij Swinkels stond hier "Task", een
+                     naam die in dat project alleen als SUBTAAK bestaat — en
+                     dan mislukt élke aanmaak met een melding die daar niets
+                     over zegt. */
+                  <SoortKiezer key={f.key} boardId={board.id}
+                               waarde={config[f.key] || ""}
+                               label={f.label}
+                               onChange={(soort) => setConfig({ ...config, [f.key]: soort })}
+                               hint="Wat hier staat geldt voor nieuwe items; per ticket kun je er
+                                     van afwijken." />
+                ) : (
                 <div key={f.key}>
                   <Label>
                     {f.label}
@@ -345,6 +359,7 @@ export function BoardSettings({
                     />
                   )}
                 </div>
+                )
               ))}
 
               {spec.secret_label && (

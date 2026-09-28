@@ -110,6 +110,11 @@ class Ticket(Base):
     # De kolom-key waar het ticket in staat.
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="todo")
     priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
+    # Het soort werkitem in de bron: een Jira-issuetype ("Bug", "Verhaal") of
+    # een Azure DevOps work item type. Leeg = wat er op het bord staat. Per
+    # TICKET en niet alleen per bord, want een bug en een taak horen op
+    # hetzelfde bord te kunnen staan.
+    item_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     assignee: Mapped[str | None] = mapped_column(String(255), nullable=True)
     labels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # Sorteervolgorde binnen een kolom; floats zodat "tussenvoegen" geen

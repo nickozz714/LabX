@@ -94,8 +94,22 @@ class SyncAdapter:
     async def create_item(self, *, title: str, description: Optional[str], state: Optional[str],
                           priority: Optional[str], assignee: Optional[str],
                           labels: List[str],
-                          acceptance_criteria: Optional[str] = None) -> ExternalItem:
+                          acceptance_criteria: Optional[str] = None,
+                          item_type: Optional[str] = None) -> ExternalItem:
+        """`item_type` is het soort werkitem in de bron: een Jira-issuetype of
+        een Azure DevOps work item type. Leeg = wat er op het bord is
+        ingesteld. Dit staat per ITEM en niet alleen per bord, want een bug en
+        een taak horen op hetzelfde bord te kunnen staan."""
         raise NotImplementedError
+
+    async def item_types(self) -> List[Dict[str, Any]]:
+        """Welke soorten dit project kent, en welke bruikbaar zijn.
+
+        Vragen in plaats van gokken. Bij Swinkels stond het bord op "Task",
+        en dat blijkt in dat project een SUBTAAK te zijn — waarop Jira elke
+        aanmaak weigerde met een melding die je zonder deze lijst niet kunt
+        plaatsen. Elke regel: {naam, id, subtaak, verplicht: [...]}."""
+        return []
 
     async def update_item(self, *, external_id: str, title: Optional[str],
                           description: Optional[str], state: Optional[str],

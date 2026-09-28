@@ -125,6 +125,8 @@ _ADDITIVE_COLUMNS = {
         # veranderd". NULL voor bestaande rijen: de eerste sync vult hem, en
         # tot dat moment gedraagt de push zich als vroeger (alles mee).
         ("external_snapshot", "TEXT"),
+        # Het soort werkitem in de bron (Jira-issuetype / ADO work item type).
+        ("item_type", "VARCHAR(64)"),
     ],
     "guard_audit": [
         ("intent", "VARCHAR(32)"),

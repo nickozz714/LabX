@@ -133,7 +133,7 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
                 "title": args.get("title"), "description": args.get("description"),
                 "acceptance_criteria": args.get("acceptance_criteria"),
                 "status": args.get("status"), "priority": args.get("priority"),
-                "labels": args.get("labels"),
+                "labels": args.get("labels"), "item_type": args.get("item_type"),
             }, author="agent")
             return {"result": f"Ticket {t.key} aangemaakt in kolom '{t.status}'."}
 
@@ -141,7 +141,7 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             t = _resolve(str(args.get("key") or ""))
             payload = {k: v for k, v in args.items()
                        if k in ("title", "description", "acceptance_criteria", "status",
-                                "priority", "assignee", "labels")
+                                "priority", "assignee", "labels", "item_type")
                        and v is not None}
             if not payload:
                 return {"error": "Geef minstens één veld op om bij te werken."}

@@ -12,6 +12,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
 import type { BoardDto, PlanDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
+import { SoortKiezer } from "@/components/SoortKiezer";
 import { useMelding } from "@/components/Meldingen";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
@@ -409,13 +410,16 @@ function NewTicketModal({
   const [description, setDescription] = useState("");
   const [acceptance, setAcceptance] = useState("");
   const [priority, setPriority] = useState("normal");
+  // Het soort werkitem in de bron. Leeg = wat er op het bord staat; per ticket
+  // in te stellen, want een bug en een taak horen op hetzelfde bord te kunnen.
+  const [soort, setSoort] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
     try {
       await boardApi.createTicket(board.id, {
         title, description, acceptance_criteria: acceptance.trim() || null,
-        status: column, priority,
+        status: column, priority, item_type: soort || null,
       });
       onCreated();
     } catch (err) {
@@ -453,15 +457,19 @@ function NewTicketModal({
             De agent toetst zijn werk hieraan en meldt per criterium of eraan voldaan is.
           </p>
         </div>
-        <div>
-          <Label>Prioriteit</Label>
-          <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
-            {["low", "normal", "high", "urgent"].map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </Select>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <Label>Prioriteit</Label>
+            <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
+              {["low", "normal", "high", "urgent"].map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <SoortKiezer boardId={board.id} waarde={soort} onChange={setSoort}
+                       hint="Bijvoorbeeld Bug. Leeg = de instelling van het bord." />
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button className="w-full" onClick={submit} disabled={!title.trim()}>
