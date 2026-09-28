@@ -395,16 +395,107 @@ class JiraAdapter(SyncAdapter):
             fields[self._acceptance_field] = _text_to_adf(acceptance_criteria)
         return fields
 
+    # Velden die Jira zelf invult of die wij altijd meesturen; die hoeven niet
+    # als "je mist nog iets" gemeld te worden.
+    _VANZELF = {"project", "issuetype", "summary", "reporter", "parent"}
+
+    async def item_types(self) -> List[Dict[str, Any]]:
+        """De issuetypes van dit project, met hun verplichte velden.
+
+        Alleen Jira weet dit: welke types er zijn, welke SUBTAKEN zijn (die
+        kunnen niet zonder bovenliggend issue) en welke velden dit project
+        verplicht stelt.
+
+        **Waarom de oude createmeta en niet de nieuwe.** Bij een team-managed
+        project (Jira noemt dat "next-gen") geeft
+        `createmeta/{key}/issuetypes` netjes HTTP 200 met een LEGE lijst. Het
+        BICC-project van Swinkels is er zo een, en op die lege lijst viel LabX
+        terug op de naam uit de instellingen — precies de situatie die we
+        wilden voorkomen. De oudere vorm met `expand` werkt daar wél, en geeft
+        de verplichte velden in dezelfde aanroep in plaats van één per type.
+
+        Helpt dat ook niet, dan blijft het project-endpoint over: dat kent de
+        types wel, alleen niet welke velden verplicht zijn.
+        """
+        key = self._require("project_key")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{self.base_url}/rest/api/3/issue/createmeta",
+                params={"projectKeys": key, "expand": "projects.issuetypes.fields"},
+                headers=self._headers())
+            if resp.status_code < 400:
+                uit = []
+                for project in ((resp.json() or {}).get("projects") or []):
+                    for soort in (project.get("issuetypes") or []):
+                        uit.append(self._soort_regel(soort, soort.get("fields") or {}))
+                if uit:
+                    return uit
+
+            resp = await client.get(f"{self.base_url}/rest/api/3/project/{key}",
+                                    headers=self._headers())
+            self._raise_for(resp, "issuetypes ophalen")
+            return [self._soort_regel(soort, None)
+                    for soort in ((resp.json() or {}).get("issueTypes") or [])]
+
+    def _soort_regel(self, soort: Dict[str, Any],
+                     velden: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        regel = {"id": str(soort.get("id")), "naam": soort.get("name") or "",
+                 "subtaak": bool(soort.get("subtask")),
+                 "omschrijving": soort.get("description") or ""}
+        if velden is not None:
+            regel["verplicht"] = [
+                {"veld": sleutel, "naam": (veld or {}).get("name") or sleutel}
+                for sleutel, veld in velden.items()
+                if (veld or {}).get("required") and sleutel not in self._VANZELF]
+        return regel
+
+    async def _issuetype_voor(self, client: "httpx.AsyncClient",
+                              gevraagd: Optional[str]) -> Dict[str, str]:
+        """Het issuetype voor een nieuw issue, gecontroleerd vóór het aanmaken.
+
+        Een subtaak eist een bovenliggend issue. Stond het bord daarop, dan
+        mislukte ELKE aanmaak met `Issuetype is een subtaak maar bovenliggende
+        issuecode of id zijn niet gespecifieerd` — een melding die niet zegt
+        dat je instelling fout staat. Nu zegt LabX dat wel, mét de soorten die
+        hier wél kunnen."""
+        naam = str(gevraagd or self.config.get("issue_type") or "Task").strip()
+        try:
+            soorten = await self.item_types()
+        except Exception:  # noqa: BLE001 — Jira mag het zelf afkeuren
+            return {"name": naam}
+        if not soorten:
+            return {"name": naam}
+        gekozen = next((s for s in soorten if s["naam"].lower() == naam.lower()), None)
+        bruikbaar = [s["naam"] for s in soorten if not s["subtaak"]]
+        if gekozen is None:
+            raise RuntimeError(
+                f"Project {self._require('project_key')} kent geen issuetype "
+                f"'{naam}'. Beschikbaar: {', '.join(bruikbaar) or 'geen'}.")
+        if gekozen["subtaak"]:
+            raise RuntimeError(
+                f"'{naam}' is in dit project een SUBTAAK, en die kan niet zonder "
+                f"bovenliggend issue. Kies een ander soort bij het bord of op het "
+                f"ticket: {', '.join(bruikbaar) or 'geen gevonden'}.")
+        ontbreekt = [v["naam"] or v["veld"] for v in (gekozen.get("verplicht") or [])]
+        if ontbreekt:
+            raise RuntimeError(
+                f"Jira eist voor een '{naam}' in dit project nog: "
+                f"{', '.join(ontbreekt)}. Die velden kent LabX niet, dus het "
+                f"aanmaken zou alsnog mislukken. Vul ze in Jira in of maak ze "
+                f"optioneel voor dit projecttype.")
+        return {"id": gekozen["id"]}
+
     async def create_item(self, *, title: str, description: Optional[str], state: Optional[str],
                           priority: Optional[str], assignee: Optional[str],
                           labels: List[str],
-                          acceptance_criteria: Optional[str] = None) -> ExternalItem:
+                          acceptance_criteria: Optional[str] = None,
+                          item_type: Optional[str] = None) -> ExternalItem:
         async with httpx.AsyncClient(timeout=60.0) as client:
             fields = await self._fields_payload(
                 client, title=title, description=description, priority=priority,
                 assignee=None, labels=labels, acceptance_criteria=acceptance_criteria)
             fields["project"] = {"key": self._require("project_key")}
-            fields["issuetype"] = {"name": str(self.config.get("issue_type") or "Task")}
+            fields["issuetype"] = await self._issuetype_voor(client, item_type)
             resp = await client.post(f"{self.base_url}/rest/api/3/issue",
                                      headers=self._headers(), json={"fields": fields})
             self._raise_for(resp, "issue aanmaken")

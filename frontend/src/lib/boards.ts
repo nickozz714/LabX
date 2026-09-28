@@ -18,7 +18,20 @@ import type {
   ProviderSpec, TicketCommentDto, TicketDto,
 } from "@/lib/types";
 
+/** Een soort werkitem zoals de bron hem kent (Jira-issuetype, ADO work item
+ *  type). `subtaak` betekent: kan niet zonder bovenliggend issue. */
+export type ItemSoort = {
+  id: string;
+  naam: string;
+  subtaak: boolean;
+  omschrijving?: string;
+  verplicht?: { veld: string; naam: string }[];
+};
+
 export const boardApi = {
+  /** Welke soorten werkitems de bron van dit bord kent. */
+  itemTypes: (boardId: number) =>
+    api.get<{ soorten: ItemSoort[]; melding?: string }>(`/boards/${boardId}/item-types`),
   providers: () => api.get<ProviderSpec[]>("/boards/providers"),
 
   list: () => api.get<BoardDto[]>("/boards"),

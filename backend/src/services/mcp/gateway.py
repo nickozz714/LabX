@@ -646,9 +646,15 @@ def build_server():
              "een run tegenkomt. `description` is de OPDRACHT (wat er moet gebeuren), "
              "`acceptance_criteria` is wanneer het klaar is.\n"
              "Args: title* (string), description (string), acceptance_criteria (string), "
-             "status (string), priority (string: low|normal|high|urgent), labels (array)",
+             "status (string), priority (string: low|normal|high|urgent), labels (array), "
+             "item_type (string)",
              {"type": "object", "properties": {
                  "title": {"type": "string"},
+                 "item_type": {"type": "string", "description":
+                               "Het soort werkitem in de bron, bijvoorbeeld Bug of Task. "
+                               "Leeg = wat er op het bord is ingesteld. Weet je de soorten "
+                               "niet, laat hem dan leeg — een verkeerde naam laat het "
+                               "doorzetten naar de bron mislukken."},
                  "description": {"type": "string",
                                  "description": "De opdracht in Markdown — niet een verslag"},
                  "acceptance_criteria": {"type": "string",
@@ -666,9 +672,11 @@ def build_server():
              "onvolledig blijkt.\n"
              "Args: key* (string), title (string), description (string), "
              "acceptance_criteria (string), status (string), priority (string), "
-             "assignee (string), labels (array)",
+             "assignee (string), labels (array), item_type (string)",
              {"type": "object", "properties": {
                  "key": {"type": "string"},
+                 "item_type": {"type": "string", "description":
+                               "Het soort werkitem in de bron, bijvoorbeeld Bug of Task."},
                  "title": {"type": "string"},
                  "description": {"type": "string",
                                  "description": "De opdracht in Markdown. Vervangt de bestaande tekst — geen verslag hier"},

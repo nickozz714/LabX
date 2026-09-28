@@ -32,12 +32,17 @@ def db():
     import models.lab_worker  # noqa: F401
     import models.message  # noqa: F401
     import models.thread  # noqa: F401
+    import models.workflow  # noqa: F401
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine, tables=[
         models.lab.Lab.__table__, models.lab_worker.LabWorker.__table__,
         models.thread.Thread.__table__, models.message.Message.__table__,
         models.background_run.BackgroundRun.__table__,
+        # De bezetting telt ook draaiende workflows mee: die nemen net zo goed
+        # een container in beslag als een chat of een ticket.
+        models.workflow.WorkflowRun.__table__,
+        models.workflow.WorkflowRunStep.__table__,
     ])
     s = sessionmaker(bind=engine)()
     s.add(models.lab.Lab(id="lab1", name="De Vries", status="running",

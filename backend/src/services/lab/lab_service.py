@@ -808,28 +808,58 @@ exec ssh -N \\
         from models.background_run import BackgroundRun
         from models.lab_worker import LabWorker
         from models.thread import Thread
+        from models.workflow import WorkflowRun, WorkflowRunStep
 
         telling: Dict[int, int] = {}
+        eerste = (self.db.query(LabWorker)
+                  .filter(LabWorker.lab_id == lab_id, LabWorker.index == 1).first())
+        eerste_id = eerste.id if eerste is not None else None
+
+        def _tel(wid: Optional[int], hoeveel: int = 1) -> None:
+            # Werk zonder werker draait in werker 1 (zie `container_for`), dus
+            # zo telt het hier ook mee.
+            doel = wid or eerste_id
+            if doel:
+                telling[doel] = telling.get(doel, 0) + hoeveel
+
         rijen = (self.db.query(BackgroundRun.lab_worker_id)
                  .join(LabWorker, LabWorker.id == BackgroundRun.lab_worker_id)
                  .filter(LabWorker.lab_id == lab_id,
                          BackgroundRun.status.in_(("running", "queued"))).all())
         for (wid,) in rijen:
             if wid:
-                telling[wid] = telling.get(wid, 0) + 1
+                _tel(wid)
 
-        # Runs zonder werker draaien in werker 1 (zie `container_for`), dus zo
-        # tellen ze hier ook mee.
         losse = (self.db.query(BackgroundRun.id)
                  .join(Thread, Thread.id == BackgroundRun.thread_id)
                  .filter(Thread.lab_id == lab_id,
                          BackgroundRun.lab_worker_id.is_(None),
                          BackgroundRun.status.in_(("running", "queued"))).count())
         if losse:
-            eerste = (self.db.query(LabWorker)
-                      .filter(LabWorker.lab_id == lab_id, LabWorker.index == 1).first())
-            if eerste is not None:
-                telling[eerste.id] = telling.get(eerste.id, 0) + losse
+            _tel(None, losse)
+
+        # En de workflows. Die liepen hier niet in mee, en dat was geen
+        # weergavefout maar een gat in de boekhouding: een draaiende workflow
+        # bezet een container net zo goed als een ticket, maar was onzichtbaar.
+        # Gevolg: een planning kon werk zetten op een werker waar al een
+        # workflow in zat, en het afschalen kon die container zelfs weghalen.
+        for run_id, wid in (self.db.query(WorkflowRun.id, WorkflowRun.worker_id)
+                            .filter(WorkflowRun.lab_id == lab_id,
+                                    WorkflowRun.status.in_(("running", "pending"))).all()):
+            # Normaal bezet een run één werker: zijn activiteiten gaan achter
+            # elkaar. Tijdens een BUBBEL draaien takken tegelijk in andere
+            # containers, en dan is de activiteit de enige plek waar staat
+            # welke. Vandaar de verzameling: geen dubbeltelling als een tak
+            # toevallig in dezelfde werker zit als de run.
+            bezet = {wid or eerste_id}
+            for (swid,) in (self.db.query(WorkflowRunStep.worker_id)
+                            .filter(WorkflowRunStep.run_id == run_id,
+                                    WorkflowRunStep.status == "running",
+                                    WorkflowRunStep.worker_id.isnot(None)).all()):
+                bezet.add(swid)
+            for w in bezet:
+                if w:
+                    telling[w] = telling.get(w, 0) + 1
         return telling
 
     @staticmethod

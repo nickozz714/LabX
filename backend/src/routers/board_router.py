@@ -223,6 +223,24 @@ def overview(runs: int = Query(default=30, le=200), db: Session = Depends(get_db
 
     return {"boards": borden, "running": lopend, "recent": verloop}
 
+@router.get("/{board_id}/item-types")
+async def item_types(board_id: int, db: Session = Depends(get_db)):
+    """Welke soorten werkitems de bron kent.
+
+    Vragen in plaats van gokken: bij Swinkels stond het bord op "Task", wat in
+    dat project een SUBTAAK bleek — en dan weigert Jira élke aanmaak met een
+    melding die niet zegt dat je instelling fout staat."""
+    from services.boards.sync_service import SyncService
+
+    adapter = SyncService(db).adapter_voor(board_id)
+    if adapter is None:
+        return {"soorten": [], "melding": "Dit bord is niet aan een bron gekoppeld."}
+    try:
+        return {"soorten": await adapter.item_types()}
+    except Exception as exc:  # noqa: BLE001
+        return {"soorten": [], "melding": str(exc)[:400]}
+
+
 @router.get("/{board_id}")
 def get_board(board_id: int, db: Session = Depends(get_db)):
     svc = _svc(db)

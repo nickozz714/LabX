@@ -261,11 +261,28 @@ class AzureDevOpsAdapter(SyncAdapter):
             add("/fields/System.Tags", "; ".join(str(x) for x in labels))
         return ops
 
+    async def item_types(self) -> List[Dict[str, Any]]:
+        """De work item types van dit project. Azure DevOps kent geen subtaken
+        die een ouder eisen, dus alles hier is bruikbaar."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{self.base}/wit/workitemtypes?api-version={_API}",
+                headers=self._headers())
+            if resp.status_code >= 400:
+                return []
+            return [{"id": w.get("referenceName") or w.get("name"),
+                     "naam": w.get("name") or "", "subtaak": False,
+                     "omschrijving": w.get("description") or "", "verplicht": []}
+                    for w in ((resp.json() or {}).get("value") or [])]
+
     async def create_item(self, *, title: str, description: Optional[str], state: Optional[str],
                           priority: Optional[str], assignee: Optional[str],
                           labels: List[str],
-                          acceptance_criteria: Optional[str] = None) -> ExternalItem:
-        wit = str(self.config.get("work_item_type") or "Task")
+                          acceptance_criteria: Optional[str] = None,
+                          item_type: Optional[str] = None) -> ExternalItem:
+        # Per item, met het bord als terugval: een bug en een taak horen op
+        # hetzelfde bord te kunnen staan.
+        wit = str(item_type or self.config.get("work_item_type") or "Task")
         ops = self._patch_ops(title=title, description=description, state=state,
                               priority=priority, assignee=assignee, labels=labels,
                               acceptance_criteria=acceptance_criteria)

@@ -250,6 +250,15 @@ class BoardSyncService:
             secret = decrypt(board.provider_secret_encrypted)
         return build_adapter(board.provider, board.provider_config or {}, secret)
 
+    def adapter_voor(self, board_id: int):
+        """De adapter van dit bord, of None als het lokaal is. Voor vragen aan
+        de bron die los staan van een synchronisatie — welke issuetypes er
+        zijn, bijvoorbeeld."""
+        board = self.boards.get_board(board_id)
+        if board.provider == "local":
+            return None
+        return self._adapter(board)
+
     # ── publieke ingang ─────────────────────────────────────────────────────
 
     async def sync_board(self, board_id: int) -> Dict[str, Any]:
@@ -383,7 +392,8 @@ class BoardSyncService:
                         state=self._state_for_column(board, ticket.status),
                         priority=ticket.priority, assignee=ticket.assignee,
                         labels=list(ticket.labels or []),
-                        acceptance_criteria=ticket.acceptance_criteria)
+                        acceptance_criteria=ticket.acceptance_criteria,
+                        item_type=getattr(ticket, "item_type", None) or None)
                     stats["created_external"] += 1
                 self._apply_external_identity(ticket, board, item)
                 # De bron heeft nu onze waarden: dat is het nieuwe ijkpunt.

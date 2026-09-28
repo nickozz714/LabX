@@ -22,6 +22,8 @@ terwijl werker 2 leegstaat.
 """
 import sys
 from pathlib import Path
+
+import pytest
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -176,3 +178,121 @@ def test_een_werker_met_ruimte_over_mag_niet_opgeruimd_worden():
     bron = inspect.getsource(LabService.scale)
     assert "_bezette_werkers" in bron
     assert "aantal > 0" in inspect.getsource(LabService.werkers_met_werk)
+
+
+# ── een draaiende workflow bezet ook een werker ─────────────────────────────
+#
+# Dit was geen weergavefout maar een gat in de boekhouding. De bezetting kwam
+# alleen uit `background_runs`, en een workflow draait niet via die tabel. Een
+# lopende workflow was daardoor onzichtbaar: het overzicht telde hem niet, een
+# planning kon werk zetten op de werker waar hij in zat, en het afschalen kon
+# die container zelfs weghalen.
+
+@pytest.fixture()
+def db():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from db.database import Base
+    from models.background_run import BackgroundRun
+    from models.lab import Lab
+    from models.lab_worker import LabWorker
+    from models.message import Message
+    from models.thread import Thread
+    from models.workflow import WorkflowRun, WorkflowRunStep
+
+    motor = create_engine("sqlite://")
+    Base.metadata.create_all(motor, tables=[
+        Lab.__table__, LabWorker.__table__, Thread.__table__, Message.__table__,
+        BackgroundRun.__table__, WorkflowRun.__table__, WorkflowRunStep.__table__])
+    s = sessionmaker(bind=motor)()
+    s.add(Lab(id="lab-1", name="Swinkels", status="running",
+              image="python:3-bookworm", created_at="nu", updated_at="nu"))
+    for i in (1, 2, 3):
+        s.add(LabWorker(lab_id="lab-1", index=i, status="running",
+                        container_id=f"c{i}", provision_status="ok",
+                        created_at="nu", updated_at="nu"))
+    s.commit()
+    yield s
+    s.close()
+
+
+def _werker_id(db, index):
+    from models.lab_worker import LabWorker
+    return db.query(LabWorker).filter(LabWorker.index == index).one().id
+
+
+def _wf_run(db, *, worker_index=None, status="running"):
+    from models.workflow import WorkflowRun
+    run = WorkflowRun(id=f"wf-{status}-{worker_index}", workflow_id=1, lab_id="lab-1",
+                      worker_id=_werker_id(db, worker_index) if worker_index else None,
+                      status=status, trigger_type="manual", created_at="nu")
+    db.add(run)
+    db.commit()
+    return run
+
+
+def test_een_draaiende_workflow_telt_mee_in_de_bezetting(db):
+    svc = LabService(db)
+    assert svc.bezetting("lab-1") == {}
+    _wf_run(db, worker_index=2)
+    assert svc.bezetting("lab-1") == {_werker_id(db, 2): 1}
+
+
+def test_een_workflow_zonder_werker_zit_in_werker_1(db):
+    """Zoals elk werk zonder werker — zie `container_for`."""
+    _wf_run(db)
+    assert LabService(db).bezetting("lab-1") == {_werker_id(db, 1): 1}
+
+
+def test_een_afgeronde_workflow_bezet_niets_meer(db):
+    _wf_run(db, worker_index=2, status="completed")
+    assert LabService(db).bezetting("lab-1") == {}
+
+
+def test_een_lopende_bubbel_bezet_elke_werker_van_zijn_takken(db):
+    """Een bubbel draait zijn takken TEGELIJK in verschillende containers. De
+    run-rij kent er maar één, dus zonder de activiteiten erbij telde een bubbel
+    voor één werker terwijl hij er drie bezet hield."""
+    from models.workflow import WorkflowRunStep
+
+    run = _wf_run(db, worker_index=1)
+    for index in (2, 3):
+        db.add(WorkflowRunStep(run_id=run.id, node_id=f"n{index}", naam=f"Tak {index}",
+                               soort="agent", volgnummer=index, status="running",
+                               worker_id=_werker_id(db, index), created_at="nu"))
+    db.commit()
+    assert LabService(db).bezetting("lab-1") == {
+        _werker_id(db, 1): 1, _werker_id(db, 2): 1, _werker_id(db, 3): 1}
+
+
+def test_een_tak_in_dezelfde_werker_telt_niet_dubbel(db):
+    from models.workflow import WorkflowRunStep
+
+    run = _wf_run(db, worker_index=1)
+    db.add(WorkflowRunStep(run_id=run.id, node_id="n1", naam="Stap", soort="agent",
+                           volgnummer=1, status="running",
+                           worker_id=_werker_id(db, 1), created_at="nu"))
+    db.commit()
+    assert LabService(db).bezetting("lab-1") == {_werker_id(db, 1): 1}
+
+
+def test_een_werker_met_een_workflow_erin_mag_niet_opgeruimd_worden(db):
+    """Het afschalen kijkt naar `werkers_met_werk`; stond de workflow daar niet
+    in, dan kon de container waar hij in draaide weggehaald worden."""
+    _wf_run(db, worker_index=3)
+    assert LabService(db).werkers_met_werk("lab-1") == {_werker_id(db, 3)}
+
+
+def test_een_planning_krijgt_niet_de_werker_waar_een_workflow_in_zit(db):
+    """De reden dat dit een echte fout was en geen weergavefout: werk landde op
+    een container waar al een workflow in draaide."""
+    from models.lab import Lab
+    from models.lab_worker import LabWorker
+
+    _wf_run(db, worker_index=1)
+    svc = LabService(db)
+    svc.claimbare_werkers = lambda _p: (db.query(LabWorker)
+                                        .order_by(LabWorker.index).all())
+    gekozen = svc.vrije_werker(db.get(Lab, "lab-1"))
+    assert gekozen is not None and gekozen.index == 2

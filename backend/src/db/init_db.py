@@ -125,6 +125,8 @@ _ADDITIVE_COLUMNS = {
         # veranderd". NULL voor bestaande rijen: de eerste sync vult hem, en
         # tot dat moment gedraagt de push zich als vroeger (alles mee).
         ("external_snapshot", "TEXT"),
+        # Het soort werkitem in de bron (Jira-issuetype / ADO work item type).
+        ("item_type", "VARCHAR(64)"),
     ],
     "guard_audit": [
         ("intent", "VARCHAR(32)"),
@@ -138,6 +140,11 @@ _ADDITIVE_COLUMNS = {
         # De invoerparameters. Leeg voor een bestaande workflow: die verwacht
         # geen invoer en blijft dus draaien zoals hij deed.
         ("parameters_json", "TEXT"),
+    ],
+    "workflow_run_steps": [
+        # In welke werker deze activiteit draaide; nodig om een lopende bubbel
+        # mee te tellen in de bezetting.
+        ("worker_id", "INTEGER"),
     ],
     "workflow_runs": [
         ("worker_id", "INTEGER"),
