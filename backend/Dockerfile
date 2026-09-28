@@ -83,4 +83,8 @@ ENV LABX_HOME=/data
 
 EXPOSE 8090
 
+# Welke build hier draait; het scherm vergelijkt hem met de zijne.
+ARG LABX_VERSION=dev
+ENV LABX_VERSION=$LABX_VERSION
+
 CMD ["python", "-m", "uvicorn", "server:app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8090"]

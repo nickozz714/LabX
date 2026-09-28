@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
+import { Versie } from "@/components/Versie";
 import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, LineChart, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench } from "lucide-react";
 import { chatApi } from "@/lib/chat";
 
@@ -110,6 +111,9 @@ export function Shell() {
           ))}
         </nav>
         <div className="flex shrink-0 items-center gap-3 pl-3 text-xs text-sidebar-foreground/60">
+          {/* Welke build je voor je hebt — en een waarschuwing als de server
+              er al een nieuwere draait. */}
+          <Versie />
           <span>{username}</span>
           <button onClick={logout} className="flex items-center gap-1 hover:text-sidebar-foreground">
             <LogOut size={14} /> Uitloggen

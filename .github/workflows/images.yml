@@ -46,6 +46,8 @@ jobs:
         with:
           context: backend
           push: true
+          build-args: |
+            LABX_VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'edge' }}
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/labx-backend:${{ github.sha }}-${{ matrix.arch }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=backend-${{ matrix.arch }}
@@ -56,6 +58,8 @@ jobs:
         with:
           context: frontend
           push: true
+          build-args: |
+            LABX_VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'edge' }}
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/labx-frontend:${{ github.sha }}-${{ matrix.arch }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=frontend-${{ matrix.arch }}

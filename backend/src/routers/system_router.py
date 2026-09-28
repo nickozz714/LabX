@@ -17,6 +17,22 @@ def health():
     return {"ok": True}
 
 
+@router.get("/version")
+def version():
+    """Welke build hier draait.
+
+    Zonder inlog, want het scherm vraagt hem ook op het inlogscherm — en er
+    staat niets in wat niet al in de tag op GitHub staat.
+
+    Het punt is de VERGELIJKING: de interface weet welke versie in haar eigen
+    bundel gebakken is, en kan die naast deze leggen. Wijken ze af, dan kijk je
+    naar een oude pagina en zegt het scherm dat, in plaats van dat je in
+    devtools naar een bestandsnaam moet turen."""
+    import os
+
+    return {"versie": os.environ.get("LABX_VERSION") or "dev"}
+
+
 @router.get("/docker", dependencies=[Depends(require_user)])
 async def docker_status():
     return await DockerRuntime().diagnose()
