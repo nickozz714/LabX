@@ -219,6 +219,28 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
                 minuten=int(args.get("minutes") or 5),
                 reden=str(args.get("reason") or "").strip() or "geen reden opgegeven")
 
+        if tool_name == "board__delete_tickets":
+            sleutels = [str(k).strip() for k in (args.get("keys") or []) if str(k).strip()]
+            if not sleutels:
+                return {"error": "Noem de sleutels die weg moeten; er is geen 'alles'."}
+            if len(sleutels) > 50:
+                return {"error": (f"{len(sleutels)} tickets in één keer is te veel. "
+                                  "Doe het in porties van hoogstens 50, zodat een "
+                                  "vergissing beperkt blijft.")}
+            uit = svc.verwijder_tickets(board.id, sleutels)
+            regels = [f"{len(uit['verwijderd'])} verwijderd"
+                      + (f": {', '.join(uit['verwijderd'][:20])}" if uit["verwijderd"] else "")]
+            if uit["overgeslagen"]:
+                regels.append("Overgeslagen: " + "; ".join(
+                    f"{o['key']} ({o['reden']})" for o in uit["overgeslagen"]))
+            if uit["niet_gevonden"]:
+                regels.append("Niet gevonden: " + ", ".join(uit["niet_gevonden"]))
+            if uit["komt_terug_bij_sync"]:
+                regels.append("Let op: " + ", ".join(uit["komt_terug_bij_sync"])
+                              + " komen uit de bron en verschijnen bij de volgende "
+                                "synchronisatie opnieuw.")
+            return {"result": "\n".join(regels)}
+
         if tool_name == "board__comment_ticket":
             t = _resolve(str(args.get("key") or ""))
             body = str(args.get("body") or "").strip()
