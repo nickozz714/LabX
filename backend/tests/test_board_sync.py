@@ -184,7 +184,9 @@ def test_de_push_slaat_een_lokaal_gehouden_ticket_over():
 
     from services.boards.sync_service import BoardSyncService
 
-    bron = inspect.getsource(BoardSyncService._push)
+    # Het duwen van één ticket staat apart, zodat de handmatige knop en de
+    # automatische ronde niet uit elkaar kunnen lopen.
+    bron = inspect.getsource(BoardSyncService._push_ticket)
     assert 'getattr(ticket, "sync_naar_bron", True)' in bron
     # `dirty` blijft staan, zodat hij alsnog meegaat als je het vinkje omzet.
     assert "ticket.dirty = False" not in bron.split("overgeslagen_lokaal")[1][:200]
@@ -195,3 +197,160 @@ def test_een_ticket_synchroniseert_standaard_wel():
     from models.board import Ticket
 
     assert Ticket.__table__.c.sync_naar_bron.default.arg is True
+
+
+# ── één ticket los doorzetten ───────────────────────────────────────────────
+#
+# Een hele bordsynchronisatie is grof gereedschap als je net één ticket hebt
+# aangepast: hij raakt alles aan, duurt langer, en als er iets misgaat staat
+# jouw ticket tussen de rest.
+
+@pytest.fixture()
+def losdb():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from db.database import Base
+    from models.board import Board, Ticket, TicketComment
+    from models.lab import Lab
+
+    motor = create_engine("sqlite://")
+    Base.metadata.create_all(motor, tables=[
+        Lab.__table__, Board.__table__, Ticket.__table__, TicketComment.__table__])
+    s = sessionmaker(bind=motor)()
+    s.add(Board(id=1, name="Swinkels", key_prefix="SWI", provider="jira",
+                provider_config={"project_key": "BICC"}, sync_direction="two_way",
+                columns=[{"key": "todo", "name": "Nog doen"}],
+                created_at="nu", updated_at="nu"))
+    s.commit()
+    yield s
+    s.close()
+
+
+def _los_ticket(db, **velden):
+    from models.board import Ticket
+
+    basis = dict(board_id=1, key="SWI-1", title="Iets", status="todo",
+                 priority="normal", labels=[], depends_on=[], position=1.0,
+                 dirty=True, created_at="nu", updated_at="nu")
+    basis.update(velden)
+    t = Ticket(**basis)
+    db.add(t)
+    db.commit()
+    return t
+
+
+class _NepAdapter:
+    def __init__(self):
+        self.aangemaakt = []
+        self.bijgewerkt = []
+        self.opmerkingen = []
+
+    async def create_item(self, **kw):
+        from services.boards.sync.base import ExternalItem
+        self.aangemaakt.append(kw)
+        return ExternalItem(external_id="10001", external_key="BICC-7",
+                            title=kw.get("title") or "", state="Nog doen")
+
+    async def update_item(self, **kw):
+        from services.boards.sync.base import ExternalItem
+        self.bijgewerkt.append(kw)
+        return ExternalItem(external_id=kw["external_id"], external_key="BICC-7",
+                            title=kw.get("title") or "")
+
+    async def add_comment(self, **kw):
+        self.opmerkingen.append(kw)
+        return "c1"
+
+
+def _los_svc(db, adapter):
+    from services.boards.sync_service import BoardSyncService
+
+    svc = BoardSyncService(db)
+    svc._adapter = lambda _b: adapter
+    return svc
+
+
+def test_een_nieuw_ticket_wordt_alleen_zelf_aangemaakt(losdb):
+    import asyncio
+
+    t = _los_ticket(losdb, item_type="Bug")
+    _los_ticket(losdb, key="SWI-2", title="Een ander ticket")   # mag niet meegaan
+    adapter = _NepAdapter()
+    uit = asyncio.run(_los_svc(losdb, adapter).sync_ticket(t.id))
+
+    assert uit["resultaat"] == "aangemaakt" and uit["ok"] is True
+    assert uit["extern"] == "BICC-7"
+    assert len(adapter.aangemaakt) == 1
+    assert adapter.aangemaakt[0]["item_type"] == "Bug"      # het soort gaat mee
+    losdb.refresh(t)
+    assert t.dirty is False and t.external_key == "BICC-7"
+
+
+def test_de_opmerkingen_van_dat_ticket_gaan_mee(losdb):
+    """"Even doorzetten" zonder je laatste opmerking is precies niet wat je
+    bedoelde."""
+    import asyncio
+
+    from models.board import TicketComment
+
+    t = _los_ticket(losdb, external_id="10001", external_key="BICC-7",
+                external_snapshot={"title": "Iets", "state": "Nog doen"})
+    ander = _los_ticket(losdb, key="SWI-2", external_id="10002", external_key="BICC-8")
+    for ticket, tekst in ((t, "van dit ticket"), (ander, "van het andere")):
+        losdb.add(TicketComment(ticket_id=ticket.id, kind="comment", author="nick",
+                                body=tekst, internal=False, pushed=False, created_at="nu"))
+    losdb.commit()
+
+    adapter = _NepAdapter()
+    asyncio.run(_los_svc(losdb, adapter).sync_ticket(t.id))
+    assert len(adapter.opmerkingen) == 1
+    assert "van dit ticket" in adapter.opmerkingen[0]["body"]
+
+
+def test_een_lokaal_gehouden_ticket_wordt_geweigerd_met_uitleg(losdb):
+    """Het vinkje is een bewuste keuze; de knop mag die niet stil overrulen."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    t = _los_ticket(losdb, sync_naar_bron=False)
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(_los_svc(losdb, _NepAdapter()).sync_ticket(t.id))
+    assert fout.value.status_code == 409
+    assert "alleen LabX" in str(fout.value.detail)
+    assert "Doorzetten naar de bron" in str(fout.value.detail)
+
+
+def test_een_ticket_zonder_wijzigingen_meldt_dat_er_niets_was(losdb):
+    """Het ijkpunt komt uit de dienst zelf: zo staat er precies in wat hij ook
+    vergelijkt, in plaats van een zelfverzonnen handvol velden."""
+    import asyncio
+
+    from services.boards.sync.base import ExternalItem
+
+    t = _los_ticket(losdb, external_id="10001", external_key="BICC-7")
+    svc = _los_svc(losdb, _NepAdapter())
+    t.external_snapshot = svc._snapshot(ExternalItem(
+        external_id="10001", external_key="BICC-7", title=t.title,
+        description=t.description, acceptance_criteria=t.acceptance_criteria,
+        state="Nog doen", priority=t.priority, assignee=t.assignee, labels=[]))
+    losdb.commit()
+
+    uit = asyncio.run(svc.sync_ticket(t.id))
+    assert uit["resultaat"] == "niets"
+    assert not svc._adapter(None).bijgewerkt
+
+
+def test_een_lokaal_bord_heeft_niets_om_naartoe_te_synchroniseren(losdb):
+    import asyncio
+
+    from fastapi import HTTPException
+    from models.board import Board
+
+    losdb.get(Board, 1).provider = "local"
+    losdb.commit()
+    t = _los_ticket(losdb)
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(_los_svc(losdb, _NepAdapter()).sync_ticket(t.id))
+    assert fout.value.status_code == 400

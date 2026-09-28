@@ -37,6 +37,13 @@ export type ItemSoort = {
 
 export const boardApi = {
   /** Welke soorten werkitems de bron van dit bord kent. */
+  /** Dit ene ticket naar de bron, nu. Een hele bordsynchronisatie is grof
+   *  gereedschap als je net één ticket hebt aangepast. */
+  syncTicket: (boardId: number, ticketId: number) =>
+    api.post<{
+      ok: boolean; resultaat: string; ticket: string; extern: string | null;
+      opmerkingen_gepusht: number; velden: string[]; errors: string[];
+    }>(`/boards/${boardId}/tickets/${ticketId}/sync`),
   itemTypes: (boardId: number) =>
     api.get<{ soorten: ItemSoort[]; melding?: string }>(`/boards/${boardId}/item-types`),
   providers: () => api.get<ProviderSpec[]>("/boards/providers"),

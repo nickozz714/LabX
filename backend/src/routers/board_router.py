@@ -223,6 +223,18 @@ def overview(runs: int = Query(default=30, le=200), db: Session = Depends(get_db
 
     return {"boards": borden, "running": lopend, "recent": verloop}
 
+@router.post("/{board_id}/tickets/{ticket_id}/sync")
+async def sync_ticket(board_id: int, ticket_id: int, db: Session = Depends(get_db)):
+    """Dit ene ticket naar de bron, nu.
+
+    Een hele bordsynchronisatie is grof gereedschap als je net één ticket hebt
+    aangepast: hij raakt alles aan, duurt langer, en als er iets misgaat staat
+    jouw ticket tussen de rest. Hier krijg je één antwoord over één ticket."""
+    from services.boards.sync_service import BoardSyncService
+
+    return await BoardSyncService(db).sync_ticket(ticket_id)
+
+
 @router.get("/{board_id}/item-types")
 async def item_types(board_id: int, db: Session = Depends(get_db)):
     """Welke soorten werkitems de bron kent.
