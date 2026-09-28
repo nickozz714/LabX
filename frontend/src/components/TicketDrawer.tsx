@@ -399,6 +399,9 @@ export function TicketDrawer({
           />
         </div>
 
+        {/* Drie korte velden naast elkaar; alles wat meer ruimte of meer
+            uitleg nodig heeft staat eronder op een eigen regel. Ze in dit
+            raster proppen maakte er smalle kolommen met afgekapte tekst van. */}
         <div className="grid grid-cols-3 gap-2">
           <div>
             <Label>Kolom</Label>
@@ -420,70 +423,6 @@ export function TicketDrawer({
               ))}
             </Select>
           </div>
-          {/* Het soort werkitem in de bron. Hier en niet alleen bij het
-              aanmaken: een ticket blijkt vaak pas onderweg een bug te zijn. */}
-          <SoortKiezer boardId={board.id} waarde={ticket.item_type || ""}
-                       label="Soort in de bron"
-                       onChange={(soort) => {
-                         setTicket({ ...ticket, item_type: soort || null });
-                         void save({ item_type: soort || null });
-                       }}
-                       hint="Bijvoorbeeld Bug. Leeg = de instelling van het bord." />
-          {/* Eén ticket doorzetten zonder het hele bord aan te raken: als je
-              net dit ticket hebt aangepast, is een volledige synchronisatie
-              grof gereedschap — en gaat er iets mis, dan staat jouw ticket
-              tussen de rest. */}
-          {board.provider && board.provider !== "local" && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" disabled={bezigMetSync || ticket.sync_naar_bron === false}
-                      onClick={async () => {
-                        setBezigMetSync(true);
-                        setSyncUitkomst(null);
-                        try {
-                          const r = await boardApi.syncTicket(board.id, ticket.id);
-                          setSyncUitkomst(
-                            r.resultaat === "niets"
-                              ? "Niets te melden — de bron was al bij."
-                              : `${r.resultaat}${r.extern ? ` als ${r.extern}` : ""}`
-                                + (r.opmerkingen_gepusht
-                                   ? ` · ${r.opmerkingen_gepusht} opmerking(en) mee`
-                                   : ""));
-                          onChanged();
-                        } catch (e) {
-                          setSyncUitkomst(e instanceof ApiError ? e.message
-                                                                : "Synchroniseren mislukt");
-                        } finally {
-                          setBezigMetSync(false);
-                        }
-                      }}>
-                {bezigMetSync ? "Bezig…" : "Nu synchroniseren"}
-              </Button>
-              {syncUitkomst && (
-                <span className="text-xs text-muted-foreground">{syncUitkomst}</span>
-              )}
-            </div>
-          )}
-
-          {/* Niet elk ticket hoort bij de klant op het bord: eigen
-              aantekeningen en zelfbedacht vervolgwerk maken daar rommel die
-              een ander moet opruimen. */}
-          <label className="flex cursor-pointer items-start gap-2 rounded-md bg-secondary/40
-                            p-2 text-xs">
-            <input type="checkbox" className="mt-0.5"
-                   checked={ticket.sync_naar_bron !== false}
-                   onChange={(e) => {
-                     setTicket({ ...ticket, sync_naar_bron: e.target.checked });
-                     void save({ sync_naar_bron: e.target.checked });
-                   }} />
-            <span>
-              <span className="font-medium text-foreground">Doorzetten naar de bron</span>
-              <br />
-              Uit gezet blijft dit ticket in LabX staan.{" "}
-              {ticket.external_key
-                ? `Let op: ${ticket.external_key} bestaat daar al en blijft staan zoals het nu is — vanaf nu lopen die twee uit elkaar.`
-                : "Hij wordt daar dan ook niet aangemaakt."}
-            </span>
-          </label>
           <div>
             <Label>Toegewezen</Label>
             <Input
@@ -493,6 +432,76 @@ export function TicketDrawer({
             />
           </div>
         </div>
+
+        {board.provider && board.provider !== "local" && (
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {/* Het soort werkitem in de bron. Hier en niet alleen bij het
+                  aanmaken: een ticket blijkt vaak pas onderweg een bug te zijn. */}
+              <SoortKiezer boardId={board.id} waarde={ticket.item_type || ""}
+                           label="Soort in de bron"
+                           onChange={(soort) => {
+                             setTicket({ ...ticket, item_type: soort || null });
+                             void save({ item_type: soort || null });
+                           }}
+                           hint="Bijvoorbeeld Bug. Leeg = de instelling van het bord." />
+              <div>
+                <Label>Doorzetten</Label>
+                <div className="flex items-center gap-2">
+                  {/* Eén ticket zonder het hele bord aan te raken: als je net
+                      dít ticket hebt aangepast is een volledige synchronisatie
+                      grof gereedschap. */}
+                  <Button variant="secondary"
+                          disabled={bezigMetSync || ticket.sync_naar_bron === false}
+                          onClick={async () => {
+                            setBezigMetSync(true);
+                            setSyncUitkomst(null);
+                            try {
+                              const r = await boardApi.syncTicket(board.id, ticket.id);
+                              setSyncUitkomst(
+                                r.resultaat === "niets"
+                                  ? "De bron was al bij."
+                                  : `${r.resultaat}${r.extern ? ` als ${r.extern}` : ""}`
+                                    + (r.opmerkingen_gepusht
+                                       ? ` · ${r.opmerkingen_gepusht} opmerking(en)`
+                                       : ""));
+                              onChanged();
+                            } catch (e) {
+                              setSyncUitkomst(e instanceof ApiError ? e.message
+                                                                    : "Synchroniseren mislukt");
+                            } finally {
+                              setBezigMetSync(false);
+                            }
+                          }}>
+                    {bezigMetSync ? "Bezig…" : "Nu synchroniseren"}
+                  </Button>
+                  <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+                    <input type="checkbox"
+                           checked={ticket.sync_naar_bron !== false}
+                           onChange={(e) => {
+                             setTicket({ ...ticket, sync_naar_bron: e.target.checked });
+                             void save({ sync_naar_bron: e.target.checked });
+                           }} />
+                    automatisch mee
+                  </label>
+                </div>
+                {syncUitkomst && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">{syncUitkomst}</p>
+                )}
+              </div>
+            </div>
+            {/* Alleen tonen als het uit staat: dan is het een keuze met een
+                gevolg, en anders is het ruis. */}
+            {ticket.sync_naar_bron === false && (
+              <p className="text-[11px] text-amber-600">
+                Dit ticket blijft in LabX.{" "}
+                {ticket.external_key
+                  ? `${ticket.external_key} bestaat al in de bron en blijft staan zoals het nu is — vanaf nu lopen die twee uit elkaar.`
+                  : "Hij wordt in de bron ook niet aangemaakt."}
+              </p>
+            )}
+          </div>
+        )}
 
         <div>
           <Label>Labels (komma-gescheiden)</Label>

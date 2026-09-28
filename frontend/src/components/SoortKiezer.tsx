@@ -64,7 +64,7 @@ export function SoortKiezer({ boardId, waarde, onChange, label = "Soort", hint }
       <Select value={waarde} onChange={(e) => onChange(e.target.value)}
               disabled={!soorten.length}>
         <option value="">
-          {soorten.length ? "— wat het bord gebruikt —" : "— geen soorten opgehaald —"}
+          {soorten.length ? "— van het bord —" : "— niet opgehaald —"}
         </option>
         {soorten.map((s) => (
           <option key={s.id} value={s.naam} disabled={s.subtaak}>
