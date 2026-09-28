@@ -139,6 +139,11 @@ _ADDITIVE_COLUMNS = {
         # geen invoer en blijft dus draaien zoals hij deed.
         ("parameters_json", "TEXT"),
     ],
+    "workflow_run_steps": [
+        # In welke werker deze activiteit draaide; nodig om een lopende bubbel
+        # mee te tellen in de bezetting.
+        ("worker_id", "INTEGER"),
+    ],
     "workflow_runs": [
         ("worker_id", "INTEGER"),
         ("trigger_ref", "VARCHAR(64)"),

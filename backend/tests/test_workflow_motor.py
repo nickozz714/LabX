@@ -207,7 +207,7 @@ def _neem_beurten_over(db, monkeypatch, antwoorden):
     from db import database
     beurten = []
 
-    async def _nep_beurt(_db, run, node, opdracht):
+    async def _nep_beurt(_db, run, node, opdracht, worker_id=None):
         beurten.append({"node": node["naam"], "opdracht": opdracht})
         antwoord = antwoorden.get(node["naam"], "klaar")
         if callable(antwoord):
@@ -358,7 +358,7 @@ def test_een_mislukte_activiteit_stopt_de_run_met_een_reden(db, monkeypatch):
         {"id": "b", "type": "agent", "naam": "Daarna", "prompt": "daarna"},
     ], [{"van": "a", "naar": "b", "soort": "succes"}])
 
-    async def _valt_om(_db, run, node, opdracht):
+    async def _valt_om(_db, run, node, opdracht, worker_id=None):
         return "", [], {}, None, "de agent viel om"
 
     monkeypatch.setattr(engine, "_agent_beurt", _valt_om)
@@ -383,7 +383,7 @@ def test_een_foutverbinding_laat_de_run_doorgaan(db, monkeypatch):
 
     gedraaid = []
 
-    async def _soms_fout(_db, run, node, opdracht):
+    async def _soms_fout(_db, run, node, opdracht, worker_id=None):
         gedraaid.append(node["naam"])
         if node["naam"] == "Valt om":
             return "", [], {}, None, "boem"
@@ -427,7 +427,7 @@ def test_een_bubbel_draait_zijn_activiteiten_tegelijk(db, monkeypatch):
 
     tegelijk, hoogste = 0, 0
 
-    async def _traag(_db, run, node, opdracht):
+    async def _traag(_db, run, node, opdracht, worker_id=None):
         nonlocal tegelijk, hoogste
         tegelijk += 1
         hoogste = max(hoogste, tegelijk)
@@ -475,7 +475,7 @@ def test_een_tak_krijgt_altijd_een_eigen_sessie(db, monkeypatch):
     ], [])
     gezien = []
 
-    async def _kijk(_db, run, node, opdracht):
+    async def _kijk(_db, run, node, opdracht, worker_id=None):
         gezien.append(node.get("verse_sessie"))
         return "ok", [], {}, "s", None
 
@@ -499,12 +499,12 @@ def test_de_uitvoer_van_elke_tak_is_daarna_bruikbaar(db, monkeypatch):
          "prompt": "klant: {{ stap.klant.uitvoer }} / order: {{ stap.order.uitvoer }}"},
     ], [{"van": "b", "naar": "na", "soort": "succes"}])
 
-    async def _antwoord(_db, run, node, opdracht):
+    async def _antwoord(_db, run, node, opdracht, worker_id=None):
         return f"{node['naam'].lower()} ok", [], {}, "s", None
 
     laatste = {}
 
-    async def _vang(_db, run, node, opdracht):
+    async def _vang(_db, run, node, opdracht, worker_id=None):
         laatste[node["naam"]] = opdracht
         return await _antwoord(_db, run, node, opdracht)
 
@@ -527,7 +527,7 @@ def test_een_omgevallen_tak_laat_de_bubbel_falen(db, monkeypatch):
         {"id": "na", "type": "agent", "naam": "Daarna", "prompt": "c"},
     ], [{"van": "b", "naar": "na", "soort": "succes"}])
 
-    async def _soms(_db, run, node, opdracht):
+    async def _soms(_db, run, node, opdracht, worker_id=None):
         if node["naam"] == "Fout":
             return "", [], {}, None, "boem"
         return "ok", [], {}, "s", None
@@ -555,7 +555,7 @@ def test_met_fout_gedrag_doorgaan_loopt_de_bubbel_gewoon_door(db, monkeypatch):
         {"id": "na", "type": "agent", "naam": "Daarna", "prompt": "c"},
     ], [{"van": "b", "naar": "na", "soort": "succes"}])
 
-    async def _soms(_db, run, node, opdracht):
+    async def _soms(_db, run, node, opdracht, worker_id=None):
         if node["naam"] == "Fout":
             return "", [], {}, None, "boem"
         return "ok", [], {}, "s", None
@@ -745,7 +745,7 @@ def test_de_lus_stopt_bij_een_fout_tenzij_je_doorgaan_kiest(db, monkeypatch):
         ], [{"van": "a", "naar": "lus", "soort": "succes"}])
         return wf
 
-    async def _soms(_db, run, node, opdracht):
+    async def _soms(_db, run, node, opdracht, worker_id=None):
         if node["naam"].startswith("Valt om"):
             return "", [], {}, None, "boem"
         return '{"lijst": ["een", "twee", "drie"]}', [], {}, "s", None
@@ -976,7 +976,7 @@ def test_de_kosten_per_activiteit_zijn_niet_het_sessietotaal(db, monkeypatch):
     from db import database
     oplopend = [0.10, 0.25, 0.40]          # zoals de CLI het meldt
 
-    async def _beurt(_db, _run, node, opdracht):
+    async def _beurt(_db, _run, node, opdracht, worker_id=None):
         i = {"Een": 0, "Twee": 1, "Drie": 2}[node["naam"]]
         return ("klaar", [], {"input_tokens": 10, "output_tokens": 5,
                               "cost_usd": oplopend[i]}, "sessie-1", None)
@@ -1004,7 +1004,7 @@ def test_een_verse_sessie_begint_met_een_eigen_teller(db, monkeypatch):
 
     from db import database
 
-    async def _beurt(_db, _run, node, opdracht):
+    async def _beurt(_db, _run, node, opdracht, worker_id=None):
         bedrag = 0.30 if node["naam"] == "Een" else 0.05
         return ("klaar", [], {"cost_usd": bedrag}, "s", None)
 

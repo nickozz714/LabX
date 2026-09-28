@@ -77,6 +77,22 @@ def maak_run(db: Session, workflow: Workflow, *, lab_id: str,
     from models.thread import Thread
 
     now = _now_iso()
+    if worker_id is None:
+        # Een workflow bezet een container net zo goed als een ticket, dus
+        # claimt hij er ook een. Deed hij dat niet, dan landde alles in werker
+        # 1 terwijl werker 2 en 3 leegstonden — en zag de rest van LabX er
+        # niets van.
+        try:
+            from models.lab import Lab
+            from services.lab.lab_service import LabService
+
+            lab = db.get(Lab, lab_id)
+            vrij = LabService(db).vrije_werker(lab) if lab is not None else None
+            worker_id = vrij.id if vrij is not None else None
+        except Exception as exc:  # noqa: BLE001 — geen werker is geen reden om niet te draaien
+            log.warningx("Werker kiezen voor een workflow mislukt",
+                         lab_id=lab_id, error=str(exc)[:200])
+
     thread = Thread(id=str(uuid4()), lab_id=lab_id,
                     title=f"Workflow: {workflow.name}",
                     source="workflow", created_at=now, updated_at=now)
@@ -463,12 +479,12 @@ async def _voer_bubbel_uit(db: Session, run: WorkflowRun, node: Dict[str, Any],
             # beurten in één CLI-sessie kan niet, en zou de context van beide
             # door elkaar husselen.
             tak_node = dict(kind, verse_sessie=True)
-            if werkers:
-                eigen_run.worker_id = werkers[index % len(werkers)]
+            tak_werker = werkers[index % len(werkers)] if werkers else None
             async with grens:
                 resultaat = await _eenmaal(eigen_db, eigen_run, tak_node,
                                            dict(context), totalen,
-                                           volgnummer + 1 + index, None, None)
+                                           volgnummer + 1 + index, None, None,
+                                           worker_id=tak_werker)
             return kind["sleutel"], resultaat
         except Exception as exc:  # noqa: BLE001
             log.warningx("Tak in een bubbel viel om", run=run.id, node=kind["naam"],
@@ -517,7 +533,13 @@ def _werkers_voor(db: Session, run: WorkflowRun, aantal: int) -> List[int]:
 async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
                    context: Dict[str, Any], totalen: Dict[str, Any],
                    volgnummer: int, iteratie: Optional[int],
-                   item: Any) -> Dict[str, Any]:
+                   item: Any, worker_id: Optional[int] = None) -> Dict[str, Any]:
+    # In een bubbel draait deze activiteit in een ANDERE container dan de run
+    # zelf. Dat expliciet meegeven en niet op de run zetten: die rij is gedeeld,
+    # en drie takken die hem om de beurt overschrijven lieten er achteraf een
+    # willekeurige werker in staan — waar het uitvoeren van een shell-commando
+    # daarna op afging.
+    werker = worker_id or run.worker_id
     soort = node["type"]
     begin = time.monotonic()
     totalen["stappen"] = totalen.get("stappen", 0) + 1
@@ -527,7 +549,7 @@ async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
         # Niet alleen de uitkomst maar ook de waarden waarop hij besloot: een
         # `als` die achteraf alleen "nee" zegt, is niet na te rekenen.
         waar, uitleg = expressies.evalueer_uitgelegd(conditie, context)
-        _log_stap(db, run, node, volgnummer, status="ok", iteratie=iteratie, item=item,
+        _log_stap(db, run, node, volgnummer, worker_id=werker, status="ok", iteratie=iteratie, item=item,
                   invoer=expressies.beschrijf_uitkomst(uitleg),
                   uitvoer="ja" if waar else "nee", tak="ja" if waar else "nee",
                   resultaat=uitleg,
@@ -537,20 +559,20 @@ async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
 
     if soort == "wacht":
         await asyncio.sleep(int(node.get("seconden") or 30))
-        _log_stap(db, run, node, volgnummer, status="ok", iteratie=iteratie, item=item,
+        _log_stap(db, run, node, volgnummer, worker_id=werker, status="ok", iteratie=iteratie, item=item,
                   invoer=f"{node.get('seconden')} seconden", uitvoer="gewacht",
                   duur_ms=int((time.monotonic() - begin) * 1000))
         return {"status": "ok", "uitvoer": ""}
 
     if soort == "shell":
         commando = expressies.vul_in(node.get("commando") or "", context)
-        rij = _log_stap(db, run, node, volgnummer, status="running", iteratie=iteratie,
+        rij = _log_stap(db, run, node, volgnummer, worker_id=werker, status="running", iteratie=iteratie,
                         item=item, invoer=commando)
         try:
             from services.mcp.tool_execution_service import ToolExecutionService
             res = await ToolExecutionService(db).execute_builtin_shell(
                 lab_id=run.lab_id, command=commando,
-                timeout=float(node.get("timeout") or 120), worker_id=run.worker_id,
+                timeout=float(node.get("timeout") or 120), worker_id=werker,
                 intent="workflow")
             uitvoer = str(res.get("output") or "")
             code = int(res.get("exit_code") or 0)
@@ -568,10 +590,10 @@ async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
     rol = (node.get("rol") or "").strip()
     if rol:
         opdracht = f"{rol}\n\n{opdracht}"
-    rij = _log_stap(db, run, node, volgnummer, status="running", iteratie=iteratie,
+    rij = _log_stap(db, run, node, volgnummer, worker_id=werker, status="running", iteratie=iteratie,
                     item=item, invoer=opdracht)
     antwoord, stappen, gebruik, sessie, fout = await _agent_beurt(
-        db, run, node, opdracht)
+        db, run, node, opdracht, worker_id=werker)
     gebruik = _kosten_van_deze_beurt(gebruik, node, totalen)
     duur = int((time.monotonic() - begin) * 1000)
     if fout:
@@ -594,7 +616,7 @@ async def _eenmaal(db: Session, run: WorkflowRun, node: Dict[str, Any],
 
 
 async def _agent_beurt(db: Session, run: WorkflowRun, node: Dict[str, Any],
-                       opdracht: str):
+                       opdracht: str, *, worker_id: Optional[int] = None):
     """Eén beurt van de agent, met alles wat eruit komt: het antwoord, de
     tool-aanroepen (de redenatie), het verbruik en de sessie."""
     from services.agent.chat_agent import ChatAgent
@@ -607,7 +629,7 @@ async def _agent_beurt(db: Session, run: WorkflowRun, node: Dict[str, Any],
                 model=node.get("model"), resume_session_id=hervat,
                 json_schema=node.get("json_schema"),
                 thread_id=run.thread_id, is_background=True,
-                lab_worker_id=run.worker_id):
+                lab_worker_id=worker_id or run.worker_id):
             soort = ev.get("kind")
             if soort == "answer":
                 antwoord = ev.get("text") or ""
@@ -669,9 +691,13 @@ def _log_stap(db: Session, run: WorkflowRun, node: Dict[str, Any], volgnummer: i
               status: str, invoer: Optional[str] = None, uitvoer: Optional[str] = None,
               iteratie: Optional[int] = None, item: Any = None,
               tak: Optional[str] = None, duur_ms: Optional[int] = None,
-              resultaat: Any = None) -> WorkflowRunStep:
+              resultaat: Any = None, worker_id: Optional[int] = None) -> WorkflowRunStep:
     rij = WorkflowRunStep(
         run_id=run.id, node_id=node["id"], naam=node["naam"], soort=node["type"],
+        # In een bubbel draait deze activiteit in een andere container dan de
+        # run; dit is de enige plek waar dat staat, en dus waar de bezetting
+        # van een lopende bubbel af te lezen is.
+        worker_id=worker_id or run.worker_id,
         volgnummer=volgnummer, iteratie=iteratie,
         item=(json.dumps(item, ensure_ascii=False)[:2000] if item is not None else None),
         status=status, invoer=(invoer or None)[:20000] if invoer else None,

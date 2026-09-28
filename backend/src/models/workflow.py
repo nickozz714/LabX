@@ -120,6 +120,11 @@ class WorkflowRunStep(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Welke verbinding er na deze activiteit genomen is (succes/fout/ja/nee).
     tak: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # In welke werker (container) deze activiteit draaide. Normaal die van de
+    # run zelf; in een bubbel heeft elke tak een eigen werker, en dan is dit de
+    # enige plek waar dat staat. Zonder dat telde een lopende bubbel voor één
+    # werker terwijl hij er drie bezet hield.
+    worker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
