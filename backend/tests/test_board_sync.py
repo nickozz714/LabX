@@ -171,3 +171,27 @@ def test_gelijk_kijkt_door_vormverschillen_heen(a, b):
 def test_gelijk_ziet_echte_verschillen():
     assert not _gelijk("x", "y")
     assert not _gelijk(["a"], ["a", "b"])
+
+
+# ── een ticket dat in LabX moet blijven ─────────────────────────────────────
+#
+# Niet elk ticket hoort bij de klant op het bord: eigen aantekeningen,
+# vervolgwerk dat de agent zelf bedacht, iets dat je eerst wilt uitzoeken. Die
+# naar Jira duwen maakt daar rommel die een ander moet opruimen.
+
+def test_de_push_slaat_een_lokaal_gehouden_ticket_over():
+    import inspect
+
+    from services.boards.sync_service import BoardSyncService
+
+    bron = inspect.getsource(BoardSyncService._push)
+    assert 'getattr(ticket, "sync_naar_bron", True)' in bron
+    # `dirty` blijft staan, zodat hij alsnog meegaat als je het vinkje omzet.
+    assert "ticket.dirty = False" not in bron.split("overgeslagen_lokaal")[1][:200]
+
+
+def test_een_ticket_synchroniseert_standaard_wel():
+    """Bestaande borden mogen hier niets van merken."""
+    from models.board import Ticket
+
+    assert Ticket.__table__.c.sync_naar_bron.default.arg is True

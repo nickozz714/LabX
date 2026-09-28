@@ -76,6 +76,34 @@ def _text_to_adf(text: Optional[str]) -> Dict[str, Any]:
     return to_adf(text)
 
 
+def _als_jira_waarde(waarde: Any, vorm: Dict[str, Any]) -> Any:
+    """Een waarde uit de instellingen in de vorm die Jira voor dat veld wil.
+
+    Jira is hier streng en de foutmelding is dat niet: een getalveld met een
+    tekst erin geeft een 400 met een veld-id, en een keuzeveld zonder het
+    `{"value": …}`-omhulsel wordt zonder uitleg geweigerd. Wie dit met de hand
+    moet raden, raadt het fout — vandaar dat we de vorm uit createmeta
+    gebruiken."""
+    soort = str(vorm.get("soort") or "string")
+    if soort == "number":
+        try:
+            getal = float(str(waarde).replace(",", "."))
+        except (TypeError, ValueError):
+            return waarde
+        return int(getal) if getal.is_integer() else getal
+    if soort == "array":
+        stukken = (waarde if isinstance(waarde, list)
+                   else [d.strip() for d in str(waarde).split(",") if d.strip()])
+        if str(vorm.get("item_soort") or "") in ("option", "component", "version"):
+            return [{"value": str(d)} for d in stukken]
+        return [str(d) for d in stukken]
+    if soort in ("option", "priority", "resolution"):
+        return {"value": str(waarde)}
+    if soort in ("user", "group"):
+        return {"name": str(waarde)}
+    return waarde
+
+
 class JiraAdapter(SyncAdapter):
     provider = "jira"
 
@@ -398,6 +426,39 @@ class JiraAdapter(SyncAdapter):
     # Velden die Jira zelf invult of die wij altijd meesturen; die hoeven niet
     # als "je mist nog iets" gemeld te worden.
     _VANZELF = {"project", "issuetype", "summary", "reporter", "parent"}
+    # De laatst opgehaalde soorten, om de VORM van een verplicht veld te weten
+    # zonder er nog een keer voor naar Jira te gaan.
+    _soorten_cache: Optional[List[Dict[str, Any]]] = None
+
+    def _vaste_velden(self) -> Dict[str, Any]:
+        """Vaste waarden voor velden die dit project verplicht stelt.
+
+        Nodig omdat een project velden kan eisen die LabX niet kent — bij
+        Swinkels een story-point-schatting en een eigen stream-veld. Zonder
+        deze mogelijkheid is zo'n issuetype gewoon onbruikbaar, en dat is een
+        rare reden om geen ticket te kunnen aanmaken.
+
+        Staat in `provider_config.field_defaults` als
+        `{"customfield_10052": 0, "labels": "labx"}`. De vorm waarin Jira ze
+        wil verschilt per veld, dus die vertaling zit in `_als_jira_waarde`;
+        een schatting als tekst versturen levert anders een 400 op waar je
+        niets aan hebt."""
+        ruw = self.config.get("field_defaults") or {}
+        if isinstance(ruw, str):
+            try:
+                ruw = json.loads(ruw)
+            except ValueError:
+                return {}
+        if not isinstance(ruw, dict):
+            return {}
+        vormen = {v["veld"]: v for soort in (self._soorten_cache or [])
+                  for v in (soort.get("verplicht") or [])}
+        uit: Dict[str, Any] = {}
+        for sleutel, waarde in ruw.items():
+            if waarde in (None, ""):
+                continue
+            uit[sleutel] = _als_jira_waarde(waarde, vormen.get(sleutel) or {})
+        return uit
 
     async def item_types(self) -> List[Dict[str, Any]]:
         """De issuetypes van dit project, met hun verplichte velden.
@@ -429,13 +490,15 @@ class JiraAdapter(SyncAdapter):
                     for soort in (project.get("issuetypes") or []):
                         uit.append(self._soort_regel(soort, soort.get("fields") or {}))
                 if uit:
+                    self._soorten_cache = uit
                     return uit
 
             resp = await client.get(f"{self.base_url}/rest/api/3/project/{key}",
                                     headers=self._headers())
             self._raise_for(resp, "issuetypes ophalen")
-            return [self._soort_regel(soort, None)
-                    for soort in ((resp.json() or {}).get("issueTypes") or [])]
+            self._soorten_cache = [self._soort_regel(soort, None)
+                                   for soort in ((resp.json() or {}).get("issueTypes") or [])]
+            return self._soorten_cache
 
     def _soort_regel(self, soort: Dict[str, Any],
                      velden: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -444,7 +507,14 @@ class JiraAdapter(SyncAdapter):
                  "omschrijving": soort.get("description") or ""}
         if velden is not None:
             regel["verplicht"] = [
-                {"veld": sleutel, "naam": (veld or {}).get("name") or sleutel}
+                {"veld": sleutel, "naam": (veld or {}).get("name") or sleutel,
+                 # De vorm, zodat het scherm een zinnig invoerveld kan tonen en
+                 # wij de waarde in de juiste JSON-vorm kunnen sturen: Jira
+                 # weigert een getal als tekst en een keuze zonder omhulsel.
+                 "soort": ((veld or {}).get("schema") or {}).get("type") or "string",
+                 "item_soort": ((veld or {}).get("schema") or {}).get("items"),
+                 "keuzes": [k.get("value") or k.get("name")
+                            for k in ((veld or {}).get("allowedValues") or [])][:40]}
                 for sleutel, veld in velden.items()
                 if (veld or {}).get("required") and sleutel not in self._VANZELF]
         return regel
@@ -476,13 +546,14 @@ class JiraAdapter(SyncAdapter):
                 f"'{naam}' is in dit project een SUBTAAK, en die kan niet zonder "
                 f"bovenliggend issue. Kies een ander soort bij het bord of op het "
                 f"ticket: {', '.join(bruikbaar) or 'geen gevonden'}.")
-        ontbreekt = [v["naam"] or v["veld"] for v in (gekozen.get("verplicht") or [])]
+        vast = self._vaste_velden()
+        ontbreekt = [v["naam"] or v["veld"] for v in (gekozen.get("verplicht") or [])
+                     if v["veld"] not in vast]
         if ontbreekt:
             raise RuntimeError(
                 f"Jira eist voor een '{naam}' in dit project nog: "
-                f"{', '.join(ontbreekt)}. Die velden kent LabX niet, dus het "
-                f"aanmaken zou alsnog mislukken. Vul ze in Jira in of maak ze "
-                f"optioneel voor dit projecttype.")
+                f"{', '.join(ontbreekt)}. Zet er een vaste waarde voor bij de "
+                f"instellingen van het bord, of maak ze optioneel in Jira.")
         return {"id": gekozen["id"]}
 
     async def create_item(self, *, title: str, description: Optional[str], state: Optional[str],
@@ -495,7 +566,13 @@ class JiraAdapter(SyncAdapter):
                 client, title=title, description=description, priority=priority,
                 assignee=None, labels=labels, acceptance_criteria=acceptance_criteria)
             fields["project"] = {"key": self._require("project_key")}
-            fields["issuetype"] = await self._issuetype_voor(client, item_type)
+            soort = await self._issuetype_voor(client, item_type)
+            fields["issuetype"] = soort
+            # Vaste waarden voor velden die dit project verplicht stelt en die
+            # LabX niet kent. Alleen bij het AANMAKEN: bij een wijziging zou je
+            # er een waarde overheen zetten die iemand daar bewust veranderde.
+            for sleutel, waarde in self._vaste_velden().items():
+                fields.setdefault(sleutel, waarde)
             resp = await client.post(f"{self.base_url}/rest/api/3/issue",
                                      headers=self._headers(), json={"fields": fields})
             self._raise_for(resp, "issue aanmaken")

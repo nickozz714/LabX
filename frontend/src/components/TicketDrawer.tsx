@@ -23,6 +23,7 @@ import { boardApi } from "@/lib/boards";
 import { chatApi } from "@/lib/chat";
 import type { BoardDto, ChatEvent, TicketCommentDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
+import { SoortKiezer } from "@/components/SoortKiezer";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
@@ -416,6 +417,35 @@ export function TicketDrawer({
               ))}
             </Select>
           </div>
+          {/* Het soort werkitem in de bron. Hier en niet alleen bij het
+              aanmaken: een ticket blijkt vaak pas onderweg een bug te zijn. */}
+          <SoortKiezer boardId={board.id} waarde={ticket.item_type || ""}
+                       label="Soort in de bron"
+                       onChange={(soort) => {
+                         setTicket({ ...ticket, item_type: soort || null });
+                         void save({ item_type: soort || null });
+                       }}
+                       hint="Bijvoorbeeld Bug. Leeg = de instelling van het bord." />
+          {/* Niet elk ticket hoort bij de klant op het bord: eigen
+              aantekeningen en zelfbedacht vervolgwerk maken daar rommel die
+              een ander moet opruimen. */}
+          <label className="flex cursor-pointer items-start gap-2 rounded-md bg-secondary/40
+                            p-2 text-xs">
+            <input type="checkbox" className="mt-0.5"
+                   checked={ticket.sync_naar_bron !== false}
+                   onChange={(e) => {
+                     setTicket({ ...ticket, sync_naar_bron: e.target.checked });
+                     void save({ sync_naar_bron: e.target.checked });
+                   }} />
+            <span>
+              <span className="font-medium text-foreground">Doorzetten naar de bron</span>
+              <br />
+              Uit gezet blijft dit ticket in LabX staan.{" "}
+              {ticket.external_key
+                ? `Let op: ${ticket.external_key} bestaat daar al en blijft staan zoals het nu is — vanaf nu lopen die twee uit elkaar.`
+                : "Hij wordt daar dan ook niet aangemaakt."}
+            </span>
+          </label>
           <div>
             <Label>Toegewezen</Label>
             <Input

@@ -304,6 +304,12 @@ export function BoardPage() {
                         <div className="flex items-center gap-1">
                           {t.agent_state === "running" && <Badge tone="yellow">agent</Badge>}
                           {t.agent_state === "failed" && <Badge tone="red">mislukt</Badge>}
+                          {t.sync_naar_bron === false && (
+                            <Badge tone="neutral" >alleen LabX</Badge>
+                          )}
+                          {t.item_type && (
+                            <Badge tone="violet">{t.item_type}</Badge>
+                          )}
                           {t.priority !== "normal" && (
                             <Badge tone={PRIORITY_TONE[t.priority]}>{t.priority}</Badge>
                           )}

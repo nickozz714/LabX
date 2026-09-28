@@ -61,8 +61,8 @@ export function SoortKiezer({ boardId, waarde, onChange, label = "Soort", hint }
       {gekozen?.verplicht?.length ? (
         <p className="mt-1 text-[11px] text-amber-600">
           De bron eist bij een <strong>{gekozen.naam}</strong> ook:{" "}
-          {gekozen.verplicht.map((v) => v.naam || v.veld).join(", ")}. Die velden kent LabX
-          niet, dus het doorzetten mislukt tot ze daar optioneel zijn.
+          {gekozen.verplicht.map((v) => v.naam || v.veld).join(", ")}. Zet er een vaste
+          waarde voor bij de instellingen van dit bord, anders mislukt het doorzetten.
         </p>
       ) : null}
       {melding && <p className="mt-1 text-[11px] text-muted-foreground">{melding}</p>}

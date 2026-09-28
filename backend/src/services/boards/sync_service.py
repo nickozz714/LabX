@@ -361,6 +361,14 @@ class BoardSyncService:
                  .all())
         for ticket in dirty:
             try:
+                if not bool(getattr(ticket, "sync_naar_bron", True)):
+                    # Bewust lokaal gehouden. Niet elk ticket hoort bij de klant
+                    # op het bord: eigen aantekeningen en zelfbedacht
+                    # vervolgwerk maken daar rommel die een ander opruimt.
+                    # `dirty` blijft staan, zodat hij alsnog meegaat als je het
+                    # vinkje later omzet.
+                    stats["overgeslagen_lokaal"] = stats.get("overgeslagen_lokaal", 0) + 1
+                    continue
                 if ticket.external_id:
                     velden = self._lokale_wijzigingen(ticket)
                     state = self._te_pushen_status(board, ticket)

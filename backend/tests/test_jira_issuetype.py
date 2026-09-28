@@ -179,3 +179,71 @@ def test_zonder_createmeta_kent_het_project_zijn_types_nog_steeds(monkeypatch):
     soorten = asyncio.run(JiraAdapter(dict(CONFIG), "token").item_types())
     assert [(s["naam"], s["subtaak"]) for s in soorten] == [("Task2", False), ("Taak", True)]
     assert "verplicht" not in soorten[0]     # dat weten we hier niet
+
+
+# ── vaste waarden voor velden die Jira verplicht stelt ──────────────────────
+#
+# Bij Swinkels eist BICC een story-point-schatting bij Task2 en een eigen
+# stream-veld bij Epic. Zonder een manier om daar een waarde voor te zetten is
+# zo'n issuetype gewoon onbruikbaar — een rare reden om geen ticket te kunnen
+# aanmaken.
+
+from services.boards.sync.jira import _als_jira_waarde  # noqa: E402
+
+TASK2 = {"id": "10099", "naam": "Task2", "subtaak": False,
+         "verplicht": [{"veld": "customfield_10052", "naam": "Story point estimate",
+                        "soort": "number", "item_soort": None, "keuzes": []}]}
+
+
+def test_zonder_vaste_waarde_blijft_het_type_geweigerd():
+    a = _adapter([TASK2])
+    with pytest.raises(RuntimeError) as fout:
+        asyncio.run(a._issuetype_voor(None, "Task2"))
+    assert "Story point estimate" in str(fout.value)
+    assert "vaste waarde" in str(fout.value)
+
+
+def test_met_een_vaste_waarde_mag_het_type_wel():
+    a = _adapter([TASK2])
+    a.config["field_defaults"] = {"customfield_10052": 0}
+    a._soorten_cache = [TASK2]
+    assert asyncio.run(a._issuetype_voor(None, "Task2")) == {"id": "10099"}
+
+
+def test_de_vaste_waarde_krijgt_de_vorm_die_jira_wil():
+    """Een getalveld met een tekst erin geeft een 400 met een veld-id erin, en
+    een keuzeveld zonder omhulsel wordt zonder uitleg geweigerd."""
+    a = _adapter([TASK2])
+    a.config["field_defaults"] = {"customfield_10052": "3"}
+    a._soorten_cache = [TASK2]
+    assert a._vaste_velden() == {"customfield_10052": 3}
+
+
+def test_een_lege_vaste_waarde_telt_niet_mee():
+    """Anders zou een leeggemaakt veld als "ingevuld" gelden en alsnog een 400
+    opleveren."""
+    a = _adapter([TASK2])
+    a.config["field_defaults"] = {"customfield_10052": ""}
+    a._soorten_cache = [TASK2]
+    assert a._vaste_velden() == {}
+    with pytest.raises(RuntimeError):
+        asyncio.run(a._issuetype_voor(None, "Task2"))
+
+
+@pytest.mark.parametrize("waarde,vorm,verwacht", [
+    ("3", {"soort": "number"}, 3),
+    ("3,5", {"soort": "number"}, 3.5),
+    ("labx, incident", {"soort": "array", "item_soort": "string"}, ["labx", "incident"]),
+    (["a", "b"], {"soort": "array", "item_soort": "string"}, ["a", "b"]),
+    ("Data", {"soort": "array", "item_soort": "option"}, [{"value": "Data"}]),
+    ("Hoog", {"soort": "option"}, {"value": "Hoog"}),
+    ("iemand", {"soort": "user"}, {"name": "iemand"}),
+    ("gewoon tekst", {"soort": "string"}, "gewoon tekst"),
+])
+def test_elke_veldvorm_krijgt_zijn_eigen_omhulsel(waarde, vorm, verwacht):
+    assert _als_jira_waarde(waarde, vorm) == verwacht
+
+
+def test_een_getal_dat_geen_getal_is_gaat_ongewijzigd_mee():
+    """Dan mag Jira er zelf iets van zeggen; wij gaan niet gokken."""
+    assert _als_jira_waarde("onbekend", {"soort": "number"}) == "onbekend"

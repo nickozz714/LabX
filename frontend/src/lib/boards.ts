@@ -25,7 +25,14 @@ export type ItemSoort = {
   naam: string;
   subtaak: boolean;
   omschrijving?: string;
-  verplicht?: { veld: string; naam: string }[];
+  verplicht?: {
+    veld: string;
+    naam: string;
+    /** De vorm die de bron wil: number, array, option, string … */
+    soort?: string;
+    item_soort?: string | null;
+    keuzes?: string[];
+  }[];
 };
 
 export const boardApi = {

@@ -637,6 +637,11 @@ export interface TicketDto {
   priority: TicketPriority;
   assignee: string | null;
   labels: string[];
+  /** Het soort werkitem in de bron (Jira-issuetype, ADO work item type).
+   *  Leeg = wat er op het bord staat. */
+  item_type: string | null;
+  /** Mag dit ticket naar de bron? Uit = het blijft in LabX. */
+  sync_naar_bron: boolean;
   /** Volgorde binnen de kolom — hoger = eerder aan de beurt. Dit IS de prioriteit. */
   position: number;
   /** Keys van tickets op ditzelfde bord die eerst klaar moeten zijn. */
