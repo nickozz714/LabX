@@ -156,6 +156,9 @@ export function TicketDrawer({
   // dat niet te onderscheiden van niets doen; deze vlag zet er twee seconden
   // "opgeslagen" bij.
   const [opgeslagen, setOpgeslagen] = useState(false);
+  // Eén ticket los doorzetten, met het antwoord ernaast.
+  const [bezigMetSync, setBezigMetSync] = useState(false);
+  const [syncUitkomst, setSyncUitkomst] = useState<string | null>(null);
 
   // Live meelezen met de agent-run van dit ticket.
   // Aan wélke run dit paneel nu hangt. Een ref en geen state: hij stuurt geen
@@ -426,6 +429,41 @@ export function TicketDrawer({
                          void save({ item_type: soort || null });
                        }}
                        hint="Bijvoorbeeld Bug. Leeg = de instelling van het bord." />
+          {/* Eén ticket doorzetten zonder het hele bord aan te raken: als je
+              net dit ticket hebt aangepast, is een volledige synchronisatie
+              grof gereedschap — en gaat er iets mis, dan staat jouw ticket
+              tussen de rest. */}
+          {board.provider && board.provider !== "local" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" disabled={bezigMetSync || ticket.sync_naar_bron === false}
+                      onClick={async () => {
+                        setBezigMetSync(true);
+                        setSyncUitkomst(null);
+                        try {
+                          const r = await boardApi.syncTicket(board.id, ticket.id);
+                          setSyncUitkomst(
+                            r.resultaat === "niets"
+                              ? "Niets te melden — de bron was al bij."
+                              : `${r.resultaat}${r.extern ? ` als ${r.extern}` : ""}`
+                                + (r.opmerkingen_gepusht
+                                   ? ` · ${r.opmerkingen_gepusht} opmerking(en) mee`
+                                   : ""));
+                          onChanged();
+                        } catch (e) {
+                          setSyncUitkomst(e instanceof ApiError ? e.message
+                                                                : "Synchroniseren mislukt");
+                        } finally {
+                          setBezigMetSync(false);
+                        }
+                      }}>
+                {bezigMetSync ? "Bezig…" : "Nu synchroniseren"}
+              </Button>
+              {syncUitkomst && (
+                <span className="text-xs text-muted-foreground">{syncUitkomst}</span>
+              )}
+            </div>
+          )}
+
           {/* Niet elk ticket hoort bij de klant op het bord: eigen
               aantekeningen en zelfbedacht vervolgwerk maken daar rommel die
               een ander moet opruimen. */}

@@ -53,6 +53,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from component_logging import get_logger
@@ -361,61 +362,112 @@ class BoardSyncService:
                  .all())
         for ticket in dirty:
             try:
-                if not bool(getattr(ticket, "sync_naar_bron", True)):
-                    # Bewust lokaal gehouden. Niet elk ticket hoort bij de klant
-                    # op het bord: eigen aantekeningen en zelfbedacht
-                    # vervolgwerk maken daar rommel die een ander opruimt.
-                    # `dirty` blijft staan, zodat hij alsnog meegaat als je het
-                    # vinkje later omzet.
-                    stats["overgeslagen_lokaal"] = stats.get("overgeslagen_lokaal", 0) + 1
-                    continue
-                if ticket.external_id:
-                    velden = self._lokale_wijzigingen(ticket)
-                    state = self._te_pushen_status(board, ticket)
-                    if not velden and not state:
-                        # Niets om te melden: het ticket is lokaal gewijzigd in
-                        # iets dat de bron niet kent (kolomvolgorde, depends_on,
-                        # agent-status), of het ijkpunt ontbreekt nog.
-                        ticket.dirty = False
-                        ticket.updated_at = _now_iso()
-                        self.db.commit()
-                        continue
-                    item = await adapter.update_item(
-                        external_id=ticket.external_id,
-                        title=velden.get("title"),
-                        description=velden.get("description"),
-                        state=state,
-                        priority=velden.get("priority"),
-                        assignee=velden.get("assignee"),
-                        labels=velden.get("labels"),
-                        acceptance_criteria=velden.get("acceptance_criteria"))
-                    stats["pushed"] += 1
-                    stats.setdefault("velden_gepusht", []).append(
-                        f"{ticket.key}: {', '.join(sorted(velden) + (['status'] if state else []))}")
-                else:
-                    # Nieuw in LabX: dan is er nog niets in de bron om te
-                    # ontzien en gaat alles mee.
-                    item = await adapter.create_item(
-                        title=ticket.title, description=ticket.description,
-                        state=self._state_for_column(board, ticket.status),
-                        priority=ticket.priority, assignee=ticket.assignee,
-                        labels=list(ticket.labels or []),
-                        acceptance_criteria=ticket.acceptance_criteria,
-                        item_type=getattr(ticket, "item_type", None) or None)
-                    stats["created_external"] += 1
-                self._apply_external_identity(ticket, board, item)
-                # De bron heeft nu onze waarden: dat is het nieuwe ijkpunt.
-                ticket.external_snapshot = self._snapshot(item)
-                ticket.dirty = False
-                ticket.updated_at = _now_iso()
-                self.db.commit()
+                await self._push_ticket(board, adapter, ticket, stats)
             except Exception as exc:  # noqa: BLE001 — één ticket mag de rest niet blokkeren
                 stats["errors"].append(f"{ticket.key}: {str(exc)[:300]}")
                 log.warningx("Ticket pushen mislukt", ticket=ticket.key, error=str(exc)[:300])
 
         await self._push_comments(board, adapter, stats)
 
-    async def _push_comments(self, board: Board, adapter, stats: Dict[str, Any]) -> None:
+    async def _push_ticket(self, board: Board, adapter, ticket: Ticket,
+                           stats: Dict[str, Any]) -> str:
+        """Eén ticket naar de bron. Geeft terug wat er gebeurd is.
+
+        Apart van de lus, want dit is precies het stuk dat óók nodig is als je
+        met de hand op "nu synchroniseren" drukt. Twee keer schrijven zou
+        betekenen dat de handmatige knop en de automatische ronde langzaam uit
+        elkaar gaan lopen — en dan is de vraag "waarom gaat het bij de ene wel
+        en bij de andere niet" nergens meer te beantwoorden.
+        """
+        if not bool(getattr(ticket, "sync_naar_bron", True)):
+            # Bewust lokaal gehouden. Niet elk ticket hoort bij de klant op het
+            # bord: eigen aantekeningen en zelfbedacht vervolgwerk maken daar
+            # rommel die een ander opruimt. `dirty` blijft staan, zodat hij
+            # alsnog meegaat als je het vinkje later omzet.
+            stats["overgeslagen_lokaal"] = stats.get("overgeslagen_lokaal", 0) + 1
+            return "lokaal"
+        if ticket.external_id:
+            velden = self._lokale_wijzigingen(ticket)
+            state = self._te_pushen_status(board, ticket)
+            if not velden and not state:
+                # Niets om te melden: het ticket is lokaal gewijzigd in iets
+                # dat de bron niet kent (kolomvolgorde, depends_on,
+                # agent-status), of het ijkpunt ontbreekt nog.
+                ticket.dirty = False
+                ticket.updated_at = _now_iso()
+                self.db.commit()
+                return "niets"
+            item = await adapter.update_item(
+                external_id=ticket.external_id,
+                title=velden.get("title"),
+                description=velden.get("description"),
+                state=state,
+                priority=velden.get("priority"),
+                assignee=velden.get("assignee"),
+                labels=velden.get("labels"),
+                acceptance_criteria=velden.get("acceptance_criteria"))
+            stats["pushed"] += 1
+            stats.setdefault("velden_gepusht", []).append(
+                f"{ticket.key}: {', '.join(sorted(velden) + (['status'] if state else []))}")
+            gedaan = "bijgewerkt"
+        else:
+            # Nieuw in LabX: dan is er nog niets in de bron om te ontzien en
+            # gaat alles mee.
+            item = await adapter.create_item(
+                title=ticket.title, description=ticket.description,
+                state=self._state_for_column(board, ticket.status),
+                priority=ticket.priority, assignee=ticket.assignee,
+                labels=list(ticket.labels or []),
+                acceptance_criteria=ticket.acceptance_criteria,
+                item_type=getattr(ticket, "item_type", None) or None)
+            stats["created_external"] += 1
+            gedaan = "aangemaakt"
+        self._apply_external_identity(ticket, board, item)
+        # De bron heeft nu onze waarden: dat is het nieuwe ijkpunt.
+        ticket.external_snapshot = self._snapshot(item)
+        ticket.dirty = False
+        ticket.updated_at = _now_iso()
+        self.db.commit()
+        return gedaan
+
+    async def sync_ticket(self, ticket_id: int) -> Dict[str, Any]:
+        """Dit ene ticket naar de bron, nu.
+
+        Bestaat omdat een hele bordsynchronisatie een grof gereedschap is als
+        je net één ticket hebt aangepast: hij raakt alles aan, duurt langer, en
+        als er iets misgaat staat jouw ticket tussen de rest. Hier krijg je één
+        antwoord over één ticket.
+
+        Opmerkingen gaan mee, want die horen bij het ticket — "even
+        doorzetten" zonder je laatste opmerking is precies niet wat je
+        bedoelde.
+        """
+        ticket = self.db.get(Ticket, int(ticket_id))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket niet gevonden")
+        board = self.boards.get_board(ticket.board_id)
+        if board.provider == "local":
+            raise HTTPException(status_code=400, detail=(
+                "Dit bord heeft geen bron om naartoe te synchroniseren."))
+        if not bool(getattr(ticket, "sync_naar_bron", True)):
+            raise HTTPException(status_code=409, detail=(
+                f"{ticket.key} staat op 'alleen LabX'. Zet 'Doorzetten naar de bron' "
+                f"aan als je hem toch wilt doorzetten."))
+
+        adapter = self._adapter(board)
+        stats: Dict[str, Any] = {"pushed": 0, "created_external": 0,
+                                 "comments_pushed": 0, "errors": []}
+        gedaan = await self._push_ticket(board, adapter, ticket, stats)
+        await self._push_comments(board, adapter, stats, alleen_ticket=ticket.id)
+        self.db.refresh(ticket)
+        return {"ok": not stats["errors"], "resultaat": gedaan,
+                "ticket": ticket.key, "extern": ticket.external_key or ticket.external_id,
+                "opmerkingen_gepusht": stats.get("comments_pushed", 0),
+                "velden": stats.get("velden_gepusht") or [],
+                "errors": stats["errors"]}
+
+    async def _push_comments(self, board: Board, adapter, stats: Dict[str, Any],
+                             *, alleen_ticket: Optional[int] = None) -> None:
         """Alleen echte opmerkingen (kind="comment") die lokaal zijn ontstaan
         én niet als intern gemarkeerd zijn.
 
@@ -430,6 +482,7 @@ class BoardSyncService:
                         TicketComment.internal == False,  # noqa: E712
                         TicketComment.pushed == False,  # noqa: E712
                         TicketComment.external_id.is_(None))
+                .filter(Ticket.id == alleen_ticket if alleen_ticket else True)
                 .all())
         for comment, ticket in rows:
             target = ticket.external_key if board.provider == "jira" else ticket.external_id
