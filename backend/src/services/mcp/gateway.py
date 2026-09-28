@@ -687,6 +687,19 @@ def build_server():
                  "assignee": {"type": "string"},
                  "labels": {"type": "array", "items": {"type": "string"}},
              }, "required": ["key"]}),
+            ("board__delete_tickets",
+             "Verwijder tickets van dit board — ONOMKEERBAAR. Alleen voor opruimen "
+             "dat je expliciet gevraagd is; verzin dit nooit zelf omdat een ticket "
+             "je overbodig lijkt.\n"
+             "Noem elke sleutel apart: er is geen 'alles' en geen patroon. Tickets "
+             "waar een agent op draait worden overgeslagen. Dit haalt alleen de "
+             "LabX-kopie weg — het issue in Jira of DevOps blijft staan, en komt "
+             "bij de volgende synchronisatie zelfs terug.\n"
+             "Args: keys* (array van strings, hoogstens 50)",
+             {"type": "object", "properties": {
+                 "keys": {"type": "array", "items": {"type": "string"},
+                          "description": "LabX-sleutels (SWI-12) of sleutels van de bron"},
+             }, "required": ["keys"]}),
             ("board__comment_ticket",
              "Plaats een opmerking op een ticket. DIT is de plek voor je bevindingen, "
              "voortgang, resultaten, vragen en waarom je vastliep — het werklogboek. "

@@ -12,12 +12,13 @@ import { useNavigate, useParams } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
 import type { BoardDto, PlanDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
+import { useBevestiging } from "@/components/Bevestiging";
 import { SoortKiezer } from "@/components/SoortKiezer";
 import { useMelding } from "@/components/Meldingen";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
-import { ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, X } from "lucide-react";
+import { ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X } from "lucide-react";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import type { Bijlage } from "@/lib/labs";
 
@@ -43,6 +44,7 @@ export function BoardPage() {
   // volgorde, en anders sleep je ze in het planningsvenster nog om.
   const [selectie, setSelectie] = useState<number[]>([]);
   const [planOpen, setPlanOpen] = useState(false);
+  const bevestig = useBevestiging();
   const [plans, setPlans] = useState<PlanDto[]>([]);
 
   const refresh = useCallback(async () => {
@@ -70,6 +72,45 @@ export function BoardPage() {
    * kaart waar hij bovenop komt; die bepaalt de nieuwe positie — en positie IS
    * de prioriteit: wie bovenaan staat, is als eerste aan de beurt.
    */
+  /** De selectie weggooien. Onomkeerbaar, dus de bevestiging zegt om hoeveel
+   *  het gaat en wat er NIET gebeurt: de bron blijft staan. */
+  async function verwijderSelectie() {
+    const gekozen = tickets.filter((t) => selectie.includes(t.id));
+    const gesynct = gekozen.filter((t) => t.external_key || t.external_id);
+    const bezig = gekozen.filter((t) => t.agent_state === "running" || t.agent_state === "queued");
+    const ja = await bevestig.vraag({
+      titel: `${gekozen.length} ticket(s) verwijderen?`,
+      tekst: [
+        "Dit kan niet ongedaan gemaakt worden.",
+        gesynct.length
+          ? `${gesynct.length} daarvan komen uit de bron; die blijven daar staan en `
+            + "verschijnen bij de volgende synchronisatie opnieuw."
+          : "",
+        bezig.length
+          ? `${bezig.length} worden overgeslagen omdat er een agent op draait.`
+          : "",
+      ].filter(Boolean).join(" "),
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
+    setBusy(true);
+    try {
+      const r = await boardApi.deleteTickets(board!.id, gekozen.map((t) => t.id));
+      setSelectie([]);
+      await refresh();
+      setNotice(
+        `${r.verwijderd.length} verwijderd`
+        + (r.overgeslagen.length ? ` · ${r.overgeslagen.length} overgeslagen` : "")
+        + (r.komt_terug_bij_sync.length
+           ? ` · ${r.komt_terug_bij_sync.length} komen terug bij de volgende sync`
+           : ""));
+    } catch (e) {
+      setNotice(e instanceof ApiError ? e.message : "Verwijderen mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onDrop(columnKey: string, voorTicketId?: number) {
     const ticketId = dragged.current;
     dragged.current = null;
@@ -204,6 +245,10 @@ export function BoardPage() {
                 <Button className="text-xs" onClick={() => setPlanOpen(true)} disabled={!board.lab_id}>
                   <ListOrdered size={13} /> Inplannen
                 </Button>
+                <Button variant="danger" className="text-xs" onClick={verwijderSelectie}
+                        disabled={busy}>
+                  <Trash2 size={13} /> Verwijderen
+                </Button>
                 <Button variant="ghost" className="text-xs" onClick={() => setSelectie([])}>
                   Selectie wissen
                 </Button>
@@ -267,9 +312,26 @@ export function BoardPage() {
                       <Bot size={12} className="ml-1 inline text-muted-foreground" />
                     )}
                   </span>
-                  <span className={`text-xs ${overLimit ? "text-destructive" : "text-muted-foreground"}`}>
-                    {cards.length}
-                    {col.wip_limit != null ? `/${col.wip_limit}` : ""}
+                  <span className="flex items-center gap-2">
+                    {cards.length > 0 && (
+                      /* Honderd kaarten één voor één aanvinken is geen werk
+                         voor een mens. */
+                      <button
+                        className="text-[11px] text-muted-foreground underline hover:text-foreground"
+                        onClick={() => {
+                          const ids = cards.map((t) => t.id);
+                          const allesAan = ids.every((id) => selectie.includes(id));
+                          setSelectie(allesAan
+                            ? selectie.filter((id) => !ids.includes(id))
+                            : [...new Set([...selectie, ...ids])]);
+                        }}>
+                        {cards.every((t) => selectie.includes(t.id)) ? "geen" : "alle"}
+                      </button>
+                    )}
+                    <span className={`text-xs ${overLimit ? "text-destructive" : "text-muted-foreground"}`}>
+                      {cards.length}
+                      {col.wip_limit != null ? `/${col.wip_limit}` : ""}
+                    </span>
                   </span>
                 </div>
                 <div className="flex-1 space-y-2 overflow-y-auto p-2">

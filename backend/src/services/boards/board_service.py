@@ -327,6 +327,73 @@ class BoardService:
         self.db.delete(t)
         self.db.commit()
 
+    # Meer dan dit in één keer is geen opruimactie meer maar een ongeluk dat
+    # zich aan het voltrekken is. Wie er echt meer wil, doet het in porties.
+    MAX_VERWIJDEREN = 200
+
+    def verwijder_tickets(self, board_id: int, sleutels: List[Any], *,
+                          ook_lopende: bool = False) -> Dict[str, Any]:
+        """Meerdere tickets in één keer weg, met per ticket een antwoord.
+
+        Verwijderen is onomkeerbaar en dit is de enige plek waar dat in bulk
+        kan, dus het hoort te zeggen wat het gedaan heeft in plaats van alleen
+        "ok". Drie dingen die daarbij niet mogen schuiven:
+
+        - **Een lopende agent blijft staan.** Zijn ticket weghalen laat een run
+          achter die naar niets meer wijst, en die blijft daarna hangen in het
+          overzicht. Met `ook_lopende` doe je het alsnog; dat is dan een keuze.
+        - **De bron wordt niet aangeraakt.** Dit haalt de LabX-kopie weg, niet
+          het issue in Jira of DevOps. Dat betekent ook dat een ticket dat uit
+          de bron kwam bij de volgende synchronisatie gewoon terugkomt — dus
+          dat zeggen we erbij in plaats van het te laten ontdekken.
+        - **Alles wat eraan hangt gaat mee**: opmerkingen en claims. Anders
+          blijven er rijen staan die naar een ticket wijzen dat niet meer
+          bestaat.
+        """
+        from models.plan import PlanClaim
+
+        if len(sleutels) > self.MAX_VERWIJDEREN:
+            raise HTTPException(status_code=400, detail=(
+                f"Hoogstens {self.MAX_VERWIJDEREN} tickets per keer; dit waren er "
+                f"{len(sleutels)}. Doe het in porties."))
+        board = self.get_board(board_id)
+        uit: Dict[str, Any] = {"verwijderd": [], "overgeslagen": [], "niet_gevonden": [],
+                               "komt_terug_bij_sync": []}
+        for sleutel in sleutels:
+            ticket = self._zoek_ticket(board, sleutel)
+            if ticket is None:
+                uit["niet_gevonden"].append(str(sleutel))
+                continue
+            if not ook_lopende and (ticket.agent_state or "idle") in ("running", "queued"):
+                uit["overgeslagen"].append(
+                    {"key": ticket.key, "reden": f"de agent is hier bezig ({ticket.agent_state})"})
+                continue
+            if ticket.external_id and board.provider != "local":
+                uit["komt_terug_bij_sync"].append(ticket.external_key or ticket.key)
+            (self.db.query(TicketComment)
+             .filter(TicketComment.ticket_id == ticket.id).delete(synchronize_session=False))
+            (self.db.query(PlanClaim)
+             .filter(PlanClaim.ticket_id == ticket.id).delete(synchronize_session=False))
+            uit["verwijderd"].append(ticket.key)
+            self.db.delete(ticket)
+        self.db.commit()
+        return uit
+
+    def _zoek_ticket(self, board: Board, sleutel: Any) -> Optional[Ticket]:
+        """Een ticket op id, LabX-sleutel of de sleutel van de bron.
+
+        Alle drie, want wie een lijst plakt heeft hem uit het scherm (SWI-124),
+        uit Jira (BICC-7317) of uit een script (het id) — en dan is "onbekend"
+        een nutteloos antwoord."""
+        q = self.db.query(Ticket).filter(Ticket.board_id == board.id)
+        tekst = str(sleutel).strip()
+        if tekst.isdigit():
+            gevonden = q.filter(Ticket.id == int(tekst)).first()
+            if gevonden is not None:
+                return gevonden
+        return (q.filter(Ticket.key == tekst).first()
+                or q.filter(Ticket.external_key == tekst).first())
+
     def _assert_known_column(self, board: Board, status: str) -> None:
         keys = {c.get("key") for c in (board.columns or [])}
         if status not in keys:

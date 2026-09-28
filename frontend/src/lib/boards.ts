@@ -39,6 +39,15 @@ export const boardApi = {
   /** Welke soorten werkitems de bron van dit bord kent. */
   /** Dit ene ticket naar de bron, nu. Een hele bordsynchronisatie is grof
    *  gereedschap als je net één ticket hebt aangepast. */
+  /** Meerdere tickets in één keer weg. Haalt de LABX-kopie weg; de bron
+   *  blijft staan — een gesynchroniseerd ticket komt dus terug. */
+  deleteTickets: (boardId: number, keys: (string | number)[], ookLopende = false) =>
+    api.post<{
+      verwijderd: string[];
+      overgeslagen: { key: string; reden: string }[];
+      niet_gevonden: string[];
+      komt_terug_bij_sync: string[];
+    }>(`/boards/${boardId}/tickets/delete`, { keys, ook_lopende: ookLopende }),
   syncTicket: (boardId: number, ticketId: number) =>
     api.post<{
       ok: boolean; resultaat: string; ticket: string; extern: string | null;

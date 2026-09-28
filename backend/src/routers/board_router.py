@@ -305,6 +305,24 @@ def update_ticket(board_id: int, ticket_id: int, payload: Dict[str, Any],
     return svc.ticket_to_dict(svc.update_ticket(ticket_id, payload))
 
 
+@router.post("/{board_id}/tickets/delete")
+def delete_tickets(board_id: int, payload: Dict[str, Any], db: Session = Depends(get_db)):
+    """Meerdere tickets in één keer weg.
+
+    Als POST en niet als DELETE met een body: niet elke proxy en niet elke
+    client stuurt een body mee bij een DELETE, en een verzoek dat onderweg
+    stilletjes zijn lijst kwijtraakt is bij verwijderen het laatste wat je
+    wilt.
+
+    Dit haalt de LABX-kopie weg; de bron wordt niet aangeraakt.
+    """
+    sleutels = payload.get("keys") or payload.get("ids") or []
+    if not isinstance(sleutels, list) or not sleutels:
+        raise HTTPException(status_code=400, detail="Geef een lijst met tickets op.")
+    return _svc(db).verwijder_tickets(board_id, sleutels,
+                                      ook_lopende=bool(payload.get("ook_lopende")))
+
+
 @router.delete("/{board_id}/tickets/{ticket_id}")
 def delete_ticket(board_id: int, ticket_id: int, db: Session = Depends(get_db)):
     svc = _svc(db)
