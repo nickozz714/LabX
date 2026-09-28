@@ -19,6 +19,9 @@ import { Badge, Button, EmptyState } from "@/components/ui";
 const TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
   completed: "green", failed: "red", running: "yellow", pending: "yellow",
   cancelled: "neutral", ok: "green", fout: "red", overgeslagen: "neutral",
+  // Onderbroken door een herstart van de backend — geen fout van de
+  // workflow, maar ook niet afgerond.
+  interrupted: "yellow",
 };
 
 function duur(ms: number | null | undefined): string {

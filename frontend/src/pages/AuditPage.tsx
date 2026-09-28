@@ -36,6 +36,7 @@ const BRON_TOON: Record<string, "neutral" | "violet" | "green"> = {
 
 const STATUS_TOON: Record<string, "green" | "red" | "yellow" | "neutral"> = {
   completed: "green", ok: "green", failed: "red", error: "red", fout: "red",
+  interrupted: "yellow",
   running: "yellow", queued: "yellow", cancelled: "neutral", overgeslagen: "neutral",
 };
 
