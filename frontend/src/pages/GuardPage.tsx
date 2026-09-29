@@ -17,8 +17,10 @@
  *    weggestopt — deze laag was maandenlang stil kapot zonder dat iemand het
  *    kon zien.
  *
- * En het audit-spoor, waar je het origineel naast wat het model kreeg legt.
- * Dat is de enige manier om de vraag te beantwoorden of de guard het goed doet.
+ * En het tabblad Audit, waar twee sporen samenkomen: wat er in een lab
+ * gebeurde (beurten, modellen, acties) en wat de guard daarvan tegenhield —
+ * met het origineel naast wat het model kreeg. Dat laatste is de enige manier
+ * om de vraag te beantwoorden of de guard het goed doet.
  */
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Check, Eye, Plus, ShieldCheck, Trash2 } from "lucide-react";
@@ -30,6 +32,7 @@ import {
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
+import { AuditActiviteit } from "@/components/AuditActiviteit";
 
 const ACTIE_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
   blokkeren: "red", maskeren: "violet", waarschuwen: "yellow", toelaten: "green",
@@ -64,12 +67,29 @@ export function GuardPage() {
         {(["regels", "audit"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)}
                   className={`px-3 py-2 ${tab === t ? "border-b-2 border-primary font-medium" : "text-muted-foreground"}`}>
-            {t === "regels" ? "Regels" : "Wat er gebeurd is"}
+            {t === "regels" ? "Regels" : "Audit"}
           </button>
         ))}
       </div>
 
-      {tab === "regels" ? <Regels onGewijzigd={laadStatus} /> : <AuditLijst />}
+      {tab === "regels" ? (
+        <Regels onGewijzigd={laadStatus} />
+      ) : (
+        /* Twee antwoorden op dezelfde vraag "wat is hier gebeurd": eerst de
+           beurten (wat deed het lab), dan wat de guard daarvan tegenhield.
+           Los van elkaar op twee plekken moest je eerst weten welk van de twee
+           je zocht. */
+        <div className="space-y-6">
+          <AuditActiviteit />
+          <div>
+            <h2 className="mb-1 text-sm font-semibold">Wat de data-guard tegenhield</h2>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Per uitvoer: wat de bron gaf, wat het model kreeg, en waarom dat verschilt.
+            </p>
+            <AuditLijst />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

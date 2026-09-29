@@ -9,7 +9,6 @@ import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { GuardPage } from "@/pages/GuardPage";
 import { KluisPage } from "@/pages/KluisPage";
-import { AuditPage } from "@/pages/AuditPage";
 import { LabsPage } from "@/pages/LabsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -56,7 +55,8 @@ function AppRoutes() {
         <Route path="schedules" element={<SchedulesPage />} />
         <Route path="azure-profiles" element={<AzureProfilesPage />} />
         <Route path="kluis" element={<KluisPage />} />
-        <Route path="audit" element={<AuditPage />} />
+        {/* Audit is opgegaan in Data-guard; oude links blijven werken. */}
+        <Route path="audit" element={<Navigate to="/guard" replace />} />
         <Route path="guard" element={<GuardPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

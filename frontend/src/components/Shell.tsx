@@ -9,7 +9,7 @@ import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { Versie } from "@/components/Versie";
-import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, LineChart, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench } from "lucide-react";
+import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench } from "lucide-react";
 import { chatApi } from "@/lib/chat";
 
 const WIZARD_DISMISSED_KEY = "labx_wizard_dismissed";
@@ -28,8 +28,7 @@ const NAV = [
   // Eigen tab en geen kaartje in de instellingen: dit pak je erbij terwijl je
   // een skill schrijft of een ticket opstelt.
   { to: "/kluis", label: "Kluis", icon: Lock },
-  { to: "/audit", label: "Audit", icon: LineChart },
-  { to: "/guard", label: "Data-guard", icon: ShieldCheck },
+  { to: "/guard", label: "Data-guard", icon: ShieldCheck },   // met het tabblad Audit
   { to: "/settings", label: "Instellingen", icon: Settings },
 ];
 

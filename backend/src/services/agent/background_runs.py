@@ -256,7 +256,11 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
                     if t is not None:
                         if session_id:
                             t.cli_session_id = session_id
-                        t.updated_at = _now_iso()
+                        # Ook een antwoord van de agent is activiteit; anders
+                        # blijft een achtergrondrun in een gearchiveerde chat
+                        # onzichtbaar.
+                        from services.chat import archief
+                        archief.raak_aan(t)
                     if status == "completed":
                         content = answer
                     elif status == "cancelled":
