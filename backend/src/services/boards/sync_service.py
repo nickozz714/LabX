@@ -18,7 +18,7 @@ Eén ticket naar een andere kolom slepen herschreef dus ook de omschrijving, met
 de tekst zoals LabX hem toevallig had staan. Dat kostte in dit project drie
 dingen tegelijk: opmaak (de omschrijving ging door een platte vertaling heen),
 de toewijzing (assignee werd op niemand gezet) en soms de inhoud zelf — op
-BICC-7148 werd op 10-09 een versie van een dag oud over de nieuwere heen gezet.
+één ticket werd zo een versie van een dag oud over de nieuwere heen gezet.
 
 Wat er nu geldt:
 - Een veld dat in LabX niet is aangeraakt, wordt NOOIT gepusht.

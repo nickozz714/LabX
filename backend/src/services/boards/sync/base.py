@@ -105,10 +105,10 @@ class SyncAdapter:
     async def item_types(self) -> List[Dict[str, Any]]:
         """Welke soorten dit project kent, en welke bruikbaar zijn.
 
-        Vragen in plaats van gokken. Bij Swinkels stond het bord op "Task",
-        en dat blijkt in dat project een SUBTAAK te zijn — waarop Jira elke
-        aanmaak weigerde met een melding die je zonder deze lijst niet kunt
-        plaatsen. Elke regel: {naam, id, subtaak, verplicht: [...]}."""
+        Vragen in plaats van gokken. Een bord dat op "Task" staat kan in het
+        doelproject een SUBTAAK aanwijzen — waarop Jira elke aanmaak weigert
+        met een melding die je zonder deze lijst niet kunt plaatsen. Elke
+        regel: {naam, id, subtaak, verplicht: [...]}."""
         return []
 
     async def update_item(self, *, external_id: str, title: Optional[str],

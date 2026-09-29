@@ -230,7 +230,7 @@ function McpSection() {
                       onChange={(e) => mcpServerApi.update(s.id, { usage_scope: e.target.value }).then(refresh)}
                       className="rounded-md border border-input bg-background px-2 py-1"
                     >
-                      <option value="session">Claude-sessie (altijd, elke chat — eigen capaciteit zoals Nectar)</option>
+                      <option value="session">Claude-sessie (altijd, elke chat — voor servers die overal mogen gelden)</option>
                       <option value="both">Sessie én lab (via de Toegang-lijst van het lab)</option>
                       <option value="lab">Alleen lab (uitsluitend als het lab het expliciet toestaat)</option>
                     </select>
@@ -328,7 +328,7 @@ function CreateMcpServerModal({ onClose, onCreated }: { onClose: () => void; onC
         </div>
         <div>
           <Label>Slug</Label>
-          <Input value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} placeholder="nectar" />
+          <Input value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} placeholder="mijn-server" />
         </div>
         <div>
           <Label>Locatie</Label>
@@ -550,12 +550,11 @@ function EditConnectionModal({ server, onClose, onSaved }: { server: MCPServerDt
                 <span>
                   <span className="font-medium">Vertel deze server welke sessie er belt</span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">
-                    Stuurt de thread-id mee als <code>X-Hive-Session</code>. Zet dit aan voor
-                    Nectar: zijn focus-banen hangen aan een sessie, en zonder dit moet het model
-                    zijn eigen sessietoken onthouden en bij elke aanroep meegeven — wat het niet
-                    doet, waarna iedereen de focus van dezelfde willekeurige baan krijgt. Laat het
-                    uit bij servers van derden: die hoeven niet te weten hoeveel gesprekken je
-                    voert of welk er belt.
+                    Stuurt de thread-id mee als <code>X-Hive-Session</code>. Zet dit aan voor een
+                    server die per gesprek iets onthoudt: zonder deze header moet het model zijn
+                    eigen sessietoken bijhouden en bij elke aanroep meegeven — wat het niet doet,
+                    waarna iedereen in dezelfde sessie terechtkomt. Laat het uit bij servers van
+                    derden: die hoeven niet te weten hoeveel gesprekken je voert of welk er belt.
                   </span>
                 </span>
               </label>

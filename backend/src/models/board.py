@@ -161,7 +161,7 @@ class Ticket(Base):
     # wijziging ALLE velden terug. Eén ticket naar een andere kolom slepen
     # herschreef dus ook de omschrijving — met de tekst zoals LabX hem toevallig
     # had staan. Stond er in Jira intussen een nieuwere versie, dan werd die
-    # overschreven met een oudere. Precies dat gebeurde op BICC-7148.
+    # overschreven met een oudere. Precies dat is hier een keer gebeurd.
     #
     # Het werkt twee kanten op: een veld dat lokaal niet is aangeraakt wordt
     # nooit gepusht, en een veld dat extern niet is veranderd wordt nooit

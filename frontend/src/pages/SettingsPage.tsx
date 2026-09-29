@@ -250,8 +250,8 @@ export function SettingsPage() {
         <p className="text-xs text-muted-foreground">
           Roep vóór elke chat-beurt automatisch één of meer tools aan en geef de resultaten mee
           aan de agent — de agent hoeft er dan niet zelf aan te denken. Werkt met elke tool die
-          een <code>query</code>-argument accepteert (bv. <code>hive_recall</code>). Elke
-          uitgevoerde hook is zichtbaar als ⚙️-stap in de chat.
+          een <code>query</code>-argument accepteert — bijvoorbeeld een zoekopdracht in je
+          kennisbank. Elke uitgevoerde hook is zichtbaar als ⚙️-stap in de chat.
         </p>
         {(settings.auto_hooks || []).map((h, i) => (
           <div key={i} className="space-y-2 rounded-md border border-border p-3">
@@ -284,7 +284,7 @@ export function SettingsPage() {
                     setSettings({ ...settings, auto_hooks: hooks });
                   }}
                   onBlur={() => save({ auto_hooks: settings.auto_hooks })}
-                  placeholder="hive_recall"
+                  placeholder="naam_van_de_tool"
                 />
               </div>
               <div>

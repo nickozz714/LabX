@@ -104,7 +104,7 @@ export function KluisPage() {
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <Label>Naam</Label>
-              <Input value={nieuw.name} placeholder="teams-incidenten-webhook"
+              <Input value={nieuw.name} placeholder="webhook-meldingen"
                      onChange={(e) => setNieuw({ ...nieuw, name: e.target.value })} />
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Je schrijft hem als{" "}
@@ -124,7 +124,7 @@ export function KluisPage() {
           <div>
             <Label>Waar is dit voor</Label>
             <TextArea rows={2} value={nieuw.description}
-                      placeholder="De Power Automate-webhook van het incidentenkanaal"
+                      placeholder="Waar deze sleutel voor is"
                       onChange={(e) => setNieuw({ ...nieuw, description: e.target.value })} />
           </div>
           <LabKeuze labs={labs} gekozen={nieuw.lab_ids}

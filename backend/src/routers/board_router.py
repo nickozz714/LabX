@@ -64,16 +64,16 @@ PROVIDER_SPECS = [
             {"key": "email", "label": "E-mailadres bij het API-token", "required": True,
              "placeholder": "naam@bedrijf.nl"},
             {"key": "project_key", "label": "Projectsleutel", "required": True,
-             "placeholder": "BICC"},
+             "placeholder": "PROJ"},
             {"key": "board_name", "label": "Jira-bordnaam (optioneel — anders het eerste bord "
                                           "van het project)", "required": False,
-             "placeholder": "BICC Sprint board"},
+             "placeholder": "PROJ Sprint board"},
             {"key": "issue_type", "label": "Type voor nieuwe issues", "required": False,
              "placeholder": "Task"},
             {"key": "acceptance_field", "label": "Veld-id voor acceptatiecriteria (optioneel)",
              "required": False, "placeholder": "customfield_10035"},
             {"key": "jql", "label": "Eigen JQL (optioneel)", "required": False,
-             "multiline": True, "placeholder": "project = BICC AND statusCategory != Done"},
+             "multiline": True, "placeholder": "project = PROJ AND statusCategory != Done"},
         ],
         "secret_label": "Atlassian API-token",
         "state_hint": ("Een Jira-bordkolom is een groepje statussen — koppel dus gerust "
@@ -239,9 +239,9 @@ async def sync_ticket(board_id: int, ticket_id: int, db: Session = Depends(get_d
 async def item_types(board_id: int, db: Session = Depends(get_db)):
     """Welke soorten werkitems de bron kent.
 
-    Vragen in plaats van gokken: bij Swinkels stond het bord op "Task", wat in
-    dat project een SUBTAAK bleek — en dan weigert Jira élke aanmaak met een
-    melding die niet zegt dat je instelling fout staat."""
+    Vragen in plaats van gokken: een bord dat op "Task" staat kan in het
+    doelproject een SUBTAAK aanwijzen — en dan weigert Jira élke aanmaak met
+    een melding die niet zegt dat je instelling fout staat."""
     from services.boards.sync_service import BoardSyncService
 
     adapter = BoardSyncService(db).adapter_voor(board_id)

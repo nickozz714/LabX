@@ -4,7 +4,7 @@ services/workflows/parameters.py
 De invoer van een workflow: wat je bij het starten meegeeft, en wat elke
 activiteit met `{{ invoer.<naam> }}` kan gebruiken.
 
-**Waarom dit er moest komen.** Een workflow die "de incidenten van Swinkels"
+**Waarom dit er moest komen.** Een workflow die "de incidenten van klant X"
 ophaalt, staat met die klantnaam in de opdracht van elke activiteit. Voor de
 volgende klant kopieer je hem, en daarna heb je twee workflows die uit elkaar
 gaan lopen. De motor kende `invoer.x` al — er was alleen geen manier om te

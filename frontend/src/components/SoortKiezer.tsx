@@ -2,10 +2,10 @@
  * components/SoortKiezer.tsx — het soort werkitem kiezen dat de bron kent.
  *
  * Waarom dit uit de bron komt en niet uit een vast lijstje: alleen Jira of
- * Azure DevOps weet welke soorten een project heeft, en hoe ze daar heten. Bij
- * Swinkels stond het bord op "Task" — een type dat in dat project helemaal niet
- * bestaat als gewone taak, maar wel als SUBTAAK ("Taak"). Elke push mislukte
- * daardoor met een melding die niet zei dat de instelling fout stond.
+ * Azure DevOps weet welke soorten een project heeft, en hoe ze daar heten. Een
+ * bord dat op "Task" staat kan verwijzen naar een type dat daar helemaal niet
+ * bestaat als gewone taak, maar wel als SUBTAAK. Elke push mislukt dan met een
+ * melding die niet zegt dat de instelling fout staat.
  *
  * Subtaken staan er wel in, maar uitgeschakeld: een subtaak kan niet zonder
  * bovenliggend issue. Ze weglaten zou de vraag oproepen waar ze gebleven zijn.

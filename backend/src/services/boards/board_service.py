@@ -222,7 +222,7 @@ class BoardService:
 
     def ticket_by_key(self, board_id: int, key: str) -> Optional[Ticket]:
         """Zoekt op de LabX-sleutel (LAB-12) en valt terug op de externe
-        sleutel (BICC-6408) — de agent kent vaak alleen die laatste."""
+        sleutel (PROJ-6408) — de agent kent vaak alleen die laatste."""
         needle = (key or "").strip()
         if not needle:
             return None
@@ -383,7 +383,7 @@ class BoardService:
         """Een ticket op id, LabX-sleutel of de sleutel van de bron.
 
         Alle drie, want wie een lijst plakt heeft hem uit het scherm (SWI-124),
-        uit Jira (BICC-7317) of uit een script (het id) — en dan is "onbekend"
+        uit Jira (PROJ-7317) of uit een script (het id) — en dan is "onbekend"
         een nutteloos antwoord."""
         q = self.db.query(Ticket).filter(Ticket.board_id == board.id)
         tekst = str(sleutel).strip()

@@ -328,10 +328,9 @@ export function BoardSettings({
               {spec.fields.map((f) => (
                 f.key === "issue_type" || f.key === "work_item_type" ? (
                   /* Niet als vrij tekstveld: alleen de bron weet hoe de
-                     soorten daar heten. Bij Swinkels stond hier "Task", een
-                     naam die in dat project alleen als SUBTAAK bestaat — en
-                     dan mislukt élke aanmaak met een melding die daar niets
-                     over zegt. */
+                     soorten daar heten. Staat hier "Task" terwijl dat in het
+                     doelproject alleen als SUBTAAK bestaat, dan mislukt élke
+                     aanmaak met een melding die daar niets over zegt. */
                   <SoortKiezer key={f.key} boardId={board.id}
                                waarde={config[f.key] || ""}
                                label={f.label}
