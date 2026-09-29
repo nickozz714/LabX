@@ -1,8 +1,8 @@
 /**
  * components/workflow/Parameters.tsx — de invoer die een workflow verwacht.
  *
- * Aanleiding: een workflow die "de incidenten van Swinkels" ophaalt, had die
- * klantnaam in de opdracht van elke activiteit staan. Voor de volgende klant
+ * Aanleiding: een workflow die "de incidenten van klant X" ophaalt, had die
+ * naam in de opdracht van elke activiteit staan. Voor de volgende klant
  * kopieerde je hem, en daarna liepen er twee uit elkaar.
  *
  * Twee kanten, allebei hier:

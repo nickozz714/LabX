@@ -529,7 +529,7 @@ export function TicketDrawer({
                   .filter(Boolean),
               })
             }
-            placeholder="SWI-3, SWI-7"
+            placeholder="LAB-3, LAB-7"
           />
           <p className="mt-1 text-xs text-muted-foreground">
             Een planning pauzeert bij dit ticket zolang die tickets nog niet in een klaar-kolom

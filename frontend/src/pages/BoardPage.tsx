@@ -882,7 +882,7 @@ function PlanVenster({ boardId, labId, tickets, onClose, onCreated }: {
           <div>
             <Label>Naam</Label>
             <Input value={naam} onChange={(e) => setNaam(e.target.value)}
-                   placeholder="bv. Silver-herstel TST" />
+                   placeholder="bv. Opruimronde" />
           </div>
           <div>
             <Label>Starten</Label>

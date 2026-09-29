@@ -166,7 +166,7 @@ class LabService:
         # voorgoed denken dat hij bezig is, en blijven de werkers op "pending"
         # staan. Zo'n werker is niet claimbaar, dus de autoscaler zet er wel
         # containers bij maar er komt nooit werk op. Precies dat gebeurde op
-        # 13-09-2026: werker 2 en 3 van Krimpenerwaard stonden na een deploy
+        # 13-09-2026: werker 2 en 3 van een lab stonden na een deploy
         # midden in het inrichten stil, en er was niets dat ze eruit haalde.
         #
         # Bij het opstarten is er per definitie geen ronde meer aan de gang —
@@ -1433,7 +1433,7 @@ exec ssh -N \\
         **Elke werker, niet alleen de eerste.** Dat was de fout achter KRI-44.
         Een lab is sinds de autoscaler geen container meer maar een groep, en
         deze functie zette de sessie alleen in de container van het lab zelf. Op
-        13-09-2026 was dat te zien ook: werker 1 en 2 van Krimpenerwaard hadden
+        13-09-2026 was dat te zien ook: werker 1 en 2 van een lab hadden
         `msal_token_cache.json`, werker 3 niet. Een run die op werker 3 landde
         kreeg "Please run 'az login'", een run op werker 1 niet — vandaar dat het
         als een intermitterende storing overkwam in plaats van als een gat.
@@ -2056,7 +2056,7 @@ exec ssh -N \\
         autoscaler zet werkers bij, die krijgen een lege `/root/.azure`, en of
         `az account get-access-token` het doet hangt dan af van op welke werker
         een run toevallig terechtkomt. Gemeten op 13-09-2026: werker 1 en 2 van
-        Krimpenerwaard hadden `msal_token_cache.json`, werker 3 niet — en dat is
+        een lab hadden `msal_token_cache.json`, werker 3 niet — en dat is
         waarom het probleem "intermitterend" leek.
         """
         p = self.get(lab_id)

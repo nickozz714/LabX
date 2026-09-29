@@ -389,8 +389,8 @@ def build_server():
         mcp.add_tool(FunctionTool(
             name="lab__write_file",
             description=("Schrijf een bestand IN de lab-container, byte-exact (betrouwbaarder dan "
-                         "heredocs via de shell voor scripts/code/configs — bv. om een skill-script "
-                         "uit Nectar te installeren). Mappen worden automatisch aangemaakt.\n"
+                         "heredocs via de shell voor scripts/code/configs — bv. om een script "
+                         "uit een skill te installeren). Mappen worden automatisch aangemaakt.\n"
                          "Args: path* (string, onder /workspace), content* (string)"),
             parameters={
                 "type": "object",

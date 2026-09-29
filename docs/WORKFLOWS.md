@@ -48,7 +48,7 @@ Een lus over meerdere activiteiten hoort in een sub-workflow; die komt later.
 ### Invoer van een workflow
 
 Een workflow kan **parameters** hebben: wat je bij het starten meegeeft, en wat
-elke activiteit gebruikt als `{{ invoer.<naam> }}`. Zonder dat stond "Swinkels"
+elke activiteit gebruikt als `{{ invoer.<naam> }}`. Zonder dat stond de klantnaam
 in de opdracht van elke activiteit, kopieerde je de workflow voor de volgende
 klant, en liepen er daarna twee uit elkaar.
 

@@ -2,11 +2,10 @@
  * components/VerplichteVelden.tsx — vaste waarden voor velden die de bron
  * verplicht stelt.
  *
- * Aanleiding: het BICC-project van Swinkels eist bij een Task2 een
- * story-point-schatting en bij een Epic een eigen stream-veld. LabX kent die
- * velden niet, en zonder een plek om er een waarde voor te zetten is zo'n
- * issuetype dus onbruikbaar — een rare reden om geen ticket te kunnen
- * aanmaken.
+ * Aanleiding: een project kan velden verplicht stellen die LabX niet kent —
+ * een story-point-schatting bij het ene issuetype, een eigen keuzeveld bij het
+ * andere. Zonder een plek om er een waarde voor te zetten is zo'n issuetype
+ * onbruikbaar, en dat is een rare reden om geen ticket te kunnen aanmaken.
  *
  * Bewust géén JSON-veld waar je `{"customfield_10052": 0}` in tikt: die
  * veld-id's zijn niet te onthouden en een typefout levert een 400 op waar

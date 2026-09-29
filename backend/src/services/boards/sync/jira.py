@@ -6,8 +6,8 @@ Jira Cloud via REST API v3.
 Config (`Board.provider_config`):
     base_url       "https://mijnbedrijf.atlassian.net"   (verplicht)
     email          het account bij de API-token          (verplicht)
-    project_key    "BICC"                                (verplicht bij create)
-    board_name     "BICC Sprint board"                   (optioneel — anders het
+    project_key    "PROJ"                                (verplicht bij create)
+    board_name     "PROJ Sprint board"                   (optioneel — anders het
                                                           eerste agile board van
                                                           het project)
     jql            eigen JQL                             (optioneel — anders:
@@ -433,8 +433,8 @@ class JiraAdapter(SyncAdapter):
     def _vaste_velden(self) -> Dict[str, Any]:
         """Vaste waarden voor velden die dit project verplicht stelt.
 
-        Nodig omdat een project velden kan eisen die LabX niet kent — bij
-        Swinkels een story-point-schatting en een eigen stream-veld. Zonder
+        Nodig omdat een project velden kan eisen die LabX niet kent — een
+        story-point-schatting bijvoorbeeld, of een eigen stream-veld. Zonder
         deze mogelijkheid is zo'n issuetype gewoon onbruikbaar, en dat is een
         rare reden om geen ticket te kunnen aanmaken.
 
@@ -469,10 +469,10 @@ class JiraAdapter(SyncAdapter):
 
         **Waarom de oude createmeta en niet de nieuwe.** Bij een team-managed
         project (Jira noemt dat "next-gen") geeft
-        `createmeta/{key}/issuetypes` netjes HTTP 200 met een LEGE lijst. Het
-        BICC-project van Swinkels is er zo een, en op die lege lijst viel LabX
-        terug op de naam uit de instellingen — precies de situatie die we
-        wilden voorkomen. De oudere vorm met `expand` werkt daar wél, en geeft
+        `createmeta/{key}/issuetypes` netjes HTTP 200 met een LEGE lijst. Op
+        die lege lijst viel LabX terug op de naam uit de instellingen —
+        precies de situatie die we wilden voorkomen. De oudere vorm met
+        `expand` werkt daar wél, en geeft
         de verplichte velden in dezelfde aanroep in plaats van één per type.
 
         Helpt dat ook niet, dan blijft het project-endpoint over: dat kent de

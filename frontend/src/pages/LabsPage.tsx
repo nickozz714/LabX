@@ -1130,7 +1130,7 @@ function TunnelPaneel({ lab }: { lab: Lab }) {
         </div>
         <div className="col-span-2">
           <Label>SSH-doel (gebruiker@server)</Label>
-          <Input value={doel} onChange={(e) => setDoel(e.target.value)} placeholder="nick@192.168.2.15" />
+          <Input value={doel} onChange={(e) => setDoel(e.target.value)} placeholder="gebruiker@server" />
         </div>
       </div>
       {lab.status !== "running" && (

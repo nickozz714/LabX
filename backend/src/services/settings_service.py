@@ -44,7 +44,8 @@ class ResolvedSettings:
         self.default_image = row.default_image or env.LAB_DEFAULT_IMAGE
         self.default_ttl_hours = row.default_ttl_hours or 14
         self.auto_recall_enabled = row.auto_recall_enabled
-        self.auto_recall_tool_name = row.auto_recall_tool_name or "hive_recall"
+        # Geen standaardnaam: welke tool dit is, hangt van je eigen opstelling af.
+        self.auto_recall_tool_name = row.auto_recall_tool_name or ""
         self.auto_recall_query_template = row.auto_recall_query_template
         self.auto_recall_instruction = row.auto_recall_instruction
         # Effective hook list: the JSON list wins; fall back to the legacy
