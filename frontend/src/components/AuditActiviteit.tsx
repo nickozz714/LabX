@@ -1,11 +1,11 @@
 /**
- * pages/AuditPage.tsx — wat er in een lab gebeurd is.
+ * components/AuditActiviteit.tsx — wat er in een lab gebeurd is.
  *
- * Het bestaande audit-scherm zit bij de data-guard en gaat over maskeren en
- * blokkeren. Dat is een scherp mes voor één vraag, en het antwoord op de
- * andere stond nergens: wat heeft dit lab eigenlijk gedaan? Die vraag stel je
- * per klant, hij gaat over beurten en niet over bytes, en je wilt hem zowel
- * over vandaag als over het kwartaal kunnen stellen.
+ * Staat samen met het guard-spoor onder één tabblad Audit. Dat zijn twee
+ * antwoorden op dezelfde vraag "wat is hier gebeurd": dit deel gaat over
+ * BEURTEN (welk model, wat ging erin, wat kwam eruit, welke acties), het
+ * andere over BYTES (wat is er tegengehouden of gemaskeerd). Ze los van elkaar
+ * op twee plekken zetten dwong je om te weten welk van de twee je zocht.
  *
  * Daarom drie dingen boven elkaar, van grof naar fijn:
  * 1. De staafjes — hoeveel beurten en acties per dag, week of maand, met wat
@@ -47,7 +47,7 @@ function duur(ms: number | null): string {
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
 }
 
-export function AuditPage() {
+export function AuditActiviteit() {
   const [labs, setLabs] = useState<Lab[]>([]);
   const [labId, setLabId] = useState("");
   const [bron, setBron] = useState("");
@@ -79,15 +79,12 @@ export function AuditPage() {
   useEffect(() => { laad(); }, [laad]);
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <h1 className="text-lg font-semibold">Audit</h1>
-          <p className="text-xs text-muted-foreground">
-            Wat er in een lab gebeurd is: welk model, wat erin ging, wat eruit kwam en welke
-            acties er ondernomen zijn.
-          </p>
-        </div>
+        <p className="max-w-md text-xs text-muted-foreground">
+          Wat er in een lab gebeurd is: welk model, wat erin ging, wat eruit kwam en welke
+          acties er ondernomen zijn.
+        </p>
         <span className="flex-1" />
         <div>
           <Label>Lab</Label>

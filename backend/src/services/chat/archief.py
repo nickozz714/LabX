@@ -7,6 +7,13 @@ gewoon terug, dus een link vanaf een ticket of uit je geschiedenis blijft
 werken, en terughalen is één klik. Precies daarom mag dit vanzelf gebeuren —
 bij verwijderen zou automatisch nooit goed voelen.
 
+**Activiteit haalt een chat uit het archief.** Een bericht zette wel
+`updated_at` bij, maar liet `archived_at` staan — en dus bleef een chat waarin
+je dagenlang doorpraatte in het archief hangen, buiten de lijst om. Dat is geen
+randgeval: juist een gesprek dat ooit stil viel en later weer oppakt, komt zo
+nooit meer terug. "Gearchiveerd" betekent stil; zodra er iets gebeurt is hij
+dat niet meer.
+
 **Waarom op `updated_at` en niet op "wanneer heb je hem opengehad".** Een chat
 openen verandert er niets aan; pas een bericht doet dat. Dat is de bedoeling:
 rondkijken houdt een gesprek niet kunstmatig levend, en een chat waarin je
@@ -30,6 +37,37 @@ log = get_logger(__name__)
 # de interface wilt kunnen bijstellen, niet iets om een container voor te
 # herstarten. De instelling overschrijft hem; 0 zet het uit.
 STANDAARD_DAGEN = 3
+
+
+def raak_aan(thread: Optional[Thread]) -> None:
+    """Deze chat is zojuist gebruikt.
+
+    Eén plek, want het zijn er twee dingen die altijd samen horen: de
+    tijdstempel bijwerken én hem uit het archief halen. Los van elkaar gaan ze
+    uit elkaar lopen — dat is precies hoe een actief gesprek dagenlang in het
+    archief kon blijven staan."""
+    if thread is None:
+        return
+    thread.updated_at = datetime.now(timezone.utc).isoformat()
+    thread.archived_at = None
+
+
+def haal_ten_onrechte_gearchiveerde_terug(db: Session) -> int:
+    """Chats die na het archiveren nog gebruikt zijn, terugzetten.
+
+    Zelfherstellend: wie hier al last van had, hoeft niets te doen. De toets is
+    eenduidig — er is na het moment van archiveren nog iets gebeurd, dus de
+    aanname "deze is stil" klopte niet meer."""
+    rijen = (db.query(Thread)
+             .filter(Thread.archived_at.isnot(None),
+                     Thread.updated_at > Thread.archived_at).all())
+    for t in rijen:
+        t.archived_at = None
+    if rijen:
+        db.commit()
+        log.infox("Chats teruggehaald die na het archiveren nog gebruikt zijn",
+                  aantal=len(rijen))
+    return len(rijen)
 
 
 def _dagen(db: Session) -> int:

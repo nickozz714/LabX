@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from authentication import require_user
 from component_logging import get_logger
 from db.database import get_db
+from services.chat import archief
 from models.lab import Lab
 from models.message import Message
 from models.thread import Thread
@@ -256,7 +257,9 @@ async def start_background(thread_id: str, payload: Dict[str, Any], db: Session 
     user_msg = Message(id=str(uuid4()), thread_id=thread_id, role="user",
                        content=text, steps=[], created_at=now)
     db.add(user_msg)
-    t.updated_at = now
+    # Aanraken haalt hem ook uit het archief: een chat waarin je praat is
+    # per definitie niet stil.
+    archief.raak_aan(t)
     db.commit()
 
     from services.agent import background_runs
@@ -439,7 +442,9 @@ async def ask(thread_id: str, payload: Dict[str, Any], db: Session = Depends(get
     user_msg = Message(id=str(uuid4()), thread_id=thread_id, role="user",
                        content=text, steps=[], created_at=now)
     db.add(user_msg)
-    t.updated_at = now
+    # Aanraken haalt hem ook uit het archief: een chat waarin je praat is
+    # per definitie niet stil.
+    archief.raak_aan(t)
     db.commit()
 
     werker = await _werker_voor_chat(db, lab)

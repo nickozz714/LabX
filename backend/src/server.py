@@ -120,10 +120,16 @@ async def _guard_audit_opruimen() -> None:
 async def _chat_archief_tick() -> None:
     """Chats die dagen stilliggen uit de lijst halen. Ze blijven bestaan en
     blijven te openen — zie services/chat/archief.py."""
-    from services.chat.archief import archiveer_stille_chats
+    from services.chat.archief import (
+        archiveer_stille_chats, haal_ten_onrechte_gearchiveerde_terug,
+    )
 
     db = SessionLocal()
     try:
+        # Eerst terughalen wat na het archiveren toch weer gebruikt is, dan pas
+        # opnieuw opruimen. Andersom zou dezelfde ronde hem meteen weer opzij
+        # zetten als hij nét over de grens is.
+        haal_ten_onrechte_gearchiveerde_terug(db)
         archiveer_stille_chats(db)
     finally:
         db.close()

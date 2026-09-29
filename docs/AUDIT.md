@@ -4,10 +4,15 @@
 
 LabX houdt twee dingen bij, en ze beantwoorden verschillende vragen.
 
-| | Waar | Waarover |
-| --- | --- | --- |
-| **Audit** | tab *Audit* | Wat heeft dit lab gedaan: welk model, wat ging erin, wat kwam eruit, welke acties zijn ondernomen. |
-| **Data-guard** | tab *Data-guard* | Wat is er tegengehouden of gemaskeerd op weg naar het model, en waarom. |
+Allebei staan ze onder **Data-guard → Audit**, boven elkaar.
+
+| | Waarover |
+| --- | --- |
+| **Activiteit** (boven) | Wat heeft dit lab gedaan: welk model, wat ging erin, wat kwam eruit, welke acties zijn ondernomen. Over **beurten**. |
+| **Wat de data-guard tegenhield** (onder) | Wat is er gemaskeerd of geblokkeerd op weg naar het model, en waarom. Over **bytes**. |
+
+Ze stonden eerst op twee plekken, en dan moet je eerst weten welk van de twee je
+zoekt voordat je kunt kijken.
 
 Het guard-spoor is een scherp mes voor één vraag. De andere vraag — "wat deden
 we vandaag bij deze klant" — gaat over beurten en niet over bytes, en die stel
