@@ -15,7 +15,7 @@
  * Het werk van de agent eindigt dus op het ticket, niet in de chat: de thread
  * achter een agent-run is verborgen (Thread.source = "board").
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -24,6 +24,7 @@ import { chatApi } from "@/lib/chat";
 import type { BoardDto, ChatEvent, TicketCommentDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
 import { SoortKiezer } from "@/components/SoortKiezer";
+import { ticketVerwijzingen } from "@/components/TicketVerwijzingen";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
@@ -45,7 +46,7 @@ const AGENT_TONE = {
  * moet de opdracht kunnen bijstellen.
  */
 function MarkdownField({
-  label, value, placeholder, rows = 8, onSave,
+  label, value, placeholder, rows = 8, onSave, verwijzingen,
 }: {
   label: string;
   value: string | null;
@@ -53,6 +54,8 @@ function MarkdownField({
   rows?: number;
   /** `false` = niet opgeslagen; dan blijft de editor open met de tekst erin. */
   onSave: (next: string) => Promise<boolean | void> | boolean | void;
+  /** Maakt ticketsleutels in de tekst klikbaar. */
+  verwijzingen?: Record<string, unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || "");
@@ -117,7 +120,8 @@ function MarkdownField({
         </div>
       ) : value?.trim() ? (
         <div className="markdown-body rounded-md border border-border p-3 text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}
+                         components={verwijzingen}>{value}</ReactMarkdown>
         </div>
       ) : (
         <button
@@ -132,12 +136,14 @@ function MarkdownField({
 }
 
 export function TicketDrawer({
-  board, ticketId, onClose, onChanged,
+  board, ticketId, onClose, onChanged, onOpenTicket,
 }: {
   board: BoardDto;
   ticketId: number;
   onClose: () => void;
   onChanged: () => void;
+  /** Een verwijzing in de tekst aanklikken opent dát ticket in dit paneel. */
+  onOpenTicket?: (ticketId: number) => void;
 }) {
   const navigate = useNavigate();
   const melding = useMelding();
@@ -159,6 +165,12 @@ export function TicketDrawer({
   // Eén ticket los doorzetten, met het antwoord ernaast.
   const [bezigMetSync, setBezigMetSync] = useState(false);
   const [syncUitkomst, setSyncUitkomst] = useState<string | null>(null);
+  // "wacht op SWI-12" in een opdracht hoort een link te zijn, geen tekst die
+  // je moet overtypen.
+  const verwijzingen = useMemo(
+    () => ticketVerwijzingen(board.id, (id) => onOpenTicket?.(id),
+                             (m) => melding.fout("Verwijzing", m)),
+    [board.id, onOpenTicket, melding]);
 
   // Live meelezen met de agent-run van dit ticket.
   // Aan wélke run dit paneel nu hangt. Een ref en geen state: hij stuurt geen
@@ -538,6 +550,7 @@ export function TicketDrawer({
         </div>
 
         <MarkdownField
+          verwijzingen={verwijzingen}
           label="Omschrijving — de opdracht"
           value={ticket.description}
           placeholder="Beschrijf wat er moet gebeuren (Markdown). Voortgang en bevindingen horen in de tijdlijn, niet hier."
@@ -545,6 +558,7 @@ export function TicketDrawer({
         />
 
         <MarkdownField
+          verwijzingen={verwijzingen}
           label="Acceptatiecriteria — wanneer is het klaar?"
           value={ticket.acceptance_criteria}
           rows={6}

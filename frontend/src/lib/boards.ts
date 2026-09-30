@@ -41,6 +41,14 @@ export const boardApi = {
    *  gereedschap als je net één ticket hebt aangepast. */
   /** Meerdere tickets in één keer weg. Haalt de LABX-kopie weg; de bron
    *  blijft staan — een gesynchroniseerd ticket komt dus terug. */
+  /** Welk ticket hoort bij deze sleutel? 404 = bestaat niet (meer). */
+  resolveTicket: (boardId: number, key: string) =>
+    api.get<{ id: number; key: string; titel: string; status: string; gearchiveerd: boolean }>(
+      `/boards/${boardId}/tickets/resolve?key=${encodeURIComponent(key)}`),
+  /** Tickets opzij zetten, of terughalen met `terug`. */
+  archiveTickets: (boardId: number, keys: (string | number)[], terug = false) =>
+    api.post<{ verwerkt: string[]; niet_gevonden: string[]; liep_al: string[] }>(
+      `/boards/${boardId}/tickets/archive`, { keys, terug }),
   deleteTickets: (boardId: number, keys: (string | number)[], ookLopende = false) =>
     api.post<{
       verwijderd: string[];
@@ -63,8 +71,11 @@ export const boardApi = {
   update: (id: number, payload: Record<string, any>) => api.patch<BoardDto>(`/boards/${id}`, payload),
   remove: (id: number) => api.delete<{ ok: boolean }>(`/boards/${id}`),
 
-  tickets: (boardId: number, params?: { status?: string; assignee?: string }) => {
+  /** `archief` = het archief in plaats van het bord. */
+  tickets: (boardId: number, archief = false,
+            params?: { status?: string; assignee?: string }) => {
     const qs = new URLSearchParams();
+    if (archief) qs.set("archived", "true");
     if (params?.status) qs.set("status", params.status);
     if (params?.assignee) qs.set("assignee", params.assignee);
     const s = qs.toString();

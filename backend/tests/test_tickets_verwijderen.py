@@ -140,3 +140,97 @@ def test_een_ticket_van_een_ander_bord_wordt_niet_geraakt(db):
     uit = BoardService(db).verwijder_tickets(1, ["SWI-1"])
     assert uit["niet_gevonden"] == ["SWI-1"]
     assert db.query(Ticket).count() == 1
+
+
+# ── archiveren: de zachte variant ───────────────────────────────────────────
+#
+# Een bord loopt vol met afgehandeld werk, en dan is verwijderen te grof: je
+# wilt het kunnen terugvinden. Een gearchiveerd ticket verdwijnt alleen uit het
+# bord.
+
+def test_archiveren_haalt_het_ticket_van_het_bord(db):
+    _t(db, "SWI-1")
+    _t(db, "SWI-2")
+    svc = BoardService(db)
+    uit = svc.archiveer_tickets(1, ["SWI-1"])
+    assert uit["verwerkt"] == ["SWI-1"]
+    assert [t.key for t in svc.list_tickets(1)] == ["SWI-2"]
+
+
+def test_het_archief_is_apart_op_te_vragen(db):
+    _t(db, "SWI-1")
+    _t(db, "SWI-2")
+    svc = BoardService(db)
+    svc.archiveer_tickets(1, ["SWI-1"])
+    assert [t.key for t in svc.list_tickets(1, gearchiveerd=True)] == ["SWI-1"]
+    # en allebei tegelijk kan ook
+    assert len(svc.list_tickets(1, gearchiveerd=None)) == 2
+
+
+def test_terughalen_zet_hem_terug_op_het_bord(db):
+    """Met één klik terug; dat is het hele verschil met verwijderen."""
+    _t(db, "SWI-1")
+    svc = BoardService(db)
+    svc.archiveer_tickets(1, ["SWI-1"])
+    uit = svc.archiveer_tickets(1, ["SWI-1"], terug=True)
+    assert uit["verwerkt"] == ["SWI-1"]
+    assert [t.key for t in svc.list_tickets(1)] == ["SWI-1"]
+
+
+def test_nog_een_keer_archiveren_verandert_niets(db):
+    """Bij een geplakte lijst van honderd zit er altijd eentje die al weg is."""
+    _t(db, "SWI-1")
+    svc = BoardService(db)
+    svc.archiveer_tickets(1, ["SWI-1"])
+    uit = svc.archiveer_tickets(1, ["SWI-1"])
+    assert uit["verwerkt"] == [] and uit["liep_al"] == ["SWI-1"]
+
+
+def test_archiveren_raakt_het_ticket_zelf_niet_kwijt(db):
+    """Opmerkingen en de koppeling met de bron blijven; dat is de belofte."""
+    t = _t(db, "SWI-1", external_id="10001", external_key="PROJ-7")
+    db.add(TicketComment(ticket_id=t.id, kind="comment", author="nick", body="hoi",
+                         created_at="nu"))
+    db.commit()
+    BoardService(db).archiveer_tickets(1, ["SWI-1"])
+    db.refresh(t)
+    assert t.external_key == "PROJ-7"
+    assert db.query(TicketComment).count() == 1
+
+
+def test_een_gearchiveerd_ticket_blijft_vindbaar_om_te_verwijderen(db):
+    """Anders zit je met een archief dat je niet meer kunt opruimen."""
+    _t(db, "SWI-1")
+    svc = BoardService(db)
+    svc.archiveer_tickets(1, ["SWI-1"])
+    assert svc.verwijder_tickets(1, ["SWI-1"])["verwijderd"] == ["SWI-1"]
+
+
+# ── verwijzingen naar andere tickets ────────────────────────────────────────
+#
+# In een opdracht staat vaak "wacht op SWI-12" of "zie PROJ-7317". Om daar een
+# link van te maken moet je weten of die sleutel bestaat én welk ticket het is.
+
+def test_een_sleutel_is_op_te_zoeken_op_alle_manieren(db):
+    t = _t(db, "SWI-1", external_id="10001", external_key="PROJ-7")
+    svc = BoardService(db)
+    board = svc.get_board(1)
+    for sleutel in ("SWI-1", "PROJ-7", str(t.id)):
+        gevonden = svc._zoek_ticket(board, sleutel)
+        assert gevonden is not None and gevonden.id == t.id
+
+
+def test_een_gearchiveerd_ticket_blijft_op_te_zoeken(db):
+    """Dat bestaat nog, het staat alleen niet op het bord — een verwijzing
+    ernaartoe moet blijven werken."""
+    _t(db, "SWI-1")
+    svc = BoardService(db)
+    svc.archiveer_tickets(1, ["SWI-1"])
+    assert svc._zoek_ticket(svc.get_board(1), "SWI-1") is not None
+
+
+def test_een_sleutel_die_niet_bestaat_levert_niets_op(db):
+    """En dan hoort het scherm dat te zeggen in plaats van stil niets te doen:
+    dan weet je niet of je mis klikte of dat het ticket weg is."""
+    svc = BoardService(db)
+    assert svc._zoek_ticket(svc.get_board(1), "SWI-999") is None
