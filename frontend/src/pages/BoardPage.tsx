@@ -18,7 +18,7 @@ import { useMelding } from "@/components/Meldingen";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
-import { ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X } from "lucide-react";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import type { Bijlage } from "@/lib/labs";
 
@@ -44,14 +44,17 @@ export function BoardPage() {
   // volgorde, en anders sleep je ze in het planningsvenster nog om.
   const [selectie, setSelectie] = useState<number[]>([]);
   const [planOpen, setPlanOpen] = useState(false);
+  // Het archief is een aparte weergave en geen vlaggetje op de kaart:
+  // opruimen moet ook echt iets opruimen.
+  const [toonArchief, setToonArchief] = useState(false);
   const bevestig = useBevestiging();
   const [plans, setPlans] = useState<PlanDto[]>([]);
 
   const refresh = useCallback(async () => {
-    const [b, t] = await Promise.all([boardApi.get(id), boardApi.tickets(id)]);
+    const [b, t] = await Promise.all([boardApi.get(id), boardApi.tickets(id, toonArchief)]);
     setBoard(b);
     setTickets(t);
-  }, [id]);
+  }, [id, toonArchief]);
 
   useEffect(() => {
     refresh().catch(() => setNotice("Board laden mislukt"));
@@ -106,6 +109,24 @@ export function BoardPage() {
            : ""));
     } catch (e) {
       setNotice(e instanceof ApiError ? e.message : "Verwijderen mislukt");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** De selectie opzij zetten, of terughalen als je in het archief kijkt. */
+  async function archiveerSelectie() {
+    const gekozen = tickets.filter((t) => selectie.includes(t.id));
+    setBusy(true);
+    try {
+      const r = await boardApi.archiveTickets(board!.id, gekozen.map((t) => t.id),
+                                              toonArchief);
+      setSelectie([]);
+      await refresh();
+      setNotice(`${r.verwerkt.length} ${toonArchief ? "teruggehaald" : "gearchiveerd"}`
+                + (r.liep_al.length ? ` · ${r.liep_al.length} stond al zo` : ""));
+    } catch (e) {
+      setNotice(e instanceof ApiError ? e.message : "Archiveren mislukt");
     } finally {
       setBusy(false);
     }
@@ -245,6 +266,13 @@ export function BoardPage() {
                 <Button className="text-xs" onClick={() => setPlanOpen(true)} disabled={!board.lab_id}>
                   <ListOrdered size={13} /> Inplannen
                 </Button>
+                <Button variant="secondary" className="text-xs" onClick={archiveerSelectie}
+                        disabled={busy}
+                        title={toonArchief
+                          ? "Terugzetten op het bord"
+                          : "Van het bord af, maar niet weg — met één klik terug"}>
+                  <Archive size={13} /> {toonArchief ? "Terughalen" : "Archiveren"}
+                </Button>
                 <Button variant="danger" className="text-xs" onClick={verwijderSelectie}
                         disabled={busy}>
                   <Trash2 size={13} /> Verwijderen
@@ -259,6 +287,11 @@ export function BoardPage() {
                 <Bot size={13} /> Pak hele kolom op
               </Button>
             )}
+            <Button variant={toonArchief ? "primary" : "ghost"} className="text-xs"
+                    onClick={() => { setSelectie([]); setToonArchief(!toonArchief); }}
+                    title="Wat je opzij hebt gezet">
+              <Archive size={13} /> {toonArchief ? "Terug naar het bord" : "Archief"}
+            </Button>
             {board.provider !== "local" && (
               <Button variant="secondary" className="text-xs" onClick={sync} disabled={busy}
                       busy={busy} busyLabel="Synchroniseren…">
@@ -410,6 +443,7 @@ export function BoardPage() {
 
       {selected != null && (
         <TicketDrawer
+          onOpenTicket={(id) => setSelected(id)}
           board={board}
           ticketId={selected}
           onClose={() => setSelected(null)}

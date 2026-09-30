@@ -206,8 +206,16 @@ class BoardService:
     # ── tickets ─────────────────────────────────────────────────────────────
 
     def list_tickets(self, board_id: int, *, status: Optional[str] = None,
-                     assignee: Optional[str] = None, limit: int = 500) -> List[Ticket]:
+                     assignee: Optional[str] = None, limit: int = 500,
+                     gearchiveerd: Optional[bool] = False) -> List[Ticket]:
+        """`gearchiveerd`: False = alleen het bord (standaard), True = alleen het
+        archief, None = allebei. Standaard weglaten en niet tonen-met-een-vlaggetje,
+        want opruimen moet ook echt iets opruimen."""
         q = self.db.query(Ticket).filter(Ticket.board_id == board_id)
+        if gearchiveerd is True:
+            q = q.filter(Ticket.archived_at.isnot(None))
+        elif gearchiveerd is False:
+            q = q.filter(Ticket.archived_at.is_(None))
         if status:
             q = q.filter(Ticket.status == status)
         if assignee:
@@ -379,6 +387,33 @@ class BoardService:
         self.db.commit()
         return uit
 
+    def archiveer_tickets(self, board_id: int, sleutels: List[Any], *,
+                          terug: bool = False) -> Dict[str, Any]:
+        """Tickets opzij zetten, of terughalen.
+
+        De zachte variant van verwijderen, en voor opruimen meestal de juiste:
+        het ticket blijft bestaan met zijn opmerkingen en zijn koppeling met de
+        bron, en is met één klik terug. Daarom ook geen bovengrens en geen
+        vangrail voor een lopende agent — er gaat niets verloren.
+        """
+        board = self.get_board(board_id)
+        nu = _now_iso()
+        uit: Dict[str, Any] = {"verwerkt": [], "niet_gevonden": [], "liep_al": []}
+        for sleutel in sleutels:
+            ticket = self._zoek_ticket(board, sleutel)
+            if ticket is None:
+                uit["niet_gevonden"].append(str(sleutel))
+                continue
+            al_zo = (ticket.archived_at is None) if terug else (ticket.archived_at is not None)
+            if al_zo:
+                uit["liep_al"].append(ticket.key)
+                continue
+            ticket.archived_at = None if terug else nu
+            ticket.updated_at = nu
+            uit["verwerkt"].append(ticket.key)
+        self.db.commit()
+        return uit
+
     def _zoek_ticket(self, board: Board, sleutel: Any) -> Optional[Ticket]:
         """Een ticket op id, LabX-sleutel of de sleutel van de bron.
 
@@ -492,6 +527,7 @@ class BoardService:
             "status": t.status, "priority": t.priority,
             "item_type": getattr(t, "item_type", None),
             "sync_naar_bron": bool(getattr(t, "sync_naar_bron", True)),
+            "archived_at": getattr(t, "archived_at", None),
             "assignee": t.assignee, "labels": t.labels or [], "position": t.position,
             "depends_on": list(getattr(t, "depends_on", None) or []),
             "agent_state": t.agent_state, "agent_run_id": t.agent_run_id,

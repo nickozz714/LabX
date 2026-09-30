@@ -275,10 +275,16 @@ def delete_board(board_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{board_id}/tickets")
 def list_tickets(board_id: int, status: Optional[str] = None, assignee: Optional[str] = None,
+                 archived: Optional[bool] = False,
                  db: Session = Depends(get_db)):
+    """`archived=false` (standaard) = het bord, `true` = het archief.
+
+    Standaard weglaten en niet tonen-met-een-vlaggetje: opruimen moet ook echt
+    iets opruimen."""
     svc = _svc(db)
     svc.get_board(board_id)
-    return svc.tickets_to_dicts(svc.list_tickets(board_id, status=status, assignee=assignee))
+    return svc.tickets_to_dicts(svc.list_tickets(board_id, status=status, assignee=assignee,
+                                                 gearchiveerd=archived))
 
 
 @router.post("/{board_id}/tickets")
@@ -303,6 +309,41 @@ def update_ticket(board_id: int, ticket_id: int, payload: Dict[str, Any],
     svc = _svc(db)
     _ticket_of_board(svc, board_id, ticket_id)
     return svc.ticket_to_dict(svc.update_ticket(ticket_id, payload))
+
+
+@router.get("/{board_id}/tickets/resolve")
+def resolve_ticket(board_id: int, key: str, db: Session = Depends(get_db)):
+    """Welk ticket hoort bij deze sleutel?
+
+    Voor de verwijzingen in een omschrijving: die noemen een sleutel, en om er
+    een link van te maken moet je weten of hij bestaat én welk ticket het is.
+    Zoekt op de LabX-sleutel, de sleutel van de bron en het id — precies zoals
+    een mens hem opschrijft.
+
+    Een gearchiveerd ticket telt gewoon mee: dat bestaat nog, het staat alleen
+    niet op het bord, en een verwijzing ernaartoe moet blijven werken.
+    """
+    svc = _svc(db)
+    board = svc.get_board(board_id)
+    ticket = svc._zoek_ticket(board, key)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail=(
+            f"{key} bestaat niet (meer) op dit bord."))
+    return {"id": ticket.id, "key": ticket.key,
+            "titel": ticket.title, "status": ticket.status,
+            "gearchiveerd": bool(getattr(ticket, "archived_at", None))}
+
+
+@router.post("/{board_id}/tickets/archive")
+def archive_tickets(board_id: int, payload: Dict[str, Any], db: Session = Depends(get_db)):
+    """Tickets opzij zetten, of terughalen met `terug: true`.
+
+    De zachte variant van verwijderen, en voor opruimen meestal de juiste: het
+    ticket blijft bestaan en is met één klik terug."""
+    sleutels = payload.get("keys") or payload.get("ids") or []
+    if not isinstance(sleutels, list) or not sleutels:
+        raise HTTPException(status_code=400, detail="Geef een lijst met tickets op.")
+    return _svc(db).archiveer_tickets(board_id, sleutels, terug=bool(payload.get("terug")))
 
 
 @router.post("/{board_id}/tickets/delete")

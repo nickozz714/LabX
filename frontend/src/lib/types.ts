@@ -642,6 +642,8 @@ export interface TicketDto {
   item_type: string | null;
   /** Mag dit ticket naar de bron? Uit = het blijft in LabX. */
   sync_naar_bron: boolean;
+  /** Opzij gezet: van het bord af, maar niet weg. */
+  archived_at: string | null;
   /** Volgorde binnen de kolom — hoger = eerder aan de beurt. Dit IS de prioriteit. */
   position: number;
   /** Keys van tickets op ditzelfde bord die eerst klaar moeten zijn. */

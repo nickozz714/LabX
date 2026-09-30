@@ -126,6 +126,15 @@ class Ticket(Base):
     # staat blijft staan, en die twee lopen vanaf dat moment uit elkaar. Dat is
     # een bewuste keuze en geen ongeluk, dus het scherm zegt het erbij.
     sync_naar_bron: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Opzij gezet, niet weg. Een bord loopt vol met afgehandeld werk, en dan is
+    # verwijderen te grof: je wilt het kunnen terugvinden. Een gearchiveerd
+    # ticket verdwijnt alleen uit het bord; hij blijft bestaan, houdt zijn
+    # opmerkingen en zijn koppeling met de bron, en is met één klik terug.
+    #
+    # De synchronisatie trekt zich er niets van aan. Dat is met opzet: anders
+    # zou een ticket dat je net hebt opgeruimd terugspringen zodra iemand er in
+    # Jira iets aan verandert — precies het rommeltje dat je wegwerkte.
+    archived_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     assignee: Mapped[str | None] = mapped_column(String(255), nullable=True)
     labels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # Sorteervolgorde binnen een kolom; floats zodat "tussenvoegen" geen

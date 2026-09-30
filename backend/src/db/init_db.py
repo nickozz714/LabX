@@ -129,6 +129,8 @@ _ADDITIVE_COLUMNS = {
         ("item_type", "VARCHAR(64)"),
         # Bestaande tickets synchroniseerden al, dus 1 is de juiste standaard.
         ("sync_naar_bron", "BOOLEAN NOT NULL DEFAULT 1"),
+        # Opzij gezet; leeg = gewoon op het bord.
+        ("archived_at", "VARCHAR(64)"),
     ],
     "guard_audit": [
         ("intent", "VARCHAR(32)"),
