@@ -114,6 +114,24 @@ export function SettingsPage() {
           </p>
         </div>
         <div>
+          <Label>Jouw naam in de bron (komma-gescheiden)</Label>
+          <Input
+            value={(settings.eigen_auteurs ?? []).join(", ")}
+            placeholder="Voornaam Achternaam, j.achternaam@klant.nl"
+            onChange={(e) => setSettings({
+              ...settings,
+              eigen_auteurs: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
+            })}
+            onBlur={() => save({ eigen_auteurs: settings.eigen_auteurs })}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Voor de urenregistratie. Die schat jouw tijd uit de opmerkingen die jij schreef, en
+            moet daarvoor weten onder welke naam je in Jira of Azure DevOps staat. Laat je dit
+            leeg, dan telt alleen wat je in LabX zelf typte. Vul je hier een náám van iemand
+            anders in, dan wordt diens tijd als de jouwe geteld — dus hou het bij jezelf.
+          </p>
+        </div>
+        <div>
           <Label>Extra CLI-argumenten (spatie-gescheiden)</Label>
           <Input
             value={extraArgsText}

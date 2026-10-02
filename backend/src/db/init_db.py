@@ -38,6 +38,8 @@ _ADDITIVE_COLUMNS = {
     ],
     "app_settings": [
         ("chat_archive_days", "INTEGER"),
+        # Onder welke namen je in Jira/DevOps staat, voor de urenschatting.
+        ("eigen_auteurs", "JSON"),
         ("auto_recall_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
         ("auto_recall_tool_name", "VARCHAR(255)"),
         ("auto_recall_query_template", "TEXT"),
@@ -136,6 +138,11 @@ _ADDITIVE_COLUMNS = {
         # bestaand ticket, en dat is precies goed — die wachten nergens op.
         ("agent_resume_at", "VARCHAR(64)"),
         ("agent_wait_reason", "TEXT"),
+        # Waar dit ticket bij hoort voor de urenregistratie. Het bord is de
+        # KLANT; dit is het traject daarbinnen (DataPlatform, doelgroepenvervoer,
+        # werk-en-inkomen). Leeg voor bestaande tickets — de agent vult hem in
+        # en jij corrigeert.
+        ("project", "VARCHAR(128)"),
     ],
     "guard_audit": [
         ("intent", "VARCHAR(32)"),
@@ -250,6 +257,7 @@ def init_db() -> None:
         skill,
         skill_tool,
         thread,
+        time_entry,
         tool,
         workflow,
     )

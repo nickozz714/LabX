@@ -106,6 +106,25 @@ async def _wachtende_tickets_tick() -> None:
         db.close()
 
 
+async def _urenregistratie_tick() -> None:
+    """Afgeronde agent-runs omzetten in gemeten tijdregels.
+
+    Idempotent op het run-id, dus vaker draaien kan geen kwaad. De schattingen
+    van je eigen tijd lopen hier NIET in mee: die worden bijgewerkt als je het
+    urenoverzicht opent, zodat een schatting nooit achter je rug om verschuift
+    terwijl je ernaar zit te kijken.
+    """
+    from services.time.time_service import TimeService
+
+    db = SessionLocal()
+    try:
+        TimeService(db).verzamel_gemeten()
+    except Exception as exc:  # noqa: BLE001 — nooit de scheduler slopen
+        log.warningx("Urenregistratie bijwerken mislukt", error=str(exc)[:200])
+    finally:
+        db.close()
+
+
 async def _claims_opruimen() -> None:
     """Verlopen reserveringen afsluiten.
 
@@ -268,6 +287,10 @@ async def lifespan(_app: FastAPI):
                        fn=_wachtende_tickets_tick, run_immediately=True)
     scheduler.register(name="board_sync", interval_seconds=60, fn=_board_sync_tick,
                        run_immediately=False)
+    # Tien minuten is ruim: een run die net klaar is hoeft niet binnen een
+    # seconde in de urenstaat te staan, en zo blijft het goedkoop.
+    scheduler.register(name="urenregistratie", interval_seconds=600,
+                       fn=_urenregistratie_tick, run_immediately=True)
     scheduler.register(name="mcp_lab_sessions", interval_seconds=300, fn=_mcp_session_tick,
                        run_immediately=False)
     scheduler.register(name="notify_inbox", interval_seconds=30, fn=_notify_inbox_tick,
@@ -317,6 +340,7 @@ from routers import (
     auth_router, system_router, lab_router, chat_router, internal_router, settings_router,
     skill_router, tool_router, mcp_router, workflow_router, schedule_router, azure_profile_router,
     board_router, notify_router, guard_router, resource_router, secret_router,
+    time_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -341,3 +365,4 @@ app.include_router(guard_router.router, prefix="/api")
 app.include_router(resource_router.router, prefix="/api")
 app.include_router(secret_router.router, prefix="/api")
 app.include_router(audit_router.router, prefix="/api")
+app.include_router(time_router.router, prefix="/api")

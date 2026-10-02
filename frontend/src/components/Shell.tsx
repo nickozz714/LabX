@@ -9,7 +9,7 @@ import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { Versie } from "@/components/Versie";
-import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench } from "lucide-react";
+import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench, Clock} from "lucide-react";
 import { chatApi } from "@/lib/chat";
 
 const WIZARD_DISMISSED_KEY = "labx_wizard_dismissed";
@@ -23,6 +23,7 @@ const NAV = [
   { to: "/boards", label: "Boards", icon: KanbanSquare },
   { to: "/skills", label: "Skills & Tools", icon: Wrench },
   { to: "/workflows", label: "Workflows", icon: Workflow },
+  { to: "/uren", label: "Uren", icon: Clock },
   { to: "/schedules", label: "Scheduling", icon: CalendarClock },
   { to: "/azure-profiles", label: "Azure-profielen", icon: KeyRound },
   // Eigen tab en geen kaartje in de instellingen: dit pak je erbij terwijl je

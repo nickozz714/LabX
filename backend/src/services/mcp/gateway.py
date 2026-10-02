@@ -759,6 +759,29 @@ def build_server():
                  "minutes": {"type": "number", "description": "Hoeveel minuten wachten (1-720)"},
                  "reason": {"type": "string", "description": "Waar je op wacht, kort"},
              }, "required": ["minutes", "reason"]}),
+            ("board__log_time",
+             "Noteer waar je tijd aan op ging, voor de urenregistratie. Roep dit AAN HET EIND "
+             "van je werk aan een ticket aan, één keer, met je eigen inschatting van de tijd "
+             "die het werk kostte.\n"
+             "Je hoeft de looptijd van je run NIET te melden — die wordt al gemeten. Wat hier "
+             "wél waarde heeft is wat jij weet en een klok niet: welk traject dit hoorde "
+             "(`project`), wat voor soort werk het was (`category`, bijvoorbeeld analyse, "
+             "ontwikkeling, onderzoek of overleg) en in één zin waar de tijd heen ging.\n"
+             "Schat eerlijk en aan de lage kant: dit getal kan op een factuur belanden. Weet "
+             "je het niet, laat `minutes` dan weg — een lege schatting is beter dan een "
+             "verzonnen schatting.\n"
+             "Args: key* (string), minutes (number), project (string), category (string), "
+             "note (string)",
+             {"type": "object", "properties": {
+                 "key": {"type": "string", "description": "De ticketsleutel, bijv. KRI-114"},
+                 "minutes": {"type": "number",
+                             "description": "Jouw schatting in minuten; weglaten als je het niet weet"},
+                 "project": {"type": "string",
+                             "description": "Het traject binnen deze klant, bijv. doelgroepenvervoer"},
+                 "category": {"type": "string",
+                              "description": "Soort werk: analyse, ontwikkeling, onderzoek, overleg…"},
+                 "note": {"type": "string", "description": "Eén zin: waar ging de tijd heen"},
+             }, "required": ["key"]}),
         ]
         for tool_name, description, schema in board_specs:
             mcp.add_tool(FunctionTool(

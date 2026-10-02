@@ -159,6 +159,12 @@ class Ticket(Base):
     agent_resume_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_wait_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- urenregistratie -----------------------------------------------------
+    # Het bord is de KLANT; dit is het traject daarbinnen. Een uurregel neemt
+    # deze waarde over op het moment van schrijven, zodat het verleden niet
+    # verspringt als je later iets anders indeelt.
+    project: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     # --- externe identiteit ------------------------------------------------
     external_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
