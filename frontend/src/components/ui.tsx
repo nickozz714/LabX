@@ -154,20 +154,26 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
 /**
  * Een venster boven de pagina.
  *
- * `dirty` is het belangrijkste argument: staat er niet-opgeslagen werk in, dan
- * gooit een klik NAAST het venster dat niet meer weg. Dat was de enige manier
- * om een half getypte workflow kwijt te raken — één klik ernaast, alles weg,
- * geen waarschuwing. Een klik naast het venster is bijna nooit "gooi mijn werk
- * weg", dus die negeren we; bewust sluiten (✕ of Escape) vraagt dan om een
- * bevestiging IN het venster zelf.
+ * **Een klik naast het venster sluit niet.** Dat was ooit andersom, met `dirty`
+ * als opt-in bescherming — en daar ging het mis: van de 22 vensters in deze app
+ * gaf er precies één dat argument mee. Overal elders kostte één klik naast het
+ * venster je hele ingetypte tekst, zonder waarschuwing. Een opt-in die je 21
+ * keer vergeet is geen bescherming, dus staat hij nu aan en moet je hem bewust
+ * uitzetten.
  *
- * Zonder `dirty` gedraagt hij zich als altijd: overal klikken sluit.
+ * Sluiten gaat dus via ✕ of Escape. Staat er met `dirty` gemeld werk in dat nog
+ * niet is opgeslagen, dan vraagt zelfs dát eerst om bevestiging IN het venster.
+ *
+ * `klikBuitenSluit` zet het oude gedrag terug voor vensters waar niets in te
+ * typen valt — een detailweergave die je wegklikt zoals je een tooltip wegklikt.
  */
-export function Modal({ open, onClose, title, children, wide, dirty }: {
+export function Modal({ open, onClose, title, children, wide, dirty, klikBuitenSluit }: {
   open: boolean; onClose: () => void; title: string; children: ReactNode;
   wide?: boolean;
-  /** Staat er niet-opgeslagen werk in? Dan wordt sluiten beschermd. */
+  /** Staat er niet-opgeslagen werk in? Dan wordt ✕/Escape óók beschermd. */
   dirty?: boolean;
+  /** Alleen voor vensters zonder invoer: klikken naast het venster sluit weer. */
+  klikBuitenSluit?: boolean;
 }) {
   const [vraagt, setVraagt] = useState(false);
 
@@ -189,8 +195,8 @@ export function Modal({ open, onClose, title, children, wide, dirty }: {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4"
-      // Naast het venster klikken sluit alleen als er niets te verliezen valt.
-      onClick={() => !dirty && onClose()}
+      // Naast het venster klikken doet niets, tenzij er niets in te typen valt.
+      onClick={() => klikBuitenSluit && !dirty && onClose()}
     >
       <div
         className={`w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[85vh] overflow-y-auto rounded-xl border border-border bg-card p-5 text-card-foreground shadow-2xl`}

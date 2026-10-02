@@ -50,6 +50,16 @@ export function BoardPage() {
   const bevestig = useBevestiging();
   const [plans, setPlans] = useState<PlanDto[]>([]);
 
+  // Hoeveel tickets hier zijn gewijzigd maar nog niet in de bron staan.
+  // Zonder dit getal is een achterstand onzichtbaar: er gaat niets vanzelf
+  // (auto-sync staat standaard uit), dus moves en statuswijzigingen blijven
+  // stilletjes liggen tot iemand op Sync drukt. Tickets die bewust lokaal
+  // blijven tellen niet mee — die wachten nergens op. In het archief laten we
+  // het getal weg, want dan is `tickets` de archieflijst en niet het bord.
+  const wachtOpPush = toonArchief
+    ? 0
+    : tickets.filter((t) => t.dirty && t.sync_naar_bron !== false).length;
+
   const refresh = useCallback(async () => {
     const [b, t] = await Promise.all([boardApi.get(id), boardApi.tickets(id, toonArchief)]);
     setBoard(b);
@@ -293,9 +303,19 @@ export function BoardPage() {
               <Archive size={13} /> {toonArchief ? "Terug naar het bord" : "Archief"}
             </Button>
             {board.provider !== "local" && (
-              <Button variant="secondary" className="text-xs" onClick={sync} disabled={busy}
-                      busy={busy} busyLabel="Synchroniseren…">
+              <Button variant={wachtOpPush ? "primary" : "secondary"} className="text-xs"
+                      onClick={sync} disabled={busy}
+                      busy={busy} busyLabel="Synchroniseren…"
+                      title={wachtOpPush
+                        ? `${wachtOpPush} ticket(s) zijn hier gewijzigd en staan nog niet in de bron. `
+                          + "Er gaat niets vanzelf: pas bij een synchronisatie worden ze teruggeschreven."
+                        : "Alles is teruggeschreven naar de bron"}>
                 <RefreshCw size={13} className={busy ? "animate-spin" : ""} /> Sync
+                {wachtOpPush > 0 && (
+                  <span className="ml-1 rounded-full bg-background/30 px-1.5 text-[10px] font-semibold">
+                    {wachtOpPush}
+                  </span>
+                )}
               </Button>
             )}
             <Button variant="secondary" className="text-xs" onClick={() => setSettingsOpen(true)}>
