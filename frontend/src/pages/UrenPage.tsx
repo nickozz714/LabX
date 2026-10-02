@@ -143,7 +143,7 @@ export function UrenPage() {
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 text-left font-medium">Project</th>
+                <th className="px-3 py-2 text-left font-medium">Klant / project</th>
                 <th className="px-3 py-2 text-right font-medium">Jouw tijd</th>
                 <th className="px-3 py-2 text-right font-medium">Bruto</th>
                 <th className="px-3 py-2 text-right font-medium">Verdeeld</th>
@@ -182,7 +182,10 @@ function Rij({ p }: { p: ProjectRegel }) {
   return (
     <tr className="border-t border-border">
       <td className="px-3 py-2">
-        <div className="font-medium">{p.project}</div>
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.klant}</div>
+        <div className="font-medium">
+          {p.traject ?? <span className="text-muted-foreground">— nog geen project</span>}
+        </div>
         <div className="text-[11px] text-muted-foreground">
           {p.tickets} ticket(s) · {p.regels} regel(s)
         </div>

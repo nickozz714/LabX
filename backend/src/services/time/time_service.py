@@ -320,13 +320,20 @@ class TimeService:
         borden = {b.id: b.name for b in self.db.query(Board).all()}
         tickets = {t.id: t for t in self.db.query(Ticket).all()}
 
-        def sleutel(r: TimeEntry) -> str:
-            """Zonder project valt een regel terug op de klant. Beter dan hem
-            op één hoop '(geen project)' gooien: dan is het overzicht leeg
-            precies zolang je de projecten nog niet hebt ingevuld."""
-            if r.project:
-                return r.project
+        def klant_van(r: TimeEntry) -> str:
             return borden.get(r.board_id, "onbekend")
+
+        def sleutel(r: TimeEntry) -> str:
+            """De eenheid waarop verdeeld en geteld wordt: klant én project.
+
+            Klant erbij, want twee klanten mogen een project met dezelfde naam
+            hebben (`DataPlatform` komt bij meerdere voor) en die horen niet op
+            één hoop. Zonder project valt een regel terug op alleen de klant —
+            beter dan '(geen project)', want dan is het overzicht leeg precies
+            zolang je de projecten nog niet hebt ingevuld.
+            """
+            klant = klant_van(r)
+            return f"{klant} · {r.project}" if r.project else klant
 
         # De verdeling kijkt alleen naar regels met een echt interval. De rest
         # kan niet overlappen, want we weten niet wannéér hij viel.
@@ -340,7 +347,8 @@ class TimeService:
         for r in regels:
             p = sleutel(r)
             rij = per_project.setdefault(p, {
-                "project": p, "gemeten": 0.0, "geschat": 0.0, "gemeld": 0.0,
+                "project": p, "klant": klant_van(r), "traject": r.project,
+                "gemeten": 0.0, "geschat": 0.0, "gemeld": 0.0,
                 "handmatig": 0.0, "regels": 0, "tickets": set(), "categorieen": {},
             })
             rij[r.kind] = rij.get(r.kind, 0.0) + r.minutes
@@ -359,6 +367,10 @@ class TimeService:
             eigen = rij["geschat"] + rij["gemeld"] + rij["handmatig"]
             projecten.append({
                 "project": p,
+                # Apart, zodat het scherm op klant kan groeperen zonder de
+                # samengestelde sleutel te moeten uit elkaar pluizen.
+                "klant": rij["klant"],
+                "traject": rij["traject"],
                 "eigen_minuten": round(eigen, 1),
                 "geschat": round(rij["geschat"], 1),
                 "gemeld": round(rij["gemeld"], 1),
@@ -389,6 +401,65 @@ class TimeService:
                 "overlap": round(bruto_totaal - verdeeld_totaal, 1),
                 "klok": verdeling.klok(intervallen),
             },
+        }
+
+    def vul_projecten_uit_labels(self, mapping: Dict[int, List[str]], *,
+                                 dry_run: bool = True,
+                                 overschrijven: bool = False) -> Dict[str, Any]:
+        """Het projectveld vullen uit de labels die er al staan.
+
+        `mapping` is per bord een lijst projectlabels op VOLGORDE VAN
+        VOORRANG: het eerste label dat op een ticket staat, wint. Die volgorde
+        is het hele punt — een Krimpenerwaard-ticket draagt vaak zowel
+        `doelgroepenvervoer` als `generiek`, en dan hoort het specifieke
+        domein te winnen.
+
+        Labels die geen project zijn (laag zoals `silver`, product zoals
+        `intelligenthive`, soort zoals `incident`) staan bewust NIET in de
+        mapping: die zouden het overzicht juist weer door elkaar gooien, en
+        dat is precies waar dit scherm vanaf moet helpen.
+
+        Standaard een proefronde: niets wordt geschreven tot je `dry_run`
+        uitzet. Een ticket dat al een project heeft blijft met rust, tenzij je
+        `overschrijven` aanzet — jouw correctie hoort te winnen van een regel.
+        """
+        per_project: Dict[str, int] = {}
+        zonder: Dict[str, int] = {}
+        geraakt = 0
+
+        for board_id, labels_op_volgorde in mapping.items():
+            tickets = self.db.query(Ticket).filter(Ticket.board_id == int(board_id)).all()
+            for t in tickets:
+                if t.project and not overschrijven:
+                    continue
+                aanwezig = {str(x).strip().lower() for x in (t.labels or []) if str(x).strip()}
+                gekozen = next((lab for lab in labels_op_volgorde
+                                if lab.strip().lower() in aanwezig), None)
+                if gekozen is None:
+                    zonder[str(board_id)] = zonder.get(str(board_id), 0) + 1
+                    continue
+                per_project[gekozen] = per_project.get(gekozen, 0) + 1
+                geraakt += 1
+                if not dry_run:
+                    t.project = gekozen
+                    t.updated_at = _nu()
+
+        if not dry_run and geraakt:
+            # De al geschreven tijdregels dragen het project van tóen. Die van
+            # een ticket dat nu pas een project krijgt, moeten mee — anders
+            # blijft je hele geschiedenis op de klantnaam staan.
+            for t in self.db.query(Ticket).filter(Ticket.project.isnot(None)).all():
+                (self.db.query(TimeEntry)
+                 .filter(TimeEntry.ticket_id == t.id, TimeEntry.project.is_(None))
+                 .update({"project": t.project}, synchronize_session=False))
+            self.db.commit()
+            log.infox("Projecten gevuld uit labels", tickets=geraakt)
+
+        return {
+            "dry_run": dry_run,
+            "tickets_geraakt": geraakt,
+            "per_project": dict(sorted(per_project.items(), key=lambda x: -x[1])),
+            "zonder_match_per_bord": zonder,
         }
 
     def categorieen(self) -> List[str]:

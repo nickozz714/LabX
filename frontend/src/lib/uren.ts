@@ -31,7 +31,12 @@ export type TijdRegel = {
 };
 
 export type ProjectRegel = {
+  /** "Klant · traject", of alleen de klant als er nog geen project staat. */
   project: string;
+  /** De klant apart, om op te groeperen. */
+  klant: string;
+  /** Het traject binnen die klant; null zolang het projectveld leeg is. */
+  traject: string | null;
   /** Wat je zou schrijven: geschat + gemeld + handmatig. */
   eigen_minuten: number;
   geschat: number;

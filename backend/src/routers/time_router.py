@@ -104,6 +104,25 @@ def verzamel(payload: Optional[Dict[str, Any]] = None,
     return {"gemeten_nieuw": gemeten, "schattingen": geschat}
 
 
+@router.post("/projecten-uit-labels")
+def projecten_uit_labels(payload: Dict[str, Any],
+                         db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Het projectveld vullen uit bestaande labels.
+
+    Body: `{"mapping": {"<board_id>": ["label", "label", …]}, "dry_run": true}`.
+    De labels staan op volgorde van voorrang; het eerste dat op een ticket
+    staat wint. Standaard een proefronde.
+    """
+    mapping = payload.get("mapping") or {}
+    if not isinstance(mapping, dict) or not mapping:
+        raise HTTPException(status_code=400,
+                            detail="Geef een mapping van board_id naar projectlabels")
+    return TimeService(db).vul_projecten_uit_labels(
+        {int(k): [str(x) for x in (v or [])] for k, v in mapping.items()},
+        dry_run=bool(payload.get("dry_run", True)),
+        overschrijven=bool(payload.get("overschrijven", False)))
+
+
 @router.get("/suggesties")
 def suggesties(db: Session = Depends(get_db)) -> Dict[str, List[str]]:
     """Voor de autoaanvulling: wat je eerder gebruikte."""
