@@ -219,6 +219,38 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
                 minuten=int(args.get("minutes") or 5),
                 reden=str(args.get("reason") or "").strip() or "geen reden opgegeven")
 
+        if tool_name == "board__log_time":
+            from services.time.time_service import TimeService
+            t = _resolve(str(args.get("key") or ""))
+            project = (str(args.get("project") or "").strip() or None)
+            # De agent weet welk traject dit is; staat het nog niet op het
+            # ticket, dan vullen we het daar meteen in. Zo hoef jij dat veld
+            # niet voor 260 bestaande tickets met de hand te doen.
+            if project and not t.project:
+                t.project = project
+                from datetime import datetime, timezone
+                t.updated_at = datetime.now(timezone.utc).isoformat()
+            minuten = args.get("minutes")
+            if minuten in (None, ""):
+                # Geen schatting is een geldig antwoord: dan leggen we alleen
+                # het project en de categorie vast, zonder een getal te
+                # verzinnen dat later op een factuur kan belanden.
+                db.commit()
+                return {"result": (f"Genoteerd bij {t.key}: project "
+                                   f"'{project or t.project or 'onbekend'}'"
+                                   + (f", categorie '{args['category']}'" if args.get("category") else "")
+                                   + ". Geen tijd gemeld — de looptijd van je run wordt al gemeten.")}
+            regel = TimeService(db).log(
+                ticket_id=t.id, board_id=t.board_id, minuten=float(minuten),
+                kind="gemeld", project=project or t.project,
+                category=str(args.get("category") or "").strip() or None,
+                note=str(args.get("note") or "").strip() or None)
+            return {"result": (f"Genoteerd bij {t.key}: {regel.minutes:.0f} minuten"
+                               + (f" ({regel.category})" if regel.category else "")
+                               + f", project '{regel.project or 'onbekend'}'. "
+                               "Dit staat als schatting in de urenregistratie en wordt "
+                               "nagelopen voordat er uren geschreven worden.")}
+
         if tool_name == "board__delete_tickets":
             sleutels = [str(k).strip() for k in (args.get("keys") or []) if str(k).strip()]
             if not sleutels:

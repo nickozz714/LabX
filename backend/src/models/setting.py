@@ -38,6 +38,13 @@ class AppSettings(Base):
     # Na hoeveel dagen zonder activiteit een chat vanzelf het archief in gaat.
     # 0 (of leeg) zet het uit. Standaard 3 — zie services/chat/archief.py.
     chat_archive_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Onder welke namen JIJ in de bron staat (Jira, Azure DevOps). De
+    # urenregistratie schat je eigen tijd uit de opmerkingen die je schreef, en
+    # moet daarvoor weten welke dat zijn. Zonder deze lijst telde elke
+    # opmerking mee die niet van de agent kwam — dus ook die van collega's en
+    # klantmedewerkers, wat de uren van de ene klant opblies en die van de
+    # andere liet verdampen. Leeg = alleen wat je in LabX zelf schreef.
+    eigen_auteurs: Mapped[list | None] = mapped_column(JSON, nullable=True)
     default_effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
     fallback_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)

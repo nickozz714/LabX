@@ -187,6 +187,8 @@ export interface AppSettingsDto {
   timeout_seconds: number | null;
   /** Na hoeveel dagen stilte een chat vanzelf het archief in gaat. 0/null = uit. */
   chat_archive_days: number | null;
+  /** Onder welke namen jij in Jira/DevOps staat — voor de urenschatting. */
+  eigen_auteurs?: string[] | null;
   extra_args: string[];
   enable_tool_search: boolean;
   data_guard_default: boolean;

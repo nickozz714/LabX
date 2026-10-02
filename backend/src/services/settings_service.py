@@ -63,6 +63,7 @@ class ResolvedSettings:
         else:
             self.auto_hooks = []
         self.chat_archive_days = row.chat_archive_days
+        self.eigen_auteurs = getattr(row, "eigen_auteurs", None) or []
         self.default_effort = row.default_effort
         self.fallback_model = row.fallback_model
         self.max_budget_usd = row.max_budget_usd
@@ -109,6 +110,7 @@ def get_public_settings(db: Session) -> Dict[str, Any]:
         "auto_recall_query_template": resolved.auto_recall_query_template,
         "auto_recall_instruction": resolved.auto_recall_instruction,
         "chat_archive_days": resolved.chat_archive_days,
+        "eigen_auteurs": resolved.eigen_auteurs,
         "default_effort": resolved.default_effort,
         "fallback_model": resolved.fallback_model,
         "max_budget_usd": resolved.max_budget_usd,
@@ -128,6 +130,7 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
         "auto_recall_enabled", "auto_recall_tool_name", "auto_recall_query_template",
         "auto_recall_instruction",
         "chat_archive_days",
+        "eigen_auteurs",
         "default_effort", "fallback_model", "max_budget_usd", "autocompact",
         "custom_agents_json", "default_agent", "auto_hooks",
     )
