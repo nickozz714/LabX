@@ -418,6 +418,16 @@ export function BoardPage() {
                         </span>
                         <div className="flex items-center gap-1">
                           {t.agent_state === "running" && <Badge tone="yellow">agent</Badge>}
+                          {/* Geparkeerd met board__wait_until: er gebeurt nu niets, maar
+                              het ticket wordt vanzelf weer opgepakt. Zonder dit zou het
+                              er net zo uitzien als een ticket waar niemand naar omkijkt. */}
+                          {t.agent_state === "waiting" && (
+                            <Badge tone="violet">
+                              {t.agent_resume_at
+                                ? `wacht tot ${t.agent_resume_at.slice(11, 16)}`
+                                : "wacht"}
+                            </Badge>
+                          )}
                           {t.agent_state === "failed" && <Badge tone="red">mislukt</Badge>}
                           {t.sync_naar_bron === false && (
                             <Badge tone="neutral" >alleen LabX</Badge>

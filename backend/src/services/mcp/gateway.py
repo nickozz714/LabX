@@ -748,11 +748,12 @@ def build_server():
              "ondertussen verder met het volgende ticket. Op het afgesproken moment wordt dit "
              "ticket opnieuw opgepakt.\n"
              "Gebruik dit in plaats van wachten of pollen in het lab: dat houdt een werker bezet "
-             "en verbrandt je context. Zet vlak vóór of ná deze aanroep in een OPMERKING wat je "
+             "en verbrandt je context. Een `sleep` van minuten in een shell is NOOIT het "
+             "antwoord. Zet vlak vóór of ná deze aanroep in een OPMERKING wat je "
              "hebt gedaan en wat er na de wachttijd moet gebeuren — bij het hervatten is die "
              "opmerking je enige context. Rond je beurt daarna gewoon af.\n"
-             "Werkt alleen als dit ticket vanuit een planning draait; anders krijg je dat te "
-             "horen.\n"
+             "Werkt voor elk ticket, of het nu uit een planning komt of met de hand is "
+             "gestart.\n"
              "Args: minutes* (number, 1-720), reason* (string)",
              {"type": "object", "properties": {
                  "minutes": {"type": "number", "description": "Hoeveel minuten wachten (1-720)"},

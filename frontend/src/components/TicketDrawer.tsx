@@ -36,7 +36,8 @@ import type { Bijlage } from "@/lib/labs";
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 
 const AGENT_TONE = {
-  idle: "neutral", queued: "yellow", running: "yellow", done: "green", failed: "red",
+  idle: "neutral", queued: "yellow", running: "yellow", waiting: "violet",
+  done: "green", failed: "red",
 } as const;
 
 /**

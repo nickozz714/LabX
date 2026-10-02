@@ -131,6 +131,11 @@ _ADDITIVE_COLUMNS = {
         ("sync_naar_bron", "BOOLEAN NOT NULL DEFAULT 1"),
         # Opzij gezet; leeg = gewoon op het bord.
         ("archived_at", "VARCHAR(64)"),
+        # Geparkeerd met `board__wait_until` buiten een planning: wanneer de
+        # agent hier weer mag beginnen, en waarop hij wachtte. Leeg voor elk
+        # bestaand ticket, en dat is precies goed — die wachten nergens op.
+        ("agent_resume_at", "VARCHAR(64)"),
+        ("agent_wait_reason", "TEXT"),
     ],
     "guard_audit": [
         ("intent", "VARCHAR(32)"),

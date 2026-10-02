@@ -532,6 +532,11 @@ class BoardService:
             "depends_on": list(getattr(t, "depends_on", None) or []),
             "agent_state": t.agent_state, "agent_run_id": t.agent_run_id,
             "agent_thread_id": t.agent_thread_id, "agent_last_error": t.agent_last_error,
+            # Staat dit ticket geparkeerd, dan hoort het scherm te kunnen zeggen
+            # tot wanneer en waarop — anders is "wacht" net zo ondoorzichtig als
+            # een ticket waar niemand naar omkijkt.
+            "agent_resume_at": t.agent_resume_at,
+            "agent_wait_reason": t.agent_wait_reason,
             "external_provider": t.external_provider, "external_id": t.external_id,
             "external_key": t.external_key, "external_url": t.external_url,
             "external_synced_at": t.external_synced_at, "dirty": t.dirty,

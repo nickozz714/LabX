@@ -522,7 +522,10 @@ export interface BoardDto {
   updated_at: string;
 }
 
-export type TicketAgentState = "idle" | "queued" | "running" | "done" | "failed";
+// "waiting" = met `board__wait_until` geparkeerd tot agent_resume_at; de
+// werker is vrij en de agent pakt het ticket daarna vanzelf weer op.
+export type TicketAgentState =
+  | "idle" | "queued" | "running" | "waiting" | "done" | "failed";
 export type TicketPriority = "low" | "normal" | "high" | "urgent";
 
 /** Een planning: een geordende set tickets die de agent achter elkaar afwerkt. */
@@ -649,6 +652,10 @@ export interface TicketDto {
   /** Keys van tickets op ditzelfde bord die eerst klaar moeten zijn. */
   depends_on: string[];
   agent_state: TicketAgentState;
+  /** Geparkeerd tot dit moment (alleen bij agent_state "waiting"). */
+  agent_resume_at?: string | null;
+  /** Waarop de agent wacht, in zijn eigen woorden. */
+  agent_wait_reason?: string | null;
   agent_run_id: string | null;
   agent_thread_id: string | null;
   agent_last_error: string | null;

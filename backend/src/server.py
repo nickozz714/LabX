@@ -88,6 +88,24 @@ async def _plan_tick() -> None:
     await _tick()
 
 
+async def _wachtende_tickets_tick() -> None:
+    """Losse tickets waarvan de wachttijd om is, weer aan de agent geven.
+
+    Een planning bewaakt zijn eigen geparkeerde items; een ticket dat met de
+    hand is gestart had niemand. Zonder deze lus is `board__wait_until` buiten
+    een planning een eenrichtingsweg.
+    """
+    from services.boards.agent_work import hervat_wachtende_tickets
+
+    db = SessionLocal()
+    try:
+        await hervat_wachtende_tickets(db)
+    except Exception as exc:  # noqa: BLE001 — nooit de scheduler slopen
+        log.warningx("Hervatten van wachtende tickets mislukt", error=str(exc)[:200])
+    finally:
+        db.close()
+
+
 async def _claims_opruimen() -> None:
     """Verlopen reserveringen afsluiten.
 
@@ -243,6 +261,11 @@ async def lifespan(_app: FastAPI):
     # wacht moet er kort na het vrijkomen in kunnen.
     scheduler.register(name="ticket_plans", interval_seconds=20, fn=_plan_tick,
                        run_immediately=True)
+    # Zelfde ritme als de planningen: een wachttijd is in minuten opgegeven,
+    # dus 20 seconden speling is ruim genoeg en voorkomt dat een ticket na een
+    # herstart minutenlang blijft liggen.
+    scheduler.register(name="wachtende_tickets", interval_seconds=20,
+                       fn=_wachtende_tickets_tick, run_immediately=True)
     scheduler.register(name="board_sync", interval_seconds=60, fn=_board_sync_tick,
                        run_immediately=False)
     scheduler.register(name="mcp_lab_sessions", interval_seconds=300, fn=_mcp_session_tick,
