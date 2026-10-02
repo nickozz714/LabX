@@ -838,9 +838,13 @@ class PlanService:
         minuten = max(1, min(int(minuten or 5), 720))
         item = self._lopend_item(lab_id, worker_id)
         if item is None:
-            return {"error": ("Dit ticket draait niet vanuit een planning, dus er is niets om "
-                              "later te hervatten. Wacht binnen deze run (kort), of zet in een "
-                              "opmerking wat er nog moet gebeuren en rond af.")}
+            # Geen planning? Dan parkeren we het TICKET zelf. Dit stond hier
+            # eerder als een weigering die de agent aanraadde "binnen deze run
+            # (kort)" te wachten — en dat deed hij dan ook, met een `sleep` van
+            # minuten in het lab, een werker eraan vast en zijn context eraan
+            # op. Een handmatig gestart ticket heeft precies hetzelfde recht om
+            # te wachten als een ticket uit een planning.
+            return self._wacht_los_ticket(lab_id, worker_id, minuten, reden)
         plan = self.get(item.plan_id)
         tot = (datetime.now(timezone.utc) + timedelta(minutes=minuten)).isoformat()
         # Alleen dit ITEM wacht; de planning loopt door. Vroeger ging de hele
@@ -876,6 +880,61 @@ class PlanService:
                if vastgehouden else "")
             + f"Rond deze run nu af: zet in een OPMERKING wat je hebt gedaan en wat er na de "
               f"wachttijd moet gebeuren — die opmerking is straks je enige context.")}
+
+    def _wacht_los_ticket(self, lab_id: str, worker_id: Optional[int],
+                          minuten: int, reden: str) -> Dict[str, Any]:
+        """`board__wait_until` voor een ticket dat buiten een planning draait.
+
+        De planning parkeert zijn item; hier parkeren we het ticket. Het komt
+        op `waiting` met een hervattijd, de run rondt af (en geeft dus de
+        werker vrij), en `hervat_wachtende_tickets` zet de agent er later weer
+        op — met de opmerking die de agent nu achterlaat als context.
+        """
+        from datetime import timedelta
+
+        from models.board import Board
+        from services.boards.board_service import BoardService
+
+        ticket = self._lopend_ticket(lab_id, worker_id)
+        if ticket is None:
+            return {"error": (
+                "Ik kan niet zien aan welk ticket je werkt, dus er valt niets te parkeren. "
+                "Zet in een opmerking wat er nog moet gebeuren en rond deze run af.")}
+        tot = (datetime.now(timezone.utc) + timedelta(minutes=minuten)).isoformat()
+        ticket.agent_state = "waiting"
+        ticket.agent_resume_at = tot
+        ticket.agent_wait_reason = reden[:1000]
+        ticket.updated_at = _now_iso()
+        self.db.commit()
+        BoardService(self.db).add_comment(
+            ticket.id, kind="activity", author="agent",
+            body=f"Wacht tot {tot[11:16]} UTC voordat het werk verdergaat — {reden[:500]}")
+        log.infox("Los ticket wacht", ticket=ticket.key, tot=tot, minuten=minuten)
+        return {"result": (
+            f"Genoteerd. Dit ticket wordt om {tot[11:16]} UTC vanzelf opnieuw opgepakt en je "
+            f"werker komt nu vrij voor ander werk. Rond deze run af: zet in een OPMERKING wat "
+            f"je hebt gedaan en wat er na de wachttijd moet gebeuren — die opmerking is straks "
+            f"je enige context.")}
+
+    def _lopend_ticket(self, lab_id: str, worker_id: Optional[int]) -> Optional[Ticket]:
+        """Het losse ticket waar deze werker nu aan werkt.
+
+        Gekoppeld via de achtergrondrun, want dáár staat de werker op; het
+        ticket kent alleen zijn run-id. Zonder werker (één-werker-lab) valt hij
+        terug op het enige lopende ticket van dit lab."""
+        from models.background_run import BackgroundRun
+        from models.board import Board
+
+        borden = [b.id for b in self.db.query(Board).filter(Board.lab_id == lab_id).all()]
+        if not borden:
+            return None
+        q = (self.db.query(Ticket)
+             .filter(Ticket.board_id.in_(borden), Ticket.agent_state == "running",
+                     Ticket.agent_run_id.isnot(None)))
+        if worker_id:
+            q = (q.join(BackgroundRun, BackgroundRun.id == Ticket.agent_run_id)
+                  .filter(BackgroundRun.lab_worker_id == int(worker_id)))
+        return q.first()
 
     def _lopend_item(self, lab_id: str, worker_id: Optional[int]) -> Optional[TicketPlanItem]:
         """Het planning-ticket dat nu op deze werker draait. Een werker doet er

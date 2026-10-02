@@ -63,8 +63,9 @@ export function RunDetailModal({ run, onClose }: { run: BackgroundRunDto; onClos
     return () => controller.abort();
   }, [run.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Alleen lezen: hier valt niets te verliezen, dus wegklikken mag.
   return (
-    <Modal open onClose={onClose} title="Achtergrondtaak" wide>
+    <Modal open onClose={onClose} title="Achtergrondtaak" wide klikBuitenSluit>
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Badge tone={statusTone(status as BackgroundRunDto["status"]) || "neutral"}>

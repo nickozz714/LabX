@@ -335,21 +335,34 @@ def _agent_commented_since(db: Session, ticket_id: int, since: str) -> bool:
 
 
 def _wacht_nog(db: Session, run) -> bool:
-    """Staat het planning-item van deze run geparkeerd tot een later moment?
+    """Staat het werk van deze run geparkeerd tot een later moment?
 
     Gekeken wordt op `run_id` en niet op de werker: `board__wait_until` geeft de
     werker juist vrij, dus die is op dit moment al losgekoppeld van het item.
+
+    Twee vormen, want een ticket kan uit een planning komen of los gestart zijn.
+    Allebei moeten ze hier "ja" geven, anders verplaatst de afloop-hook het
+    ticket naar de klaar-kolom terwijl het werk nog moet beginnen.
     """
     from models.plan import TicketPlanItem
 
     run_id = str(getattr(run, "id", "") or "")
     if not run_id:
         return False
+    nu = _now_iso()
+    # Een run hoort bij een planning-item óf bij een los ticket, nooit bij
+    # allebei. Is er een item, dan is dat het antwoord — ook als het "nee" is.
+    # Daarna alsnog naar het ticket kijken zou de planning overstemmen.
     item = (db.query(TicketPlanItem)
             .filter(TicketPlanItem.run_id == run_id).first())
-    if item is None or item.state != "waiting" or not item.resume_at:
-        return False
-    return str(item.resume_at) > _now_iso()
+    if item is not None:
+        return (item.state == "waiting" and bool(item.resume_at)
+                and str(item.resume_at) > nu)
+    los = (db.query(Ticket)
+           .filter(Ticket.agent_run_id == run_id,
+                   Ticket.agent_state == "waiting",
+                   Ticket.agent_resume_at.isnot(None)).first())
+    return los is not None and str(los.agent_resume_at) > nu
 
 
 def _make_finish_hook(ticket_id: int, *, started_at: str):
@@ -381,7 +394,13 @@ def _make_finish_hook(ticket_id: int, *, started_at: str):
         # de nacht van 16 op 17 september vier keer achter elkaar: vier tickets
         # op Klaar, en het zilver en goud dat erachter zat is nooit gedraaid.
         if status == "completed" and _wacht_nog(db, run):
-            ticket.agent_state = "queued"
+            # Een ticket uit een planning gaat terug in de rij ("queued"); de
+            # planning bewaakt zelf wanneer het weer aan de beurt is. Een los
+            # geparkeerd ticket moet juist op "waiting" blijven staan, want
+            # daar hangt zijn eigen hervattijd aan — zet je hem op "queued",
+            # dan pakt niets hem ooit nog op.
+            if not ticket.agent_resume_at:
+                ticket.agent_state = "queued"
             ticket.agent_last_error = None
             answer = (getattr(run, "answer", None) or "").strip()
             if answer and not _agent_commented_since(db, ticket.id, started_at):
@@ -555,6 +574,58 @@ def geef_tickets_vrij(db: Session) -> int:
     if vrij:
         db.commit()
     return vrij
+
+
+async def hervat_wachtende_tickets(db: Session) -> int:
+    """Losse tickets die met `board__wait_until` geparkeerd stonden en wier
+    wachttijd om is, weer aan de agent geven.
+
+    De tegenhanger van wat `PlanService` voor een planning doet. Zonder deze
+    lus zou parkeren buiten een planning een eenrichtingsweg zijn: de werker
+    komt vrij, maar niemand pakt het ticket ooit nog op.
+
+    De opmerking die de agent vóór het wachten achterliet is zijn context — die
+    staat al bij het ticket en gaat vanzelf mee in de prompt. Hier zetten we
+    alleen de reden van het wachten er nog bij, zodat hij weet wáár hij op
+    stond te wachten en dat hij dat nu moet controleren.
+    """
+    nu = _now_iso()
+    wachtend = (db.query(Ticket)
+                .filter(Ticket.agent_state == "waiting",
+                        Ticket.agent_resume_at.isnot(None),
+                        Ticket.agent_resume_at <= nu).all())
+    hervat = 0
+    for ticket in wachtend:
+        reden = (ticket.agent_wait_reason or "").strip()
+        # Eerst wissen, dan starten: mislukt het starten, dan blijft dit ticket
+        # niet elke tick opnieuw een poging uitlokken.
+        ticket.agent_resume_at = None
+        ticket.agent_wait_reason = None
+        ticket.agent_state = "idle"
+        ticket.updated_at = _now_iso()
+        db.commit()
+        try:
+            await start_ticket_run(
+                db, ticket.id, trigger="hervat-na-wachten",
+                extra_instruction=(
+                    f"Je hebt dit ticket eerder geparkeerd om te wachten op: {reden}. "
+                    f"Die wachttijd is om. Controleer eerst of dat inderdaad klaar is "
+                    f"voordat je verdergaat — is het dat niet, wacht dan opnieuw met "
+                    f"`board__wait_until` in plaats van hier te blijven staan."
+                    if reden else
+                    "Je hebt dit ticket eerder geparkeerd om te wachten; die tijd is om. "
+                    "Kijk in de opmerkingen wat er nog moest gebeuren."),
+            )
+            hervat += 1
+        except Exception as exc:  # noqa: BLE001 — één ticket mag de lus niet slopen
+            ticket.agent_last_error = f"Hervatten na wachten mislukt: {str(exc)[:300]}"
+            ticket.updated_at = _now_iso()
+            db.commit()
+            log.warningx("Hervatten na wachten mislukt",
+                         ticket=ticket.key, error=str(exc)[:300])
+    if hervat:
+        log.infox("Wachtende tickets hervat", aantal=hervat)
+    return hervat
 
 
 async def cancel_ticket_run(db: Session, ticket_id: int) -> Dict[str, Any]:

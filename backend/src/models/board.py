@@ -152,6 +152,12 @@ class Ticket(Base):
     agent_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_thread_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Geparkeerd met `board__wait_until` terwijl dit ticket NIET uit een
+    # planning kwam. De planning heeft daar zijn eigen `resume_at` voor; een
+    # los gestart ticket had niets, en dat was precies de reden dat de agent
+    # dan maar in het lab ging slapen om een werker heen.
+    agent_resume_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_wait_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # --- externe identiteit ------------------------------------------------
     external_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)

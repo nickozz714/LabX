@@ -142,8 +142,13 @@ def start(db: Session, *, thread_id: str, lab_id: str,
         _execute(run.id, lab_id=lab_id, history=history, model=model, effort=effort,
                  mode=mode, resume_session_id=resume_session_id,
                  lab_worker_id=lab_worker_id))
-    _ACTIVE_TASKS[run.id] = task
-    task.add_done_callback(lambda _t: _ACTIVE_TASKS.pop(run.id, None))
+    # Het id vastpakken vóór de callback: `run` hoort bij de sessie van de
+    # aanroeper, en die is dicht tegen de tijd dat de taak klaar is. `run.id`
+    # IN de lambda gaf daarom elke keer een DetachedInstanceError, waardoor de
+    # opruiming nooit draaide en _ACTIVE_TASKS onbeperkt bleef groeien.
+    run_id = run.id
+    _ACTIVE_TASKS[run_id] = task
+    task.add_done_callback(lambda _t: _ACTIVE_TASKS.pop(run_id, None))
     return (run, q) if pre_subscribe else run
 
 
