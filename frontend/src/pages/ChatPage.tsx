@@ -649,7 +649,7 @@ export function ChatPage() {
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm sm:px-4">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-2 text-sm sm:px-4">
               <button type="button" onClick={() => setLijstOpen(true)} aria-label="Chats tonen"
                       className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground md:hidden">
                 <PanelLeft size={16} />
@@ -695,8 +695,8 @@ export function ChatPage() {
                   </select>
                   <button
                     onClick={() => pinAsDefault("model", activeThread.model)}
-                    className="text-muted-foreground hover:text-foreground"
                     title="Maak dit het standaardmodel voor nieuwe chats"
+                    className="hidden text-muted-foreground hover:text-foreground sm:inline-flex"
                   >
                     <Pin size={13} />
                   </button>
@@ -717,8 +717,8 @@ export function ChatPage() {
                   </select>
                   <button
                     onClick={() => pinAsDefault("effort", activeThread.effort)}
-                    className="text-muted-foreground hover:text-foreground"
                     title="Maak dit de standaard-effort voor nieuwe chats"
+                    className="hidden text-muted-foreground hover:text-foreground sm:inline-flex"
                   >
                     <Pin size={13} />
                   </button>
@@ -734,7 +734,7 @@ export function ChatPage() {
                 </button>
               )}
             </div>
-            <div ref={scrollRef} onScroll={handleChatScroll} className="flex-1 space-y-4 overflow-y-auto p-4">
+            <div ref={scrollRef} onScroll={handleChatScroll} className="flex-1 space-y-4 overflow-y-auto p-3 sm:p-4">
               {messages.map((m) => (
                 <ChatBubble key={m.id} message={m} />
               ))}
@@ -765,7 +765,7 @@ export function ChatPage() {
               <BijlageLijst bijlagen={bijlagen}
                             onVerwijder={(path) =>
                               setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <TextArea
                   rows={2}
                   value={input}
@@ -780,7 +780,7 @@ export function ChatPage() {
                   placeholder={inputDisabled ? "Koppel en start eerst een lab…" : "Typ een bericht… (Markdown, Shift+Enter voor nieuwe regel, /model <naam> om het model te wisselen)"}
                   className="resize-none"
                 />
-                <div className="flex flex-col justify-end gap-1">
+                <div className="flex items-stretch justify-end gap-2 sm:flex-col sm:gap-1">
                   {/* Tijdens het streamen staat "Stuur" uit — dan hoort hier
                       de uitweg te zitten, op de plek waar je hem zoekt en
                       zonder dat je naar beneden hoeft te scrollen. */}
@@ -1181,7 +1181,7 @@ function ChatBubble({ message }: { message: Message }) {
   const visibleSteps = (message.steps || []).filter((s) => (s as any).kind !== "usage");
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-2xl rounded-lg px-3 py-2 text-sm ${isUser ? "bg-primary text-primary-foreground" : "bg-secondary"}`}>
+      <div className={`min-w-0 max-w-[92%] overflow-hidden rounded-lg px-3 py-2 text-sm sm:max-w-2xl ${isUser ? "bg-primary text-primary-foreground" : "bg-secondary"}`}>
         {!isUser && visibleSteps.length > 0 && (
           <details className="mb-2 rounded-md border border-border/60 bg-background/40 px-2 py-1 text-xs">
             <summary className="cursor-pointer font-medium text-muted-foreground">
@@ -1190,7 +1190,7 @@ function ChatBubble({ message }: { message: Message }) {
             <div className="mt-1 max-h-64 space-y-1 overflow-y-auto">
               {visibleSteps.map((s, i) =>
                 s.kind === "tool" ? (
-                  <div key={i} className="font-mono text-muted-foreground">
+                  <div key={i} className="break-all font-mono text-muted-foreground">
                     🔧 {(s as any).name}
                     {(s as any).input && (
                       <span className="opacity-70"> {JSON.stringify((s as any).input).slice(0, 160)}</span>

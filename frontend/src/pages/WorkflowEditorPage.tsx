@@ -205,13 +205,13 @@ export function WorkflowEditorPage() {
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border p-2 sm:p-3">
         <Button variant="ghost" onClick={() => navigate("/workflows")}>← Workflows</Button>
         <Input value={naam} onChange={(e) => { setNaam(e.target.value); setVuil(true); }}
                className="w-full font-semibold sm:w-64" />
         <Input value={omschrijving} placeholder="Korte omschrijving"
                onChange={(e) => { setOmschrijving(e.target.value); setVuil(true); }}
-               className="w-full sm:w-72" />
+               className="hidden sm:block sm:w-72" />
         <div className="flex-1" />
         {wf.waarschuwingen?.length > 0 && (
           <span className="text-xs text-yellow-600" title={wf.waarschuwingen.join("\n")}>
@@ -223,7 +223,7 @@ export function WorkflowEditorPage() {
         {/* Ook labs die uit staan: een lab gaat vanzelf slapen na een tijd
             stilte, en dat mag geen reden zijn dat je je workflow niet kunt
             draaien. De motor zet hem als eerste stap aan. */}
-        <Select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-52">
+        <Select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-full sm:w-52">
           <option value="">Kies een lab…</option>
           {labs.map((l) => (
             <option key={l.id} value={l.id}>
@@ -238,29 +238,31 @@ export function WorkflowEditorPage() {
         <Button onClick={opslaan} disabled={!vuil}>Opslaan</Button>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        <div className="flex w-40 flex-col gap-1 border-r border-border p-2">
-          <div className="mb-1 text-[11px] font-semibold text-muted-foreground">Toevoegen</div>
-          <Button variant="secondary" className="justify-start text-xs"
+      <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+        {/* Op een telefoon wordt het palet een horizontale strook boven het
+            doek: zo houd je de volle breedte over om op te tekenen. */}
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2 sm:w-40 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r">
+          <div className="mb-1 hidden text-[11px] font-semibold text-muted-foreground sm:block">Toevoegen</div>
+          <Button variant="secondary" className="shrink-0 justify-start whitespace-nowrap text-xs"
                   onClick={() => voegToe("agent")}>🤖 Agent</Button>
-          <Button variant="secondary" className="justify-start text-xs"
+          <Button variant="secondary" className="shrink-0 justify-start whitespace-nowrap text-xs"
                   onClick={() => voegToe("shell")}>&gt;_ Shell</Button>
-          <Button variant="secondary" className="justify-start text-xs"
+          <Button variant="secondary" className="shrink-0 justify-start whitespace-nowrap text-xs"
                   onClick={() => voegToe("als")}>? Als</Button>
-          <Button variant="secondary" className="justify-start text-xs"
+          <Button variant="secondary" className="shrink-0 justify-start whitespace-nowrap text-xs"
                   onClick={() => voegToe("wacht")}>⏱ Wachten</Button>
-          <Button variant="secondary" className="justify-start text-xs"
+          <Button variant="secondary" className="shrink-0 justify-start whitespace-nowrap text-xs"
                   onClick={() => voegToe("voorelk")}>↻ Lus</Button>
-          <Button variant="secondary" className="justify-start text-xs"
+          <Button variant="secondary" className="shrink-0 justify-start whitespace-nowrap text-xs"
                   onClick={() => voegToe("parallel")}>⇉ Bubbel</Button>
-          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          <p className="mt-2 hidden text-[11px] leading-relaxed text-muted-foreground sm:block">
             Sleep activiteiten in een <strong>lus</strong> om ze per element van een lijst te
             laten draaien — een <code>als</code> erin beslist dan per element. In een
             <strong> bubbel</strong> draaien ze tegelijk.
           </p>
         </div>
 
-        <div className="min-w-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
           <WorkflowCanvas nodes={nodes} edges={edges} status={statusPerNode}
                           geselecteerd={selectie} onSelect={setSelectie} onChange={wijzig} />
         </div>

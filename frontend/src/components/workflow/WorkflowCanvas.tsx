@@ -269,11 +269,16 @@ function Doek({ nodes, edges, status, geselecteerd, onSelect, onChange }: {
       onNodeClick={(_e, n) => onSelect(n.id)}
       onPaneClick={() => onSelect(null)}
       fitView
+      // Verder kunnen uitzoomen dan de standaard 0.5: op een smal scherm
+      // past een workflow van een paar activiteiten er anders niet op.
+      minZoom={0.15}
       proOptions={{ hideAttribution: false }}
     >
       <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
       <Controls />
-      <MiniMap pannable zoomable className="!bg-card" />
+      {/* De minimap is op een telefoon een vierkant van 150px over een doek
+          dat zelf nauwelijks groter is. Weg ermee; de Controls blijven. */}
+      <MiniMap pannable zoomable className="!hidden !bg-card sm:!block" />
     </ReactFlow>
     </MaatContext.Provider>
   );

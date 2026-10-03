@@ -36,7 +36,7 @@ export function WorkflowsPage() {
 
   return (
     <div className="p-4 sm:p-6">
-      <div className="mb-4 flex justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-bold">Workflows</h1>
         <Button onClick={() => setCreating(true)}>+ Nieuwe workflow</Button>
       </div>
@@ -46,8 +46,12 @@ export function WorkflowsPage() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {workflows.map((w) => (
             <Card key={w.id} className="p-4">
-              <div className="flex items-center justify-between">
-                <span className="cursor-pointer font-medium" onClick={() => navigate(`/workflows/${w.id}`)}>{w.name}</span>
+              {/* min-w-0 is hier geen detail: een flex-kind krimpt standaard
+                  NIET onder zijn inhoud, dus een lange naam duwt de badge de
+                  kaart uit in plaats van zelf af te kappen. */}
+              <div className="flex items-start justify-between gap-2">
+                <span className="min-w-0 flex-1 cursor-pointer break-words font-medium"
+                      onClick={() => navigate(`/workflows/${w.id}`)}>{w.name}</span>
                 <button
                   onClick={() => workflowApi.updateMeta(w.id, { is_enabled: !w.is_enabled })
                     .then(refresh)
@@ -59,8 +63,9 @@ export function WorkflowsPage() {
                   <Badge tone={w.is_enabled ? "green" : "neutral"}>{w.is_enabled ? "aan" : "uit"}</Badge>
                 </button>
               </div>
-              <div className="cursor-pointer text-xs text-muted-foreground" onClick={() => navigate(`/workflows/${w.id}`)}>{w.description}</div>
-              <div className="mt-1 flex items-center justify-between">
+              <div className="mt-1 cursor-pointer break-words text-xs text-muted-foreground"
+                   onClick={() => navigate(`/workflows/${w.id}`)}>{w.description}</div>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-muted-foreground">
                   {(w.nodes || []).length || w.steps.length} activiteit(en)
                   {(w.waarschuwingen || []).length > 0 && (
@@ -73,24 +78,24 @@ export function WorkflowsPage() {
                 {/* De twee knoppen horen bij elkaar, rechts. Los in een
                     justify-between-rij belandt de eerste precies in het midden
                     van de kaart — alsof hij bij niets hoort. */}
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="secondary"
-                  className="px-2 py-0.5 text-xs"
+                  className="px-3 py-1.5 text-xs sm:px-2 sm:py-0.5"
                   onClick={() => setMonitoringVoor(monitoringVoor?.id === w.id ? null : w)}
                 >
                   {monitoringVoor?.id === w.id ? "Monitoring sluiten" : "Monitoring"}
                 </Button>
                 <Button
                   variant="secondary"
-                  className="px-2 py-0.5 text-xs"
+                  className="px-3 py-1.5 text-xs sm:px-2 sm:py-0.5"
                   onClick={() => navigate(`/workflows/${w.id}`)}
                 >
                   Bewerken
                 </Button>
                 <Button
                   variant="danger"
-                  className="px-2 py-0.5 text-xs"
+                  className="px-3 py-1.5 text-xs sm:px-2 sm:py-0.5"
                   // De belofte TERUGGEVEN: daar herkent Button aan dat er iets
                   // loopt en zet hij zichzelf op bezig. Met accolades eromheen
                   // verdwijnt hij en lijkt er niets te gebeuren.

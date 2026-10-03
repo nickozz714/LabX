@@ -216,7 +216,7 @@ export function OverviewPage() {
           {data.boards.map((b) => (
             <Card key={b.id} className="p-3">
               <div className="flex items-center justify-between">
-                <Link to={`/boards/${b.id}`} className="font-semibold hover:underline">
+                <Link to={`/boards/${b.id}`} className="min-w-0 break-words font-semibold hover:underline">
                   {b.name}
                 </Link>
                 <span className="text-xs text-muted-foreground">{b.ticket_total} tickets</span>
