@@ -84,7 +84,7 @@ export function ChatPage() {
   // gesprek laat niets van het gesprek over. Op een groot scherm blijft het
   // openstaan zoals het was.
   const [sidePanelOpen, setSidePanelOpen] = useState(
-    () => typeof window === "undefined" || window.innerWidth >= 768);
+    () => typeof window === "undefined" || window.innerWidth >= 1024);
   const [lijstOpen, setLijstOpen] = useState(false);
   const [sideTab, setSideTab] = useState<"lab" | "taken">("lab");
   const knownRunStatusRef = useRef<Record<string, string>>({});
@@ -502,9 +502,9 @@ export function ChatPage() {
           schuift; vanaf tablet blijft hij gewoon naast de chat staan. */}
       {lijstOpen && (
         <button type="button" aria-label="Chatlijst sluiten" onClick={() => setLijstOpen(false)}
-                className="fixed inset-0 z-30 bg-foreground/30 md:hidden" />
+                className="fixed inset-0 z-30 bg-foreground/30 lg:hidden" />
       )}
-      <aside className={`${lijstOpen ? "absolute inset-y-0 left-0 z-40 w-[80vw] max-w-xs shadow-xl" : "hidden"} shrink-0 overflow-y-auto border-r border-border bg-background p-3 md:static md:z-auto md:block md:w-64 md:max-w-none md:shadow-none`}>
+      <aside className={`${lijstOpen ? "absolute inset-y-0 left-0 z-40 w-[80vw] max-w-xs shadow-xl" : "hidden"} shrink-0 overflow-y-auto border-r border-border bg-background p-3 lg:static lg:z-auto lg:block lg:w-64 lg:max-w-none lg:shadow-none`}>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold">{toonArchief ? "Archief" : "Chats"}</h2>
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground"
@@ -644,15 +644,21 @@ export function ChatPage() {
 
       <div className="flex flex-1 flex-col">
         {!activeThread ? (
-          <div className="flex flex-1 items-center justify-center">
-            <EmptyState>Kies een lab hiernaast om een nieuwe chat te starten.</EmptyState>
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4">
+            <EmptyState>
+              <span className="hidden lg:inline">Kies een lab hiernaast om een nieuwe chat te starten.</span>
+              <span className="lg:hidden">Open je chats om er een te kiezen, of start een nieuwe.</span>
+            </EmptyState>
+            <Button variant="secondary" className="lg:hidden" onClick={() => setLijstOpen(true)}>
+              <PanelLeft size={15} /> Chats openen
+            </Button>
           </div>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-2 text-sm sm:px-4">
-              <button type="button" onClick={() => setLijstOpen(true)} aria-label="Chats tonen"
-                      className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground md:hidden">
-                <PanelLeft size={16} />
+              <button type="button" onClick={() => setLijstOpen(true)}
+                      className="-ml-1 flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-muted-foreground hover:text-foreground lg:hidden">
+                <PanelLeft size={15} /> Chats
               </button>
               <span className="group flex min-w-0 items-center gap-1 truncate font-medium">
                 {activeThread.title}
@@ -821,7 +827,7 @@ export function ChatPage() {
       </div>
 
       {activeThread && lab && sidePanelOpen && (
-        <aside className="absolute inset-0 z-40 flex flex-col border-l border-border bg-background md:static md:z-auto md:w-80 md:shrink-0">
+        <aside className="absolute inset-0 z-40 flex flex-col border-l border-border bg-background lg:static lg:z-auto lg:w-80 lg:shrink-0">
           <div className="flex shrink-0 gap-1 border-b border-border px-2 text-sm">
             {(["lab", "taken"] as const).map((t) => (
               <button

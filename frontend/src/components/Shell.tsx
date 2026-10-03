@@ -89,7 +89,7 @@ export function Shell() {
           onClick={() => setMenuOpen((v) => !v)}
           aria-label={menuOpen ? "Menu sluiten" : "Menu openen"}
           aria-expanded={menuOpen}
-          className="-ml-1 mr-1 flex h-11 w-11 items-center justify-center rounded-md text-sidebar-foreground/80 hover:bg-sidebar-accent/10 md:hidden"
+          className="-ml-1 mr-1 flex h-11 w-11 items-center justify-center rounded-md text-sidebar-foreground/80 hover:bg-sidebar-accent/10 lg:hidden"
         >
           {menuOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
@@ -97,7 +97,7 @@ export function Shell() {
           <span className="inline-block h-2 w-2 rounded-full bg-sidebar-accent" />
           LabX
         </div>
-        <nav className="hidden flex-1 items-stretch gap-1 overflow-x-auto md:flex">
+        <nav className="hidden flex-1 items-stretch gap-1 overflow-x-auto lg:flex">
           {NAV.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
@@ -125,7 +125,7 @@ export function Shell() {
         </nav>
         {/* Op mobiel duwt dit de accountregel naar rechts; op desktop doet de
             tabstrip dat al met flex-1. */}
-        <div className="flex-1 md:hidden" />
+        <div className="flex-1 lg:hidden" />
         <div className="flex shrink-0 items-center gap-3 pl-3 text-xs text-sidebar-foreground/60">
           {/* Welke build je voor je hebt — en een waarschuwing als de server
               er al een nieuwere draait. */}
@@ -144,7 +144,7 @@ export function Shell() {
       {/* Het uitschuifmenu. Alleen onder md, en het sluit zichzelf zodra je
           iets kiest — anders blijft het over je scherm liggen. */}
       {menuOpen && (
-        <div className="md:hidden">
+        <div className="lg:hidden">
           <button
             type="button"
             aria-label="Menu sluiten"
@@ -180,7 +180,7 @@ export function Shell() {
         </div>
       )}
 
-      <main className="veilig-onder flex-1 overflow-y-auto">
+      <main className="veilig-onder min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         <Outlet />
       </main>
     </div>
