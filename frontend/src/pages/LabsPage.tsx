@@ -85,7 +85,7 @@ export function LabsPage() {
           {labs.map((lab) => (
             <Card key={lab.id} className="cursor-pointer p-4 hover:border-primary/40" onClick={() => setSelected(lab)}>
               <div className="mb-1 flex items-center justify-between">
-                <span className="font-semibold">{lab.name}</span>
+                <span className="min-w-0 flex-1 break-words font-semibold">{lab.name}</span>
                 <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
               </div>
               <div className="text-xs text-muted-foreground">{lab.image}</div>

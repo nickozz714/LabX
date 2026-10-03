@@ -112,7 +112,7 @@ function McpSection() {
             {catalog.map((c) => (
               <Card key={c.key} className="p-3">
                 <div className="mb-1 flex items-center justify-between">
-                  <span className="font-medium text-sm">{c.name}</span>
+                  <span className="min-w-0 flex-1 break-words font-medium text-sm">{c.name}</span>
                   <Badge tone={c.suggested_location === "lab" ? "violet" : "neutral"}>
                     {c.suggested_location === "lab" ? "in lab" : "extern"}
                   </Badge>
