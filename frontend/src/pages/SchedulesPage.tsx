@@ -73,7 +73,7 @@ export function SchedulesPage() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       <div className="mb-4 flex justify-between">
         <h1 className="text-xl font-bold">Scheduling</h1>
         <Button onClick={() => setCreating(true)}>+ Nieuwe schedule</Button>

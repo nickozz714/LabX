@@ -49,11 +49,11 @@ export function LoginPage() {
   }
 
   if (needsSetup === null) {
-    return <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">Laden…</div>;
+    return <div className="flex h-app items-center justify-center text-sm text-muted-foreground">Laden…</div>;
   }
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-background">
+    <div className="flex h-app w-full items-center justify-center bg-background">
       <Card className="w-full max-w-sm p-6">
         <h1 className="mb-1 text-xl font-bold">LabX</h1>
         {needsSetup ? (

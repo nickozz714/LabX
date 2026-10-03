@@ -54,7 +54,7 @@ export function LabsPage() {
   }, []);
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">Labs</h1>
         <Button onClick={() => setCreateOpen(true)}>+ Nieuw lab</Button>
@@ -302,7 +302,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
             ))}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <div>
             <Label>CPU</Label>
             <Input type="number" step="0.5" value={cpu} onChange={(e) => setCpu(Number(e.target.value))} />
@@ -1123,7 +1123,7 @@ function TunnelPaneel({ lab }: { lab: Lab }) {
         opent is die van jou; de redirect komt via de tunnel weer in het lab terecht. Laat het
         tunnelvenster open tot je klaar bent.
       </p>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
           <Label>Poort</Label>
           <Input type="number" value={poort} onChange={(e) => setPoort(Number(e.target.value))} />

@@ -374,14 +374,14 @@ export function TicketDrawer({
 
   if (!ticket) {
     return (
-      <aside className="flex w-[30rem] shrink-0 flex-col border-l border-border bg-card p-4">
+      <aside className="fixed inset-0 z-40 flex flex-col border-l border-border bg-card p-4 lg:static lg:z-auto lg:w-[30rem] lg:shrink-0">
         <p className="text-sm text-muted-foreground">Laden…</p>
       </aside>
     );
   }
 
   return (
-    <aside className="flex w-[30rem] shrink-0 flex-col overflow-y-auto border-l border-border bg-card">
+    <aside className="fixed inset-0 z-40 flex flex-col overflow-y-auto border-l border-border bg-card lg:static lg:z-auto lg:w-[30rem] lg:shrink-0">
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs text-muted-foreground">{ticket.key}</span>
@@ -415,7 +415,7 @@ export function TicketDrawer({
         {/* Drie korte velden naast elkaar; alles wat meer ruimte of meer
             uitleg nodig heeft staat eronder op een eigen regel. Ze in dit
             raster proppen maakte er smalle kolommen met afgekapte tekst van. */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <div>
             <Label>Kolom</Label>
             <Select value={ticket.status} onChange={(e) => save({ status: e.target.value })}>

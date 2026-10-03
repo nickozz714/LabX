@@ -201,17 +201,17 @@ export function WorkflowEditorPage() {
   const geselecteerd = useMemo(
     () => nodes.find((n) => n.id === selectie) || null, [nodes, selectie]);
 
-  if (!wf) return <div className="p-6 text-sm text-muted-foreground">Laden…</div>;
+  if (!wf) return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
         <Button variant="ghost" onClick={() => navigate("/workflows")}>← Workflows</Button>
         <Input value={naam} onChange={(e) => { setNaam(e.target.value); setVuil(true); }}
-               className="w-64 font-semibold" />
+               className="w-full font-semibold sm:w-64" />
         <Input value={omschrijving} placeholder="Korte omschrijving"
                onChange={(e) => { setOmschrijving(e.target.value); setVuil(true); }}
-               className="w-72" />
+               className="w-full sm:w-72" />
         <div className="flex-1" />
         {wf.waarschuwingen?.length > 0 && (
           <span className="text-xs text-yellow-600" title={wf.waarschuwingen.join("\n")}>
@@ -265,7 +265,14 @@ export function WorkflowEditorPage() {
                           geselecteerd={selectie} onSelect={setSelectie} onChange={wijzig} />
         </div>
 
-        <div className="w-96 overflow-y-auto border-l border-border">
+        {/* Het eigenschappenpaneel is op een telefoon een overlay: naast een
+            doek van 390px breed is er geen ruimte voor allebei. Vanaf lg staat
+            het weer gewoon naast het canvas. */}
+        <div className={`${geselecteerd ? "fixed inset-0 z-40 bg-card" : "hidden"} overflow-y-auto border-l border-border lg:static lg:z-auto lg:block lg:w-96 lg:bg-transparent`}>
+          <button type="button" onClick={() => setSelectie(null)}
+                  className="sticky top-0 z-10 flex w-full items-center justify-end gap-1 border-b border-border bg-card px-3 py-2 text-xs text-muted-foreground lg:hidden">
+            Sluiten ✕
+          </button>
           <Eigenschappen node={geselecteerd} onChange={wijzigNode} onDelete={verwijderNode}
                          parameters={parameters}
                          onParameters={(p) => { setParameters(p); setVuil(true); }}

@@ -189,7 +189,7 @@ export function AzureProfilesPage() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       <div className="mb-4 flex justify-between">
         <h1 className="text-xl font-bold">Azure-profielen</h1>
         <div className="flex gap-2">

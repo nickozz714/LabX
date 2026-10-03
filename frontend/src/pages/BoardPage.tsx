@@ -244,13 +244,13 @@ export function BoardPage() {
   }
 
   if (!board) {
-    return <div className="p-6 text-sm text-muted-foreground">Laden…</div>;
+    return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
   }
 
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-3 sm:px-4">
           <button onClick={() => navigate("/boards")} className="text-muted-foreground hover:text-foreground">
             <ArrowLeft size={16} />
           </button>
@@ -347,14 +347,18 @@ export function BoardPage() {
           }}
         />
 
-        <div className="flex flex-1 gap-3 overflow-x-auto p-4">
+        {/* Kanban op een telefoon: de kolommen blijven naast elkaar, maar
+            eentje vult bijna het scherm en klikt netjes in bij het vegen.
+            Een kolom van 288px op een scherm van 390px geeft anders die
+            halve-kolom-rand waar je steeds overheen scrolt. */}
+        <div className="schuif-x flex flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
           {board.columns.map((col) => {
             const cards = tickets.filter((t) => t.status === col.key);
             const overLimit = col.wip_limit != null && cards.length > col.wip_limit;
             return (
               <div
                 key={col.key}
-                className="flex w-72 shrink-0 flex-col rounded-lg border border-border bg-secondary/30"
+                className="flex w-[86vw] max-w-[22rem] shrink-0 flex-col rounded-lg border border-border bg-secondary/30 sm:w-72"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => onDrop(col.key)}
               >

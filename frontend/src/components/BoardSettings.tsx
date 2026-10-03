@@ -180,7 +180,7 @@ export function BoardSettings({
     <Modal open onClose={onClose} title={`Instellingen — ${board.name}`} wide>
       <div className="space-y-4">
         {/* algemeen */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="col-span-2">
             <Label>Naam</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} />
