@@ -46,7 +46,7 @@ export function BoardsPage() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">Boards</h1>
         <Button onClick={() => setCreating(true)}>+ Nieuw board</Button>
@@ -178,7 +178,7 @@ function CreateBoardModal({ onClose, onCreated }: { onClose: () => void; onCreat
   return (
     <Modal open onClose={onClose} title="Nieuw board">
       <div className="space-y-3">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="col-span-2">
             <Label>Naam</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Platformwerk" />

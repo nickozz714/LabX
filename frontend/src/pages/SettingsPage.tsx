@@ -40,7 +40,7 @@ export function SettingsPage() {
     };
   }, []);
 
-  if (!settings) return <div className="p-6 text-sm text-muted-foreground">Laden…</div>;
+  if (!settings) return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
 
   async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string }) {
     try {
@@ -626,7 +626,7 @@ function AccountCard() {
         Wijzig de gebruikersnaam en/of het wachtwoord van het beheerdersaccount. Je huidige
         wachtwoord is verplicht ter bevestiging.
       </p>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
           <Label>Huidig wachtwoord</Label>
           <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />

@@ -101,7 +101,65 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   -webkit-font-smoothing: antialiased;
+  /* Safari op iOS schaalt tekst in liggende stand eigenmachtig op. Dat breekt
+     uitlijning die in staande stand wél klopt. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Doorscrollen naar de pagina eronder geeft op iOS die rubberbandbeweging
+     waarbij de hele app lijkt los te komen. */
+  overscroll-behavior-y: none;
 }
+
+/* --- iOS Safari -----------------------------------------------------------
+ *
+ * Drie dingen die op een iPhone misgaan en nergens anders.
+ *
+ * 1. `100vh` is op iOS NIET de zichtbare hoogte: Safari rekent de adresbalk
+ *    mee, dus een scherm van `h-screen` steekt er onderaan onder. Je krijgt
+ *    een pagina die wiebelt en knoppen die onder de balk vallen. `100dvh`
+ *    (dynamic viewport height) is wél wat je ziet en krimpt mee als de balk
+ *    verschijnt. De `100vh`-regel blijft als terugval voor oudere browsers:
+ *    wie `dvh` niet kent, negeert de tweede regel gewoon.
+ *
+ * 2. De notch en de streep onderaan overlappen je interface. `safe-area-inset`
+ *    zegt hoeveel ruimte je daar moet laten; die geven we door als variabelen
+ *    zodat componenten hem kunnen gebruiken.
+ *
+ * 3. Een invoerveld met een lettergrootte ONDER 16px laat Safari bij focus
+ *    inzoomen, en daarna staat de hele app scheef. Daarom krijgen velden op
+ *    kleine schermen 16px — alleen op het veld zelf, zodat de rest van het
+ *    ontwerp compact blijft.
+ */
+.h-app {
+  height: 100vh;
+  height: 100dvh;
+}
+.min-h-app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+:root {
+  --veilig-boven: env(safe-area-inset-top, 0px);
+  --veilig-onder: env(safe-area-inset-bottom, 0px);
+}
+
+.veilig-onder { padding-bottom: var(--veilig-onder); }
+.veilig-boven { padding-top: var(--veilig-boven); }
+
+@media (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px;
+  }
+}
+
+/* Horizontaal schuiven met vingers: laat kolommen netjes inklikken in plaats
+   van halverwege blijven hangen. */
+.schuif-x {
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.schuif-x > * { scroll-snap-align: start; }
 
 /* xterm.js needs an explicit sized container */
 .xterm-viewport::-webkit-scrollbar {

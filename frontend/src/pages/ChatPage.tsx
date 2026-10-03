@@ -20,7 +20,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2, PanelLeft} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi, chatBijlageMap } from "@/lib/chat";
@@ -80,7 +80,12 @@ export function ChatPage() {
   const [labPanelTab, setLabPanelTab] = useState<"toegang" | "shell" | "audit">("toegang");
   const [threadRuns, setThreadRuns] = useState<BackgroundRunDto[]>([]);
   const [runDetail, setRunDetail] = useState<BackgroundRunDto | null>(null);
-  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  // Op een telefoon staat het zijpaneel standaard dicht: 320px naast een
+  // gesprek laat niets van het gesprek over. Op een groot scherm blijft het
+  // openstaan zoals het was.
+  const [sidePanelOpen, setSidePanelOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 768);
+  const [lijstOpen, setLijstOpen] = useState(false);
   const [sideTab, setSideTab] = useState<"lab" | "taken">("lab");
   const knownRunStatusRef = useRef<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
@@ -492,8 +497,14 @@ export function ChatPage() {
   })();
 
   return (
-    <div className="flex h-full">
-      <aside className="w-64 shrink-0 overflow-y-auto border-r border-border p-3">
+    <div className="relative flex h-full">
+      {/* De chatlijst is op een telefoon een lade die over het gesprek
+          schuift; vanaf tablet blijft hij gewoon naast de chat staan. */}
+      {lijstOpen && (
+        <button type="button" aria-label="Chatlijst sluiten" onClick={() => setLijstOpen(false)}
+                className="fixed inset-0 z-30 bg-foreground/30 md:hidden" />
+      )}
+      <aside className={`${lijstOpen ? "absolute inset-y-0 left-0 z-40 w-[80vw] max-w-xs shadow-xl" : "hidden"} shrink-0 overflow-y-auto border-r border-border bg-background p-3 md:static md:z-auto md:block md:w-64 md:max-w-none md:shadow-none`}>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold">{toonArchief ? "Archief" : "Chats"}</h2>
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground"
@@ -638,8 +649,12 @@ export function ChatPage() {
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-sm">
-              <span className="group flex items-center gap-1 font-medium">
+            <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm sm:px-4">
+              <button type="button" onClick={() => setLijstOpen(true)} aria-label="Chats tonen"
+                      className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground md:hidden">
+                <PanelLeft size={16} />
+              </button>
+              <span className="group flex min-w-0 items-center gap-1 truncate font-medium">
                 {activeThread.title}
                 <button
                   onClick={() => setRenaming(activeThread)}
@@ -806,7 +821,7 @@ export function ChatPage() {
       </div>
 
       {activeThread && lab && sidePanelOpen && (
-        <aside className="flex w-80 shrink-0 flex-col border-l border-border">
+        <aside className="absolute inset-0 z-40 flex flex-col border-l border-border bg-background md:static md:z-auto md:w-80 md:shrink-0">
           <div className="flex shrink-0 gap-1 border-b border-border px-2 text-sm">
             {(["lab", "taken"] as const).map((t) => (
               <button

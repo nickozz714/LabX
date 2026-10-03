@@ -32,7 +32,7 @@ export function FirstRunWizard({ onDone }: { onDone: () => void }) {
   useEffect(refresh, []);
 
   if (!docker || !settings) {
-    return <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">Laden…</div>;
+    return <div className="flex h-app items-center justify-center text-sm text-muted-foreground">Laden…</div>;
   }
 
   const dockerOk = docker.daemon_up;
@@ -50,7 +50,7 @@ export function FirstRunWizard({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background p-6">
+    <div className="flex h-app items-center justify-center bg-background p-6">
       <Card className="w-full max-w-lg space-y-5 p-6">
         <div>
           <h1 className="text-lg font-bold">Welkom bij LabX</h1>
