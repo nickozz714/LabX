@@ -147,7 +147,10 @@ body {
 .veilig-onder { padding-bottom: var(--veilig-onder); }
 .veilig-boven { padding-top: var(--veilig-boven); }
 
-@media (max-width: 767px) {
+/* Tot 1023px, niet tot 767: een iPhone in liggende stand is 844-956px breed
+   en is nog steeds een telefoon. Met de grens op 767 zoomde Safari daar
+   alsnog in bij elke focus. */
+@media (max-width: 1023px) {
   input, textarea, select {
     font-size: 16px;
   }
