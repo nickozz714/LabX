@@ -23,7 +23,7 @@ type Section = "skills" | "tools" | "mcp";
 export function SkillsPage() {
   const [section, setSection] = useState<Section>("skills");
   return (
-    <div className="p-4 sm:p-6">
+    <div className="veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex gap-1 border-b border-border text-sm">
         {(["skills", "tools", "mcp"] as Section[]).map((s) => (
           <button

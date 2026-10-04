@@ -180,7 +180,7 @@ export function Shell() {
         </div>
       )}
 
-      <main className="veilig-onder min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+      <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         <Outlet />
       </main>
     </div>
