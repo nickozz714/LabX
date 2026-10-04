@@ -65,7 +65,7 @@ export function OverviewPage() {
   if (laden) return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
   if (!data || data.boards.length === 0) {
     return (
-      <div className="p-4 sm:p-6">
+      <div className="veilig-onder p-4 sm:p-6">
         <EmptyState>Nog geen boards. Maak er een aan bij Boards.</EmptyState>
       </div>
     );

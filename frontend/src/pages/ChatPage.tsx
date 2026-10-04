@@ -642,7 +642,7 @@ export function ChatPage() {
         )}
       </aside>
 
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         {!activeThread ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4">
             <EmptyState>
@@ -660,11 +660,14 @@ export function ChatPage() {
                       className="-ml-1 flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-muted-foreground hover:text-foreground lg:hidden">
                 <PanelLeft size={15} /> Chats
               </button>
-              <span className="group flex min-w-0 items-center gap-1 truncate font-medium">
-                {activeThread.title}
+              {/* truncate werkt op de TEKST, niet op een flex-container:
+                  stond het op de span eromheen, dan liep een lange tickettitel
+                  gewoon door. Potlood blijft op desktop, waar hover bestaat. */}
+              <span className="group flex min-w-0 flex-1 items-center gap-1 font-medium">
+                <span className="truncate">{activeThread.title}</span>
                 <button
                   onClick={() => setRenaming(activeThread)}
-                  className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                  className="hidden shrink-0 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 lg:inline-flex"
                   title="Naam wijzigen"
                 >
                   <Pencil size={13} />
@@ -692,7 +695,7 @@ export function ChatPage() {
                   <select
                     value={activeThread.model || ""}
                     onChange={(e) => setThreadModel(activeThread.id, e.target.value || null)}
-                    className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                    className="max-w-[9rem] rounded-md border border-input bg-background px-2 py-1 text-xs sm:max-w-none"
                     title="Model voor deze chat — of typ /model <naam> in het bericht"
                   >
                     {MODEL_OPTIONS.map((m) => (
@@ -714,7 +717,7 @@ export function ChatPage() {
                   <select
                     value={activeThread.effort || ""}
                     onChange={(e) => setThreadEffort(activeThread.id, e.target.value || null)}
-                    className="rounded-md border border-input bg-background px-2 py-1 text-xs"
+                    className="max-w-[9rem] rounded-md border border-input bg-background px-2 py-1 text-xs sm:max-w-none"
                     title="Reasoning effort (hoeveelheid denkwerk) voor deze chat — of typ /effort <niveau> in het bericht"
                   >
                     {EFFORT_OPTIONS.map((o) => (
@@ -767,7 +770,7 @@ export function ChatPage() {
                 </Card>
               )}
             </div>
-            <div className="border-t border-border p-3">
+            <div className="veilig-onder border-t border-border p-3">
               <BijlageLijst bijlagen={bijlagen}
                             onVerwijder={(path) =>
                               setBijlagen((prev) => prev.filter((b) => b.path !== path))} />

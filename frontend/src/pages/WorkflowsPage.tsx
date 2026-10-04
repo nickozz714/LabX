@@ -35,7 +35,7 @@ export function WorkflowsPage() {
   useEffect(refresh, []);
 
   return (
-    <div className="p-4 sm:p-6">
+    <div className="veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-bold">Workflows</h1>
         <Button onClick={() => setCreating(true)}>+ Nieuwe workflow</Button>
