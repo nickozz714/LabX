@@ -200,6 +200,15 @@ fn compose_command(env_path: &Path, compose_path: &Path) -> Command {
         .arg(env_path)
         .arg("-f")
         .arg(compose_path);
+    // Welke versie dit is, zodat een LOKALE build (de terugval als `pull`
+    // niet lukt) hetzelfde nummer in de bundel bakt als de installer draagt.
+    // Zonder dit viel de build-arg terug op "dev" en zei een verse installatie
+    // dat hij "dev" draaide, terwijl je net v0.7.9 had gedownload.
+    //
+    // Via de omgeving en NIET via .env: dat bestand wordt één keer bij de
+    // eerste start geschreven en daarna nooit meer aangeraakt, dus een
+    // versienummer daarin zou blijven staan op de versie van toen.
+    cmd.env("LABX_VERSION", env!("CARGO_PKG_VERSION"));
     cmd
 }
 
