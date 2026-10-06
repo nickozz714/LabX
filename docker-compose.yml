@@ -17,6 +17,10 @@ services:
     # fallback (docker compose up --build) — zie .github/workflows/images.yml.
     build:
       context: ./backend
+      args:
+        # Het versienummer in de bundel bakken. De desktop-app geeft zijn eigen
+        # versie mee; met de hand bouwen geeft "dev", en dat is dan ook waar.
+        LABX_VERSION: ${LABX_VERSION:-dev}
     image: ${LABX_BACKEND_IMAGE:-ghcr.io/nickozz714/labx-backend:latest}
     container_name: labx-api
     restart: unless-stopped
@@ -66,6 +70,10 @@ services:
   web:
     build:
       context: ./frontend
+      args:
+        # Idem voor de interface: zonder dit staat er "dev" in de hoek van het
+        # scherm en denkt de versievergelijking dat je naar een oude pagina kijkt.
+        LABX_VERSION: ${LABX_VERSION:-dev}
     image: ${LABX_FRONTEND_IMAGE:-ghcr.io/nickozz714/labx-frontend:latest}
     container_name: labx-web
     restart: unless-stopped

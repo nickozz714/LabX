@@ -65,7 +65,12 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           node -e "const fs=require('fs');const f='tauri.conf.json';const j=JSON.parse(fs.readFileSync(f));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n')" "$V"
-          echo "app-versie gezet op $V"
+          # Ook in Cargo.toml: de app geeft zijn eigen versie (CARGO_PKG_VERSION)
+          # door aan `docker compose`, zodat een lokale build hetzelfde nummer
+          # in de bundel bakt als de installer draagt. Bleef dit op 0.1.0 staan,
+          # dan zei een verse installatie dat hij 0.1.0 draaide.
+          sed -i.bak -E "0,/^version = \".*\"/s//version = \"$V\"/" Cargo.toml && rm -f Cargo.toml.bak
+          echo "app-versie gezet op $V (tauri.conf.json + Cargo.toml: $(grep -m1 '^version' Cargo.toml))"
 
       - name: Install desktop deps
         working-directory: desktop
