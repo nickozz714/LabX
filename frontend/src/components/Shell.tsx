@@ -9,8 +9,9 @@ import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { Versie } from "@/components/Versie";
-import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench, Clock, Menu, X} from "lucide-react";
+import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench, Clock, Menu, X, Mic} from "lucide-react";
 import { chatApi } from "@/lib/chat";
+import { spraakApi } from "@/lib/spraak";
 
 const WIZARD_DISMISSED_KEY = "labx_wizard_dismissed";
 
@@ -33,6 +34,15 @@ const NAV = [
   { to: "/settings", label: "Instellingen", icon: Settings },
 ];
 
+/** De vaste tabs, plus Spraak alleen als die functie aanstaat. */
+function zichtbareNav(spraakAan: boolean) {
+  if (!spraakAan) return NAV;
+  const i = NAV.findIndex((n) => n.to === "/chat");
+  const met = [...NAV];
+  met.splice(i + 1, 0, { to: "/spraak", label: "Spraak", icon: Mic });
+  return met;
+}
+
 export function Shell() {
   const { username, logout } = useAuth();
   const [wizardDismissed, setWizardDismissed] = useState(() => localStorage.getItem(WIZARD_DISMISSED_KEY) === "1");
@@ -40,6 +50,13 @@ export function Shell() {
   const [needsWizard, setNeedsWizard] = useState(false);
   const [runningCount, setRunningCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  // De spraaktab bestaat alleen als de functie aanstaat. Niet verbergen met
+  // CSS: hij hoort er dan echt niet te zijn, net als de endpoints erachter.
+  const [spraakAan, setSpraakAan] = useState(false);
+
+  useEffect(() => {
+    spraakApi.status().then((s) => setSpraakAan(Boolean(s.aan))).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +115,7 @@ export function Shell() {
           LabX
         </div>
         <nav className="hidden flex-1 items-stretch gap-1 overflow-x-auto lg:flex">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {zichtbareNav(spraakAan).map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -152,7 +169,7 @@ export function Shell() {
             className="fixed inset-0 z-30 bg-foreground/30"
           />
           <nav className="veilig-onder absolute inset-x-0 z-40 max-h-[70dvh] overflow-y-auto border-b border-sidebar-border bg-sidebar p-2 shadow-lg">
-            {NAV.map(({ to, label, icon: Icon }) => (
+            {zichtbareNav(spraakAan).map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}

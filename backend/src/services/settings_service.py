@@ -111,6 +111,20 @@ def get_public_settings(db: Session) -> Dict[str, Any]:
         "auto_recall_instruction": resolved.auto_recall_instruction,
         "chat_archive_days": resolved.chat_archive_days,
         "eigen_auteurs": resolved.eigen_auteurs,
+        # Spraakassistent. De sleutel zelf komt NOOIT terug — alleen of er een
+        # staat, zelfde patroon als het oauth-token.
+        "openai_key_configured": bool(row.openai_key_encrypted),
+        "voice_enabled": bool(row.voice_enabled),
+        "voice_brein": row.voice_brein,
+        "voice_microfoon": row.voice_microfoon,
+        "voice_bevestiging": row.voice_bevestiging,
+        "voice_woord": row.voice_woord,
+        "voice_meld_runs": bool(row.voice_meld_runs),
+        "voice_sessie_minuten": row.voice_sessie_minuten,
+        "voice_dag_limiet_usd": row.voice_dag_limiet_usd,
+        "voice_realtime_model": row.voice_realtime_model,
+        "voice_stt_model": row.voice_stt_model,
+        "voice_brein_model": row.voice_brein_model,
         "default_effort": resolved.default_effort,
         "fallback_model": resolved.fallback_model,
         "max_budget_usd": resolved.max_budget_usd,
@@ -131,6 +145,10 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
         "auto_recall_instruction",
         "chat_archive_days",
         "eigen_auteurs",
+        "voice_enabled", "voice_brein", "voice_microfoon", "voice_bevestiging",
+        "voice_woord", "voice_meld_runs", "voice_sessie_minuten",
+        "voice_dag_limiet_usd", "voice_realtime_model", "voice_stt_model",
+        "voice_brein_model",
         "default_effort", "fallback_model", "max_budget_usd", "autocompact",
         "custom_agents_json", "default_agent", "auto_hooks",
     )
@@ -144,6 +162,17 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
             row.oauth_token_encrypted = encrypt(token)
         else:
             row.oauth_token_encrypted = None
+    if "openai_key" in payload:
+        sleutel = (payload["openai_key"] or "").strip()
+        if sleutel:
+            from utils.crypto import encrypt
+            row.openai_key_encrypted = encrypt(sleutel)
+        else:
+            row.openai_key_encrypted = None
+    # Zonder sleutel kan de spraakassistent niets, dus dan gaat hij ook uit.
+    # Een aan-schuifje dat niets doet is erger dan een uit-schuifje.
+    if row.voice_enabled and not row.openai_key_encrypted:
+        row.voice_enabled = False
     row.updated_at = _now_iso()
     db.commit()
     return get_public_settings(db)

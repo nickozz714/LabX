@@ -189,6 +189,16 @@ export interface AppSettingsDto {
   chat_archive_days: number | null;
   /** Onder welke namen jij in Jira/DevOps staat — voor de urenschatting. */
   eigen_auteurs?: string[] | null;
+  /** Spraakassistent. De sleutel komt nooit terug; alleen of er een staat. */
+  openai_key_configured?: boolean;
+  voice_enabled?: boolean;
+  voice_brein?: "realtime" | "pipeline";
+  voice_microfoon?: "ptt" | "open";
+  voice_bevestiging?: "klik" | "spraak" | "beide";
+  voice_woord?: string | null;
+  voice_meld_runs?: boolean;
+  voice_sessie_minuten?: number;
+  voice_dag_limiet_usd?: number;
   extra_args: string[];
   enable_tool_search: boolean;
   data_guard_default: boolean;

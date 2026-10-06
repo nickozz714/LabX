@@ -131,6 +131,134 @@ export function SettingsPage() {
             anders in, dan wordt diens tijd als de jouwe geteld — dus hou het bij jezelf.
           </p>
         </div>
+        {/* ── Spraakassistent ─────────────────────────────────────────
+            Zonder sleutel kan hij niets, dus dan laat de backend het schuifje
+            ook niet aan staan. */}
+        <div className="rounded-lg border border-border p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold">Spraakassistent</span>
+            <label className="flex cursor-pointer items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.voice_enabled)}
+                onChange={(e) => {
+                  const aan = e.target.checked;
+                  setSettings({ ...settings, voice_enabled: aan });
+                  save({ voice_enabled: aan });
+                }}
+              />
+              Aan (tabblad verschijnt)
+            </label>
+          </div>
+
+          <Label>OpenAI-sleutel</Label>
+          <Input
+            type="password"
+            placeholder={settings.openai_key_configured ? "•••••••• (ingesteld)" : "sk-…"}
+            onBlur={(e) => {
+              if (!e.target.value.trim()) return;
+              save({ openai_key: e.target.value.trim() });
+              e.target.value = "";
+            }}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Nodig voor het transcriberen van spraak en voor het realtime-model. De
+            sleutel komt nooit terug uit de API — net als het Claude-token. Zonder
+            sleutel blijft de assistent uit; typen werkt dan nog wel.
+          </p>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Brein</Label>
+              <Select
+                value={settings.voice_brein || "pipeline"}
+                onChange={(e) => {
+                  setSettings({ ...settings, voice_brein: e.target.value as "realtime" | "pipeline" });
+                  save({ voice_brein: e.target.value });
+                }}
+              >
+                <option value="pipeline">Pijplijn (transcriptie + Claude) — goedkoper</option>
+                <option value="realtime">GPT-realtime — sneller, natuurlijker</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Microfoon</Label>
+              <Select
+                value={settings.voice_microfoon || "ptt"}
+                onChange={(e) => {
+                  setSettings({ ...settings, voice_microfoon: e.target.value as "ptt" | "open" });
+                  save({ voice_microfoon: e.target.value });
+                }}
+              >
+                <option value="ptt">Push-to-talk — alleen wat jij opstuurt</option>
+                <option value="open">Open microfoon — hoort iedereen in de kamer</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Bevestigen met</Label>
+              <Select
+                value={settings.voice_bevestiging || "beide"}
+                onChange={(e) => {
+                  setSettings({ ...settings, voice_bevestiging: e.target.value as "klik" | "spraak" | "beide" });
+                  save({ voice_bevestiging: e.target.value });
+                }}
+              >
+                <option value="beide">Allebei</option>
+                <option value="klik">Alleen klikken</option>
+                <option value="spraak">Alleen je stem</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Bevestigingswoord</Label>
+              <Input
+                value={settings.voice_woord ?? ""}
+                placeholder="bevestigd"
+                onChange={(e) => setSettings({ ...settings, voice_woord: e.target.value })}
+                onBlur={() => save({ voice_woord: settings.voice_woord })}
+              />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Het woord moet je héle antwoord zijn: “Henk” bevestigt, “Henk, kun jij
+            even kijken?” niet. Kies daarom geen woord dat je in gewone gesprekken
+            gebruikt — zit er een Henk op kantoor, dan is “Henk” juist het
+            slechtste woord dat je kunt nemen. Een bevestiging vervalt na 20
+            seconden.
+          </p>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Sessielimiet (minuten, 0 = geen)</Label>
+              <Input
+                type="number" min={0}
+                value={settings.voice_sessie_minuten ?? 30}
+                onChange={(e) => setSettings({ ...settings, voice_sessie_minuten: Number(e.target.value) })}
+                onBlur={() => save({ voice_sessie_minuten: settings.voice_sessie_minuten })}
+              />
+            </div>
+            <div>
+              <Label>Dagplafond in dollars (0 = geen)</Label>
+              <Input
+                type="number" min={0} step="0.5"
+                value={settings.voice_dag_limiet_usd ?? 5}
+                onChange={(e) => setSettings({ ...settings, voice_dag_limiet_usd: Number(e.target.value) })}
+                onBlur={() => save({ voice_dag_limiet_usd: settings.voice_dag_limiet_usd })}
+              />
+            </div>
+          </div>
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.voice_meld_runs)}
+              onChange={(e) => {
+                setSettings({ ...settings, voice_meld_runs: e.target.checked });
+                save({ voice_meld_runs: e.target.checked });
+              }}
+            />
+            Zelf melden wanneer een run die hij startte klaar is
+          </label>
+        </div>
+
         <div>
           <Label>Extra CLI-argumenten (spatie-gescheiden)</Label>
           <Input

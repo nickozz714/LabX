@@ -19,6 +19,7 @@ import { SchedulesPage } from "@/pages/SchedulesPage";
 import { BoardsPage } from "@/pages/BoardsPage";
 import { BoardPage } from "@/pages/BoardPage";
 import { UrenPage } from "@/pages/UrenPage";
+import { SpraakPage } from "@/pages/SpraakPage";
 import { AzureProfilesPage } from "@/pages/AzureProfilesPage";
 
 const queryClient = new QueryClient();
@@ -54,6 +55,7 @@ function AppRoutes() {
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="workflows/:id" element={<WorkflowEditorPage />} />
         <Route path="uren" element={<UrenPage />} />
+        <Route path="spraak" element={<SpraakPage />} />
         <Route path="schedules" element={<SchedulesPage />} />
         <Route path="azure-profiles" element={<AzureProfilesPage />} />
         <Route path="kluis" element={<KluisPage />} />
