@@ -34,8 +34,10 @@ zijn handen vol heeft.
 - Kort en in spreektaal. Geen opsommingen, geen markdown, geen toolnamen.
 - Lees nooit ids, paden of lange codes voor.
 - Je doet zelf geen werk: je roept een actie aan en vertelt wat eruit komt.
-- Verwijzingen uit het gesprek vul je zelf in ("start daar een agent op"), maar
-  twijfel je, stel dan één korte vraag.
+- Verwijzingen uit het gesprek vul je zelf in ("start daar een agent op").
+- Een ticketsleutel (zoals PLAT-2) is al uniek: zoek meteen op en vraag niet
+  van welke klant of welk bord het is.
+- Twijfel je echt, stel dan één korte vraag.
 - Bij een schrijfactie krijg je geen resultaat maar een BEVESTIGINGSZIN terug.
   Lees die letterlijk voor en wacht op antwoord. Formuleer nooit je eigen
   versie van wat er gaat gebeuren, en zeg nooit dat iets gedaan is voordat je
@@ -72,6 +74,13 @@ def _sessie_config(db: Session) -> Dict[str, Any]:
                 f"Spreek dat woord zelf nooit uit."),
             "audio": {
                 "input": {
+                    # De browser moet kunnen zien wat JIJ zei: daar hangt de
+                    # bevestiging aan. De server legt die transcriptie tegen
+                    # het bevestigingswoord -- het model beslist dat niet.
+                    "transcription": {
+                        "model": s.voice_stt_model or "gpt-4o-mini-transcribe",
+                        "language": "nl",
+                    },
                     # Bij push-to-talk bepaalt de browser wanneer er audio gaat;
                     # dan hoort de server niet zelf te beslissen dat iemand
                     # uitgesproken is. Bij een open microfoon wel.

@@ -37,6 +37,7 @@ def db(monkeypatch):
     import models.thread  # noqa: F401
     import models.message  # noqa: F401  (background_runs verwijst ernaar)
     import models.voice  # noqa: F401
+    import models.setting  # noqa: F401  (de instellingen sturen het brein)
 
     monkeypatch.setenv("LABX_FERNET_KEY",
                        "dGVzdC1zbGV1dGVsLXZvb3ItZGUtdW5pdC10ZXN0cy0wMDA9")
@@ -52,6 +53,7 @@ def db(monkeypatch):
         models.voice.VoiceSession.__table__,
         models.voice.VoiceEvent.__table__,
         models.voice.VoicePendingAction.__table__,
+        models.setting.AppSettings.__table__,
     ])
     s = sessionmaker(bind=engine)()
     try:
@@ -260,3 +262,85 @@ def test_de_verboden_acties_bestaan_niet_als_tool():
                 "secret", "geheim", "kluis", "instelling", "guard")
     for naam in alles:
         assert not any(v in naam.lower() for v in verboden), naam
+
+
+def test_zonder_openai_sleutel_blijft_de_assistent_bruikbaar(db):
+    """De sleutel is nodig om spraak te VERSTAAN, niet om na te denken.
+
+    Het pijplijn-brein draait op de Claude-CLI. Zette je de assistent zonder
+    OpenAI-sleutel helemaal uit, dan was het typveld onbereikbaar en daarmee
+    de hele functie onbruikbaar voor wie alleen typt. Hij valt daarom terug op
+    de pijplijn in plaats van uit te gaan.
+    """
+    from services.settings_service import update_settings
+
+    uit = update_settings(db, {"voice_enabled": True, "voice_brein": "realtime"})
+
+    assert uit["voice_enabled"] is True, "aanzetten zonder sleutel moet blijven staan"
+    assert uit["voice_brein"] == "pipeline", "realtime kan niet zonder sleutel"
+    assert uit["openai_key_configured"] is False
+
+
+def test_de_spraakinstellingen_komen_ook_uit_get_settings(db):
+    """De hele spraaklaag leest zijn instellingen via get_settings().
+
+    ResolvedSettings kopieert expliciet veld voor veld. Vergeet je er daar
+    een, dan krijgt de spraaklaag stilzwijgend de standaardwaarde terug: de
+    assistent lijkt uit te staan, de sleutel lijkt te ontbreken en het
+    bevestigingswoord valt terug op het standaardwoord -- zonder foutmelding.
+    Dit is precies hoe dat een keer misging.
+    """
+    from services.settings_service import get_settings, update_settings
+
+    update_settings(db, {
+        "voice_enabled": True,
+        "voice_bevestiging": "spraak",
+        "voice_woord": "henk",
+        "voice_meld_runs": True,
+        "voice_dag_limiet_usd": 12.5,
+        "openai_key": "sk-test-sleutel",
+    })
+
+    s = get_settings(db)
+
+    assert s.voice_enabled is True
+    assert s.voice_bevestiging == "spraak"
+    assert s.voice_woord == "henk"
+    assert s.voice_meld_runs is True
+    assert s.voice_dag_limiet_usd == 12.5
+    assert s.openai_key_encrypted, "de spraaklaag moet de sleutel hier kunnen vinden"
+
+
+def test_een_te_laat_antwoord_is_herkenbaar_als_te_laat(db):
+    """Een bevestiging die net verlopen is, moet vindbaar blijven.
+
+    Anders gaat een late "henk" als gewone zin naar het brein, stelt dat
+    dezelfde schrijfactie opnieuw voor, en denk jij dat je bevestigde terwijl
+    je in werkelijkheid een nieuw voorstel kreeg.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from models.voice import VoicePendingAction
+    from services.voice.sessie import VoiceSessieService
+
+    svc = VoiceSessieService(db)
+    sessie = svc.start(brein="pipeline", microfoon="ptt")
+
+    nu = datetime.now(timezone.utc)
+    db.add(VoicePendingAction(
+        id="verlopen-1", session_id=sessie.id, tool="verplaats_ticket",
+        parameters={"ticket": "PLAT-2"}, zin="Je wilt PLAT-2 verplaatsen?",
+        status="verlopen",
+        created_at=(nu - timedelta(seconds=40)).isoformat(),
+        expires_at=(nu - timedelta(seconds=20)).isoformat(),
+        resolved_at=(nu - timedelta(seconds=20)).isoformat()))
+    db.commit()
+
+    assert svc.openstaand(sessie.id) is None, "verlopen telt niet als openstaand"
+
+    net = svc.net_verlopen(sessie.id)
+    assert net is not None and net.id == "verlopen-1"
+
+    # Maar een bevestiging van een kwartier geleden is geen 'te laat antwoord'
+    # meer; dan is het gewoon een nieuwe zin.
+    assert svc.net_verlopen(sessie.id, binnen_seconden=5) is None

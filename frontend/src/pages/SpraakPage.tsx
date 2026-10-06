@@ -10,11 +10,13 @@
  * ruimte, en het maakt de functie bruikbaar zonder OpenAI-sleutel.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Square, Send, Volume2, VolumeX, Loader2 } from "lucide-react";
+import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2 } from "lucide-react";
 
 import { Badge, Button, Card, EmptyState, Input } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { Opname, lees, spraakApi, zwijg } from "@/lib/spraak";
+import { startRealtime } from "@/lib/spraakRealtime";
+import type { RealtimeSessie } from "@/lib/spraakRealtime";
 import type { SpraakGebeurtenis, SpraakSessie, SpraakStatus } from "@/lib/spraak";
 
 export function SpraakPage() {
@@ -29,6 +31,13 @@ export function SpraakPage() {
 
   const opname = useRef(new Opname());
   const onder = useRef<HTMLDivElement | null>(null);
+
+  // Het realtime-brein houdt een eigen verbinding open; die hoort bij deze
+  // pagina en moet dus ook met de pagina mee verdwijnen.
+  const realtime = useRef<RealtimeSessie | null>(null);
+  const [luistert, setLuistert] = useState(false);
+  const [rtStatus, setRtStatus] = useState<string | null>(null);
+  const isRealtime = sessie?.brein === "realtime";
 
   useEffect(() => {
     spraakApi.status().then(setStatus).catch(() => setStatus({ aan: false }));
@@ -63,6 +72,13 @@ export function SpraakPage() {
     onder.current?.scrollIntoView({ behavior: "smooth" });
   }, [sessie?.tijdlijn?.length]);
 
+  // Een open microfoon die blijft luisteren nadat je weg navigeert is precies
+  // wat je niet wilt.
+  useEffect(() => () => {
+    realtime.current?.stop();
+    realtime.current = null;
+  }, []);
+
   async function startSessie() {
     setBezig(true);
     setMelding(null);
@@ -78,6 +94,10 @@ export function SpraakPage() {
 
   async function stopSessie() {
     if (!sessie) return;
+    realtime.current?.stop();
+    realtime.current = null;
+    setLuistert(false);
+    setRtStatus(null);
     zwijg();
     await spraakApi.stop(sessie.id).catch(() => {});
     setSessie(null);
@@ -136,6 +156,33 @@ export function SpraakPage() {
     }
   }
 
+  async function luisterenAanUit() {
+    if (!sessie) return;
+    if (realtime.current) {
+      realtime.current.stop();
+      realtime.current = null;
+      setLuistert(false);
+      setRtStatus(null);
+      return;
+    }
+    setBezig(true);
+    setMelding(null);
+    try {
+      zwijg();   // het realtime-model praat zelf; niet er doorheen lezen
+      realtime.current = await startRealtime(sessie.id, {
+        onStatus: setRtStatus,
+        onVeranderd: () => { void verversen(sessie.id); },
+        onFout: (f) => setMelding(f instanceof Error ? f.message : String(f)),
+      });
+      setLuistert(true);
+    } catch (err) {
+      setMelding(err instanceof ApiError || err instanceof Error
+        ? err.message : "De verbinding kwam niet tot stand");
+    } finally {
+      setBezig(false);
+    }
+  }
+
   async function bevestig(akkoord: boolean) {
     if (!sessie) return;
     setBezig(true);
@@ -168,6 +215,7 @@ export function SpraakPage() {
         <h1 className="text-lg font-semibold">Spraak</h1>
         {sessie && <Badge tone="green">sessie loopt</Badge>}
         {status?.brein && <Badge>{status.brein === "realtime" ? "realtime" : "pijplijn"}</Badge>}
+        {rtStatus && <Badge tone={luistert ? "green" : "neutral"}>{rtStatus}</Badge>}
         <div className="flex-1" />
         {sessie && (
           <span className="text-xs text-muted-foreground">
@@ -247,8 +295,24 @@ export function SpraakPage() {
               <Button onClick={() => stuur(tekst)} disabled={bezig || !tekst.trim()}>
                 <Send size={15} /> Stuur
               </Button>
-              {/* Push-to-talk: ingedrukt houden. Geen schakelaar, want dan weet
-                  je niet of hij nog luistert. */}
+              {/* Bij het realtime-brein luistert de microfoon continu, dus
+                  daar hoort een schakelaar. Bij de pijplijn houd je de knop
+                  ingedrukt: dan weet je zeker wanneer hij meeluistert. */}
+              {isRealtime ? (
+                <Button
+                  variant={luistert ? "danger" : "secondary"}
+                  onClick={luisterenAanUit}
+                  disabled={bezig || !kanSpreken}
+                  title={kanSpreken
+                    ? "Open microfoon aan- of uitzetten"
+                    : "Er staat geen OpenAI-sleutel ingesteld"}
+                >
+                  {bezig
+                    ? <Loader2 size={15} className="animate-spin" />
+                    : luistert ? <MicOff size={15} /> : <Mic size={15} />}
+                  {luistert ? "Stop luisteren" : "Luisteren"}
+                </Button>
+              ) : (
               <Button
                 variant={opnemen ? "danger" : "secondary"}
                 disabled={bezig && !opnemen}
@@ -266,6 +330,7 @@ export function SpraakPage() {
                   : opnemen ? <Square size={15} /> : <Mic size={15} />}
                 {opnemen ? "Loslaten" : "Praten"}
               </Button>
+              )}
             </div>
           </div>
         </div>

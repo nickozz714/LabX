@@ -9,7 +9,7 @@ import { labsApi } from "@/lib/labs";
 import { useAuth } from "@/contexts/AuthContext";
 import { api, ApiError } from "@/lib/api";
 import type { AppSettingsDto, GuardModelStatus, LabExtra } from "@/lib/types";
-import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/components/ui";
+import { Badge, Button, Card, Input, Label, Select, TextArea, Toggle } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ClaimResourcesCard } from "@/components/ClaimResourcesCard";
@@ -42,7 +42,7 @@ export function SettingsPage() {
 
   if (!settings) return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
 
-  async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string }) {
+  async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string; openai_key?: string }) {
     try {
       const updated = await settingsApi.update({ ...settings, ...patch });
       setSettings(updated);
@@ -174,7 +174,7 @@ export function SettingsPage() {
                 value={settings.voice_brein || "pipeline"}
                 onChange={(e) => {
                   setSettings({ ...settings, voice_brein: e.target.value as "realtime" | "pipeline" });
-                  save({ voice_brein: e.target.value });
+                  save({ voice_brein: e.target.value as "realtime" | "pipeline" });
                 }}
               >
                 <option value="pipeline">Pijplijn (transcriptie + Claude) — goedkoper</option>
@@ -187,7 +187,7 @@ export function SettingsPage() {
                 value={settings.voice_microfoon || "ptt"}
                 onChange={(e) => {
                   setSettings({ ...settings, voice_microfoon: e.target.value as "ptt" | "open" });
-                  save({ voice_microfoon: e.target.value });
+                  save({ voice_microfoon: e.target.value as "ptt" | "open" });
                 }}
               >
                 <option value="ptt">Push-to-talk — alleen wat jij opstuurt</option>
@@ -200,7 +200,7 @@ export function SettingsPage() {
                 value={settings.voice_bevestiging || "beide"}
                 onChange={(e) => {
                   setSettings({ ...settings, voice_bevestiging: e.target.value as "klik" | "spraak" | "beide" });
-                  save({ voice_bevestiging: e.target.value });
+                  save({ voice_bevestiging: e.target.value as "klik" | "spraak" | "beide" });
                 }}
               >
                 <option value="beide">Allebei</option>

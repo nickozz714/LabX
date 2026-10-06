@@ -157,6 +157,33 @@ class VoiceSessieService:
             return None
         return rij
 
+    def net_verlopen(self, session_id: str, binnen_seconden: int = 120
+                     ) -> Optional[VoicePendingAction]:
+        """De laatste bevestiging die kort geleden is vervallen.
+
+        Nodig om een te laat antwoord te herkennen. Zonder dit belandt een
+        late "henk" als gewone zin bij het brein, dat dan dezelfde actie
+        opnieuw voorstelt -- je denkt te bevestigen en krijgt ongemerkt een
+        nieuw voorstel voor je.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        rij = (self.db.query(VoicePendingAction)
+               .filter(VoicePendingAction.session_id == session_id,
+                       VoicePendingAction.status == "verlopen")
+               .order_by(VoicePendingAction.resolved_at.desc()).first())
+        if rij is None or not rij.resolved_at:
+            return None
+        try:
+            toen = datetime.fromisoformat(rij.resolved_at)
+        except ValueError:
+            return None
+        if toen.tzinfo is None:
+            toen = toen.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - toen > timedelta(seconds=binnen_seconden):
+            return None
+        return rij
+
     # ── bevestigen ──────────────────────────────────────────────────────────
 
     async def beantwoord(self, session_id: str, *, antwoord: Optional[str] = None,

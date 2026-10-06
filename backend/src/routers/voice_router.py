@@ -79,8 +79,15 @@ def start_sessie(payload: Optional[Dict[str, Any]] = None,
             f"Het dagplafond van ${limiet:.2f} is bereikt. "
             "Morgen weer, of zet het plafond hoger bij Instellingen."))
 
+    brein = payload.get("brein") or s.voice_brein
+    # Het realtime-brein draait bij OpenAI. Zonder sleutel kan dat niet, en
+    # een sessie die bij de eerste zin omvalt is erger dan een sessie die
+    # meteen met de pijplijn begint.
+    if brein == "realtime" and not s.openai_key_encrypted:
+        brein = "pipeline"
+
     svc = VoiceSessieService(db)
-    sessie = svc.start(brein=payload.get("brein") or s.voice_brein,
+    sessie = svc.start(brein=brein,
                        microfoon=payload.get("microfoon") or s.voice_microfoon)
     return _sessie_dto(sessie)
 
@@ -149,6 +156,17 @@ async def zeg(session_id: str, payload: Dict[str, Any],
         if uit["status"] != "geweigerd_kanaal":
             svc.noteer(session_id, "assistent", uit.get("melding") or "")
             return {"antwoord": uit.get("melding"), "bevestiging": uit}
+
+    # Te laat bevestigd: zeg dat eerlijk in plaats van de zin door te geven
+    # aan het brein, want dat stelt dezelfde actie dan gewoon opnieuw voor.
+    elif bev.is_bevestiging(tekst, s.voice_woord):
+        verlopen = svc.net_verlopen(session_id)
+        if verlopen is not None:
+            melding = (f"Dat was te laat, ik heb niets gedaan. "
+                       f"{verlopen.zin} Zeg het opnieuw als je het alsnog wilt.")
+            svc.noteer(session_id, "gebruiker", tekst)
+            svc.noteer(session_id, "assistent", melding)
+            return {"antwoord": melding, "bevestiging": {"status": "verlopen"}}
 
     svc.noteer(session_id, "gebruiker", tekst)
     from services.voice.brein import antwoord_op
