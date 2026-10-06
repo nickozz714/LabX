@@ -69,8 +69,18 @@ jobs:
           # door aan `docker compose`, zodat een lokale build hetzelfde nummer
           # in de bundel bakt als de installer draagt. Bleef dit op 0.1.0 staan,
           # dan zei een verse installatie dat hij 0.1.0 draaide.
-          sed -i.bak -E "0,/^version = \".*\"/s//version = \"$V\"/" Cargo.toml && rm -f Cargo.toml.bak
-          echo "app-versie gezet op $V (tauri.conf.json + Cargo.toml: $(grep -m1 '^version' Cargo.toml))"
+          #
+          # Met node en niet met sed: BSD-sed op de macOS-runner kent het
+          # `0,/regex/`-adres niet, dus daar deed het stil niets — de build
+          # slaagde en Cargo.toml bleef op 0.1.0 staan.
+          node -e "
+            const fs=require('fs'); const f='Cargo.toml';
+            const s=fs.readFileSync(f,'utf8');
+            const n=s.replace(/^version = \".*\"/m, 'version = \"'+process.argv[1]+'\"');
+            if (n===s) { console.error('Cargo.toml: versieregel niet gevonden'); process.exit(1); }
+            fs.writeFileSync(f,n);
+          " "$V"
+          echo "app-versie gezet op $V — tauri.conf.json: $(node -p "require('./tauri.conf.json').version"), Cargo.toml: $(grep -m1 '^version' Cargo.toml)"
 
       - name: Install desktop deps
         working-directory: desktop
