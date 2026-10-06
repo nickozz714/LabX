@@ -341,6 +341,7 @@ from routers import (
     skill_router, tool_router, mcp_router, workflow_router, schedule_router, azure_profile_router,
     board_router, notify_router, guard_router, resource_router, secret_router,
     time_router,
+    voice_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -366,3 +367,4 @@ app.include_router(resource_router.router, prefix="/api")
 app.include_router(secret_router.router, prefix="/api")
 app.include_router(audit_router.router, prefix="/api")
 app.include_router(time_router.router, prefix="/api")
+app.include_router(voice_router.router, prefix="/api")
