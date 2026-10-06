@@ -45,6 +45,33 @@ class AppSettings(Base):
     # klantmedewerkers, wat de uren van de ene klant opblies en die van de
     # andere liet verdampen. Leeg = alleen wat je in LabX zelf schreef.
     eigen_auteurs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # --- spraakassistent -----------------------------------------------------
+    # De hele functie hangt aan `voice_enabled`: staat die uit, dan is het
+    # tabblad onzichtbaar en bestaan de endpoints voor de interface niet.
+    # Versleuteld, net als het oauth-token: nooit terug via de API.
+    openai_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    voice_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # "realtime" (spraakmodel van OpenAI doet intentie én stem) of "pipeline"
+    # (transcriberen, Claude als brein via de bestaande CLI, lokaal voorlezen).
+    voice_brein: Mapped[str] = mapped_column(String(16), nullable=False, default="pipeline")
+    voice_microfoon: Mapped[str] = mapped_column(String(16), nullable=False, default="ptt")
+    # Hoe je een schrijfactie bevestigt: "klik", "spraak" of "beide".
+    voice_bevestiging: Mapped[str] = mapped_column(String(16), nullable=False, default="beide")
+    # Het woord dat bevestigt. Bewust NIET "ja": een omstander die toevallig
+    # ja zegt moet niets kunnen. Moet het hele antwoord zijn, niet een woord
+    # erin — zie services/voice/bevestiging.py.
+    voice_woord: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Uit zichzelf melden dat een run klaar is. Standaard UIT: anders word je
+    # onderbroken door werk waar je niet naar vroeg.
+    voice_meld_runs: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Kostenbeheersing. 0 = geen limiet.
+    voice_sessie_minuten: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    voice_dag_limiet_usd: Mapped[float] = mapped_column(Float, nullable=False, default=5.0)
+    # Modelkeuzes per onderdeel, zodat je kunt schuiven zonder code.
+    voice_realtime_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    voice_stt_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    voice_brein_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     default_effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
     fallback_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)

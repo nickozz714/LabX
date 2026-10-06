@@ -40,6 +40,20 @@ _ADDITIVE_COLUMNS = {
         ("chat_archive_days", "INTEGER"),
         # Onder welke namen je in Jira/DevOps staat, voor de urenschatting.
         ("eigen_auteurs", "JSON"),
+        # Spraakassistent. Alles standaard uit/leeg: een bestaande installatie
+        # merkt niets tot je hem zelf aanzet.
+        ("openai_key_encrypted", "TEXT"),
+        ("voice_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("voice_brein", "VARCHAR(16) NOT NULL DEFAULT 'pipeline'"),
+        ("voice_microfoon", "VARCHAR(16) NOT NULL DEFAULT 'ptt'"),
+        ("voice_bevestiging", "VARCHAR(16) NOT NULL DEFAULT 'beide'"),
+        ("voice_woord", "VARCHAR(64)"),
+        ("voice_meld_runs", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("voice_sessie_minuten", "INTEGER NOT NULL DEFAULT 30"),
+        ("voice_dag_limiet_usd", "FLOAT NOT NULL DEFAULT 5.0"),
+        ("voice_realtime_model", "VARCHAR(128)"),
+        ("voice_stt_model", "VARCHAR(128)"),
+        ("voice_brein_model", "VARCHAR(128)"),
         ("auto_recall_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
         ("auto_recall_tool_name", "VARCHAR(255)"),
         ("auto_recall_query_template", "TEXT"),
@@ -258,6 +272,7 @@ def init_db() -> None:
         skill_tool,
         thread,
         time_entry,
+        voice,
         tool,
         workflow,
     )
