@@ -70,8 +70,11 @@ class Antwoord:
 class Context:
     """Alles wat een actie nodig heeft om zijn werk te doen."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, session_id: Optional[str] = None):
         self.db = db
+        # Een begeleide opdracht hoort bij één gesprek: zonder dit zou een
+        # concept uit de ene sessie in de andere opduiken.
+        self.session_id = session_id
 
     # -- borden en tickets --
 

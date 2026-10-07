@@ -113,3 +113,29 @@ class VoicePendingAction(Base):
     resultaat: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (Index("idx_voice_pending_sessie", "session_id", "status"),)
+
+
+class VoiceConcept(Base):
+    """Een opdracht die over meerdere beurten wordt opgebouwd.
+
+    Dit staat met opzet in de DATABASE en niet in het geheugen van het model.
+    Een model dat zelf een concept onthoudt, vult op den duur velden in die je
+    nooit gezegd hebt -- en bij een planning of een workflow merk je dat pas
+    als het ding draait. De server weet wat er gevraagd is en wat er ingevuld
+    staat; het model stelt alleen de vraag en geeft het antwoord door.
+    """
+
+    __tablename__ = "voice_concepten"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("voice_sessions.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    # "planning" of "workflow"
+    soort: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Wat er tot nu toe is ingevuld.
+    velden: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # bezig | afgerond | afgebroken
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="bezig")
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -20,8 +20,19 @@ from sqlalchemy.orm import Session
 from component_logging import get_logger
 from models.voice import VoiceEvent, VoicePendingAction, VoiceSession
 from services.voice import bevestiging as bev
-from services.voice.acties import Antwoord, Context, LEESACTIES
-from services.voice.schrijfacties import SCHRIJFACTIES, UITVOERDERS
+from services.voice.acties import Antwoord, Context, LEESACTIES as _LEES
+from services.voice.opdrachtacties import (OPDRACHT_LEESACTIES,
+                                           OPDRACHT_SCHRIJFACTIES,
+                                           OPDRACHT_UITVOERDERS)
+from services.voice.schrijfacties import SCHRIJFACTIES as _SCHRIJF
+from services.voice.schrijfacties import UITVOERDERS as _UITVOER
+
+# De begeleide opdracht hangt er als een aparte laag naast en wordt hier
+# samengevoegd: zo hoeft acties.py niets van opdrachtacties.py te weten, en
+# blijft die importrichting één kant op.
+LEESACTIES = {**_LEES, **OPDRACHT_LEESACTIES}
+SCHRIJFACTIES = {**_SCHRIJF, **OPDRACHT_SCHRIJFACTIES}
+UITVOERDERS = {**_UITVOER, **OPDRACHT_UITVOERDERS}
 
 log = get_logger(__name__)
 
@@ -112,6 +123,10 @@ class VoiceSessieService:
         instructie aan het model, want een instructie kan genegeerd worden.
         """
         args = {k: v for k, v in (args or {}).items() if v is not None}
+
+        # De context krijgt de sessie mee: een begeleide opdracht hoort bij
+        # dit gesprek en mag niet uit een ander opduiken.
+        self.ctx.session_id = session_id
 
         if tool in LEESACTIES:
             uit: Antwoord = LEESACTIES[tool](self.ctx, **args)

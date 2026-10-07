@@ -79,6 +79,28 @@ TOOLSCHEMA: List[Dict[str, Any]] = [
         "tot": {"type": "string", "description": "Einddag, JJJJ-MM-DD."}}),
 
     # ── schrijven (altijd via bevestiging) ───────────────────────────────
+    # ── begeleide opdracht ───────────────────────────────────────────────
+    # Deze vier voeren het gesprek; rond_opdracht_af is de schrijfactie.
+    _t("begin_opdracht",
+       "Begin met het opbouwen van een planning of een workflow. Gebruik dit "
+       "als de gebruiker er eentje wil MAKEN -- dat kost meerdere beurten, en "
+       "jij stelt steeds de vraag die je terugkrijgt.",
+       {"soort": {"type": "string", "enum": ["planning", "workflow"],
+                  "description": "Wat er opgebouwd wordt."}},
+       ["soort"]),
+    _t("vul_aan",
+       "Het antwoord van de gebruiker op de vraag die nu openstaat. Geef "
+       "letterlijk door wat hij zei; je hoeft niet te weten bij welk veld het "
+       "hoort, dat weet het systeem. Bij een stappenlijst sluit 'klaar' de "
+       "lijst af.",
+       {"waarde": {"type": "string", "description": "Wat de gebruiker zei."}},
+       ["waarde"]),
+    _t("toon_concept",
+       "Wat er tot nu toe is opgebouwd. Gebruik dit bij 'wat heb ik nu' of "
+       "'lees het nog eens voor'.", {}),
+    _t("stop_opdracht",
+       "Gooi de lopende opdracht weg. Gebruik dit bij 'laat maar', 'stop' of "
+       "'begin opnieuw'.", {}),
     _t("start_agent",
        "Zet de agent aan het werk op een ticket. De gebruiker moet dit eerst "
        "bevestigen; die bevestigingszin krijg je terug en lees je voor.",
@@ -115,6 +137,10 @@ TOOLSCHEMA: List[Dict[str, Any]] = [
        "Voer een workflow uit op een lab.",
        {"workflow": {"type": "string"}, "lab": {"type": "string"}},
        ["workflow"]),
+    _t("rond_opdracht_af",
+       "De opgebouwde planning of workflow daadwerkelijk aanmaken. Doe dit "
+       "pas als alles ingevuld is; je krijgt een bevestigingszin terug met "
+       "het hele concept erin.", {}),
     _t("wijzig_werkers",
        "Meer of minder werkers in een lab. Gebruik dit bij 'zet er meer "
        "werkers op' of 'schaal terug'.",

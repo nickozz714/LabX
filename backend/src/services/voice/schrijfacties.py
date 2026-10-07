@@ -382,39 +382,41 @@ SCHRIJFACTIES: Dict[str, Callable[..., Antwoord]] = {
     "voer_schedule_uit": bereid_voer_schedule_uit,
 }
 
-def voer_wijzig_werkers(ctx: Context, *, lab_id: str, min: int, max: int, **_):
+async def voer_wijzig_werkers(db: Session, p: Dict[str, Any]) -> str:
     from models.lab import Lab
 
-    rij = ctx.db.get(Lab, lab_id)
+    rij = db.get(Lab, p["lab_id"])
     if rij is None:
-        return {"melding": "Dat lab bestaat niet meer."}
-    rij.min_workers, rij.max_workers = int(min), int(max)
-    # De autoscaler brengt het aantal zelf binnen de nieuwe grenzen; hier
-    # alleen de grenzen verzetten, anders vecht je met hem om de controle.
-    ctx.db.commit()
-    return {"melding": f"{rij.name} staat nu op minimaal {min} en maximaal {max} werkers."}
+        return "Dat lab bestaat niet meer."
+    rij.min_workers, rij.max_workers = int(p["min"]), int(p["max"])
+    # Alleen de GRENZEN verzetten, niet het actuele aantal: de autoscaler
+    # brengt dat zelf binnen de nieuwe marges, en daar moet je niet mee vechten.
+    db.commit()
+    return (f"{rij.name} staat nu op minimaal {rij.min_workers} en maximaal "
+            f"{rij.max_workers} werkers.")
 
 
-def voer_wijzig_sessies(ctx: Context, *, lab_id: str, aantal: int, **_):
+async def voer_wijzig_sessies(db: Session, p: Dict[str, Any]) -> str:
     from models.lab import Lab
 
-    rij = ctx.db.get(Lab, lab_id)
+    rij = db.get(Lab, p["lab_id"])
     if rij is None:
-        return {"melding": "Dat lab bestaat niet meer."}
-    rij.sessies_per_werker = int(aantal)
-    ctx.db.commit()
-    return {"melding": f"In {rij.name} mogen nu {aantal} sessies tegelijk per werker."}
+        return "Dat lab bestaat niet meer."
+    rij.sessies_per_werker = int(p["aantal"])
+    db.commit()
+    return (f"In {rij.name} mogen nu {rij.sessies_per_werker} sessies tegelijk "
+            f"per werker.")
 
 
-def voer_zet_schedule(ctx: Context, *, schedule_id: int, aan: bool, **_):
+async def voer_zet_schedule(db: Session, p: Dict[str, Any]) -> str:
     from models.schedule import Schedule
 
-    rij = ctx.db.get(Schedule, int(schedule_id))
+    rij = db.get(Schedule, int(p["schedule_id"]))
     if rij is None:
-        return {"melding": "Die planning bestaat niet meer."}
-    rij.is_enabled = bool(aan)
-    ctx.db.commit()
-    return {"melding": f"{rij.name} staat nu {'aan' if aan else 'uit'}."}
+        return "Die planning bestaat niet meer."
+    rij.is_enabled = bool(p["aan"])
+    db.commit()
+    return f"{rij.name} staat nu {'aan' if rij.is_enabled else 'uit'}."
 
 
 UITVOERDERS: Dict[str, Callable[..., Any]] = {
