@@ -56,6 +56,9 @@ export function SpraakPage() {
   const [rtOpnemen, setRtOpnemen] = useState(false);
   const [rtStatus, setRtStatus] = useState<string | null>(null);
   const [niveau, setNiveau] = useState(0);
+  // De meter zelf blijft in een ref: de orb leest hem per frame uit, en dat
+  // mag geen re-render kosten.
+  const meterRef = useRef<((uit: Uint8Array) => void) | null>(null);
   const isRealtime = sessie?.brein === "realtime";
   const openMicrofoon = status?.microfoon === "open";
   // Welke stem er voorleest, en bij welke sessie de kosten horen.
@@ -104,6 +107,7 @@ export function SpraakPage() {
     }
     const meter = meetStream(stream);
     if (!meter) return;
+    meterRef.current = meter.spectrum;
     let id = 0;
     const tik = () => {
       setNiveau(meter.lees());
@@ -113,6 +117,7 @@ export function SpraakPage() {
     return () => {
       cancelAnimationFrame(id);
       meter.stop();
+      meterRef.current = null;
       setNiveau(0);
     };
   }, [opnemen]);
@@ -338,7 +343,8 @@ export function SpraakPage() {
               praat kijk je niet naar de tekst, en dit is het enige dat dan
               terugkoppelt dat er iets gebeurt. */}
           <div className="flex justify-center pb-2 pt-1">
-            <Orb toestand={orbToestand} niveau={niveau} maat={132} />
+            <Orb toestand={orbToestand} niveau={niveau} maat={150}
+                 spectrum={meterRef.current ?? undefined} />
           </div>
           {tijdlijn.map((e) => <Regel key={e.id} e={e} />)}
 

@@ -216,7 +216,18 @@ export async function startRealtime(
     }
   }
 
-  dc.addEventListener("open", () => meld.onStatus?.("Luistert"));
+  let kanaalOpen = false;
+  dc.addEventListener("open", () => { kanaalOpen = true; meld.onStatus?.("Luistert"); });
+  // Zonder deze controle blijft een mislukte verbinding er precies zo uitzien
+  // als een werkende: de knop reageert, en er gebeurt niets.
+  setTimeout(() => {
+    if (!kanaalOpen) {
+      meld.onStatus?.("Geen verbinding");
+      meld.onFout?.(new Error(
+        "De verbinding met OpenAI kwam niet tot stand (het datakanaal bleef "
+        + "dicht). Meestal blokkeert een netwerk of VPN het WebRTC-verkeer."));
+    }
+  }, 8000);
   dc.addEventListener("close", () => meld.onStatus?.("Verbroken"));
   dc.addEventListener("message", (bericht) => {
     let e: any;
@@ -228,7 +239,12 @@ export async function startRealtime(
     if (e.type === "session.created") meld.onStatus?.("Luistert");
     if (e.type === "response.created") meld.onStatus?.("Spreekt");
     if (e.type === "response.done") meld.onStatus?.("Luistert");
-    if (e.type === "error") meld.onFout?.(new Error(e.error?.message || "Realtime-fout"));
+    if (e.type === "error") {
+      const f = e.error || {};
+      meld.onFout?.(new Error(
+        [f.message, f.type, f.code, f.param].filter(Boolean).join(" · ")
+        || "Realtime-fout zonder toelichting"));
+    }
 
     if (e.type === "conversation.item.input_audio_transcription.completed" && e.transcript) {
       void gebruikerZei(String(e.transcript));
@@ -268,11 +284,15 @@ export async function startRealtime(
     },
   });
   if (!sdp.ok) {
+    // De body meenemen: met alleen een statuscode valt niet te zien OF het aan
+    // het token ligt, aan het model of aan de sessie, en dan ben je aan het
+    // raden in plaats van aan het repareren.
+    const uitleg = (await sdp.text().catch(() => "")).slice(0, 300);
     try { dc.close(); } catch { /* al dicht */ }
     try { pc.close(); } catch { /* al dicht */ }
     opruimen();
     audio.remove();
-    throw new Error(`OpenAI weigerde de verbinding (${sdp.status})`);
+    throw new Error(`OpenAI weigerde de verbinding (${sdp.status}) ${uitleg}`);
   }
   await pc.setRemoteDescription({ type: "answer", sdp: await sdp.text() });
 

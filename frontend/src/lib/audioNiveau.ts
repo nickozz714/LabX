@@ -38,6 +38,13 @@ function geefContext(): AudioContext | null {
 export type NiveauMeter = {
   /** Huidig niveau, 0..1. Leest zonder te wachten; bedoeld voor een rAF-lus. */
   lees: () => number;
+  /** Vult `uit` met het frequentiebeeld (0..255 per band).
+   *  Daarmee kan de visualisatie de VORM van je stem laten zien en niet
+   *  alleen de luidheid -- dat is het verschil tussen een meter en iets dat
+   *  eruitziet alsof het luistert. */
+  spectrum: (uit: Uint8Array) => void;
+  /** Aantal banden, zodat de aanroeper de juiste buffer kan maken. */
+  readonly banden: number;
   stop: () => void;
 };
 
@@ -53,6 +60,17 @@ function maakMeter(bron: AudioNode, ctx: AudioContext,
   let gestopt = false;
 
   return {
+    banden: analyser.frequencyBinCount,
+    spectrum: (uit: Uint8Array) => {
+      if (gestopt) {
+        uit.fill(0);
+        return;
+      }
+      // De cast is nodig sinds TypeScript de getypeerde arrays generiek maakte
+      // over hun buffer: lib.dom vraagt hier Uint8Array<ArrayBuffer>, terwijl
+      // een gewone `Uint8Array` als ArrayBufferLike wordt gelezen.
+      analyser.getByteFrequencyData(uit as Uint8Array<ArrayBuffer>);
+    },
     lees: () => {
       if (gestopt) return 0;
       analyser.getByteFrequencyData(buffer);
