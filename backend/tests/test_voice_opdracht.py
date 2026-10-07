@@ -141,8 +141,11 @@ def test_een_workflow_blijft_doorvragen_tot_je_klaar_zegt(db):
 
     uit = opdracht.vul_aan(db, concept, "klaar")
     assert uit.get("klaar") is True
-    assert concept.velden["stappen"] == ["Lees de logs van vannacht",
-                                         "Meld wat er misging"]
+    # Stappen zijn getypeerde knopen, geen losse zinnen: dat is wat een
+    # vertakking of een lus mogelijk maakt.
+    assert [s["prompt"] for s in concept.velden["stappen"]] == [
+        "Lees de logs van vannacht", "Meld wat er misging"]
+    assert all(s["type"] == "agent" for s in concept.velden["stappen"])
 
 
 def test_klaar_zeggen_zonder_enkele_stap_kan_niet(db):

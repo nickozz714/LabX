@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from component_logging import get_logger
-from services.voice import opdracht
+from services.voice import opdracht, stappen as stappenlaag
 from services.voice.opdracht import _nu
 from services.voice.acties import Antwoord, Bevestiging, Context
 
@@ -105,11 +105,12 @@ def bereid_rond_opdracht_af(ctx: Context, **_) -> Antwoord:
             parameters={"concept_id": concept.id, "lab_id": lab.id},
             zin=zin))
 
-    stappen = list(v.get("stappen") or [])
-    opsomming = "; ".join(f"{i}. {s}" for i, s in enumerate(stappen, start=1))
+    boom = v.get("stappen") or []
+    nodes, _edges = stappenlaag.naar_graaf(boom)
+    regels = stappenlaag.in_woorden(boom)
     zin = (f"Je wilt de workflow '{v['naam']}' aanmaken met "
-           f"{len(stappen)} stap{'pen' if len(stappen) != 1 else ''}: "
-           f"{opsomming}. Zal ik hem opslaan?")
+           f"{len(nodes)} activiteit{'en' if len(nodes) != 1 else ''}: "
+           f"{' '.join(regels)}. Zal ik hem opslaan?")
     return Antwoord(bevestiging=Bevestiging(
         tool="maak_workflow",
         parameters={"concept_id": concept.id},
@@ -153,40 +154,46 @@ async def voer_maak_planning(db, p: Dict[str, Any]) -> str:
 
 async def voer_maak_workflow(db, p: Dict[str, Any]) -> str:
     from models.workflow import Workflow
-    from services.workflows import migratie
 
     concept = _concept(db, p["concept_id"])
     if concept is None or concept.status != "bezig":
         return "Dat concept bestaat niet meer."
     v = dict(concept.velden or {})
 
-    stappen = [{"index": i, "title": _titel(s), "instruction": s}
-               for i, s in enumerate(v.get("stappen") or [], start=1)]
+    from services.workflows import graph
+
+    boom = v.get("stappen") or []
+    rauwe_nodes, rauwe_edges = stappenlaag.naar_graaf(boom)
+
+    # Door de normalisatie van de tekenaar heen halen: die vult de velden aan
+    # die wij niet noemen (posities, sleutels, herhaalgrenzen), gooit
+    # verbindingen weg die nergens heen gaan, en bewaakt de vorm. Zelf de
+    # uiteindelijke structuur schrijven zou betekenen dat een uitgesproken
+    # workflow bij elke wijziging aan de tekenaar kan breken.
+    nodes, edges = graph.normaliseer(rauwe_nodes, rauwe_edges)
+
+    # De platte stappenlijst blijft ook bestaan: die wordt elders gebruikt om
+    # een workflow samen te vatten.
+    stappen = [{"index": i, "title": n["naam"],
+                "instruction": n.get("prompt") or n.get("commando") or n["naam"]}
+               for i, n in enumerate(nodes, start=1)]
+
     rij = Workflow(name=v["naam"], description=v.get("omschrijving"),
                    markdown="", steps_json=stappen,
-                   nodes_json=[], edges_json=[], parameters_json=[],
+                   nodes_json=nodes, edges_json=edges, parameters_json=[],
                    is_enabled=True, created_at=_nu(), updated_at=_nu())
     db.add(rij)
     db.flush()
 
-    # De tekenaar heeft nodes en edges nodig; die laten we opbouwen door
-    # dezelfde omzetting die bestaande workflows gebruikt, zodat een workflow
-    # die je uitspreekt er precies zo uitziet als een die je tekende.
-    nodes, edges = migratie.zet_om(rij)
-    if nodes:
-        rij.nodes_json, rij.edges_json = nodes, edges
-
+    # Dezelfde controle die de tekenaar toont. Een workflow die je uitspreekt
+    # kan best nog een gat hebben -- dat hoor je liever nu dan als hij draait.
+    waarschuwingen = graph.valideer(nodes, edges)
     concept.status = "afgerond"
     db.commit()
-    return (f"De workflow {rij.name} staat klaar met {len(stappen)} stappen. "
-            f"Je kunt hem openen bij Workbench om hem bij te werken.")
 
-
-def _titel(instructie: str) -> str:
-    """Een korte titel uit de eerste woorden van de stap."""
-    woorden = (instructie or "").split()
-    kort = " ".join(woorden[:6])
-    return (kort[:60] or "Stap").rstrip(".,;:")
+    staart = (" Let op: " + " ".join(waarschuwingen[:2])) if waarschuwingen else ""
+    return (f"De workflow {rij.name} staat klaar met {len(nodes)} activiteiten. "
+            f"Je kunt hem openen bij Workbench.{staart}")
 
 
 OPDRACHT_SCHRIJFACTIES = {"rond_opdracht_af": bereid_rond_opdracht_af}

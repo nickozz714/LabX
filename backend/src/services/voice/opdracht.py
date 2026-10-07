@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from component_logging import get_logger
+from services.voice import stappen as stappenlaag
 
 log = get_logger(__name__)
 
@@ -211,7 +212,7 @@ def openstaand_veld(concept) -> Optional[Dict[str, Any]]:
     for veld in VELDEN[concept.soort]:
         naam = veld["naam"]
         if veld.get("herhaalt"):
-            if velden.get(f"{naam}_klaar"):
+            if stappenlaag.compleet(velden):
                 continue
             return veld
         if naam in velden:
@@ -226,8 +227,10 @@ def vraag_nu(concept) -> Optional[str]:
     veld = openstaand_veld(concept)
     if veld is None:
         return None
-    if veld.get("herhaalt") and (concept.velden or {}).get(veld["naam"]):
-        return veld.get("vervolgvraag") or veld["vraag"]
+    if veld.get("herhaalt"):
+        # De stappenlaag weet waar in de boom we zijn: in een tak, in een lus,
+        # of gewoon op het hoofdniveau. Die vraag is hier niet na te maken.
+        return stappenlaag.vraag(dict(concept.velden or {}))
     return veld["vraag"]
 
 
@@ -252,13 +255,10 @@ def vul_aan(db: Session, concept, waarde: str) -> Dict[str, Any]:
     plat = tekst.lower().strip(" .!?")
 
     if veld.get("herhaalt"):
-        if plat in KLAAR_WOORDEN:
-            if not velden.get(naam):
-                return {"vraag": "Er is nog geen enkele stap. Wat moet de "
-                                 "eerste stap doen?"}
-            velden[f"{naam}_klaar"] = True
-        else:
-            velden.setdefault(naam, []).append(tekst)
+        if plat in KLAAR_WOORDEN and not velden.get(naam) and not velden.get("pad"):
+            return {"vraag": "Er is nog geen enkele stap. Wat moet de "
+                             "eerste stap doen?"}
+        velden = stappenlaag.verwerk(velden, tekst, KLAAR_WOORDEN)
     elif veld.get("optioneel") and plat in ("geen", "sla over", "overslaan", "nee"):
         velden[f"{naam}_overgeslagen"] = True
     elif naam == "wanneer":
@@ -303,7 +303,11 @@ def sluit_open_lijst(db: Session, concept) -> bool:
     velden = copy.deepcopy(dict(concept.velden or {}))
     if not velden.get(veld["naam"]):
         return False
-    velden[f"{veld['naam']}_klaar"] = True
+    # Ook open takken sluiten: wie afrondt terwijl hij nog in een nee-tak zit,
+    # bedoelt de hele workflow en niet alleen die tak.
+    velden["pad"] = []
+    velden["open"] = None
+    velden["stappen_klaar"] = True
     concept.velden = velden
     concept.updated_at = _nu()
     flag_modified(concept, "velden")
@@ -325,7 +329,7 @@ def samenvatting(db: Session, concept) -> Dict[str, Any]:
     else:
         uit.update({
             "omschrijving": v.get("omschrijving"),
-            "stappen": list(v.get("stappen") or []),
+            "stappen": stappenlaag.in_woorden(v.get("stappen") or []),
         })
     uit["nog_te_vragen"] = vraag_nu(concept)
     return uit
