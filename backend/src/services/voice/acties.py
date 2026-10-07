@@ -246,7 +246,9 @@ def zoek_tickets(ctx: Context, *, klant: Optional[str] = None,
     borden = {b.id: b.name for b in ctx.db.query(Board).all()}
     return Antwoord(feiten={
         "aantal": len(rijen),
-        "tickets": [{"sleutel": t.key, "titel": (t.title or "")[:90],
+        # Titel eerst, sleutel daarna: het model leest voor wat het eerst
+        # ziet, en "PLAT-2, PLAT-1, PLAT-4" zegt hardop helemaal niets.
+        "tickets": [{"titel": (t.title or "")[:90], "sleutel": t.key,
                      "kolom": t.status, "klant": borden.get(t.board_id, "?"),
                      "agent": t.agent_state}
                     for t in rijen[:15]],
