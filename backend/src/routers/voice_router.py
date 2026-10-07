@@ -213,6 +213,34 @@ def tool(session_id: str, payload: Dict[str, Any],
         session_id, naam, payload.get("args") or {})
 
 
+@router.post("/sessies/{session_id}/transcript")
+def transcript(session_id: str, payload: Dict[str, Any],
+               db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Wat er in een realtime-gesprek gezegd is, voor de tijdlijn.
+
+    Bij het pijplijn-brein loopt elke zin via de server, dus die staat er
+    vanzelf in. Bij realtime praat de browser rechtstreeks met OpenAI en ziet
+    de server alleen de toolaanroepen -- dan is er achteraf niet terug te
+    lezen wat er namens jou gezegd is. Daarom stuurt de browser beide kanten
+    van het gesprek hierheen.
+    """
+    _vereis_aan(db)
+    rol = str(payload.get("rol") or "").strip()
+    if rol not in ("gebruiker", "assistent"):
+        raise HTTPException(status_code=400, detail="Onbekende rol")
+    tekst = str(payload.get("tekst") or "").strip()
+    if not tekst:
+        return {"status": "leeg"}
+
+    sessie = db.get(VoiceSession, session_id)
+    if sessie is None or sessie.status != "actief":
+        raise HTTPException(status_code=409, detail="Deze sessie loopt niet")
+
+    VoiceSessieService(db).noteer(session_id, rol, tekst[:4000],
+                                  kosten_usd=payload.get("kosten_usd"))
+    return {"status": "genoteerd"}
+
+
 @router.get("/tools")
 def tools(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     """Het toolschema, voor het realtime-model."""

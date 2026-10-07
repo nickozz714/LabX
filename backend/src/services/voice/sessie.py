@@ -54,7 +54,10 @@ class VoiceSessieService:
         voorbeeld = ("Vraag bijvoorbeeld wat er nu loopt, "
                      "of hoe het met een ticket staat.")
         if brein == "realtime":
-            return "Zet de microfoon aan en begin maar. " + voorbeeld
+            if microfoon == "open":
+                return "Zet de microfoon aan en begin maar. " + voorbeeld
+            return ("Zet de microfoon aan, houd daarna de praatknop ingedrukt. "
+                    + voorbeeld)
         if microfoon == "open":
             return "Ik luister. " + voorbeeld
         return "Houd de praatknop ingedrukt, of typ. " + voorbeeld

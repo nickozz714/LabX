@@ -50,8 +50,10 @@ export function SpraakPage() {
   // pagina en moet dus ook met de pagina mee verdwijnen.
   const realtime = useRef<RealtimeSessie | null>(null);
   const [luistert, setLuistert] = useState(false);
+  const [rtOpnemen, setRtOpnemen] = useState(false);
   const [rtStatus, setRtStatus] = useState<string | null>(null);
   const isRealtime = sessie?.brein === "realtime";
+  const openMicrofoon = status?.microfoon === "open";
 
   useEffect(() => {
     spraakApi.status().then(setStatus).catch(() => setStatus({ aan: false }));
@@ -115,6 +117,7 @@ export function SpraakPage() {
     realtime.current?.stop();
     realtime.current = null;
     setLuistert(false);
+    setRtOpnemen(false);
     setRtStatus(null);
     zwijg();
     await spraakApi.stop(sessie.id).catch(() => {});
@@ -180,6 +183,7 @@ export function SpraakPage() {
       realtime.current.stop();
       realtime.current = null;
       setLuistert(false);
+      setRtOpnemen(false);
       setRtStatus(null);
       return;
     }
@@ -187,11 +191,14 @@ export function SpraakPage() {
     setMelding(null);
     try {
       zwijg();   // het realtime-model praat zelf; niet er doorheen lezen
-      realtime.current = await startRealtime(sessie.id, {
-        onStatus: setRtStatus,
-        onVeranderd: () => { void verversen(sessie.id); },
-        onFout: (f) => setMelding(f instanceof Error ? f.message : String(f)),
-      });
+      realtime.current = await startRealtime(
+        sessie.id,
+        status?.microfoon === "open",
+        {
+          onStatus: setRtStatus,
+          onVeranderd: () => { void verversen(sessie.id); },
+          onFout: (f) => setMelding(f instanceof Error ? f.message : String(f)),
+        });
       setLuistert(true);
     } catch (err) {
       setMelding(err instanceof ApiError || err instanceof Error
@@ -364,7 +371,9 @@ export function SpraakPage() {
           {/* De praatknop krijgt een hele regel: op een telefoon is dit het
               element dat je blind moet kunnen raken. */}
           <div className="mt-2">
-            {isRealtime ? (
+            {isRealtime && (!luistert || openMicrofoon) ? (
+              /* Open microfoon: een schakelaar, want hij blijft luisteren.
+                 Nog niet verbonden: eerst de verbinding opzetten. */
               <Button
                 variant={luistert ? "danger" : "secondary"}
                 className={`h-12 w-full ${luistert ? "praat-puls" : ""}`}
@@ -374,7 +383,30 @@ export function SpraakPage() {
                 {bezig
                   ? <Loader2 size={18} className="animate-spin" />
                   : luistert ? <MicOff size={18} /> : <Mic size={18} />}
-                {luistert ? "Stop met luisteren" : "Luisteren"}
+                {luistert ? "Stop met luisteren" : "Microfoon aanzetten"}
+              </Button>
+            ) : isRealtime ? (
+              /* Verbonden met push-to-talk: OpenAI beslist dan niet zelf
+                 wanneer je uitgesproken bent, dus houd je de knop vast. */
+              <Button
+                variant={rtOpnemen ? "danger" : "secondary"}
+                className={`praatknop h-12 w-full ${rtOpnemen ? "praat-puls" : ""}`}
+                onMouseDown={() => { setRtOpnemen(true); realtime.current?.beginBeurt(); }}
+                onMouseUp={() => { setRtOpnemen(false); realtime.current?.eindBeurt(); }}
+                onMouseLeave={rtOpnemen
+                  ? () => { setRtOpnemen(false); realtime.current?.eindBeurt(); }
+                  : undefined}
+                onTouchStart={(e) => {
+                  e.preventDefault(); setRtOpnemen(true); realtime.current?.beginBeurt();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault(); setRtOpnemen(false); realtime.current?.eindBeurt();
+                }}
+                onTouchCancel={() => { setRtOpnemen(false); realtime.current?.eindBeurt(); }}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                {rtOpnemen ? <Square size={18} /> : <Mic size={18} />}
+                {rtOpnemen ? "Laat los om te versturen" : "Houd ingedrukt om te praten"}
               </Button>
             ) : (
               <Button

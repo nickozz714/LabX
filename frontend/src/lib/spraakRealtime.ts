@@ -21,6 +21,9 @@ import { getToken } from "@/lib/api";
 
 const OPENAI_CALLS = "https://api.openai.com/v1/realtime/calls";
 
+/** Korter dan dit is een tik, geen zin. OpenAI weigert zulke korte beurten. */
+const MINIMALE_BEURT_MS = 350;
+
 export type RealtimeMeldingen = {
   onStatus?: (status: string) => void;
   /** Er is iets gebeurd dat de tijdlijn moet verversen. */
@@ -33,7 +36,31 @@ export type RealtimeMeldingen = {
 export type RealtimeSessie = {
   stop: () => void;
   demp: (uit: boolean) => void;
+  /** Push-to-talk: ingedrukt. Alleen zinvol als de microfoon niet openstaat. */
+  beginBeurt: () => void;
+  /** Push-to-talk: losgelaten — sluit de beurt af en vraagt om antwoord. */
+  eindBeurt: () => void;
+  /** Staat de microfoon continu open (dan bepaalt OpenAI de beurten)? */
+  readonly openMicrofoon: boolean;
 };
+
+/** Een zin uit het realtime-gesprek vastleggen, zodat de tijdlijn klopt. */
+async function labxTranscript(sessieId: string, rol: "gebruiker" | "assistent",
+                              tekst: string) {
+  if (!tekst.trim()) return;
+  try {
+    await fetch(`/api/voice/sessies/${sessieId}/transcript`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+      },
+      body: JSON.stringify({ rol, tekst }),
+    });
+  } catch {
+    /* de tijdlijn mag het gesprek niet laten vastlopen */
+  }
+}
 
 async function labxTool(sessieId: string, naam: string, args: unknown) {
   const res = await fetch(`/api/voice/sessies/${sessieId}/tool`, {
@@ -95,10 +122,20 @@ function stuurMededeling(dc: RTCDataChannel, tekst: string) {
 
 export async function startRealtime(
   sessieId: string,
+  openMicrofoon: boolean,
   meld: RealtimeMeldingen = {},
 ): Promise<RealtimeSessie> {
   meld.onStatus?.("Microfoon aanvragen…");
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  // Bij push-to-talk staat de server-VAD uit: OpenAI beslist dan niet zelf
+  // wanneer je uitgesproken bent, dus moet de browser elke beurt afsluiten.
+  // Tot die tijd gaat het spoor op stil, anders stroomt de hele kamer mee.
+  const zetMicrofoon = (aan: boolean) => {
+    for (const t of stream.getAudioTracks()) t.enabled = aan;
+  };
+  if (!openMicrofoon) zetMicrofoon(false);
+  let begonnenOp = 0;
 
   const opruimen = () => {
     for (const t of stream.getTracks()) t.stop();
@@ -163,6 +200,11 @@ export async function startRealtime(
 
   async function gebruikerZei(tekst: string) {
     meld.onGezegd?.(tekst);
+    // Eerst vastleggen: ook een zin die nergens toe leidt hoort terug te
+    // lezen te zijn. Zonder dit staat er in de tijdlijn alleen wat er
+    // uitgevoerd is, en niet wat je gevraagd hebt.
+    await labxTranscript(sessieId, "gebruiker", tekst);
+    meld.onVeranderd?.();
     if (!wachtOpBevestiging || !tekst.trim()) return;
     wachtOpBevestiging = false;
     try {
@@ -190,6 +232,13 @@ export async function startRealtime(
 
     if (e.type === "conversation.item.input_audio_transcription.completed" && e.transcript) {
       void gebruikerZei(String(e.transcript));
+    }
+    // Wat de assistent zei komt als losse stukjes binnen; pas bij 'done' is
+    // het een hele zin die in de tijdlijn thuishoort.
+    if ((e.type === "response.output_audio_transcript.done"
+         || e.type === "response.audio_transcript.done") && e.transcript) {
+      void labxTranscript(sessieId, "assistent", String(e.transcript))
+        .then(() => meld.onVeranderd?.());
     }
     if (e.type === "response.output_item.done" && e.item?.type === "function_call") {
       if (nogNiet(e.item.call_id)) {
@@ -228,6 +277,7 @@ export async function startRealtime(
   await pc.setRemoteDescription({ type: "answer", sdp: await sdp.text() });
 
   return {
+    openMicrofoon,
     stop: () => {
       try { dc.close(); } catch { /* al dicht */ }
       try { pc.close(); } catch { /* al dicht */ }
@@ -235,8 +285,32 @@ export async function startRealtime(
       audio.remove();
       meld.onStatus?.("Gestopt");
     },
-    demp: (uit: boolean) => {
-      for (const t of stream.getAudioTracks()) t.enabled = !uit;
+    demp: (uit: boolean) => zetMicrofoon(!uit),
+
+    beginBeurt: () => {
+      if (openMicrofoon) return;
+      // Leeggooien voordat je begint: anders zit de stilte van daarvoor nog
+      // in de buffer en wordt die als jouw beurt meegestuurd.
+      stuur(dc, { type: "input_audio_buffer.clear" });
+      begonnenOp = Date.now();
+      zetMicrofoon(true);
+      meld.onStatus?.("Luistert");
+    },
+    eindBeurt: () => {
+      if (openMicrofoon) return;
+      zetMicrofoon(false);
+      // Een tik in plaats van vasthouden levert te weinig audio op; OpenAI
+      // weigert zo'n commit met een foutmelding. Dan liever niets versturen.
+      if (Date.now() - begonnenOp < MINIMALE_BEURT_MS) {
+        stuur(dc, { type: "input_audio_buffer.clear" });
+        meld.onStatus?.("Te kort — houd de knop even vast");
+        return;
+      }
+      // Zonder commit blijft OpenAI wachten tot er iets gebeurt -- en dat
+      // gebeurt nooit, want de server-VAD staat bij push-to-talk uit.
+      stuur(dc, { type: "input_audio_buffer.commit" });
+      stuur(dc, { type: "response.create" });
+      meld.onStatus?.("Denkt na…");
     },
   };
 }
