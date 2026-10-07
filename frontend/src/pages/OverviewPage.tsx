@@ -13,6 +13,7 @@ import { boardApi } from "@/lib/boards";
 import type { OverviewDto, OverviewRunDto, PlanDto } from "@/lib/types";
 import { Badge, Button, Card, EmptyState } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { OrchestratorStart } from "@/components/OrchestratorStart";
 import { Bot, Pause, Play, RefreshCw, X } from "lucide-react";
 
 const PLAN_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
@@ -182,7 +183,8 @@ export function OverviewPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-6">
+    <div className="veilig-onder mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
+      <OrchestratorStart />
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Overzicht</h1>
         <Button variant="ghost" className="text-xs" onClick={refresh}>

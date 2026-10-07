@@ -228,4 +228,9 @@ export class Opname {
   get loopt() {
     return this.recorder?.state === "recording";
   }
+
+  /** De lopende stream, zodat de orb kan meebewegen met wat je zegt. */
+  get bron(): MediaStream | null {
+    return this.stream;
+  }
 }

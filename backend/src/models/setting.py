@@ -78,6 +78,13 @@ class AppSettings(Base):
                                                   default="browser")
     voice_tts_stem: Mapped[str | None] = mapped_column(String(32), nullable=True)
     voice_tts_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Fish Audio als alternatief voor OpenAI bij verstaan en voorlezen.
+    fish_key_encrypted: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    voice_stt: Mapped[str | None] = mapped_column(String(16), nullable=True,
+                                                  default="openai")
+    voice_fish_stem: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    voice_fish_tts_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    voice_fish_stt_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     default_effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
     fallback_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)

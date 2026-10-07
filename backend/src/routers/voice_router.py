@@ -259,14 +259,17 @@ async def spreek(payload: Dict[str, Any],
     het dagplafond blijft kloppen.
     """
     s = _vereis_aan(db)
-    if s.voice_tts != "openai":
+    if s.voice_tts not in ("openai", "fish"):
         raise HTTPException(status_code=409, detail="Voorlezen staat op de browserstem.")
 
     tekst = str(payload.get("tekst") or "").strip()
     if not tekst:
         raise HTTPException(status_code=400, detail="Er is niets om voor te lezen")
 
-    from services.voice.tts import geschatte_kosten, spreek_uit
+    if s.voice_tts == "fish":
+        from services.voice.fish import geschatte_kosten, spreek_uit
+    else:
+        from services.voice.tts import geschatte_kosten, spreek_uit
     try:
         audio = await spreek_uit(db, tekst)
     except Exception as exc:  # noqa: BLE001 — de browser valt terug op zijn eigen stem
@@ -309,11 +312,17 @@ async def realtime_token(db: Session = Depends(get_db)) -> Dict[str, Any]:
 async def transcribeer(payload: Dict[str, Any],
                        db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Audio uit de browser naar tekst, voor het pijplijn-brein."""
-    _vereis_aan(db)
+    s = _vereis_aan(db)
     audio = payload.get("audio_base64")
     if not audio:
         raise HTTPException(status_code=400, detail="Geen audio meegestuurd")
-    from services.voice.stt import transcribeer_base64
+
+    # Wie verstaat, is een losse keuze van wie voorleest -- zo kun je ze
+    # tegen elkaar afzetten zonder alles tegelijk om te gooien.
+    if s.voice_stt == "fish":
+        from services.voice.fish import transcribeer_base64
+    else:
+        from services.voice.stt import transcribeer_base64
     try:
         return {"tekst": await transcribeer_base64(db, str(audio),
                                                    payload.get("mime") or "audio/webm")}

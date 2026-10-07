@@ -21,6 +21,8 @@ import { BoardPage } from "@/pages/BoardPage";
 import { UrenPage } from "@/pages/UrenPage";
 import { SpraakPage } from "@/pages/SpraakPage";
 import { AzureProfilesPage } from "@/pages/AzureProfilesPage";
+import { WorkbenchPage } from "@/pages/WorkbenchPage";
+import { KluisTabsPage } from "@/pages/KluisTabsPage";
 
 const queryClient = new QueryClient();
 
@@ -45,26 +47,48 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/labs" replace />} />
+        {/* Overzicht is het beginpunt: daar zie je wat er draait, wat wacht
+            en hoe het laatste afliep -- en daar start je de orchestrator. */}
+        <Route index element={<Navigate to="/overzicht" replace />} />
         <Route path="overzicht" element={<OverviewPage />} />
         <Route path="labs" element={<LabsPage />} />
         <Route path="chat" element={<ChatPage />} />
-        <Route path="skills" element={<SkillsPage />} />
         <Route path="boards" element={<BoardsPage />} />
         <Route path="boards/:boardId" element={<BoardPage />} />
-        <Route path="workflows" element={<WorkflowsPage />} />
-        <Route path="workflows/:id" element={<WorkflowEditorPage />} />
         <Route path="uren" element={<UrenPage />} />
-        <Route path="spraak" element={<SpraakPage />} />
-        <Route path="schedules" element={<SchedulesPage />} />
-        <Route path="azure-profiles" element={<AzureProfilesPage />} />
-        <Route path="kluis" element={<KluisPage />} />
+
+        {/* Wat de agent kan, en wanneer hij het doet. */}
+        <Route path="workbench" element={<WorkbenchPage />}>
+          <Route index element={<Navigate to="skills" replace />} />
+          <Route path="skills" element={<SkillsPage />} />
+          <Route path="workflows" element={<WorkflowsPage />} />
+          <Route path="scheduling" element={<SchedulesPage />} />
+        </Route>
+        {/* De editor is een volledig scherm en hoort niet onder de subtabs. */}
+        <Route path="workflows/:id" element={<WorkflowEditorPage />} />
+
+        {/* Inloggegevens die de agent mag gebruiken maar nooit mag zien. */}
+        <Route path="kluis" element={<KluisTabsPage />}>
+          <Route index element={<Navigate to="geheimen" replace />} />
+          <Route path="geheimen" element={<KluisPage />} />
+          <Route path="azure" element={<AzureProfilesPage />} />
+        </Route>
+
+        <Route path="orchestrator" element={<SpraakPage />} />
+
+        {/* De oude adressen blijven werken: er staan bladwijzers en links in
+            tickets naar deze paden. */}
+        <Route path="skills" element={<Navigate to="/workbench/skills" replace />} />
+        <Route path="workflows" element={<Navigate to="/workbench/workflows" replace />} />
+        <Route path="schedules" element={<Navigate to="/workbench/scheduling" replace />} />
+        <Route path="azure-profiles" element={<Navigate to="/kluis/azure" replace />} />
+        <Route path="spraak" element={<Navigate to="/orchestrator" replace />} />
         {/* Audit is opgegaan in Data-guard; oude links blijven werken. */}
         <Route path="audit" element={<Navigate to="/guard" replace />} />
         <Route path="guard" element={<GuardPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/labs" replace />} />
+      <Route path="*" element={<Navigate to="/overzicht" replace />} />
     </Routes>
   );
 }

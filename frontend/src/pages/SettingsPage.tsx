@@ -42,7 +42,7 @@ export function SettingsPage() {
 
   if (!settings) return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
 
-  async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string; openai_key?: string }) {
+  async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string; openai_key?: string; fish_key?: string }) {
     try {
       const updated = await settingsApi.update({ ...settings, ...patch });
       setSettings(updated);
@@ -225,12 +225,15 @@ export function SettingsPage() {
               <Label>Stem</Label>
               <Select
                 value={settings.voice_tts === "openai"
-                  ? `openai:${settings.voice_tts_stem || "coral"}` : "browser"}
+                  ? `openai:${settings.voice_tts_stem || "coral"}`
+                  : settings.voice_tts === "fish" ? "fish" : "browser"}
                 onChange={(e) => {
                   const v = e.target.value;
                   const patch = v === "browser"
                     ? { voice_tts: "browser" as const }
-                    : { voice_tts: "openai" as const, voice_tts_stem: v.split(":")[1] };
+                    : v === "fish"
+                      ? { voice_tts: "fish" as const }
+                      : { voice_tts: "openai" as const, voice_tts_stem: v.split(":")[1] };
                   setSettings({ ...settings, ...patch });
                   save(patch);
                 }}
@@ -242,11 +245,62 @@ export function SettingsPage() {
                 <option value="openai:nova">Nova — helder</option>
                 <option value="openai:sage">Sage — kalm</option>
                 <option value="openai:shimmer">Shimmer — zacht</option>
+                <option value="fish">Fish Audio — eigen stem (reference_id)</option>
               </Select>
               <p className="mt-1 text-xs text-muted-foreground">
                 De browserstem kost niets. De andere klinken menselijk maar gaan
-                per zin via OpenAI; dat telt mee in je dagplafond. Lukt het even
-                niet, dan valt hij terug op de browserstem.
+                per zin naar een dienst; dat telt mee in je dagplafond. Lukt het
+                even niet, dan valt hij terug op de browserstem.
+              </p>
+            </div>
+            <div>
+              <Label>Verstaan door</Label>
+              <Select
+                value={settings.voice_stt || "openai"}
+                onChange={(e) => {
+                  const v = e.target.value as "openai" | "fish";
+                  setSettings({ ...settings, voice_stt: v });
+                  save({ voice_stt: v });
+                }}
+              >
+                <option value="openai">OpenAI — kent je bordprefixen</option>
+                <option value="fish">Fish Audio — alleen een taalhint</option>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                OpenAI krijgt een woordenlijst mee met je bordprefixen en
+                klantnamen; dat is wat van “Plato” weer “PLAT-2” maakt. Fish
+                neemt alleen een taalcode aan, dus reken op slechtere
+                ticketsleutels.
+              </p>
+            </div>
+            <div>
+              <Label>Fish Audio-sleutel</Label>
+              <Input
+                type="password"
+                placeholder={settings.fish_key_configured ? "•••••••• (ingesteld)" : "fish_…"}
+                onBlur={(e) => {
+                  if (!e.target.value.trim()) return;
+                  save({ fish_key: e.target.value.trim() });
+                  e.target.value = "";
+                }}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Alleen nodig als je hierboven Fish kiest. Let op: de gratis laag
+                van Fish is voor persoonlijk, niet-commercieel gebruik — prima om
+                de stem te beoordelen, niet om klantwerk mee te doen.
+              </p>
+            </div>
+            <div>
+              <Label>Fish-stem (reference_id)</Label>
+              <Input
+                value={settings.voice_fish_stem ?? ""}
+                placeholder="leeg = standaardstem"
+                onChange={(e) => setSettings({ ...settings, voice_fish_stem: e.target.value })}
+                onBlur={() => save({ voice_fish_stem: settings.voice_fish_stem })}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Het id van een stem uit de Fish-bibliotheek of een eigen
+                gekloonde stem. Laat leeg voor de standaard.
               </p>
             </div>
             <div>

@@ -85,6 +85,11 @@ class ResolvedSettings:
         self.voice_tts = getattr(row, "voice_tts", None) or "browser"
         self.voice_tts_stem = getattr(row, "voice_tts_stem", None)
         self.voice_tts_model = getattr(row, "voice_tts_model", None)
+        self.fish_key_encrypted = getattr(row, "fish_key_encrypted", None)
+        self.voice_stt = getattr(row, "voice_stt", None) or "openai"
+        self.voice_fish_stem = getattr(row, "voice_fish_stem", None)
+        self.voice_fish_tts_model = getattr(row, "voice_fish_tts_model", None)
+        self.voice_fish_stt_model = getattr(row, "voice_fish_stt_model", None)
         self.default_effort = row.default_effort
         self.fallback_model = row.fallback_model
         self.max_budget_usd = row.max_budget_usd
@@ -143,6 +148,9 @@ def get_public_settings(db: Session) -> Dict[str, Any]:
         "voice_meld_runs": bool(row.voice_meld_runs),
         "voice_sessie_minuten": row.voice_sessie_minuten,
         "voice_dag_limiet_usd": row.voice_dag_limiet_usd,
+        "fish_key_configured": bool(row.fish_key_encrypted),
+        "voice_stt": resolved.voice_stt,
+        "voice_fish_stem": resolved.voice_fish_stem,
         "voice_tts": resolved.voice_tts,
         "voice_tts_stem": resolved.voice_tts_stem,
         "voice_realtime_model": row.voice_realtime_model,
@@ -172,6 +180,8 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
         "voice_woord", "voice_meld_runs", "voice_sessie_minuten",
         "voice_dag_limiet_usd", "voice_realtime_model", "voice_stt_model",
         "voice_brein_model", "voice_tts", "voice_tts_stem", "voice_tts_model",
+        "voice_stt", "voice_fish_stem", "voice_fish_tts_model",
+        "voice_fish_stt_model",
         "default_effort", "fallback_model", "max_budget_usd", "autocompact",
         "custom_agents_json", "default_agent", "auto_hooks",
     )
@@ -192,6 +202,13 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
             row.openai_key_encrypted = encrypt(sleutel)
         else:
             row.openai_key_encrypted = None
+    if "fish_key" in payload:
+        sleutel = (payload["fish_key"] or "").strip()
+        if sleutel:
+            from utils.crypto import encrypt
+            row.fish_key_encrypted = encrypt(sleutel)
+        else:
+            row.fish_key_encrypted = None
     # Het realtime-brein draait bij OpenAI, dus zonder sleutel kan dat niet.
     # Het pijplijn-brein denkt met de Claude-CLI en heeft de sleutel alleen
     # nodig om spraak te verstaan -- typen werkt dan gewoon. Daarom valt hij

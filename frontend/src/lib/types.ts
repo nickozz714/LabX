@@ -199,8 +199,11 @@ export interface AppSettingsDto {
   voice_meld_runs?: boolean;
   voice_sessie_minuten?: number;
   voice_dag_limiet_usd?: number;
-  voice_tts?: "browser" | "openai";
+  voice_tts?: "browser" | "openai" | "fish";
   voice_tts_stem?: string | null;
+  voice_stt?: "openai" | "fish";
+  voice_fish_stem?: string | null;
+  fish_key_configured?: boolean;
   extra_args: string[];
   enable_tool_search: boolean;
   data_guard_default: boolean;

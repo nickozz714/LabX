@@ -18,6 +18,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2 } from "lucide-react";
 
 import { Badge, Button, Card, EmptyState, Input } from "@/components/ui";
+import { Orb } from "@/components/Orb";
+import type { OrbToestand } from "@/components/Orb";
+import { meetStream } from "@/lib/audioNiveau";
 import { ApiError } from "@/lib/api";
 import { Opname, lees, spraakApi, zwijg } from "@/lib/spraak";
 import { startRealtime } from "@/lib/spraakRealtime";
@@ -52,6 +55,7 @@ export function SpraakPage() {
   const [luistert, setLuistert] = useState(false);
   const [rtOpnemen, setRtOpnemen] = useState(false);
   const [rtStatus, setRtStatus] = useState<string | null>(null);
+  const [niveau, setNiveau] = useState(0);
   const isRealtime = sessie?.brein === "realtime";
   const openMicrofoon = status?.microfoon === "open";
   // Welke stem er voorleest, en bij welke sessie de kosten horen.
@@ -89,6 +93,29 @@ export function SpraakPage() {
   useEffect(() => {
     onder.current?.scrollIntoView({ behavior: "smooth" });
   }, [sessie?.tijdlijn?.length]);
+
+  // Meebewegen met wat er werkelijk gezegd wordt. Een animatie die alleen
+  // "er gebeurt iets" uitbeeldt, leest na twee keer kijken als een laadbalkje.
+  useEffect(() => {
+    const stream = opname.current.bron;
+    if (!opnemen || !stream) {
+      setNiveau(0);
+      return;
+    }
+    const meter = meetStream(stream);
+    if (!meter) return;
+    let id = 0;
+    const tik = () => {
+      setNiveau(meter.lees());
+      id = requestAnimationFrame(tik);
+    };
+    id = requestAnimationFrame(tik);
+    return () => {
+      cancelAnimationFrame(id);
+      meter.stop();
+      setNiveau(0);
+    };
+  }, [opnemen]);
 
   // Een open microfoon die blijft luisteren nadat je weg navigeert is precies
   // wat je niet wilt.
@@ -239,6 +266,18 @@ export function SpraakPage() {
   const nogNietsGevraagd = !tijdlijn.some((e) => e.soort === "gebruiker");
   const vervalt = status?.verval_seconden || 20;
 
+  // Eén aflezing van de toestand, in de volgorde waarin het ertoe doet: een
+  // fout of een openstaande bevestiging wint van alles, want daar moet jij wat
+  // mee. Daarna pas wat het systeem aan het doen is.
+  const orbToestand: OrbToestand =
+    melding ? "fout"
+    : openstaand ? "bevestigen"
+    : (opnemen || rtOpnemen) ? "luisteren"
+    : (bezig && isRealtime && !luistert) ? "verbinden"
+    : bezig ? "denken"
+    : rtStatus === "Spreekt" ? "spreken"
+    : "rust";
+
   return (
     <div className="flex h-full flex-col">
       {/* ── Kop ─────────────────────────────────────────────────────────── */}
@@ -295,6 +334,12 @@ export function SpraakPage() {
         </div>
       ) : (
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3 sm:px-6">
+          {/* De orb staat bovenaan het gesprek en niet in een hoekje: als je
+              praat kijk je niet naar de tekst, en dit is het enige dat dan
+              terugkoppelt dat er iets gebeurt. */}
+          <div className="flex justify-center pb-2 pt-1">
+            <Orb toestand={orbToestand} niveau={niveau} maat={132} />
+          </div>
           {tijdlijn.map((e) => <Regel key={e.id} e={e} />)}
 
           {nogNietsGevraagd && (

@@ -3,45 +3,34 @@
  * one content pane; no per-project switcher (LabX is single-tenant).
  */
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { Versie } from "@/components/Versie";
-import { Boxes, CalendarClock, KanbanSquare, KeyRound, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Workflow, Wrench, Clock, Menu, X, Mic} from "lucide-react";
+import { Boxes, KanbanSquare, LayoutDashboard, Lock, LogOut, MessageSquare, Settings, ShieldCheck, Wrench, Clock, Menu, X } from "lucide-react";
 import { chatApi } from "@/lib/chat";
-import { spraakApi } from "@/lib/spraak";
 
 const WIZARD_DISMISSED_KEY = "labx_wizard_dismissed";
 
+// Negen tabs, geen dertien. Verwante schermen zitten nu in een verzamelpagina
+// met een eigen striptje erbinnen (zie SubTabs): Workbench voor wat de agent
+// kan en wanneer, Kluis voor alles waarmee hij ergens binnenkomt. Een balk die
+// je niet in één oogopslag kunt overzien, lees je uiteindelijk niet meer.
 const NAV = [
-  // Vooraan: dit is het scherm waarmee je de dag begint — wat draait er, wat
-  // wacht er, en hoe liep het laatste af.
+  // Vooraan én het beginpunt van de app: wat draait er, wat wacht er, en hoe
+  // liep het laatste af. Hier start je ook de orchestrator.
   { to: "/overzicht", label: "Overzicht", icon: LayoutDashboard },
   { to: "/labs", label: "Labs", icon: Boxes },
   { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/boards", label: "Boards", icon: KanbanSquare },
-  { to: "/skills", label: "Skills & Tools", icon: Wrench },
-  { to: "/workflows", label: "Workflows", icon: Workflow },
+  { to: "/workbench", label: "Workbench", icon: Wrench },     // skills, workflows, scheduling
   { to: "/uren", label: "Uren", icon: Clock },
-  { to: "/schedules", label: "Scheduling", icon: CalendarClock },
-  { to: "/azure-profiles", label: "Azure-profielen", icon: KeyRound },
-  // Eigen tab en geen kaartje in de instellingen: dit pak je erbij terwijl je
-  // een skill schrijft of een ticket opstelt.
-  { to: "/kluis", label: "Kluis", icon: Lock },
+  { to: "/kluis", label: "Kluis", icon: Lock },               // geheimen + Azure-profielen
   { to: "/guard", label: "Data-guard", icon: ShieldCheck },   // met het tabblad Audit
   { to: "/settings", label: "Instellingen", icon: Settings },
 ];
-
-/** De vaste tabs, plus Spraak alleen als die functie aanstaat. */
-function zichtbareNav(spraakAan: boolean) {
-  if (!spraakAan) return NAV;
-  const i = NAV.findIndex((n) => n.to === "/chat");
-  const met = [...NAV];
-  met.splice(i + 1, 0, { to: "/spraak", label: "Spraak", icon: Mic });
-  return met;
-}
 
 export function Shell() {
   const { username, logout } = useAuth();
@@ -50,18 +39,6 @@ export function Shell() {
   const [needsWizard, setNeedsWizard] = useState(false);
   const [runningCount, setRunningCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
-  // De spraaktab bestaat alleen als de functie aanstaat. Niet verbergen met
-  // CSS: hij hoort er dan echt niet te zijn, net als de endpoints erachter.
-  const [spraakAan, setSpraakAan] = useState(false);
-
-  // Opnieuw kijken bij elke paginawissel. Vul je de OpenAI-sleutel in bij
-  // Instellingen, dan hoort de tab er te staan zodra je daar wegklikt --
-  // niet pas na een harde herlaadbeurt.
-  const locatie = useLocation();
-  useEffect(() => {
-    spraakApi.status().then((s) => setSpraakAan(Boolean(s.aan))).catch(() => {});
-  }, [locatie.pathname]);
-
   useEffect(() => {
     let cancelled = false;
     const poll = () =>
@@ -119,7 +96,7 @@ export function Shell() {
           LabX
         </div>
         <nav className="hidden flex-1 items-stretch gap-1 overflow-x-auto lg:flex">
-          {zichtbareNav(spraakAan).map(({ to, label, icon: Icon }) => (
+          {NAV.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -173,7 +150,7 @@ export function Shell() {
             className="fixed inset-0 z-30 bg-foreground/30"
           />
           <nav className="veilig-onder absolute inset-x-0 z-40 max-h-[70dvh] overflow-y-auto border-b border-sidebar-border bg-sidebar p-2 shadow-lg">
-            {zichtbareNav(spraakAan).map(({ to, label, icon: Icon }) => (
+            {NAV.map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
