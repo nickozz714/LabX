@@ -261,3 +261,20 @@ body {
   50%      { box-shadow: 0 0 0 10px rgb(239 68 68 / 0); }
 }
 .praat-puls { animation: praat-puls 1.4s ease-out infinite; }
+
+/* ── Het donkere vlak van de orchestrator ────────────────────────────────────
+   De gedeelde Input- en Button-componenten zijn op het lichte thema gebouwd.
+   Ze hier overschrijven met losse klassen betekent vechten met de volgorde van
+   Tailwind-regels; één regel op de omgeving is voorspelbaarder en blijft ook
+   kloppen als die componenten veranderen. */
+.spraak-donker input,
+.spraak-donker textarea {
+  background-color: rgb(255 255 255 / 0.06);
+  border-color: rgb(255 255 255 / 0.12);
+  color: rgb(226 232 240);
+}
+.spraak-donker input::placeholder { color: rgb(100 116 139); }
+.spraak-donker input:focus {
+  border-color: rgb(56 189 248 / 0.5);
+  outline-color: rgb(56 189 248 / 0.4);
+}

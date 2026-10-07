@@ -15,12 +15,13 @@
  *   tikken. Een leeg scherm met een microfoon vertelt je niet wat kan.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2 } from "lucide-react";
+import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2, Search } from "lucide-react";
 
 import { Badge, Button, Card, EmptyState, Input } from "@/components/ui";
 import { Orb } from "@/components/Orb";
 import type { OrbToestand } from "@/components/Orb";
 import { meetStream } from "@/lib/audioNiveau";
+import { Geheugensteun } from "@/components/Geheugensteun";
 import { ApiError } from "@/lib/api";
 import { Opname, lees, spraakApi, zwijg } from "@/lib/spraak";
 import { startRealtime } from "@/lib/spraakRealtime";
@@ -56,6 +57,7 @@ export function SpraakPage() {
   const [rtOpnemen, setRtOpnemen] = useState(false);
   const [rtStatus, setRtStatus] = useState<string | null>(null);
   const [niveau, setNiveau] = useState(0);
+  const [steunOpen, setSteunOpen] = useState(false);
   // De meter zelf blijft in een ref: de orb leest hem per frame uit, en dat
   // mag geen re-render kosten.
   const meterRef = useRef<((uit: Uint8Array) => void) | null>(null);
@@ -284,13 +286,22 @@ export function SpraakPage() {
     : "rust";
 
   return (
-    <div className="flex h-full flex-col">
+    // Een eigen donker vlak, los van het thema van de app. Dat is geen
+    // smaakkwestie: een gloed kan alleen gloeien tegen bijna-zwart. Op de
+    // witte achtergrond van de rest werd de orb een bleke knikker.
+    <div className="flex h-full min-h-0">
+      <div className="spraak-donker relative flex min-w-0 flex-1 flex-col bg-[#070b14] text-slate-200">
+        {/* Zacht licht van bovenaf, zodat het vlak geen dode rechthoek is. */}
+        <div aria-hidden
+             className="pointer-events-none absolute inset-x-0 top-0 h-64
+                        bg-[radial-gradient(60%_100%_at_50%_0%,rgba(56,189,248,0.10),transparent_70%)]" />
+
       {/* ── Kop ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5 sm:px-6 sm:py-3">
-        <h1 className="text-base font-semibold sm:text-lg">Spraak</h1>
+      <div className="relative flex items-center gap-2 border-b border-white/10 px-3 py-2.5 sm:px-6 sm:py-3">
+        <h1 className="text-base font-semibold text-slate-100 sm:text-lg">Orchestrator</h1>
         {sessie && (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px] shadow-emerald-400/70" />
             <span className="hidden sm:inline">
               {status?.brein === "realtime" ? "realtime" : "pijplijn"}
             </span>
@@ -301,13 +312,22 @@ export function SpraakPage() {
         <div className="flex-1" />
 
         {sessie && (
-          <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">
+          <span className="hidden text-xs tabular-nums text-slate-500 sm:inline">
             ${sessie.kosten_usd.toFixed(3)}
             {status?.vandaag_usd !== undefined
               && ` · $${status.vandaag_usd.toFixed(2)} vandaag`}
           </span>
         )}
-        <Button variant="ghost" className="h-9 w-9 p-0"
+        <button
+          onClick={() => setSteunOpen((o) => !o)}
+          title="Opzoeken — hoe heette dat ticket ook alweer?"
+          aria-label="Opzoeken"
+          className={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
+            steunOpen ? "bg-white/15 text-slate-100" : "text-slate-400 hover:bg-white/10"}`}
+        >
+          <Search size={16} />
+        </button>
+        <Button variant="ghost" className="h-9 w-9 p-0 text-slate-400 hover:bg-white/10"
                 onClick={() => setGeluid((g) => !g)}
                 aria-label={geluid ? "Voorlezen uitzetten" : "Voorlezen aanzetten"}
                 title={geluid ? "Voorlezen uitzetten" : "Voorlezen aanzetten"}>
@@ -324,18 +344,25 @@ export function SpraakPage() {
       </div>
 
       {melding && (
-        <div className="mx-3 mt-2 rounded-md border border-border bg-muted/40 p-2 text-xs sm:mx-6">
+        <div className="relative mx-3 mt-2 rounded-md border border-rose-400/30 bg-rose-400/10 p-2 text-xs text-rose-200 sm:mx-6">
           {melding}
         </div>
       )}
 
       {/* ── Gesprek ─────────────────────────────────────────────────────── */}
       {!sessie ? (
-        <div className="flex flex-1 items-center justify-center p-4">
-          <EmptyState>
-            Start een sessie en vraag bijvoorbeeld “wat loopt er nu” of “hoe
-            staat het met KRI-114”. Je kunt praten of typen.
-          </EmptyState>
+        <div className="relative flex flex-1 flex-col items-center justify-center gap-6 p-6">
+          <Orb toestand="rust" maat={240} bijschrift={false} onClick={startSessie} />
+          <div className="max-w-sm text-center">
+            <p className="text-sm text-slate-300">
+              Klik op de kern om te beginnen.
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">
+              Vraag bijvoorbeeld “wat loopt er nu” of “hoe staat het met
+              KRI-114”. Je kunt praten of typen — en een schrijfactie vraagt
+              altijd eerst je akkoord.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3 sm:px-6">
@@ -343,7 +370,7 @@ export function SpraakPage() {
               praat kijk je niet naar de tekst, en dit is het enige dat dan
               terugkoppelt dat er iets gebeurt. */}
           <div className="flex justify-center pb-2 pt-1">
-            <Orb toestand={orbToestand} niveau={niveau} maat={150}
+            <Orb toestand={orbToestand} niveau={niveau} maat={190}
                  spectrum={meterRef.current ?? undefined} />
           </div>
           {tijdlijn.map((e) => <Regel key={e.id} e={e} />)}
@@ -355,9 +382,10 @@ export function SpraakPage() {
                   key={v}
                   onClick={() => stuur(v)}
                   disabled={bezig}
-                  className="rounded-full border border-border px-3 py-1.5 text-xs
-                             text-muted-foreground transition-colors
-                             hover:bg-muted disabled:opacity-50"
+                  className="rounded-full border border-white/15 px-3 py-1.5 text-xs
+                             text-slate-300 transition-colors
+                             hover:border-sky-400/40 hover:bg-sky-400/10
+                             disabled:opacity-50"
                 >
                   {v}
                 </button>
@@ -370,12 +398,12 @@ export function SpraakPage() {
 
       {/* ── Bevestiging ─────────────────────────────────────────────────── */}
       {sessie && openstaand && (
-        <div className="mx-3 mb-2 overflow-hidden rounded-lg border border-warning/50 bg-warning/10 sm:mx-6">
+        <div className="relative mx-3 mb-2 overflow-hidden rounded-lg border border-amber-400/40 bg-amber-400/10 sm:mx-6">
           {/* De balk loopt leeg: dat zie je ook als je niet op de seconden let. */}
-          <div className="h-1 bg-warning transition-[width] duration-500 ease-linear"
+          <div className="h-1 bg-amber-400 transition-[width] duration-500 ease-linear"
                style={{ width: `${Math.min(100, ((resterend ?? 0) / vervalt) * 100)}%` }} />
           <div className="p-3">
-            <div className="text-sm font-medium">{openstaand.zin}</div>
+            <div className="text-sm font-medium text-amber-50">{openstaand.zin}</div>
             <div className="mt-3 flex items-center gap-2">
               {status?.bevestiging !== "spraak" && (
                 <>
@@ -390,11 +418,11 @@ export function SpraakPage() {
                 </>
               )}
               {status?.bevestiging !== "klik" && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-amber-200/80">
                   of zeg “{status?.woord}”
                 </span>
               )}
-              <span className="ml-auto text-sm font-semibold tabular-nums text-warning">
+              <span className="ml-auto text-sm font-semibold tabular-nums text-amber-300">
                 {resterend ?? 0}s
               </span>
             </div>
@@ -404,7 +432,7 @@ export function SpraakPage() {
 
       {/* ── Invoer ──────────────────────────────────────────────────────── */}
       {sessie && (
-        <div className="veilig-onder border-t border-border px-3 py-3 sm:px-6">
+        <div className="veilig-onder relative border-t border-white/10 bg-black/20 px-3 py-3 sm:px-6">
           <div className="flex items-center gap-2">
             <Input
               value={tekst}
@@ -485,13 +513,17 @@ export function SpraakPage() {
           </div>
 
           {/* Op een smal scherm past de kostenregel niet in de kop. */}
-          <div className="mt-2 text-center text-[11px] tabular-nums text-muted-foreground sm:hidden">
+          <div className="mt-2 text-center text-[11px] tabular-nums text-slate-600 sm:hidden">
             ${sessie.kosten_usd.toFixed(3)} deze sessie
             {status?.vandaag_usd !== undefined
               && ` · $${status.vandaag_usd.toFixed(2)} vandaag`}
           </div>
         </div>
       )}
+      </div>
+
+      {/* Naast het gesprek op een breed scherm, eroverheen op een telefoon. */}
+      <Geheugensteun open={steunOpen} sluit={() => setSteunOpen(false)} />
     </div>
   );
 }
@@ -502,7 +534,7 @@ function Regel({ e }: { e: SpraakGebeurtenis }) {
   if (e.soort === "gebruiker") {
     return (
       <div className="flex justify-end">
-        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-sm text-primary-foreground sm:max-w-2xl">
+        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-br-md bg-sky-500/90 px-3.5 py-2 text-sm text-white shadow-lg shadow-sky-500/20 sm:max-w-2xl">
           {e.tekst}
         </div>
       </div>
@@ -511,7 +543,7 @@ function Regel({ e }: { e: SpraakGebeurtenis }) {
   if (e.soort === "assistent") {
     return (
       <div className="flex justify-start">
-        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-bl-md bg-secondary px-3.5 py-2 text-sm sm:max-w-2xl">
+        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-bl-md border border-white/10 bg-white/[0.07] px-3.5 py-2 text-sm text-slate-100 sm:max-w-2xl">
           {e.tekst}
         </div>
       </div>
@@ -519,14 +551,14 @@ function Regel({ e }: { e: SpraakGebeurtenis }) {
   }
   if (e.soort === "bevestiging") {
     return (
-      <Card className="border-warning/40 bg-warning/5 p-2 text-xs">
+      <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-xs text-amber-100">
         <span className="font-medium">Gevraagd om bevestiging:</span> {e.tekst}
-      </Card>
+      </div>
     );
   }
   if (e.soort === "actie") {
     return (
-      <div className="flex items-start gap-2 px-1 text-[11px] text-muted-foreground">
+      <div className="flex items-start gap-2 px-1 text-[11px] text-slate-500">
         <span className="tabular-nums">{tijd}</span>
         <span className="font-mono">{e.tool}</span>
         {e.resultaat && <span className="min-w-0 flex-1 break-words">— {e.resultaat.slice(0, 160)}</span>}
@@ -534,7 +566,7 @@ function Regel({ e }: { e: SpraakGebeurtenis }) {
     );
   }
   return (
-    <div className="px-1 text-[11px] text-muted-foreground">
+    <div className="px-1 text-[11px] text-slate-500">
       <span className="tabular-nums">{tijd}</span> {e.tekst}
     </div>
   );

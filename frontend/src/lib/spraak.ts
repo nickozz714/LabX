@@ -24,6 +24,15 @@ export type SpraakStatus = {
   tts?: "browser" | "openai";
 };
 
+/** Eén treffer in de geheugensteun: alleen naam, sleutel en toestand. */
+export type SpraakVondst = {
+  soort: "ticket" | "bord" | "lab" | "chat";
+  sleutel: string | null;
+  naam: string;
+  detail: string | null;
+  id: string;
+};
+
 export type SpraakGebeurtenis = {
   id: number;
   ts: string;
@@ -67,6 +76,8 @@ export const spraakApi = {
   realtimeToken: () =>
     api.post<{ client_secret: string; model: string }>("/voice/realtime-token"),
   stemmen: () => api.get<string[]>("/voice/stemmen"),
+  opzoeken: (q: string) =>
+    api.get<SpraakVondst[]>(`/voice/opzoeken?q=${encodeURIComponent(q)}`),
 
   /** Voorgelezen audio. Bewust buiten `api` om: die verwacht JSON terug. */
   spreek: async (tekst: string, sessie?: string): Promise<Blob> => {

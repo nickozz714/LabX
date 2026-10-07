@@ -282,6 +282,61 @@ async def spreek(payload: Dict[str, Any],
     return Response(content=audio, media_type="audio/mpeg")
 
 
+@router.get("/opzoeken")
+def opzoeken(q: str = "", db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
+    """Namen opzoeken terwijl je praat -- een geheugensteun.
+
+    Je weet dat het ticket over de zilveren pipelines ging maar niet meer hoe
+    het heet, en dan val je stil. Dit geeft in één lijst terug wat er in
+    borden, tickets, labs en chats op je zoekwoord lijkt, zodat je het kunt
+    aflezen zonder de sessie te verlaten.
+
+    Bewust geen klantgegevens: alleen namen, sleutels en kolommen -- hetzelfde
+    soort informatie dat de leesacties ook teruggeven.
+    """
+    _vereis_aan(db)
+    from models.board import Board, Ticket
+    from models.lab import Lab
+    from models.thread import Thread
+
+    term = (q or "").strip()
+    uit: List[Dict[str, Any]] = []
+    patroon = f"%{term}%"
+
+    tickets = db.query(Ticket)
+    if term:
+        tickets = tickets.filter(Ticket.title.ilike(patroon)
+                                 | Ticket.key.ilike(patroon))
+    for t in tickets.order_by(Ticket.id.desc()).limit(25).all():
+        uit.append({"soort": "ticket", "sleutel": t.key, "naam": t.title,
+                    "detail": t.status, "id": str(t.board_id)})
+
+    borden = db.query(Board)
+    if term:
+        borden = borden.filter(Board.name.ilike(patroon)
+                               | Board.key_prefix.ilike(patroon))
+    for b in borden.limit(10).all():
+        uit.append({"soort": "bord", "sleutel": b.key_prefix, "naam": b.name,
+                    "detail": None, "id": str(b.id)})
+
+    labs = db.query(Lab)
+    if term:
+        labs = labs.filter(Lab.name.ilike(patroon))
+    for l in labs.limit(10).all():
+        uit.append({"soort": "lab", "sleutel": None, "naam": l.name,
+                    "detail": l.status, "id": l.id})
+
+    # `source`, niet `kind`: board-threads horen hier niet tussen.
+    chats = db.query(Thread).filter(Thread.source == "chat")
+    if term:
+        chats = chats.filter(Thread.title.ilike(patroon))
+    for c in chats.order_by(Thread.id.desc()).limit(10).all():
+        uit.append({"soort": "chat", "sleutel": None, "naam": c.title,
+                    "detail": None, "id": c.id})
+
+    return uit
+
+
 @router.get("/stemmen")
 def stemmen(db: Session = Depends(get_db)) -> List[str]:
     """De stemmen waaruit je kunt kiezen."""
