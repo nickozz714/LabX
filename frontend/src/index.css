@@ -255,13 +255,6 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Zichtbaar dat er opgenomen wordt, ook vanuit een ooghoek. */
-@keyframes praat-puls {
-  0%, 100% { box-shadow: 0 0 0 0 rgb(239 68 68 / 0.45); }
-  50%      { box-shadow: 0 0 0 10px rgb(239 68 68 / 0); }
-}
-.praat-puls { animation: praat-puls 1.4s ease-out infinite; }
-
 /* ── Het donkere vlak van de orchestrator ────────────────────────────────────
    De gedeelde Input- en Button-componenten zijn op het lichte thema gebouwd.
    Ze hier overschrijven met losse klassen betekent vechten met de volgorde van
@@ -278,3 +271,32 @@ body {
   border-color: rgb(56 189 248 / 0.5);
   outline-color: rgb(56 189 248 / 0.4);
 }
+
+/* Knoppen op het donkere vlak. Twee klassen diep, dus deze wint van de losse
+   Tailwind-klassen in de Button-component zonder dat daar iets aan hoeft te
+   veranderen -- en zonder !important. */
+.spraak-donker .knop-donker {
+  background-color: rgb(255 255 255 / 0.07);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  color: rgb(226 232 240);
+}
+.spraak-donker .knop-donker:hover:not(:disabled) {
+  background-color: rgb(255 255 255 / 0.12);
+  border-color: rgb(56 189 248 / 0.45);
+}
+.spraak-donker .knop-donker:disabled { opacity: 0.45; }
+
+/* Opnemen: onmiskenbaar, ook vanuit een ooghoek. */
+.spraak-donker .knop-opnemen {
+  background-color: rgb(244 63 94 / 0.22);
+  border-color: rgb(244 63 94 / 0.55);
+  color: rgb(254 205 211);
+}
+
+/* Versturen en bevestigen houden hun kleur, maar wel passend bij het vlak. */
+.spraak-donker .knop-primair {
+  background-color: rgb(14 165 233);
+  border: 1px solid rgb(56 189 248 / 0.6);
+  color: white;
+}
+.spraak-donker .knop-primair:hover:not(:disabled) { background-color: rgb(2 132 199); }

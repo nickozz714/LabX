@@ -1,5 +1,5 @@
 /**
- * SpraakPage — praten tegen LabX.
+ * OrchestratorPage — praten tegen LabX, en LabX laten werken.
  *
  * Mobiel eerst: op een telefoon is de praatknop het grootste element op het
  * scherm en staat hij onderaan, binnen duimbereik. Het typveld staat erboven
@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2, Search } from "lucide-react";
 
-import { Badge, Button, Card, EmptyState, Input } from "@/components/ui";
+import { Badge, Button, EmptyState, Input } from "@/components/ui";
 import { Orb } from "@/components/Orb";
 import type { OrbToestand } from "@/components/Orb";
 import { meetStream } from "@/lib/audioNiveau";
@@ -37,7 +37,7 @@ const VOORBEELDEN = [
   "Welke labs draaien er?",
 ];
 
-export function SpraakPage() {
+export function OrchestratorPage() {
   const [status, setStatus] = useState<SpraakStatus | null>(null);
   const [sessie, setSessie] = useState<SpraakSessie | null>(null);
   const [tekst, setTekst] = useState("");
@@ -337,7 +337,7 @@ export function SpraakPage() {
           ? <Button variant="danger" className="h-9 text-xs" onClick={stopSessie}>
               Stoppen
             </Button>
-          : <Button className="h-9 text-xs" onClick={startSessie}
+          : <Button className="knop-primair h-9 text-xs" onClick={startSessie}
                     disabled={bezig} busy={bezig}>
               Starten
             </Button>}
@@ -407,11 +407,11 @@ export function SpraakPage() {
             <div className="mt-3 flex items-center gap-2">
               {status?.bevestiging !== "spraak" && (
                 <>
-                  <Button className="h-11 flex-1 sm:h-9 sm:flex-none"
+                  <Button className="knop-primair h-11 flex-1 sm:h-9 sm:flex-none"
                           onClick={() => bevestig(true)} disabled={bezig}>
                     Ja, doen
                   </Button>
-                  <Button variant="secondary" className="h-11 flex-1 sm:h-9 sm:flex-none"
+                  <Button variant="secondary" className="knop-donker h-11 flex-1 sm:h-9 sm:flex-none"
                           onClick={() => bevestig(false)} disabled={bezig}>
                     Nee
                   </Button>
@@ -441,7 +441,7 @@ export function SpraakPage() {
               onKeyDown={(e) => { if (e.key === "Enter") stuur(tekst); }}
               disabled={bezig}
             />
-            <Button className="h-11 w-11 shrink-0 p-0"
+            <Button className="knop-primair h-11 w-11 shrink-0 p-0"
                     onClick={() => stuur(tekst)}
                     disabled={bezig || !tekst.trim()}
                     aria-label="Versturen">
@@ -457,7 +457,7 @@ export function SpraakPage() {
                  Nog niet verbonden: eerst de verbinding opzetten. */
               <Button
                 variant={luistert ? "danger" : "secondary"}
-                className={`h-12 w-full ${luistert ? "praat-puls" : ""}`}
+                className={`knop-donker h-12 w-full ${luistert ? "knop-opnemen" : ""}`}
                 onClick={luisterenAanUit}
                 disabled={bezig}
               >
@@ -471,7 +471,7 @@ export function SpraakPage() {
                  wanneer je uitgesproken bent, dus houd je de knop vast. */
               <Button
                 variant={rtOpnemen ? "danger" : "secondary"}
-                className={`praatknop h-12 w-full ${rtOpnemen ? "praat-puls" : ""}`}
+                className={`praatknop knop-donker h-12 w-full ${rtOpnemen ? "knop-opnemen" : ""}`}
                 onMouseDown={() => { setRtOpnemen(true); realtime.current?.beginBeurt(); }}
                 onMouseUp={() => { setRtOpnemen(false); realtime.current?.eindBeurt(); }}
                 onMouseLeave={rtOpnemen
@@ -492,7 +492,7 @@ export function SpraakPage() {
             ) : (
               <Button
                 variant={opnemen ? "danger" : "secondary"}
-                className={`praatknop h-12 w-full ${opnemen ? "praat-puls" : ""}`}
+                className={`praatknop knop-donker h-12 w-full ${opnemen ? "knop-opnemen" : ""}`}
                 disabled={bezig && !opnemen}
                 onMouseDown={knopIngedrukt}
                 onMouseUp={knopLosgelaten}

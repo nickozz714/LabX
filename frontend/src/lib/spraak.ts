@@ -75,7 +75,6 @@ export const spraakApi = {
                                 { audio_base64: audioBase64, mime }),
   realtimeToken: () =>
     api.post<{ client_secret: string; model: string }>("/voice/realtime-token"),
-  stemmen: () => api.get<string[]>("/voice/stemmen"),
   opzoeken: (q: string) =>
     api.get<SpraakVondst[]>(`/voice/opzoeken?q=${encodeURIComponent(q)}`),
 

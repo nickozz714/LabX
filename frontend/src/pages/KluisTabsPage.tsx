@@ -17,7 +17,10 @@ export function KluisTabsPage() {
         { to: "/kluis/geheimen", label: "Geheimen", icon: Lock },
         { to: "/kluis/azure", label: "Azure-profielen", icon: KeyRound },
       ]} />
-      <div className="min-h-0 flex-1">
+      {/* De strip blijft staan, de inhoud schuift. Zonder dit overflow werd
+          alles onder de vouw afgeknipt: de pagina is h-full, en de kinderen
+          brengen hun eigen schuifbalk niet mee. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <Outlet />
       </div>
     </div>

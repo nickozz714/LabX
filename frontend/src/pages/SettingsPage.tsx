@@ -131,13 +131,13 @@ export function SettingsPage() {
             anders in, dan wordt diens tijd als de jouwe geteld — dus hou het bij jezelf.
           </p>
         </div>
-        {/* ── Spraakassistent ─────────────────────────────────────────
+        {/* ── Orchestrator ────────────────────────────────────────────
             Twee voorwaarden, allebei nodig: het schuifje aan én een sleutel.
             Zonder sleutel valt er niets te verstaan, en dan hoort het tabblad
             er ook niet te zijn. */}
         <div className="rounded-lg border border-border p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-semibold">Spraakassistent</span>
+            <span className="text-sm font-semibold">Orchestrator</span>
             <label className="flex cursor-pointer items-center gap-2 text-xs">
               <input
                 type="checkbox"
@@ -159,10 +159,10 @@ export function SettingsPage() {
               ? "text-green-600 dark:text-green-500"
               : "text-muted-foreground"}`}>
             {!settings.voice_enabled
-              ? "Staat uit — het tabblad Spraak is niet zichtbaar."
+              ? "Staat uit — de orchestrator verschijnt niet op Overzicht."
               : !settings.openai_key_configured
-                ? "Vul hieronder een OpenAI-sleutel in; pas dan verschijnt het tabblad Spraak."
-                : "Klaar voor gebruik — het tabblad Spraak staat in de balk bovenaan."}
+                ? "Vul hieronder een OpenAI-sleutel in; pas dan verschijnt de orchestrator op Overzicht."
+                : "Klaar voor gebruik — je start hem vanaf Overzicht."}
           </p>
 
           <Label>OpenAI-sleutel</Label>

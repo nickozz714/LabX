@@ -63,6 +63,11 @@ def status(db: Session = Depends(get_db)) -> Dict[str, Any]:
             "dag_limiet_usd": s.voice_dag_limiet_usd,
             "verval_seconden": bev.VERVAL_SECONDEN,
             "vandaag_usd": _vandaag_usd(db),
+            # Zonder dit viel de interface altijd terug op de browserstem: hij
+            # leest hier af of er een dienst moet voorlezen, en dat veld
+            # ontbrak gewoon. De ingestelde stem werd dus nooit gebruikt.
+            "tts": s.voice_tts,
+            "tts_stem": s.voice_tts_stem,
         })
     return uit
 
@@ -335,14 +340,6 @@ def opzoeken(q: str = "", db: Session = Depends(get_db)) -> List[Dict[str, Any]]
                     "detail": None, "id": c.id})
 
     return uit
-
-
-@router.get("/stemmen")
-def stemmen(db: Session = Depends(get_db)) -> List[str]:
-    """De stemmen waaruit je kunt kiezen."""
-    _vereis_aan(db)
-    from services.voice.tts import STEMMEN
-    return list(STEMMEN)
 
 
 @router.post("/realtime-token")

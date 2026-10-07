@@ -19,7 +19,7 @@ import { SchedulesPage } from "@/pages/SchedulesPage";
 import { BoardsPage } from "@/pages/BoardsPage";
 import { BoardPage } from "@/pages/BoardPage";
 import { UrenPage } from "@/pages/UrenPage";
-import { SpraakPage } from "@/pages/SpraakPage";
+import { OrchestratorPage } from "@/pages/OrchestratorPage";
 import { AzureProfilesPage } from "@/pages/AzureProfilesPage";
 import { WorkbenchPage } from "@/pages/WorkbenchPage";
 import { KluisTabsPage } from "@/pages/KluisTabsPage";
@@ -74,7 +74,7 @@ function AppRoutes() {
           <Route path="azure" element={<AzureProfilesPage />} />
         </Route>
 
-        <Route path="orchestrator" element={<SpraakPage />} />
+        <Route path="orchestrator" element={<OrchestratorPage />} />
 
         {/* De oude adressen blijven werken: er staan bladwijzers en links in
             tickets naar deze paden. */}
