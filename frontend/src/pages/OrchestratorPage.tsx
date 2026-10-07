@@ -15,18 +15,19 @@
  *   tikken. Een leeg scherm met een microfoon vertelt je niet wat kan.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2, Search } from "lucide-react";
+import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2, Search, MessageSquare } from "lucide-react";
 
 import { Badge, Button, EmptyState, Input } from "@/components/ui";
 import { Orb } from "@/components/Orb";
 import type { OrbToestand } from "@/components/Orb";
 import { meetStream } from "@/lib/audioNiveau";
 import { Geheugensteun } from "@/components/Geheugensteun";
+import { Gesprek } from "@/components/Gesprek";
 import { ApiError } from "@/lib/api";
 import { Opname, lees, spraakApi, zwijg } from "@/lib/spraak";
 import { startRealtime } from "@/lib/spraakRealtime";
 import type { RealtimeSessie } from "@/lib/spraakRealtime";
-import type { SpraakGebeurtenis, SpraakSessie, SpraakStatus } from "@/lib/spraak";
+import type { SpraakSessie, SpraakStatus } from "@/lib/spraak";
 
 /** Voorbeeldvragen voor een leeg gesprek. Bewust alleen dingen die altijd
  *  werken, dus niets dat van een bepaald ticket of bord uitgaat. */
@@ -48,7 +49,6 @@ export function OrchestratorPage() {
   const [resterend, setResterend] = useState<number | null>(null);
 
   const opname = useRef(new Opname());
-  const onder = useRef<HTMLDivElement | null>(null);
 
   // Het realtime-brein houdt een eigen verbinding open; die hoort bij deze
   // pagina en moet dus ook met de pagina mee verdwijnen.
@@ -58,6 +58,17 @@ export function OrchestratorPage() {
   const [rtStatus, setRtStatus] = useState<string | null>(null);
   const [niveau, setNiveau] = useState(0);
   const [steunOpen, setSteunOpen] = useState(false);
+  const [gesprekOpen, setGesprekOpen] = useState(false);
+  const [vensterBreedte, setVensterBreedte] = useState(
+    typeof window === "undefined" ? 1280 : window.innerWidth);
+
+  // De orb schaalt mee met het venster: op een telefoon mag hij niet over de
+  // rand lopen, op een monitor mag hij gerust het beeld vullen.
+  useEffect(() => {
+    const bij = () => setVensterBreedte(window.innerWidth);
+    window.addEventListener("resize", bij);
+    return () => window.removeEventListener("resize", bij);
+  }, []);
   // De meter zelf blijft in een ref: de orb leest hem per frame uit, en dat
   // mag geen re-render kosten.
   const meterRef = useRef<((uit: Uint8Array) => void) | null>(null);
@@ -94,10 +105,6 @@ export function OrchestratorPage() {
     const t = setInterval(tik, 500);
     return () => clearInterval(t);
   }, [sessie?.openstaand?.vervalt_op, sessie, verversen]);
-
-  useEffect(() => {
-    onder.current?.scrollIntoView({ behavior: "smooth" });
-  }, [sessie?.tijdlijn?.length]);
 
   // Meebewegen met wat er werkelijk gezegd wordt. Een animatie die alleen
   // "er gebeurt iets" uitbeeldt, leest na twee keer kijken als een laadbalkje.
@@ -272,6 +279,12 @@ export function OrchestratorPage() {
   // Alleen de begroeting: dan weet je nog niet wat je kunt vragen.
   const nogNietsGevraagd = !tijdlijn.some((e) => e.soort === "gebruiker");
   const vervalt = status?.verval_seconden || 20;
+  // Alleen de laatste beurt blijft in beeld; de rest staat in het paneel.
+  const laatsteGebruiker = [...tijdlijn].reverse().find((e) => e.soort === "gebruiker");
+  const laatsteAssistent = [...tijdlijn].reverse().find((e) => e.soort === "assistent");
+  // Meegroeien met het scherm: op een telefoon mag hij niet over de rand, op
+  // een monitor mag hij gerust groot zijn.
+  const orbMaat = Math.max(220, Math.min(420, Math.round(vensterBreedte * 0.3)));
 
   // Eén aflezing van de toestand, in de volgorde waarin het ertoe doet: een
   // fout of een openstaande bevestiging wint van alles, want daar moet jij wat
@@ -317,6 +330,17 @@ export function OrchestratorPage() {
             {status?.vandaag_usd !== undefined
               && ` · $${status.vandaag_usd.toFixed(2)} vandaag`}
           </span>
+        )}
+        {sessie && (
+          <button
+            onClick={() => setGesprekOpen((o) => !o)}
+            title="Het hele gesprek openen"
+            aria-label="Gesprek"
+            className={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
+              gesprekOpen ? "bg-white/15 text-slate-100" : "text-slate-400 hover:bg-white/10"}`}
+          >
+            <MessageSquare size={16} />
+          </button>
         )}
         <button
           onClick={() => setSteunOpen((o) => !o)}
@@ -365,18 +389,30 @@ export function OrchestratorPage() {
           </div>
         </div>
       ) : (
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3 sm:px-6">
-          {/* De orb staat bovenaan het gesprek en niet in een hoekje: als je
-              praat kijk je niet naar de tekst, en dit is het enige dat dan
-              terugkoppelt dat er iets gebeurt. */}
-          <div className="flex justify-center pb-2 pt-1">
-            <Orb toestand={orbToestand} niveau={niveau} maat={190}
-                 spectrum={meterRef.current ?? undefined} />
+        /* De orb IS het scherm. Tijdens het praten kijk je niet naar tekst, en
+           een meelopende tijdlijn trekt de aandacht weg van het enige element
+           dat terugkoppelt dat er geluisterd wordt. Alleen je laatste zin en
+           het antwoord daarop blijven staan; de rest open je met de knop. */
+        <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6 py-4">
+          <Orb toestand={orbToestand} niveau={niveau} maat={orbMaat}
+               spectrum={meterRef.current ?? undefined} />
+
+          <div className="w-full max-w-xl space-y-3 text-center">
+            {laatsteGebruiker && (
+              <p className="text-sm text-slate-400">
+                <span className="mr-1.5 text-slate-600">jij</span>
+                “{laatsteGebruiker.tekst}”
+              </p>
+            )}
+            {laatsteAssistent && (
+              <p className="text-lg leading-relaxed text-slate-100 sm:text-xl">
+                {laatsteAssistent.tekst}
+              </p>
+            )}
           </div>
-          {tijdlijn.map((e) => <Regel key={e.id} e={e} />)}
 
           {nogNietsGevraagd && (
-            <div className="flex flex-wrap gap-2 pt-2">
+            <div className="flex flex-wrap justify-center gap-2">
               {VOORBEELDEN.map((v) => (
                 <button
                   key={v}
@@ -392,7 +428,6 @@ export function OrchestratorPage() {
               ))}
             </div>
           )}
-          <div ref={onder} />
         </div>
       )}
 
@@ -522,52 +557,10 @@ export function OrchestratorPage() {
       )}
       </div>
 
-      {/* Naast het gesprek op een breed scherm, eroverheen op een telefoon. */}
+      {/* Naast de orb op een breed scherm, eroverheen op een telefoon. */}
+      <Gesprek open={gesprekOpen} sluit={() => setGesprekOpen(false)}
+               tijdlijn={tijdlijn} />
       <Geheugensteun open={steunOpen} sluit={() => setSteunOpen(false)} />
-    </div>
-  );
-}
-
-function Regel({ e }: { e: SpraakGebeurtenis }) {
-  const tijd = e.ts.slice(11, 19);
-
-  if (e.soort === "gebruiker") {
-    return (
-      <div className="flex justify-end">
-        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-br-md bg-sky-500/90 px-3.5 py-2 text-sm text-white shadow-lg shadow-sky-500/20 sm:max-w-2xl">
-          {e.tekst}
-        </div>
-      </div>
-    );
-  }
-  if (e.soort === "assistent") {
-    return (
-      <div className="flex justify-start">
-        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-bl-md border border-white/10 bg-white/[0.07] px-3.5 py-2 text-sm text-slate-100 sm:max-w-2xl">
-          {e.tekst}
-        </div>
-      </div>
-    );
-  }
-  if (e.soort === "bevestiging") {
-    return (
-      <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-xs text-amber-100">
-        <span className="font-medium">Gevraagd om bevestiging:</span> {e.tekst}
-      </div>
-    );
-  }
-  if (e.soort === "actie") {
-    return (
-      <div className="flex items-start gap-2 px-1 text-[11px] text-slate-500">
-        <span className="tabular-nums">{tijd}</span>
-        <span className="font-mono">{e.tool}</span>
-        {e.resultaat && <span className="min-w-0 flex-1 break-words">— {e.resultaat.slice(0, 160)}</span>}
-      </div>
-    );
-  }
-  return (
-    <div className="px-1 text-[11px] text-slate-500">
-      <span className="tabular-nums">{tijd}</span> {e.tekst}
     </div>
   );
 }

@@ -48,7 +48,10 @@ const BIJSCHRIFT: Record<OrbToestand, string> = {
 /** Toestanden waarin de orb uit zichzelf beweegt als er niets te meten valt. */
 const EIGEN_BEWEGING: OrbToestand[] = ["verbinden", "denken", "spreken"];
 
-const STAVEN = 72;
+const STAVEN = 108;
+/** Markeringen op de buitenring. Puur optisch, maar ze geven de rand een
+ *  instrumentachtige precisie in plaats van een zachte vlek. */
+const MARKERINGEN = 36;
 
 export function Orb({
   toestand,
@@ -116,7 +119,7 @@ export function Orb({
       const st = toestandRef.current;
       const [tint, verzadiging] = TINT[st];
       const mid = maat / 2;
-      const straal = maat * 0.3;
+      const straal = maat * 0.26;
 
       // ── Het signaal ─────────────────────────────────────────────────────
       spectrumRef.current?.(banden);
@@ -169,11 +172,33 @@ export function Orb({
         ctx.lineTo(mid + Math.cos(hoek) * (binnen + lengte),
                    mid + Math.sin(hoek) * (binnen + lengte));
         ctx.strokeStyle =
-          `hsla(${tint} ${verzadiging * 90}% ${58 + vorige[i] * 24}% / ${0.3 + vorige[i] * 0.6})`;
-        ctx.lineWidth = maat * 0.012;
-        ctx.lineCap = "round";
+          `hsla(${tint} ${verzadiging * 100}% ${56 + vorige[i] * 38}% / ${0.35 + vorige[i] * 0.65})`;
+        ctx.lineWidth = Math.max(1, maat * 0.0075);
+        ctx.lineCap = "butt";   // scherpe uiteinden lezen als instrument
         ctx.stroke();
       }
+
+      // ── Buitenring met markeringen ──────────────────────────────────────
+      for (let i = 0; i < MARKERINGEN; i++) {
+        const hoek = (i / MARKERINGEN) * Math.PI * 2 - Math.PI / 2;
+        const lang = i % 3 === 0;
+        const r1 = straal * 1.86;
+        const r2 = r1 + straal * (lang ? 0.1 : 0.05);
+        ctx.beginPath();
+        ctx.moveTo(mid + Math.cos(hoek) * r1, mid + Math.sin(hoek) * r1);
+        ctx.lineTo(mid + Math.cos(hoek) * r2, mid + Math.sin(hoek) * r2);
+        ctx.strokeStyle = `hsla(${tint} ${verzadiging * 60}% 70% / ${lang ? 0.4 : 0.2})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      // Een dunne cirkel binnen de staven: die geeft het geheel een rand om
+      // tegen af te lezen, zoals de schaal op een meter.
+      ctx.beginPath();
+      ctx.arc(mid, mid, straal * 1.06, 0, Math.PI * 2);
+      ctx.strokeStyle = `hsla(${tint} ${verzadiging * 70}% 72% / 0.22)`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
 
       // ── Boog die rondloopt ──────────────────────────────────────────────
       // Bij verbinden en denken is er niets te meten maar gebeurt er wél iets;
@@ -193,8 +218,9 @@ export function Orb({
                                      : niveauRef.current * 0.3);
       const kern = straal * (0.82 + puls);
 
-      const gloed = ctx.createRadialGradient(mid, mid, 0, mid, mid, kern * 2.1);
-      gloed.addColorStop(0, `hsla(${tint} ${verzadiging * 95}% 70% / 0.5)`);
+      const gloed = ctx.createRadialGradient(mid, mid, 0, mid, mid, kern * 2.6);
+      gloed.addColorStop(0, `hsla(${tint} ${verzadiging * 100}% 72% / ${0.42 + puls})`);
+      gloed.addColorStop(0.45, `hsla(${tint} ${verzadiging * 95}% 60% / 0.16)`);
       gloed.addColorStop(1, `hsla(${tint} ${verzadiging * 90}% 55% / 0)`);
       ctx.fillStyle = gloed;
       ctx.fillRect(0, 0, maat, maat);
