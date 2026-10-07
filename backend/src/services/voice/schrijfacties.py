@@ -284,8 +284,95 @@ async def voer_voer_schedule_uit(db: Session, p: Dict[str, Any]) -> str:
     return f"Planning {p['naam']} is gestart."
 
 
+def bereid_wijzig_werkers(ctx: Context, *, lab: str,
+                          maximaal: Optional[int] = None,
+                          minimaal: Optional[int] = None, **_) -> Antwoord:
+    """Meer of minder werkers in een lab.
+
+    Dit kost geheugen en processortijd op de machine waar het lab draait, dus
+    het is een schrijfactie met bevestiging -- ook al verandert er niets aan
+    klantgegevens. Een lab dat je per ongeluk op twintig werkers zet, legt de
+    rest plat.
+    """
+    from models.lab import Lab
+
+    rij = ctx.lab_van_naam(lab)
+    if rij is None:
+        return _niet_gevonden(f"een lab dat '{lab}' heet",
+                              [l.name for l in ctx.db.query(Lab).all() if l.name])
+    if maximaal is None and minimaal is None:
+        return Antwoord(vraag="Hoeveel werkers moeten het er worden?")
+
+    nieuw_max = int(maximaal) if maximaal is not None else rij.max_workers
+    nieuw_min = int(minimaal) if minimaal is not None else rij.min_workers
+    if not (1 <= nieuw_min <= nieuw_max <= 20):
+        return Antwoord(vraag=(
+            "Dat kan niet: het minimum moet minstens 1 zijn, het maximum niet "
+            "boven de 20, en het minimum niet boven het maximum."))
+
+    deel = []
+    if minimaal is not None and nieuw_min != rij.min_workers:
+        deel.append(f"minimaal {nieuw_min}")
+    if maximaal is not None and nieuw_max != rij.max_workers:
+        deel.append(f"maximaal {nieuw_max}")
+    if not deel:
+        return Antwoord(feiten={"melding": f"{rij.name} staat al zo ingesteld."})
+
+    return Antwoord(bevestiging=Bevestiging(
+        tool="wijzig_werkers",
+        parameters={"lab_id": rij.id, "min": nieuw_min, "max": nieuw_max},
+        zin=(f"Je wilt lab {rij.name} op {' en '.join(deel)} werkers zetten? "
+             f"Nu is dat minimaal {rij.min_workers} en maximaal {rij.max_workers}.")))
+
+
+def bereid_wijzig_sessies(ctx: Context, *, lab: str, aantal: int, **_) -> Antwoord:
+    """Hoeveel sessies er tegelijk in één werker mogen draaien."""
+    from models.lab import Lab
+
+    rij = ctx.lab_van_naam(lab)
+    if rij is None:
+        return _niet_gevonden(f"een lab dat '{lab}' heet",
+                              [l.name for l in ctx.db.query(Lab).all() if l.name])
+    getal = int(aantal)
+    if not (1 <= getal <= 10):
+        return Antwoord(vraag="Dat moet tussen 1 en 10 liggen.")
+    if getal == rij.sessies_per_werker:
+        return Antwoord(feiten={"melding": f"{rij.name} staat al op {getal}."})
+
+    return Antwoord(bevestiging=Bevestiging(
+        tool="wijzig_sessies",
+        parameters={"lab_id": rij.id, "aantal": getal},
+        zin=(f"Je wilt in lab {rij.name} {getal} sessies tegelijk per werker "
+             f"toestaan? Nu staat dat op {rij.sessies_per_werker}.")))
+
+
+def bereid_zet_schedule(ctx: Context, *, schedule: str, aan: bool, **_) -> Antwoord:
+    """Een planning aan- of uitzetten."""
+    from models.schedule import Schedule
+    from services.voice import opzoeken
+
+    rijen = ctx.db.query(Schedule).all()
+    treffers = opzoeken.kies_op_naam(schedule, [s.name for s in rijen])
+    if len(treffers) != 1:
+        return _niet_gevonden(f"een planning die '{schedule}' heet",
+                              [s.name for s in rijen])
+    s = next(s for s in rijen if s.name == treffers[0])
+    if bool(s.is_enabled) == bool(aan):
+        return Antwoord(feiten={
+            "melding": f"{s.name} staat al {'aan' if aan else 'uit'}."})
+
+    return Antwoord(bevestiging=Bevestiging(
+        tool="zet_schedule",
+        parameters={"schedule_id": s.id, "aan": bool(aan)},
+        zin=(f"Je wilt de planning {s.name} {'aan' if aan else 'uit'}zetten? "
+             f"Die draait op {s.cron_expression}.")))
+
+
 SCHRIJFACTIES: Dict[str, Callable[..., Antwoord]] = {
     "start_agent": bereid_start_agent,
+    "wijzig_werkers": bereid_wijzig_werkers,
+    "wijzig_sessies": bereid_wijzig_sessies,
+    "zet_schedule": bereid_zet_schedule,
     "maak_ticket": bereid_maak_ticket,
     "verplaats_ticket": bereid_verplaats_ticket,
     "plaats_opmerking": bereid_plaats_opmerking,
@@ -295,8 +382,46 @@ SCHRIJFACTIES: Dict[str, Callable[..., Antwoord]] = {
     "voer_schedule_uit": bereid_voer_schedule_uit,
 }
 
+def voer_wijzig_werkers(ctx: Context, *, lab_id: str, min: int, max: int, **_):
+    from models.lab import Lab
+
+    rij = ctx.db.get(Lab, lab_id)
+    if rij is None:
+        return {"melding": "Dat lab bestaat niet meer."}
+    rij.min_workers, rij.max_workers = int(min), int(max)
+    # De autoscaler brengt het aantal zelf binnen de nieuwe grenzen; hier
+    # alleen de grenzen verzetten, anders vecht je met hem om de controle.
+    ctx.db.commit()
+    return {"melding": f"{rij.name} staat nu op minimaal {min} en maximaal {max} werkers."}
+
+
+def voer_wijzig_sessies(ctx: Context, *, lab_id: str, aantal: int, **_):
+    from models.lab import Lab
+
+    rij = ctx.db.get(Lab, lab_id)
+    if rij is None:
+        return {"melding": "Dat lab bestaat niet meer."}
+    rij.sessies_per_werker = int(aantal)
+    ctx.db.commit()
+    return {"melding": f"In {rij.name} mogen nu {aantal} sessies tegelijk per werker."}
+
+
+def voer_zet_schedule(ctx: Context, *, schedule_id: int, aan: bool, **_):
+    from models.schedule import Schedule
+
+    rij = ctx.db.get(Schedule, int(schedule_id))
+    if rij is None:
+        return {"melding": "Die planning bestaat niet meer."}
+    rij.is_enabled = bool(aan)
+    ctx.db.commit()
+    return {"melding": f"{rij.name} staat nu {'aan' if aan else 'uit'}."}
+
+
 UITVOERDERS: Dict[str, Callable[..., Any]] = {
     "start_agent": voer_start_agent,
+    "wijzig_werkers": voer_wijzig_werkers,
+    "wijzig_sessies": voer_wijzig_sessies,
+    "zet_schedule": voer_zet_schedule,
     "maak_ticket": voer_maak_ticket,
     "verplaats_ticket": voer_verplaats_ticket,
     "plaats_opmerking": voer_plaats_opmerking,

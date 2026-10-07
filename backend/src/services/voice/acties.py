@@ -363,8 +363,98 @@ def _minuten_sinds(tijdstip: Optional[str]) -> Optional[int]:
     return int((datetime.now(timezone.utc) - d).total_seconds() // 60)
 
 
+def lab_details(ctx: Context, *, lab: str, **_) -> Antwoord:
+    """Hoe een lab is ingericht: beeld, werkers, sessies, Azure-profiel.
+
+    Dit is wat je wilt weten voordat je er werk op zet: past het erbij, en
+    hoeveel kan er tegelijk in.
+    """
+    from models.azure_profile import AzureProfile
+    from models.lab import Lab
+
+    rij = ctx.lab_van_naam(lab)
+    if rij is None:
+        return Antwoord(vraag=f"Ik ken geen lab dat '{lab}' heet.",
+                        keuzes=[l.name for l in ctx.db.query(Lab).all() if l.name])
+
+    profiel = None
+    if getattr(rij, "azure_profile_id", None):
+        p = ctx.db.get(AzureProfile, rij.azure_profile_id)
+        profiel = getattr(p, "name", None) if p else None
+
+    return Antwoord(feiten={
+        "naam": rij.name,
+        "status": rij.status,
+        "beeld": rij.image,
+        "werkers_nu": rij.worker_count,
+        "werkers_minimaal": rij.min_workers,
+        "werkers_maximaal": rij.max_workers,
+        "sessies_per_werker": rij.sessies_per_werker,
+        "azure_profiel": profiel or "geen",
+    })
+
+
+def workflow_details(ctx: Context, *, workflow: str, **_) -> Antwoord:
+    """Wat een workflow precies doet: de stappen op volgorde."""
+    from models.workflow import Workflow
+
+    rijen = ctx.db.query(Workflow).all()
+    treffers = opzoeken.kies_op_naam(workflow, [w.name for w in rijen])
+    if len(treffers) != 1:
+        return Antwoord(vraag="Welke workflow bedoel je?",
+                        keuzes=treffers[:8] or [w.name for w in rijen][:8])
+    w = next(w for w in rijen if w.name == treffers[0])
+
+    stappen = []
+    for i, stap in enumerate(w.steps_json or [], start=1):
+        if isinstance(stap, dict):
+            stappen.append({"nummer": i,
+                            "naam": stap.get("name") or stap.get("titel") or f"stap {i}",
+                            "soort": stap.get("type") or stap.get("soort")})
+    return Antwoord(feiten={
+        "naam": w.name,
+        "omschrijving": (w.description or "")[:200] or None,
+        "aan": bool(w.is_enabled),
+        "aantal_stappen": len(stappen),
+        "stappen": stappen[:12],
+        "parameters": [p.get("name") for p in (w.parameters_json or [])
+                       if isinstance(p, dict)][:10],
+    })
+
+
+def _labnaam(ctx: Context, lab_id: Optional[str]) -> Optional[str]:
+    from models.lab import Lab
+    rij = ctx.db.get(Lab, lab_id) if lab_id else None
+    return rij.name if rij else None
+
+
+def schedule_details(ctx: Context, *, schedule: str, **_) -> Antwoord:
+    """Wat er precies gepland staat, en wanneer het weer draait."""
+    from models.schedule import Schedule
+
+    rijen = ctx.db.query(Schedule).all()
+    treffers = opzoeken.kies_op_naam(schedule, [s.name for s in rijen])
+    if len(treffers) != 1:
+        return Antwoord(vraag="Welke planning bedoel je?",
+                        keuzes=treffers[:8] or [s.name for s in rijen][:8])
+    s = next(s for s in rijen if s.name == treffers[0])
+
+    return Antwoord(feiten={
+        "naam": s.name,
+        "aan": bool(s.is_enabled),
+        "patroon": s.cron_expression,
+        "soort": s.kind,
+        "lab": _labnaam(ctx, s.lab_id),
+        "volgende_keer": getattr(s, "next_run_at", None),
+        "laatste_keer": getattr(s, "last_run_at", None),
+    })
+
+
 LEESACTIES: Dict[str, Callable[..., Antwoord]] = {
     "wat_loopt_er": wat_loopt_er,
+    "lab_details": lab_details,
+    "workflow_details": workflow_details,
+    "schedule_details": schedule_details,
     "ticket_status": ticket_status,
     "zoek_tickets": zoek_tickets,
     "chat_status": chat_status,
