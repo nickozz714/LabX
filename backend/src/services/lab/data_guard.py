@@ -200,6 +200,39 @@ def _delimited_record_rows(lines: List[str]) -> Tuple[int, int]:
     return best
 
 
+def _heeft_waardeveld(o: dict) -> bool:
+    for v in o.values():
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            return True
+        if isinstance(v, str) and _is_value_cell(v):
+            return True
+    return False
+
+
+def _lijsten_van_objecten(data: Any, diepte: int = 0) -> List[list]:
+    """Elke lijst-van-objecten, op welke diepte dan ook.
+
+    Eerder keek dit alleen naar het hoogste niveau: een lijst, of een lijst
+    direct onder een sleutel. Een API-antwoord ziet er zelden zo uit --
+    `{"status":"ok","data":{"items":[ ...klantrijen... ]}}` kwam er ongemoeid
+    doorheen, en dat is precies de vorm waarin gegevens een lab verlaten.
+    """
+    if diepte > 6:
+        return []
+    gevonden: List[list] = []
+    if isinstance(data, list):
+        if any(isinstance(o, dict) for o in data):
+            gevonden.append(data)
+        for item in data[:200]:
+            gevonden += _lijsten_van_objecten(item, diepte + 1)
+    elif isinstance(data, dict):
+        for v in data.values():
+            gevonden += _lijsten_van_objecten(v, diepte + 1)
+    return gevonden
+
+
 def _json_record_rows(text: str) -> int:
     t = text.strip()
     if not (t.startswith("[") or t.startswith("{")):
@@ -208,34 +241,113 @@ def _json_record_rows(text: str) -> int:
         data = json.loads(t)
     except (ValueError, TypeError):
         return 0
-    if isinstance(data, dict):
-        data = next((v for v in data.values() if isinstance(v, list)), None)
-    if not isinstance(data, list) or len(data) < 3:
-        return 0
-    objs = [o for o in data if isinstance(o, dict)]
-    if len(objs) < 3:
+
+    beste = 0
+    for lijst in _lijsten_van_objecten(data):
+        objs = [o for o in lijst if isinstance(o, dict)]
+        if len(objs) < 3:
+            continue
+        hits = sum(1 for o in objs if _heeft_waardeveld(o))
+        if hits >= 0.6 * len(objs):
+            beste = max(beste, hits)
+    return beste
+
+
+# ── XML ──────────────────────────────────────────────────────────────────────
+# Bewust met reguliere expressies en niet met een echte parser: deze tekst komt
+# uit een container en een XML-parser op onvertrouwde invoer is zelf een risico
+# (entiteitsexpansie). We hoeven de boom ook niet te kennen -- alleen of er
+# herhaalde elementen in staan die op rijen lijken.
+_XML_BLOK = re.compile(r"<([A-Za-z_][\w.-]*)\b[^>/]*>(.*?)</\1>", re.S)
+_XML_BLAD = re.compile(r"<([A-Za-z_][\w.-]*)\b[^>/]*>([^<>]*)</\1>")
+_XML_ATTR = re.compile(r'([A-Za-z_][\w.-]*)\s*=\s*"([^"]*)"')
+_XML_MAX = 200_000
+
+
+def _xml_rijen(blokken: List[str]) -> int:
+    """Hoeveel van deze blokken zijn klantrijen?
+
+    Dezelfde maatstaf als bij CSV en JSON: minstens twee velden die in alle
+    blokken terugkomen, en minstens een veld waarvan de waarden getallen,
+    bedragen of datums zijn. Een schema haalt die drempel niet -- daar staan
+    typenamen, geen waarden -- en dat is precies het verschil dat we willen.
+    """
+    rijen = []
+    for blok in blokken:
+        velden = {k: v for k, v in _XML_BLAD.findall(blok) if v.strip()}
+        if len(velden) < 2:
+            velden = {k: v for k, v in _XML_ATTR.findall(blok) if v.strip()}
+        if len(velden) >= 2:
+            rijen.append(velden)
+    if len(rijen) < 3:
         return 0
 
-    def _has_value_field(o: dict) -> bool:
-        for v in o.values():
-            if isinstance(v, bool):
-                continue
-            if isinstance(v, (int, float)):
-                return True
-            if isinstance(v, str) and _is_value_cell(v):
-                return True
-        return False
+    gedeeld = set(rijen[0])
+    for r in rijen[1:]:
+        gedeeld &= set(r)
+    if len(gedeeld) < 2:
+        return 0
+    for sleutel in gedeeld:
+        waarden = [r[sleutel] for r in rijen]
+        if sum(_is_value_cell(w) for w in waarden) >= 0.6 * len(waarden):
+            return len(rijen)
+    return 0
 
-    hits = sum(1 for o in objs if _has_value_field(o))
-    return hits if hits >= 0.6 * len(objs) else 0
+
+def _xml_blokken_per_tag(t: str, diepte: int = 0) -> Dict[str, List[str]]:
+    """Alle elementen per tagnaam, ook de geneste.
+
+    Zonder de recursie hier vond dit niets: een `findall` pakt het buitenste
+    element (`<rows>...</rows>`) als een treffer en loopt daarna verder NA die
+    treffer, dus de `<row>`-elementen erbinnen kwamen nooit in beeld. En juist
+    die zijn de rijen.
+    """
+    per_tag: Dict[str, List[str]] = {}
+    if diepte > 5:
+        return per_tag
+    for m in _XML_BLOK.finditer(t):
+        tag, inhoud = m.group(1), m.group(2)
+        per_tag.setdefault(tag, []).append(inhoud)
+        for k, v in _xml_blokken_per_tag(inhoud, diepte + 1).items():
+            per_tag.setdefault(k, []).extend(v)
+    return per_tag
+
+
+def _xml_record_rows(text: str) -> int:
+    """Klantrijen in XML. Hier keek de guard helemaal niet naar.
+
+    Gemeten: een `<rows><row><klant>..</klant><omzet>..</omzet></row>...` ging
+    er ongehinderd doorheen, en werd alleen tegengehouden door het lokale
+    model -- dus niet op een machine waar dat model niet draait.
+    """
+    t = text.strip()[:_XML_MAX]
+    if "<" not in t or ">" not in t:
+        return 0
+
+    per_tag = _xml_blokken_per_tag(t)
+    beste = 0
+    for blokken in per_tag.values():
+        if len(blokken) >= 3:
+            beste = max(beste, _xml_rijen(blokken))
+    if beste:
+        return beste
+
+    # Rijen als losse elementen met attributen: <row klant=".." omzet=".."/>
+    zelfsluitend: Dict[str, List[str]] = {}
+    for m in re.finditer(r"<([A-Za-z_][\w.-]*)\b([^>]*)/>", t):
+        zelfsluitend.setdefault(m.group(1), []).append(m.group(2))
+    for blokken in zelfsluitend.values():
+        if len(blokken) >= 3:
+            beste = max(beste, _xml_rijen(blokken))
+    return beste
 
 
 def record_rows(text: str) -> int:
-    """Number of recognized customer-record rows (delimited or JSON). 0 = no
-    records (e.g. a name list or free text)."""
+    """Number of recognized customer-record rows (delimited, JSON or XML).
+    0 = no records (e.g. a name list or free text)."""
     lines = [ln for ln in text.splitlines() if ln.strip()]
     delim_rows, _ = _delimited_record_rows(lines)
-    return max(delim_rows, _json_record_rows(text))
+    return max(delim_rows, _json_record_rows(text), _xml_record_rows(text))
 
 
 # ── Core inspection ───────────────────────────────────────────────────────────

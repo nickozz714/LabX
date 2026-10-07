@@ -64,7 +64,7 @@ services:
       LABX_CLI_DEFAULT_MODEL: ${LABX_CLI_DEFAULT_MODEL:-claude-sonnet-5}
       DATA_GUARD_LLM_ENABLED: ${DATA_GUARD_LLM_ENABLED:-1}
       DATA_GUARD_LLM_MODEL: ${DATA_GUARD_LLM_MODEL:-qwen2.5:1.5b}
-      DATA_GUARD_LLM_URL: ${DATA_GUARD_LLM_URL:-}
+      DATA_GUARD_LLM_URL: ${DATA_GUARD_LLM_URL:-http://labx-ollama:11434}
       LABX_CORS_ORIGINS: ${LABX_CORS_ORIGINS:-*}
 
   web:
@@ -86,10 +86,16 @@ services:
     environment:
       LABX_API_URL: ${LABX_API_URL:-http://localhost:8090}
 
-  # Optional local-model sidecar for the data-guard's "spoor B" second opinion
-  # and/or the Claude-Code-alternative local model. Not required — set
-  # DATA_GUARD_LLM_URL to point at an existing host/LAN Ollama instead and
-  # remove this service.
+  # Het lokale model voor de tweede mening van de data-guard ("spoor B").
+  #
+  # Dit stond achter een compose-profiel en startte dus niet mee. Gevolg: de
+  # guard stond in de instellingen op AAN, maar het model was er niet, en de
+  # controle valt stil zonder dat iemand dat ziet. Toen zijn er klantgegevens
+  # langs gekomen -- XML-rijen die de regellaag destijds niet herkende en die
+  # alleen dit model had tegengehouden.
+  #
+  # Draait er al een Ollama op de host of in het LAN? Zet dan
+  # DATA_GUARD_LLM_URL naar dat adres; deze service mag dan weg.
   ollama:
     image: ollama/ollama:latest
     container_name: labx-ollama
@@ -98,4 +104,3 @@ services:
       - labx-labs
     volumes:
       - labx_data:/root/.ollama:rw
-    profiles: ["with-ollama"]

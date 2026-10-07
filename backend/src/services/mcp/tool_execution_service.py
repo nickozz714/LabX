@@ -56,7 +56,8 @@ class ToolExecutionService:
             return LabService(self.db).container_for(lab, worker_id)
         return lab.container_id
 
-    async def _second_opinion(self, *, lab, guarded: Dict[str, Any]) -> Dict[str, Any]:
+    async def _second_opinion(self, *, lab, guarded: Dict[str, Any],
+                              command: Optional[str] = None) -> Dict[str, Any]:
         """De DERDE laag: het lokale model.
 
         De regels vinden patronen — een BSN, een IBAN, een SELECT. Wat ze
@@ -91,6 +92,36 @@ class ToolExecutionService:
                 "guard_reason": opinion.get("reason"),
                 "guard_facts": {**facts, "llm": opinion, "fase": "lokaal model"},
             }
+        if opinion is not None and opinion.get("uitgevoerd") is False:
+            # De derde laag viel uit. Bij een data-plane commando is dat
+            # precies de situatie waarin het eerder misging: de regels waren
+            # de enige controle, en die kenden XML-rijen niet. Dan gaat het
+            # dicht. Een metadata-commando (schema's, tellingen, listings)
+            # blijft gewoon werken -- anders legt één hangende Ollama al het
+            # labwerk plat, en dan gaat de guard uit en beschermt hij niets.
+            from services.lab.data_guard import classify_command
+
+            herkomst = classify_command(command)
+            if herkomst == "data":
+                log.warningx("Data-uitvoer GEBLOKKEERD: geen tweede mening",
+                             lab=getattr(lab, "id", None),
+                             storing=opinion.get("storing"))
+                reden = ("het lokale controlemodel is niet bereikbaar, en dit "
+                         "commando leest gegevens")
+                audit.werk_bij(self.db, audit_id, outcome="geblokkeerd",
+                               geleverd="", llm_verdict=opinion)
+                return {
+                    **guarded,
+                    "output": GUARD_MESSAGE.format(reason=reden),
+                    "guarded": True,
+                    "guard_reason": reden,
+                    "guard_facts": {**facts, "llm": opinion,
+                                    "fase": "lokaal model onbereikbaar"},
+                }
+            log.warningx("Uitvoer doorgelaten ZONDER tweede mening",
+                         lab=getattr(lab, "id", None), herkomst=herkomst,
+                         storing=opinion.get("storing"))
+
         if opinion is not None:
             audit.werk_bij(self.db, audit_id, llm_verdict=opinion)
             guarded = {**guarded, "guard_facts": {**facts, "llm": opinion}}
@@ -202,7 +233,9 @@ class ToolExecutionService:
             db=self.db, lab_name=(lab.name if lab else None),
             command=f"mcp:{server.slug}:{tool.remote_name}",
         )
-        guarded = await self._second_opinion(lab=lab, guarded=guarded)
+        guarded = await self._second_opinion(
+            lab=lab, guarded=guarded,
+            command=f"mcp:{server.slug}:{tool.remote_name}")
         self._audit(lab_id=lab_id, command=f"mcp:{server.slug}:{tool.remote_name}", guarded_result=guarded)
         if guarded.get("guarded"):
             return guarded["output"]
@@ -229,6 +262,7 @@ class ToolExecutionService:
                                    command=command, lab_id=lab_id, db=self.db,
                                    lab_name=(lab.name if lab else None),
                                    worker_id=worker_id, intent=intent)
-        guarded = await self._second_opinion(lab=lab, guarded=guarded)
+        guarded = await self._second_opinion(lab=lab, guarded=guarded,
+                                             command=command)
         self._audit(lab_id=lab_id, command=command, guarded_result=guarded)
         return guarded
