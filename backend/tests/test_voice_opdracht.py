@@ -175,3 +175,47 @@ def test_stoppen_laat_niets_klaarstaan(db):
     opdracht.stop(db, concept)
 
     assert opdracht.lopend(db, sid) is None
+
+
+def test_afronden_sluit_een_openstaande_stappenlijst(db):
+    """Dit liep echt dood in een gesprek.
+
+    De gebruiker zei "klaar", de transcriptie maakte er "Klar" van, het model
+    gaf het niet door, en afronden antwoordde "Nog niet compleet. En de
+    volgende stap?". Daarna gaf het model het op en BEWEERDE dat de workflow
+    was aangemaakt. Wie afrondt, bedoelt afronden.
+    """
+    sid = _sessie(db)
+    concept = opdracht.begin(db, sid, "workflow")
+    opdracht.vul_aan(db, concept, "Nachtcontrole")
+    opdracht.vul_aan(db, concept, "Kijkt of alles draait")
+    opdracht.vul_aan(db, concept, "Lees de logs")
+
+    assert opdracht.vraag_nu(concept) is not None, "de lijst staat nog open"
+    assert opdracht.sluit_open_lijst(db, concept) is True
+    assert opdracht.vraag_nu(concept) is None, "nu is het compleet"
+
+
+def test_afronden_sluit_niets_als_er_nog_geen_stap_is(db):
+    """Een workflow zonder stappen is geen workflow."""
+    sid = _sessie(db)
+    concept = opdracht.begin(db, sid, "workflow")
+    opdracht.vul_aan(db, concept, "Leeg")
+    opdracht.vul_aan(db, concept, "geen")
+
+    assert opdracht.sluit_open_lijst(db, concept) is False
+    assert opdracht.vraag_nu(concept) is not None
+
+
+@pytest.mark.parametrize("gezegd", ["klaar", "Klaar.", "Klar", "dat was het",
+                                    "KLAAR!", "verder niets"])
+def test_verschillende_manieren_om_klaar_te_zeggen(db, gezegd):
+    """De transcriptie is niet perfect; "Klar" mag het gesprek niet ophangen."""
+    sid = _sessie(db)
+    concept = opdracht.begin(db, sid, "workflow")
+    opdracht.vul_aan(db, concept, "Nachtcontrole")
+    opdracht.vul_aan(db, concept, "geen")
+    opdracht.vul_aan(db, concept, "Lees de logs")
+
+    uit = opdracht.vul_aan(db, concept, gezegd)
+    assert uit.get("klaar") is True, f"'{gezegd}' sloot de lijst niet af"

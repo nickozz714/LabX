@@ -66,8 +66,9 @@ VELDEN: Dict[str, List[Dict[str, Any]]] = {
 }
 
 # Woorden waarmee je een herhalend veld afsluit.
-KLAAR_WOORDEN = {"klaar", "dat was het", "dat is het", "genoeg", "stop",
-                 "niets meer", "niks meer", "afronden", "klaar is kees"}
+KLAAR_WOORDEN = {"klaar", "klar", "klaar is kees", "dat was het", "dat is het",
+                 "genoeg", "stop", "niets meer", "niks meer", "afronden",
+                 "dat was m", "verder niets", "verder niks", "ready", "done"}
 
 
 # ── Nederlandse tijdsaanduiding naar cron ────────────────────────────────────
@@ -286,6 +287,29 @@ def vul_aan(db: Session, concept, waarde: str) -> Dict[str, Any]:
     if volgende is None:
         return {"klaar": True, "concept": samenvatting(db, concept)}
     return {"vraag": volgende, "concept": samenvatting(db, concept)}
+
+
+def sluit_open_lijst(db: Session, concept) -> bool:
+    """Sluit een herhalend veld af als er al iets in staat.
+
+    Zonder dit liep het gesprek dood: je zegt "klaar", de transcriptie maakt
+    er "Klar" van of het model geeft het niet door, en afronden antwoordt dan
+    "Nog niet compleet. En de volgende stap?" -- waarna het model het opgaf en
+    bééérde dat het klaar was. Wie afrondt, bedoelt afronden.
+    """
+    veld = openstaand_veld(concept)
+    if veld is None or not veld.get("herhaalt"):
+        return False
+    velden = copy.deepcopy(dict(concept.velden or {}))
+    if not velden.get(veld["naam"]):
+        return False
+    velden[f"{veld['naam']}_klaar"] = True
+    concept.velden = velden
+    concept.updated_at = _nu()
+    flag_modified(concept, "velden")
+    db.commit()
+    db.refresh(concept)
+    return True
 
 
 def samenvatting(db: Session, concept) -> Dict[str, Any]:

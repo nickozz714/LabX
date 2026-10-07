@@ -346,3 +346,43 @@ def test_een_te_laat_antwoord_is_herkenbaar_als_te_laat(db):
     # Maar een bevestiging van een kwartier geleden is geen 'te laat antwoord'
     # meer; dan is het gewoon een nieuwe zin.
     assert svc.net_verlopen(sessie.id, binnen_seconden=5) is None
+
+
+def test_een_nieuwe_sessie_sluit_de_vorige(db):
+    """Er stonden er zes tegelijk open.
+
+    Een sessie bleef "actief" tot je op Stoppen klikte; navigeer je weg of
+    herlaad je de pagina, dan bleef hij staan. Dat levert meerdere tijdlijnen,
+    meerdere concepten en meerdere kostentellers op terwijl je maar tegen één
+    ding praat.
+    """
+    from services.voice.sessie import VoiceSessieService
+
+    svc = VoiceSessieService(db)
+    eerste = svc.start(brein="pipeline", microfoon="ptt")
+    tweede = svc.start(brein="pipeline", microfoon="ptt")
+
+    db.refresh(eerste)
+    assert eerste.status == "gestopt"
+    assert eerste.einde_reden == "vervangen"
+    assert tweede.status == "actief"
+
+
+def test_oude_sessies_verlopen_vanzelf(db):
+    """De instelling voor de sessieduur bestond al en deed niets."""
+    from datetime import datetime, timedelta, timezone
+
+    from models.voice import VoiceSession
+    from services.voice.sessie import VoiceSessieService
+
+    svc = VoiceSessieService(db)
+    oud = VoiceSession(
+        id="oud", brein="pipeline", microfoon="ptt", status="actief",
+        started_at=(datetime.now(timezone.utc) - timedelta(hours=3)).isoformat())
+    db.add(oud)
+    db.commit()
+
+    assert svc.ruim_op(minuten=30) == 1
+    db.refresh(oud)
+    assert oud.status == "gestopt"
+    assert oud.einde_reden == "verlopen"

@@ -51,6 +51,10 @@ def status(db: Session = Depends(get_db)) -> Dict[str, Any]:
     interface moet kunnen weten of het tabblad getoond wordt."""
     s = _instellingen(db)
     aan = _staat_aan(s)
+    if aan:
+        # De pagina vraagt dit als eerste op; een goed moment om te sluiten
+        # wat er is blijven hangen.
+        VoiceSessieService(db).ruim_op(minuten=s.voice_sessie_minuten or 30)
     uit: Dict[str, Any] = {"aan": aan}
     if aan:
         uit.update({
@@ -101,6 +105,10 @@ def start_sessie(payload: Optional[Dict[str, Any]] = None,
         brein = "pipeline"
 
     svc = VoiceSessieService(db)
+    # Eerst opruimen wat is blijven hangen. Doen we dat hier en niet in een
+    # achtergrondtaak, dan gebeurt het precies wanneer het ertoe doet en
+    # hebben we er geen tweede draaiend onderdeel voor nodig.
+    svc.ruim_op(minuten=s.voice_sessie_minuten or 30)
     sessie = svc.start(brein=brein,
                        microfoon=payload.get("microfoon") or s.voice_microfoon)
     return _sessie_dto(sessie)

@@ -81,6 +81,10 @@ def bereid_rond_opdracht_af(ctx: Context, **_) -> Antwoord:
     concept = opdracht.lopend(ctx.db, ctx.session_id)
     if concept is None:
         return Antwoord(vraag="Er loopt geen opdracht om af te ronden.")
+    # Staat er nog een stappenlijst open met minstens één stap erin, dan is
+    # afronden het sein om die te sluiten -- niet om nog een keer te vragen.
+    opdracht.sluit_open_lijst(ctx.db, concept)
+
     open_vraag = opdracht.vraag_nu(concept)
     if open_vraag:
         return Antwoord(vraag=f"Nog niet compleet. {open_vraag}")

@@ -48,7 +48,32 @@ class VoiceSessieService:
 
     # ── sessies ─────────────────────────────────────────────────────────────
 
+    def ruim_op(self, *, minuten: int = 30) -> int:
+        """Sessies die niemand meer heeft afgesloten, alsnog sluiten.
+
+        Een sessie bleef "actief" tot je op Stoppen klikte. Navigeer je weg of
+        herlaad je de pagina, dan bleef hij staan -- en dan zie je er na een
+        middag werken zes openstaan, met evenveel kostenplafonds die los van
+        elkaar meetellen. De instelling voor de sessieduur bestond al en werd
+        nergens afgedwongen; dit is die instelling.
+        """
+        from datetime import timedelta
+
+        grens = (datetime.now(timezone.utc) - timedelta(minutes=max(1, minuten)))
+        oud = (self.db.query(VoiceSession)
+               .filter(VoiceSession.status == "actief",
+                       VoiceSession.started_at < grens.isoformat()).all())
+        for s in oud:
+            self.stop(s.id, reden="verlopen")
+        return len(oud)
+
     def start(self, *, brein: str, microfoon: str) -> VoiceSession:
+        # Eén gesprek tegelijk. Twee open sessies betekent twee tijdlijnen,
+        # twee concepten en twee kostentellers -- en jij praat maar tegen één.
+        for lopend in (self.db.query(VoiceSession)
+                       .filter(VoiceSession.status == "actief").all()):
+            self.stop(lopend.id, reden="vervangen")
+
         s = VoiceSession(id=str(uuid4()), brein=brein, microfoon=microfoon,
                          status="actief", started_at=_nu())
         self.db.add(s)

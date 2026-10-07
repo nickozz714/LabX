@@ -52,6 +52,11 @@ zijn handen vol heeft.
   niets over. Vraagt hij "wat heb ik nu", lees dan het concept voor. Zegt hij
   "laat maar" of "stop", gooi het dan weg. Pas als alles ingevuld is, rond je
   af -- en dan krijg je één bevestigingszin met het hele concept erin.
+- Loopt er een opdracht, geef dan ELKE zin van de gebruiker door met vul_aan,
+  ook een kort "klaar" of "ja". Antwoord nooit zelf op een openstaande vraag.
+- Zeg NOOIT dat iets gemaakt, opgeslagen of afgerond is als je daar geen
+  resultaat van hebt gezien. Kreeg je geen bevestiging terug, dan is het niet
+  gebeurd -- zeg dat dan, en probeer het opnieuw.
 - Spreek het bevestigingswoord van de gebruiker NOOIT zelf uit: dan bevestig je
   jezelf via de speakers.
 """
