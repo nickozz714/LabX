@@ -97,9 +97,12 @@ def bereid_rond_opdracht_af(ctx: Context, **_) -> Antwoord:
             return Antwoord(
                 vraag=f"Ik ken geen lab dat '{v.get('lab')}' heet.",
                 keuzes=[l.name for l in ctx.db.query(Lab).all() if l.name])
+        invoer = v.get("parameterwaarden") or {}
+        met = (" met " + ", ".join(f"{k} is {w}" for k, w in invoer.items())
+               if invoer else "")
         zin = (f"Je wilt de planning '{v['naam']}' aanmaken: "
                f"{opdracht.cron_in_woorden(v['wanneer'])}, in lab {lab.name}, "
-               f"en dan {v['wat']}. Zal ik hem aanzetten?")
+               f"en dan {v['wat']}{met}. Zal ik hem aanzetten?")
         return Antwoord(bevestiging=Bevestiging(
             tool="maak_planning",
             parameters={"concept_id": concept.id, "lab_id": lab.id},
@@ -108,9 +111,11 @@ def bereid_rond_opdracht_af(ctx: Context, **_) -> Antwoord:
     boom = v.get("stappen") or []
     nodes, _edges = stappenlaag.naar_graaf(boom)
     regels = stappenlaag.in_woorden(boom)
+    invoer = [p["naam"] for p in (v.get("parameters") or [])]
+    met = f" Hij vraagt om invoer: {', '.join(invoer)}." if invoer else ""
     zin = (f"Je wilt de workflow '{v['naam']}' aanmaken met "
            f"{len(nodes)} activiteit{'en' if len(nodes) != 1 else ''}: "
-           f"{' '.join(regels)}. Zal ik hem opslaan?")
+           f"{' '.join(regels)}.{met} Zal ik hem opslaan?")
     return Antwoord(bevestiging=Bevestiging(
         tool="maak_workflow",
         parameters={"concept_id": concept.id},
@@ -144,6 +149,9 @@ async def voer_maak_planning(db, p: Dict[str, Any]) -> str:
         prompt=None if is_workflow else v["wat"],
         workflow_id=(next(w.id for w in wfs if w.name == treffers[0])
                      if is_workflow else None),
+        # De waarden voor de invoer van die workflow. Zonder dit viel een
+        # planning bij de eerste run om op een parameter die niemand zette.
+        parameters_json=(v.get("parameterwaarden") or None) if is_workflow else None,
         is_enabled=True, created_at=_nu(), updated_at=_nu())
     db.add(rij)
     concept.status = "afgerond"
@@ -178,9 +186,14 @@ async def voer_maak_workflow(db, p: Dict[str, Any]) -> str:
                 "instruction": n.get("prompt") or n.get("commando") or n["naam"]}
                for i, n in enumerate(nodes, start=1)]
 
+    # Parameters komen uit de vraag naar invoer, maar ook uit een keuze die
+    # naar `invoer.X` verwijst zonder dat die X al bestond.
+    from services.workflows import parameters as params
+    invoer = params.normaliseer(v.get("parameters") or [])
+
     rij = Workflow(name=v["naam"], description=v.get("omschrijving"),
                    markdown="", steps_json=stappen,
-                   nodes_json=nodes, edges_json=edges, parameters_json=[],
+                   nodes_json=nodes, edges_json=edges, parameters_json=invoer,
                    is_enabled=True, created_at=_nu(), updated_at=_nu())
     db.add(rij)
     db.flush()

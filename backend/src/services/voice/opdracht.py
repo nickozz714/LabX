@@ -55,11 +55,17 @@ VELDEN: Dict[str, List[Dict[str, Any]]] = {
         {"naam": "wat",
          "vraag": "Wat moet hij doen? Zeg de opdracht in woorden, of de naam "
                   "van een workflow."},
+        # Alleen als de gekozen workflow invoer vraagt. Welke dat zijn, weten
+        # we pas als "wat" ingevuld is -- vandaar dynamisch.
+        {"naam": "parameterwaarden", "dynamisch": True, "vraag": ""},
     ],
     "workflow": [
         {"naam": "naam", "vraag": "Hoe moet de workflow heten?"},
         {"naam": "omschrijving",
          "vraag": "Waar is hij voor? Eén zin is genoeg.", "optioneel": True},
+        {"naam": "invoer", "optioneel": True,
+         "vraag": "Heeft deze workflow invoer nodig? Noem de velden, of zeg "
+                  "'geen'."},
         {"naam": "stappen", "herhaalt": True,
          "vraag": "Wat is de eerste stap? Zeg wat de agent moet doen.",
          "vervolgvraag": "En de volgende stap? Zeg 'klaar' als je er bent."},
@@ -206,11 +212,24 @@ def begin(db: Session, session_id: str, soort: str):
     return rij
 
 
+def _openstaande_parameter(velden: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """De eerste parameter van de gekozen workflow die nog geen waarde heeft."""
+    gevuld = velden.get("parameterwaarden") or {}
+    for p in (velden.get("_params") or []):
+        if p["naam"] not in gevuld:
+            return p
+    return None
+
+
 def openstaand_veld(concept) -> Optional[Dict[str, Any]]:
     """Welke vraag staat er nu open? None betekent: compleet."""
     velden = concept.velden or {}
     for veld in VELDEN[concept.soort]:
         naam = veld["naam"]
+        if veld.get("dynamisch"):
+            if _openstaande_parameter(velden) is None:
+                continue
+            return veld
         if veld.get("herhaalt"):
             if stappenlaag.compleet(velden):
                 continue
@@ -227,6 +246,12 @@ def vraag_nu(concept) -> Optional[str]:
     veld = openstaand_veld(concept)
     if veld is None:
         return None
+    if veld.get("dynamisch"):
+        p = _openstaande_parameter(dict(concept.velden or {}))
+        if p is None:
+            return None
+        uitleg = f" ({p['omschrijving']})" if p.get("omschrijving") else ""
+        return f"Welke waarde moet '{p['naam']}'{uitleg} krijgen?"
     if veld.get("herhaalt"):
         # De stappenlaag weet waar in de boom we zijn: in een tak, in een lus,
         # of gewoon op het hoofdniveau. Die vraag is hier niet na te maken.
@@ -254,7 +279,22 @@ def vul_aan(db: Session, concept, waarde: str) -> Dict[str, Any]:
     naam = veld["naam"]
     plat = tekst.lower().strip(" .!?")
 
-    if veld.get("herhaalt"):
+    if veld.get("dynamisch"):
+        p = _openstaande_parameter(velden)
+        if p is None:
+            return {"klaar": True, "concept": samenvatting(db, concept)}
+        velden.setdefault("parameterwaarden", {})[p["naam"]] = tekst
+    elif naam == "invoer":
+        if plat in ("geen", "nee", "niets", "niks", "sla over", "overslaan"):
+            velden["invoer_overgeslagen"] = True
+        else:
+            # "klantnaam en periode" → twee parameters.
+            losse = [re.sub(r"[^a-z0-9_]+", "_", w.strip().lower()).strip("_")
+                     for w in re.split(r",| en ", tekst) if w.strip()]
+            velden["parameters"] = [{"naam": n, "soort": "tekst"}
+                                    for n in losse if n]
+            velden["invoer"] = ", ".join(n["naam"] for n in velden["parameters"])
+    elif veld.get("herhaalt"):
         if plat in KLAAR_WOORDEN and not velden.get(naam) and not velden.get("pad"):
             return {"vraag": "Er is nog geen enkele stap. Wat moet de "
                              "eerste stap doen?"}
@@ -273,6 +313,9 @@ def vul_aan(db: Session, concept, waarde: str) -> Dict[str, Any]:
         if not tekst:
             return {"vraag": veld["vraag"]}
         velden[naam] = tekst
+
+    if naam == "wat" and concept.soort == "planning":
+        velden["_params"] = _parameters_van_workflow(db, tekst)
 
     concept.velden = velden
     concept.updated_at = _nu()
@@ -316,6 +359,34 @@ def sluit_open_lijst(db: Session, concept) -> bool:
     return True
 
 
+def _parameters_van_workflow(db: Session, wat: str) -> List[Dict[str, Any]]:
+    """Vraagt de gekozen workflow invoer? Dan moet de planning die meegeven.
+
+    Zonder dit werd een planning aangemaakt voor een workflow met verplichte
+    invoer, en viel die bij de eerste run om op een parameter die niemand had
+    gezet.
+    """
+    from models.workflow import Workflow
+    from services.voice import opzoeken
+    from services.workflows import parameters as params
+
+    try:
+        wfs = db.query(Workflow).all()
+        treffers = opzoeken.kies_op_naam(wat or "", [w.name for w in wfs])
+        if len(treffers) != 1:
+            return []
+        wf = next(w for w in wfs if w.name == treffers[0])
+        return [{"naam": p["naam"], "soort": p["soort"],
+                 "omschrijving": p.get("omschrijving") or ""}
+                for p in params.normaliseer(wf.parameters_json)]
+    except Exception as exc:  # noqa: BLE001
+        # Lukt het opzoeken niet, dan gaat de planning gewoon door zonder
+        # invoer. Een gesprek laten omvallen op een opzoeking is erger dan
+        # een parameter missen -- en dat laatste merk je bij de eerste run.
+        log.warningx("Parameters van workflow niet op te halen", error=str(exc)[:200])
+        return []
+
+
 def samenvatting(db: Session, concept) -> Dict[str, Any]:
     """Wat er nu staat, in woorden die je kunt voorlezen."""
     v = dict(concept.velden or {})
@@ -325,11 +396,13 @@ def samenvatting(db: Session, concept) -> Dict[str, Any]:
             "lab": v.get("lab"),
             "wanneer": cron_in_woorden(v["wanneer"]) if v.get("wanneer") else None,
             "wat": v.get("wat"),
+            "invoer": v.get("parameterwaarden") or None,
         })
     else:
         uit.update({
             "omschrijving": v.get("omschrijving"),
             "stappen": stappenlaag.in_woorden(v.get("stappen") or []),
+            "invoer": [p["naam"] for p in (v.get("parameters") or [])] or None,
         })
     uit["nog_te_vragen"] = vraag_nu(concept)
     return uit

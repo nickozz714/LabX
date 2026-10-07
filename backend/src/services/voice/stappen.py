@@ -24,6 +24,7 @@ opent -- vandaar dat we zijn eigen normalisatie eroverheen laten lopen.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -112,8 +113,33 @@ def lees_voorwaarde(tekst: str) -> Dict[str, Any]:
         if operator in ("is_leeg", "is_niet_leeg"):
             return {"operator": operator, "rechts": None}
         rechts = t[m.end():].strip(" .,:;\"'")
-        return {"operator": operator, "rechts": rechts or None}
+        # Expliciet tegen None vergelijken: 0 is falsy, dus met `or` werd
+        # "groter dan nul" alsnog de TEKST "nul".
+        getal = _als_getal(rechts)
+        return {"operator": operator,
+                "rechts": getal if getal is not None else (rechts or None)}
     return {"operator": "is_niet_leeg", "rechts": None}
+
+
+_GETALWOORDEN = {"nul": 0, "een": 1, "één": 1, "twee": 2, "drie": 3, "vier": 4,
+                 "vijf": 5, "zes": 6, "zeven": 7, "acht": 8, "negen": 9,
+                 "tien": 10, "honderd": 100, "duizend": 1000}
+
+
+def _als_getal(tekst: str):
+    """"groter dan nul" moet tegen 0 vergelijken, niet tegen het wóórd "nul".
+
+    Bij een vergelijkingsoperator is dat geen cosmetica: ">" op twee stukjes
+    tekst doet iets heel anders dan op twee getallen.
+    """
+    t = (tekst or "").strip().lower()
+    if not t:
+        return None
+    if re.fullmatch(r"-?\d+", t):
+        return int(t)
+    if re.fullmatch(r"-?\d+[.,]\d+", t):
+        return float(t.replace(",", "."))
+    return _GETALWOORDEN.get(t)
 
 
 def voorwaarde_in_woorden(conditie: Dict[str, Any]) -> str:
@@ -126,6 +152,86 @@ def voorwaarde_in_woorden(conditie: Dict[str, Any]) -> str:
     op = uitleg.get(conditie.get("operator") or "==", "gelijk is aan")
     rechts = conditie.get("rechts")
     return f"{links} {op}{(' ' + str(rechts)) if rechts not in (None, '') else ''}"
+
+
+# ── Waar een keuze naar kan kijken ───────────────────────────────────────────
+# Dit is waar het eerder misging. Een conditie verwijst naar
+# `stap.<sleutel>.json.<veld>`, en dat veld bestaat alleen als die stap een
+# EXPORTSCHEMA heeft. Zonder schema evalueert de voorwaarde tegen niets en
+# gaat de keuze altijd stil de nee-tak in -- een workflow die niet faalt maar
+# ook nooit doet wat je bedoelde.
+
+def _loop(stappen: List[Dict[str, Any]]):
+    """Alle knopen in de boom, in volgorde."""
+    for k in stappen:
+        yield k
+        for sleutel in ("ja", "nee", "_hier"):
+            yield from _loop(k.get(sleutel) or [])
+
+
+def verwijzingen(velden: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Alles waar een keuze nu naar kan kijken, met een uitspreekbare naam."""
+    uit: List[Dict[str, str]] = []
+    for p in (velden.get("parameters") or []):
+        uit.append({"pad": f"invoer.{p['naam']}",
+                    "label": f"de invoer {p['naam']}"})
+    for k in _loop(velden.get("stappen") or []):
+        sleutel = k.get("sleutel")
+        if not sleutel:
+            continue
+        for veld in (k.get("_velden") or []):
+            uit.append({"pad": f"stap.{sleutel}.json.{veld}",
+                        "label": f"{veld} uit {k.get('naam') or sleutel}"})
+        if k.get("type") in ("agent", "shell"):
+            uit.append({"pad": f"stap.{sleutel}.status",
+                        "label": f"of {k.get('naam') or sleutel} gelukt is"})
+    return uit
+
+
+def kies_verwijzing(tekst: str, opties: List[Dict[str, str]]) -> Optional[str]:
+    """Wat de gebruiker noemde, terugbrengen tot een echte verwijzing.
+
+    Hij zegt "of het lezen gelukt is" of gewoon "status"; allebei moeten bij
+    hetzelfde pad uitkomen. Een letterlijk pad mag ook -- wie `stap.x.json.y`
+    uitspreekt, bedoelt dat.
+    """
+    t = (tekst or "").strip().lower()
+    if not t:
+        return None
+    for o in opties:
+        if o["pad"].lower() == t:
+            return o["pad"]
+    woorden = {w for w in re.split(r"[^a-z0-9]+", t) if len(w) > 2}
+    beste, score = None, 0
+    for o in opties:
+        kandidaat = {w for w in re.split(r"[^a-z0-9]+", o["label"].lower() + " " + o["pad"].lower())
+                     if len(w) > 2}
+        overlap = len(woorden & kandidaat)
+        if overlap > score:
+            beste, score = o["pad"], overlap
+    return beste
+
+
+def _laatste_uitvoerende(velden: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """De stap waar een veld aan toegevoegd kan worden.
+
+    De keuze zelf exporteert niets, dus we zoeken de laatste agent- of
+    shell-stap ervoor.
+    """
+    kandidaat = None
+    for k in _loop(velden.get("stappen") or []):
+        if k.get("type") in ("agent", "shell"):
+            kandidaat = k
+    return kandidaat
+
+
+def schema_van(velden: List[str]) -> str:
+    """Een exportschema uit veldnamen. Gaat als string naar `--json-schema`."""
+    return json.dumps({
+        "type": "object",
+        "properties": {v: {"type": "string"} for v in velden},
+        "required": list(velden),
+    }, ensure_ascii=False)
 
 
 # ── De boom ──────────────────────────────────────────────────────────────────
@@ -153,7 +259,14 @@ def vraag(velden: Dict[str, Any]) -> str:
     laatste = _laatste(velden)
 
     if open_vraag == "conditie_links":
-        return "Waar moet ik naar kijken? Bijvoorbeeld de uitvoer van een eerdere stap."
+        opties = verwijzingen(velden)
+        if opties:
+            lijst = "; ".join(o["label"] for o in opties[:5])
+            return (f"Waar moet ik naar kijken? Je kunt kiezen uit: {lijst}. "
+                    f"Of noem een nieuw veld dat de vorige stap moet teruggeven.")
+        return ("Waar moet ik naar kijken? Er is nog niets om op te toetsen, "
+                "dus noem een veld dat de vorige stap moet teruggeven -- "
+                "bijvoorbeeld status, aantal of gelukt.")
     if open_vraag == "conditie_rechts":
         return "En wat moet daarmee zo zijn? Bijvoorbeeld 'gelijk aan ok', 'bevat fout' of 'niet leeg'."
     if open_vraag == "ja":
@@ -195,7 +308,22 @@ def verwerk(velden: Dict[str, Any], tekst: str, klaar_woorden) -> Dict[str, Any]
     # -- een deelvraag die openstaat --
     if open_vraag == "conditie_links":
         knoop = _laatste(velden)
-        knoop.setdefault("conditie", {})["links"] = t
+        pad = kies_verwijzing(t, verwijzingen(velden))
+        if pad is None:
+            # Geen bestaande verwijzing: dan is dit een veld dat de vorige
+            # stap moet gaan teruggeven. Zonder dit zou de voorwaarde naar
+            # iets wijzen dat nooit bestaat, en dan kiest hij altijd stil de
+            # nee-tak.
+            veld = re.sub(r"[^a-z0-9_]+", "_", t.lower()).strip("_") or "resultaat"
+            vorige = _laatste_uitvoerende(velden)
+            if vorige is None:
+                pad = f"invoer.{veld}"
+                velden.setdefault("parameters", []).append(
+                    {"naam": veld, "soort": "tekst"})
+            else:
+                vorige.setdefault("_velden", []).append(veld)
+                pad = f"stap.{vorige['sleutel']}.json.{veld}"
+        knoop.setdefault("conditie", {})["links"] = pad
         velden["open"] = "conditie_rechts"
         return velden
     if open_vraag == "conditie_rechts":
@@ -249,7 +377,12 @@ def verwerk(velden: Dict[str, Any], tekst: str, klaar_woorden) -> Dict[str, Any]
 
 def _voeg_toe(velden: Dict[str, Any], tekst: str) -> None:
     soort = raad_soort(tekst)
+    # Een korte sleutel, want hiernaar verwijs je straks hardop. De naam van
+    # de stap is de eerste zes woorden; daar een slug van maken levert
+    # `stap.lees_het_logbestand_uit_van.json.status` op, en dat spreekt niemand uit.
+    velden["teller"] = int(velden.get("teller") or 0) + 1
     knoop: Dict[str, Any] = {"type": soort, "naam": _naam_uit(tekst),
+                             "sleutel": f"stap{velden['teller']}",
                              "tekst": tekst}
     huidige_lijst(velden).append(knoop)
 
@@ -337,10 +470,19 @@ class _Bouwer:
             soort = knoop.get("type", "agent")
             node: Dict[str, Any] = {"id": nid, "type": soort,
                                     "naam": knoop.get("naam") or "Stap"}
+            if knoop.get("sleutel"):
+                node["sleutel"] = knoop["sleutel"]
             if groep:
                 node["groep"] = groep
             if soort == "agent":
                 node["prompt"] = knoop.get("prompt") or knoop.get("tekst") or ""
+                # Een stap waar een keuze op toetst, moet die velden ook
+                # daadwerkelijk teruggeven -- anders kijkt de keuze naar niets.
+                if knoop.get("_velden"):
+                    node["json_schema"] = schema_van(knoop["_velden"])
+                    node["prompt"] += (
+                        "\n\nGeef je antwoord als JSON met de velden: "
+                        + ", ".join(knoop["_velden"]) + ".")
             elif soort == "shell":
                 node["commando"] = knoop.get("commando") or ""
             elif soort == "als":

@@ -9,6 +9,7 @@ Wat hier wordt vastgelegd: dat de soort uit je woorden komt, dat de server
 alleen doorvraagt naar wat er voor díé soort mist, en dat de boom omgezet
 wordt naar een graaf die de tekenaar accepteert.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -48,7 +49,7 @@ def test_wachttijden_uit_spreektaal(zin, seconden):
     ("gelijk is aan ok", "==", "ok"),
     ("niet gelijk is aan fout", "!=", "fout"),
     ("bevat fout", "bevat", "fout"),
-    ("groter dan 10", ">", "10"),
+    ("groter dan 10", ">", 10),
     ("leeg is", "is_leeg", None),
     ("gevuld is", "is_niet_leeg", None),
 ])
@@ -71,7 +72,7 @@ def test_een_keuze_krijgt_twee_takken():
     stappen.verwerk(velden, "Als de logging is uitgelezen", KLAAR)
     assert "waar moet ik naar kijken" in stappen.vraag(velden).lower()
 
-    stappen.verwerk(velden, "stap.logs.status", KLAAR)
+    stappen.verwerk(velden, "of het lezen gelukt is", KLAAR)
     assert "wat moet daarmee" in stappen.vraag(velden).lower()
 
     stappen.verwerk(velden, "gelijk aan ok", KLAAR)
@@ -87,15 +88,18 @@ def test_een_keuze_krijgt_twee_takken():
     assert stappen.compleet(velden)
     keuze = velden["stappen"][1]
     assert keuze["type"] == "als"
-    assert keuze["conditie"] == {"links": "stap.logs.status",
-                                 "operator": "==", "rechts": "ok"}
+    # De verwijzing is er eentje die ECHT bestaat, niet wat er letterlijk
+    # werd gezegd: "of het lezen gelukt is" wijst naar de status van stap 1.
+    assert keuze["conditie"]["links"] == "stap.stap1.status"
+    assert keuze["conditie"]["operator"] == "=="
+    assert keuze["conditie"]["rechts"] == "ok"
     assert not keuze.get("ja")
     assert [s["prompt"] for s in keuze["nee"]] == ["Maak het hello-script aan"]
 
 
 def test_de_graaf_van_een_keuze_heeft_ja_en_nee_verbindingen():
     velden = {}
-    for zin in ["Lees het logbestand", "Als het gevuld is", "stap.logs",
+    for zin in ["Lees het logbestand", "Als het gevuld is", "of het lezen gelukt is",
                 "gevuld is", "niets", "Maak het hello-script", "klaar", "klaar"]:
         stappen.verwerk(velden, zin, KLAAR)
 
@@ -154,3 +158,89 @@ def test_de_graaf_gaat_door_de_normalisatie_van_de_tekenaar():
     assert len(nodes) == 2
     assert all("positie" in n and "sleutel" in n for n in nodes)
     assert len(edges) == 1 and edges[0]["soort"] == "succes"
+
+
+# ── Waar een keuze naar kijkt ────────────────────────────────────────────────
+# Dit was een echte fout: een conditie verwees naar stap.X.json.Y terwijl die
+# stap geen exportschema had. De voorwaarde evalueerde dan tegen niets en de
+# keuze ging altijd stil de nee-tak in -- een workflow die niet faalt, maar
+# ook nooit doet wat je bedoelde.
+
+def test_een_nieuw_veld_wordt_aan_de_vorige_stap_toegevoegd():
+    velden = {}
+    stappen.verwerk(velden, "Lees het logbestand", KLAAR)
+    stappen.verwerk(velden, "Als het goed ging", KLAAR)
+    stappen.verwerk(velden, "aantal regels", KLAAR)       # bestaat nog niet
+    stappen.verwerk(velden, "groter dan 0", KLAAR)
+
+    lezen = velden["stappen"][0]
+    assert lezen["_velden"] == ["aantal_regels"], "de vorige stap moet dit teruggeven"
+    keuze = velden["stappen"][1]
+    assert keuze["conditie"]["links"] == f"stap.{lezen['sleutel']}.json.aantal_regels"
+
+
+def test_de_stap_krijgt_ook_echt_een_exportschema():
+    """Zonder dit staat het veld wel in de voorwaarde maar levert de stap het
+    nooit op -- precies de stille fout die dit moest verhelpen."""
+    velden = {}
+    for zin in ["Lees het logbestand", "Als het goed ging", "aantal regels",
+                "groter dan 0", "niets", "Meld het", "klaar", "klaar"]:
+        stappen.verwerk(velden, zin, KLAAR)
+
+    nodes, _ = stappen.naar_graaf(velden["stappen"])
+    lezen = nodes[0]
+    assert lezen["json_schema"], "de stap moet gestructureerd antwoorden"
+    schema = json.loads(lezen["json_schema"])
+    assert "aantal_regels" in schema["properties"]
+    assert "aantal_regels" in schema["required"]
+    # En de opdracht zegt het er ook bij, anders weet de agent het niet.
+    assert "aantal_regels" in lezen["prompt"]
+
+
+def test_een_bestaande_verwijzing_wordt_hergebruikt():
+    """Noem je iets dat er al is, dan komt er geen tweede veld bij."""
+    velden = {}
+    stappen.verwerk(velden, "Lees het logbestand", KLAAR)
+    stappen.verwerk(velden, "Als het goed ging", KLAAR)
+    stappen.verwerk(velden, "aantal regels", KLAAR)
+    stappen.verwerk(velden, "groter dan 0", KLAAR)
+    stappen.verwerk(velden, "niets", KLAAR)
+    stappen.verwerk(velden, "klaar", KLAAR)
+    stappen.verwerk(velden, "Als er nog iets is", KLAAR)
+    stappen.verwerk(velden, "aantal regels", KLAAR)       # bestaat nu wél
+
+    assert velden["stappen"][0]["_velden"] == ["aantal_regels"], "geen dubbel veld"
+
+
+def test_zonder_eerdere_stap_wordt_het_een_invoerparameter():
+    """Begint de workflow met een keuze, dan kan er niets geëxporteerd zijn --
+    dan is het logische alternatief invoer van de workflow zelf."""
+    velden = {}
+    stappen.verwerk(velden, "Als de klant bekend is", KLAAR)
+    stappen.verwerk(velden, "klantnaam", KLAAR)
+    stappen.verwerk(velden, "niet leeg", KLAAR)
+
+    assert velden["parameters"] == [{"naam": "klantnaam", "soort": "tekst"}]
+    assert velden["stappen"][0]["conditie"]["links"] == "invoer.klantnaam"
+
+
+def test_de_keuzelijst_noemt_wat_er_te_kiezen_valt():
+    velden = {}
+    stappen.verwerk(velden, "Lees het logbestand", KLAAR)
+    stappen.verwerk(velden, "Als het goed ging", KLAAR)
+
+    vraag = stappen.vraag(velden)
+    assert "kiezen uit" in vraag.lower()
+    assert "gelukt" in vraag.lower()
+
+
+@pytest.mark.parametrize("zin,rechts", [
+    ("groter dan nul", 0),
+    ("groter dan 10", 10),
+    ("kleiner dan vijf", 5),
+    ("gelijk aan 3.5", 3.5),
+    ("gelijk aan ok", "ok"),
+])
+def test_getallen_in_een_voorwaarde_worden_getallen(zin, rechts):
+    """">" op twee stukjes tekst doet iets heel anders dan op twee getallen."""
+    assert stappen.lees_voorwaarde(zin)["rechts"] == rechts

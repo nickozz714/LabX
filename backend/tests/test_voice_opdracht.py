@@ -132,6 +132,7 @@ def test_een_workflow_blijft_doorvragen_tot_je_klaar_zegt(db):
 
     opdracht.vul_aan(db, concept, "Nachtelijke controle")
     opdracht.vul_aan(db, concept, "Kijkt of alles nog draait")
+    opdracht.vul_aan(db, concept, "geen")            # geen invoerparameters
 
     uit = opdracht.vul_aan(db, concept, "Lees de logs van vannacht")
     assert "volgende stap" in uit["vraag"].lower()
@@ -153,6 +154,7 @@ def test_klaar_zeggen_zonder_enkele_stap_kan_niet(db):
     concept = opdracht.begin(db, sid, "workflow")
     opdracht.vul_aan(db, concept, "Lege workflow")
     opdracht.vul_aan(db, concept, "geen")          # omschrijving overslaan
+    opdracht.vul_aan(db, concept, "geen")          # geen invoerparameters
 
     uit = opdracht.vul_aan(db, concept, "klaar")
     assert "eerste stap" in uit["vraag"].lower()
@@ -192,6 +194,7 @@ def test_afronden_sluit_een_openstaande_stappenlijst(db):
     concept = opdracht.begin(db, sid, "workflow")
     opdracht.vul_aan(db, concept, "Nachtcontrole")
     opdracht.vul_aan(db, concept, "Kijkt of alles draait")
+    opdracht.vul_aan(db, concept, "geen")
     opdracht.vul_aan(db, concept, "Lees de logs")
 
     assert opdracht.vraag_nu(concept) is not None, "de lijst staat nog open"
@@ -205,6 +208,7 @@ def test_afronden_sluit_niets_als_er_nog_geen_stap_is(db):
     concept = opdracht.begin(db, sid, "workflow")
     opdracht.vul_aan(db, concept, "Leeg")
     opdracht.vul_aan(db, concept, "geen")
+    opdracht.vul_aan(db, concept, "geen")
 
     assert opdracht.sluit_open_lijst(db, concept) is False
     assert opdracht.vraag_nu(concept) is not None
@@ -217,7 +221,8 @@ def test_verschillende_manieren_om_klaar_te_zeggen(db, gezegd):
     sid = _sessie(db)
     concept = opdracht.begin(db, sid, "workflow")
     opdracht.vul_aan(db, concept, "Nachtcontrole")
-    opdracht.vul_aan(db, concept, "geen")
+    opdracht.vul_aan(db, concept, "geen")            # omschrijving
+    opdracht.vul_aan(db, concept, "geen")            # invoer
     opdracht.vul_aan(db, concept, "Lees de logs")
 
     uit = opdracht.vul_aan(db, concept, gezegd)
