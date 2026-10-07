@@ -242,3 +242,22 @@ body {
 .markdown-body-invert pre { background: hsl(var(--primary-foreground) / 0.15); }
 .markdown-body-invert th, .markdown-body-invert td { border-color: hsl(var(--primary-foreground) / 0.3); }
 .markdown-body-invert hr { border-top-color: hsl(var(--primary-foreground) / 0.3); }
+
+/* Push-to-talk op een telefoon. Ingedrukt houden is op iOS normaal het
+   gebaar voor "selecteer tekst" en het deelmenu; zonder deze regels kiest
+   Safari dat in plaats van jouw knop, en schuift de pagina onder je vinger
+   weg zodra je hem beweegt. */
+.praatknop {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Zichtbaar dat er opgenomen wordt, ook vanuit een ooghoek. */
+@keyframes praat-puls {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(239 68 68 / 0.45); }
+  50%      { box-shadow: 0 0 0 10px rgb(239 68 68 / 0); }
+}
+.praat-puls { animation: praat-puls 1.4s ease-out infinite; }

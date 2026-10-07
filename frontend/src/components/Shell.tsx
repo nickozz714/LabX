@@ -3,7 +3,7 @@
  * one content pane; no per-project switcher (LabX is single-tenant).
  */
 import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
@@ -54,9 +54,13 @@ export function Shell() {
   // CSS: hij hoort er dan echt niet te zijn, net als de endpoints erachter.
   const [spraakAan, setSpraakAan] = useState(false);
 
+  // Opnieuw kijken bij elke paginawissel. Vul je de OpenAI-sleutel in bij
+  // Instellingen, dan hoort de tab er te staan zodra je daar wegklikt --
+  // niet pas na een harde herlaadbeurt.
+  const locatie = useLocation();
   useEffect(() => {
     spraakApi.status().then((s) => setSpraakAan(Boolean(s.aan))).catch(() => {});
-  }, []);
+  }, [locatie.pathname]);
 
   useEffect(() => {
     let cancelled = false;

@@ -1,13 +1,18 @@
 /**
  * SpraakPage — praten tegen LabX.
  *
- * De opzet volgt wat we hebben afgesproken: je klikt bewust om een sessie te
- * starten, alles komt in één tijdlijn, en een schrijfactie vraagt altijd
- * bevestiging met een zichtbare aftelklok.
+ * Mobiel eerst: op een telefoon is de praatknop het grootste element op het
+ * scherm en staat hij onderaan, binnen duimbereik. Het typveld staat erboven
+ * als gelijkwaardige invoer, niet als noodoplossing — in een volle ruimte wil
+ * je niet hardop vragen hoe het met een klantticket staat.
  *
- * Het typveld staat er niet als noodoplossing maar als gelijkwaardige invoer.
- * Je kunt de hele assistent gebruiken zonder microfoon — handig in een stille
- * ruimte, en het maakt de functie bruikbaar zonder OpenAI-sleutel.
+ * Wat de opzet verder stuurt:
+ * - Alles komt in één tijdlijn, zodat je achteraf kunt teruglezen wat er
+ *   namens jou gebeurd is.
+ * - Een schrijfactie vraagt altijd bevestiging, met een aftelbalk die je ook
+ *   vanuit een ooghoek ziet leeglopen.
+ * - Zolang je nog niets gevraagd hebt, staan er voorbeeldvragen om aan te
+ *   tikken. Een leeg scherm met een microfoon vertelt je niet wat kan.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2 } from "lucide-react";
@@ -18,6 +23,15 @@ import { Opname, lees, spraakApi, zwijg } from "@/lib/spraak";
 import { startRealtime } from "@/lib/spraakRealtime";
 import type { RealtimeSessie } from "@/lib/spraakRealtime";
 import type { SpraakGebeurtenis, SpraakSessie, SpraakStatus } from "@/lib/spraak";
+
+/** Voorbeeldvragen voor een leeg gesprek. Bewust alleen dingen die altijd
+ *  werken, dus niets dat van een bepaald ticket of bord uitgaat. */
+const VOORBEELDEN = [
+  "Wat loopt er nu?",
+  "Wat staat er open?",
+  "Wat staat er gepland?",
+  "Welke labs draaien er?",
+];
 
 export function SpraakPage() {
   const [status, setStatus] = useState<SpraakStatus | null>(null);
@@ -84,7 +98,11 @@ export function SpraakPage() {
     setMelding(null);
     try {
       const s = await spraakApi.start({});
-      await verversen(s.id);
+      const vol = await verversen(s.id);
+      // Hardop, zodat meteen duidelijk is dat de sessie leeft. Voorlezen gaat
+      // via de browser en kost niets.
+      const groet = (vol.tijdlijn || []).find((e) => e.soort === "assistent");
+      if (groet) lees(groet.tekst, geluid);
     } catch (err) {
       setMelding(err instanceof ApiError ? err.message : "Sessie starten mislukt");
     } finally {
@@ -207,131 +225,185 @@ export function SpraakPage() {
   }
 
   const openstaand = sessie?.openstaand;
-  const kanSpreken = Boolean(status?.sleutel_aanwezig);
+  const tijdlijn = sessie?.tijdlijn || [];
+  // Alleen de begroeting: dan weet je nog niet wat je kunt vragen.
+  const nogNietsGevraagd = !tijdlijn.some((e) => e.soort === "gebruiker");
+  const vervalt = status?.verval_seconden || 20;
 
   return (
-    <div className="veilig-onder flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-3 sm:px-6">
-        <h1 className="text-lg font-semibold">Spraak</h1>
-        {sessie && <Badge tone="green">sessie loopt</Badge>}
-        {status?.brein && <Badge>{status.brein === "realtime" ? "realtime" : "pijplijn"}</Badge>}
-        {rtStatus && <Badge tone={luistert ? "green" : "neutral"}>{rtStatus}</Badge>}
-        <div className="flex-1" />
+    <div className="flex h-full flex-col">
+      {/* ── Kop ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5 sm:px-6 sm:py-3">
+        <h1 className="text-base font-semibold sm:text-lg">Spraak</h1>
         {sessie && (
-          <span className="text-xs text-muted-foreground">
-            ${sessie.kosten_usd.toFixed(3)} deze sessie
-            {status?.vandaag_usd !== undefined && ` · $${status.vandaag_usd.toFixed(2)} vandaag`}
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+            <span className="hidden sm:inline">
+              {status?.brein === "realtime" ? "realtime" : "pijplijn"}
+            </span>
           </span>
         )}
-        <Button variant="ghost" className="text-xs" onClick={() => setGeluid((g) => !g)}
+        {rtStatus && <Badge tone={luistert ? "green" : "neutral"}>{rtStatus}</Badge>}
+
+        <div className="flex-1" />
+
+        {sessie && (
+          <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">
+            ${sessie.kosten_usd.toFixed(3)}
+            {status?.vandaag_usd !== undefined
+              && ` · $${status.vandaag_usd.toFixed(2)} vandaag`}
+          </span>
+        )}
+        <Button variant="ghost" className="h-9 w-9 p-0"
+                onClick={() => setGeluid((g) => !g)}
+                aria-label={geluid ? "Voorlezen uitzetten" : "Voorlezen aanzetten"}
                 title={geluid ? "Voorlezen uitzetten" : "Voorlezen aanzetten"}>
-          {geluid ? <Volume2 size={15} /> : <VolumeX size={15} />}
+          {geluid ? <Volume2 size={16} /> : <VolumeX size={16} />}
         </Button>
         {sessie
-          ? <Button variant="danger" className="text-xs" onClick={stopSessie}>Stoppen</Button>
-          : <Button className="text-xs" onClick={startSessie} disabled={bezig} busy={bezig}>
-              Sessie starten
+          ? <Button variant="danger" className="h-9 text-xs" onClick={stopSessie}>
+              Stoppen
+            </Button>
+          : <Button className="h-9 text-xs" onClick={startSessie}
+                    disabled={bezig} busy={bezig}>
+              Starten
             </Button>}
       </div>
 
       {melding && (
-        <div className="mx-3 mt-3 rounded-md border border-border bg-muted/40 p-2 text-xs sm:mx-6">
+        <div className="mx-3 mt-2 rounded-md border border-border bg-muted/40 p-2 text-xs sm:mx-6">
           {melding}
         </div>
       )}
 
+      {/* ── Gesprek ─────────────────────────────────────────────────────── */}
       {!sessie ? (
         <div className="flex flex-1 items-center justify-center p-4">
           <EmptyState>
-            Start een sessie en vraag bijvoorbeeld “wat loopt er nu” of “hoe staat
-            het met KRI-114”. Je kunt praten of typen.
+            Start een sessie en vraag bijvoorbeeld “wat loopt er nu” of “hoe
+            staat het met KRI-114”. Je kunt praten of typen.
           </EmptyState>
         </div>
       ) : (
-        <div className="flex-1 space-y-2 overflow-y-auto p-3 sm:p-6">
-          {(sessie.tijdlijn || []).map((e) => <Regel key={e.id} e={e} />)}
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3 sm:px-6">
+          {tijdlijn.map((e) => <Regel key={e.id} e={e} />)}
+
+          {nogNietsGevraagd && (
+            <div className="flex flex-wrap gap-2 pt-2">
+              {VOORBEELDEN.map((v) => (
+                <button
+                  key={v}
+                  onClick={() => stuur(v)}
+                  disabled={bezig}
+                  className="rounded-full border border-border px-3 py-1.5 text-xs
+                             text-muted-foreground transition-colors
+                             hover:bg-muted disabled:opacity-50"
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          )}
           <div ref={onder} />
         </div>
       )}
 
+      {/* ── Bevestiging ─────────────────────────────────────────────────── */}
       {sessie && openstaand && (
-        <div className="mx-3 mb-2 rounded-md border border-warning/50 bg-warning/10 p-3 sm:mx-6">
-          <div className="text-sm font-medium">{openstaand.zin}</div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {status?.bevestiging !== "spraak" && (
-              <>
-                <Button className="text-xs" onClick={() => bevestig(true)} disabled={bezig}>
-                  Ja, doen
-                </Button>
-                <Button variant="secondary" className="text-xs"
-                        onClick={() => bevestig(false)} disabled={bezig}>
-                  Nee
-                </Button>
-              </>
-            )}
-            {status?.bevestiging !== "klik" && (
-              <span className="text-xs text-muted-foreground">
-                of zeg “{status?.woord}”
+        <div className="mx-3 mb-2 overflow-hidden rounded-lg border border-warning/50 bg-warning/10 sm:mx-6">
+          {/* De balk loopt leeg: dat zie je ook als je niet op de seconden let. */}
+          <div className="h-1 bg-warning transition-[width] duration-500 ease-linear"
+               style={{ width: `${Math.min(100, ((resterend ?? 0) / vervalt) * 100)}%` }} />
+          <div className="p-3">
+            <div className="text-sm font-medium">{openstaand.zin}</div>
+            <div className="mt-3 flex items-center gap-2">
+              {status?.bevestiging !== "spraak" && (
+                <>
+                  <Button className="h-11 flex-1 sm:h-9 sm:flex-none"
+                          onClick={() => bevestig(true)} disabled={bezig}>
+                    Ja, doen
+                  </Button>
+                  <Button variant="secondary" className="h-11 flex-1 sm:h-9 sm:flex-none"
+                          onClick={() => bevestig(false)} disabled={bezig}>
+                    Nee
+                  </Button>
+                </>
+              )}
+              {status?.bevestiging !== "klik" && (
+                <span className="text-xs text-muted-foreground">
+                  of zeg “{status?.woord}”
+                </span>
+              )}
+              <span className="ml-auto text-sm font-semibold tabular-nums text-warning">
+                {resterend ?? 0}s
               </span>
-            )}
-            <span className="ml-auto text-xs font-semibold tabular-nums text-warning">
-              {resterend ?? 0}s
-            </span>
+            </div>
           </div>
         </div>
       )}
 
+      {/* ── Invoer ──────────────────────────────────────────────────────── */}
       {sessie && (
-        <div className="veilig-onder border-t border-border p-3 sm:px-6">
-          <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="veilig-onder border-t border-border px-3 py-3 sm:px-6">
+          <div className="flex items-center gap-2">
             <Input
               value={tekst}
-              placeholder="Typ wat je wilt vragen…"
+              placeholder="Typ je vraag…"
               onChange={(e) => setTekst(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") stuur(tekst); }}
               disabled={bezig}
             />
-            <div className="flex items-stretch gap-2">
-              <Button onClick={() => stuur(tekst)} disabled={bezig || !tekst.trim()}>
-                <Send size={15} /> Stuur
+            <Button className="h-11 w-11 shrink-0 p-0"
+                    onClick={() => stuur(tekst)}
+                    disabled={bezig || !tekst.trim()}
+                    aria-label="Versturen">
+              <Send size={16} />
+            </Button>
+          </div>
+
+          {/* De praatknop krijgt een hele regel: op een telefoon is dit het
+              element dat je blind moet kunnen raken. */}
+          <div className="mt-2">
+            {isRealtime ? (
+              <Button
+                variant={luistert ? "danger" : "secondary"}
+                className={`h-12 w-full ${luistert ? "praat-puls" : ""}`}
+                onClick={luisterenAanUit}
+                disabled={bezig}
+              >
+                {bezig
+                  ? <Loader2 size={18} className="animate-spin" />
+                  : luistert ? <MicOff size={18} /> : <Mic size={18} />}
+                {luistert ? "Stop met luisteren" : "Luisteren"}
               </Button>
-              {/* Bij het realtime-brein luistert de microfoon continu, dus
-                  daar hoort een schakelaar. Bij de pijplijn houd je de knop
-                  ingedrukt: dan weet je zeker wanneer hij meeluistert. */}
-              {isRealtime ? (
-                <Button
-                  variant={luistert ? "danger" : "secondary"}
-                  onClick={luisterenAanUit}
-                  disabled={bezig || !kanSpreken}
-                  title={kanSpreken
-                    ? "Open microfoon aan- of uitzetten"
-                    : "Er staat geen OpenAI-sleutel ingesteld"}
-                >
-                  {bezig
-                    ? <Loader2 size={15} className="animate-spin" />
-                    : luistert ? <MicOff size={15} /> : <Mic size={15} />}
-                  {luistert ? "Stop luisteren" : "Luisteren"}
-                </Button>
-              ) : (
+            ) : (
               <Button
                 variant={opnemen ? "danger" : "secondary"}
+                className={`praatknop h-12 w-full ${opnemen ? "praat-puls" : ""}`}
                 disabled={bezig && !opnemen}
-                title={kanSpreken
-                  ? "Houd ingedrukt om te praten"
-                  : "Er staat geen OpenAI-sleutel ingesteld; typen werkt wel"}
-                onMouseDown={kanSpreken ? knopIngedrukt : undefined}
-                onMouseUp={kanSpreken ? knopLosgelaten : undefined}
+                onMouseDown={knopIngedrukt}
+                onMouseUp={knopLosgelaten}
                 onMouseLeave={opnemen ? knopLosgelaten : undefined}
-                onTouchStart={kanSpreken ? knopIngedrukt : undefined}
-                onTouchEnd={kanSpreken ? knopLosgelaten : undefined}
+                // Op een telefoon moet het standaardgebaar (tekst selecteren,
+                // deelmenu) wijken voor de knop, anders laat hij halverwege los.
+                onTouchStart={(e) => { e.preventDefault(); void knopIngedrukt(); }}
+                onTouchEnd={(e) => { e.preventDefault(); void knopLosgelaten(); }}
+                onTouchCancel={() => { void knopLosgelaten(); }}
+                onContextMenu={(e) => e.preventDefault()}
               >
                 {bezig && !opnemen
-                  ? <Loader2 size={15} className="animate-spin" />
-                  : opnemen ? <Square size={15} /> : <Mic size={15} />}
-                {opnemen ? "Loslaten" : "Praten"}
+                  ? <Loader2 size={18} className="animate-spin" />
+                  : opnemen ? <Square size={18} /> : <Mic size={18} />}
+                {opnemen ? "Laat los om te versturen" : "Houd ingedrukt om te praten"}
               </Button>
-              )}
-            </div>
+            )}
+          </div>
+
+          {/* Op een smal scherm past de kostenregel niet in de kop. */}
+          <div className="mt-2 text-center text-[11px] tabular-nums text-muted-foreground sm:hidden">
+            ${sessie.kosten_usd.toFixed(3)} deze sessie
+            {status?.vandaag_usd !== undefined
+              && ` · $${status.vandaag_usd.toFixed(2)} vandaag`}
           </div>
         </div>
       )}
@@ -345,7 +417,7 @@ function Regel({ e }: { e: SpraakGebeurtenis }) {
   if (e.soort === "gebruiker") {
     return (
       <div className="flex justify-end">
-        <div className="min-w-0 max-w-[92%] break-words rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground sm:max-w-2xl">
+        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-sm text-primary-foreground sm:max-w-2xl">
           {e.tekst}
         </div>
       </div>
@@ -354,7 +426,7 @@ function Regel({ e }: { e: SpraakGebeurtenis }) {
   if (e.soort === "assistent") {
     return (
       <div className="flex justify-start">
-        <div className="min-w-0 max-w-[92%] break-words rounded-lg bg-secondary px-3 py-2 text-sm sm:max-w-2xl">
+        <div className="min-w-0 max-w-[85%] break-words rounded-2xl rounded-bl-md bg-secondary px-3.5 py-2 text-sm sm:max-w-2xl">
           {e.tekst}
         </div>
       </div>

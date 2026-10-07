@@ -26,10 +26,21 @@ def _instellingen(db: Session):
     return get_settings(db)
 
 
+def _staat_aan(s) -> bool:
+    """Aan betekent: ingeschakeld EN bruikbaar.
+
+    Zonder OpenAI-sleutel kan er niets verstaan worden, en een spraakassistent
+    waar je alleen tegen kunt typen is geen spraakassistent. Dan hoort het
+    tabblad er ook niet te zijn.
+    """
+    return bool(getattr(s, "voice_enabled", False)
+                and getattr(s, "openai_key_encrypted", None))
+
+
 def _vereis_aan(db: Session):
     """De functie staat uit → dit endpoint bestaat niet."""
     s = _instellingen(db)
-    if not getattr(s, "voice_enabled", False):
+    if not _staat_aan(s):
         raise HTTPException(status_code=404, detail="Not Found")
     return s
 
@@ -39,7 +50,7 @@ def status(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Of de functie aanstaat, en waarmee. Dit endpoint mag ALTIJD — de
     interface moet kunnen weten of het tabblad getoond wordt."""
     s = _instellingen(db)
-    aan = bool(getattr(s, "voice_enabled", False))
+    aan = _staat_aan(s)
     uit: Dict[str, Any] = {"aan": aan}
     if aan:
         uit.update({
@@ -52,8 +63,6 @@ def status(db: Session = Depends(get_db)) -> Dict[str, Any]:
             "dag_limiet_usd": s.voice_dag_limiet_usd,
             "verval_seconden": bev.VERVAL_SECONDEN,
             "vandaag_usd": _vandaag_usd(db),
-            # Zonder sleutel werkt alleen het typveld; dat mag de interface weten.
-            "sleutel_aanwezig": bool(s.openai_key_encrypted),
         })
     return uit
 

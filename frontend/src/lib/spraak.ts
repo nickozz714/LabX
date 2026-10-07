@@ -21,7 +21,6 @@ export type SpraakStatus = {
   dag_limiet_usd?: number;
   verval_seconden?: number;
   vandaag_usd?: number;
-  sleutel_aanwezig?: boolean;
 };
 
 export type SpraakGebeurtenis = {

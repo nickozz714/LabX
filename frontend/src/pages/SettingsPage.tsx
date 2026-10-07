@@ -132,8 +132,9 @@ export function SettingsPage() {
           </p>
         </div>
         {/* ── Spraakassistent ─────────────────────────────────────────
-            Zonder sleutel kan hij niets, dus dan laat de backend het schuifje
-            ook niet aan staan. */}
+            Twee voorwaarden, allebei nodig: het schuifje aan én een sleutel.
+            Zonder sleutel valt er niets te verstaan, en dan hoort het tabblad
+            er ook niet te zijn. */}
         <div className="rounded-lg border border-border p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <span className="text-sm font-semibold">Spraakassistent</span>
@@ -147,9 +148,22 @@ export function SettingsPage() {
                   save({ voice_enabled: aan });
                 }}
               />
-              Aan (tabblad verschijnt)
+              Aan
             </label>
           </div>
+
+          {/* Eén regel die zegt waar je staat, zodat je niet hoeft te raden
+              waarom de tab er nog niet is. */}
+          <p className={`mb-3 text-xs ${
+            settings.voice_enabled && settings.openai_key_configured
+              ? "text-green-600 dark:text-green-500"
+              : "text-muted-foreground"}`}>
+            {!settings.voice_enabled
+              ? "Staat uit — het tabblad Spraak is niet zichtbaar."
+              : !settings.openai_key_configured
+                ? "Vul hieronder een OpenAI-sleutel in; pas dan verschijnt het tabblad Spraak."
+                : "Klaar voor gebruik — het tabblad Spraak staat in de balk bovenaan."}
+          </p>
 
           <Label>OpenAI-sleutel</Label>
           <Input
@@ -162,9 +176,8 @@ export function SettingsPage() {
             }}
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            Nodig voor het transcriberen van spraak en voor het realtime-model. De
-            sleutel komt nooit terug uit de API — net als het Claude-token. Zonder
-            sleutel blijft de assistent uit; typen werkt dan nog wel.
+            Nodig om spraak te verstaan en voor het realtime-model. De sleutel
+            komt nooit terug uit de API — net als het Claude-token.
           </p>
 
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">

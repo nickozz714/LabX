@@ -27,18 +27,25 @@ STANDAARD_MODEL = "gpt-4o-mini-transcribe"
 MAX_BYTES = 8 * 1024 * 1024
 
 
-def _woordenlijst(db: Session) -> str:
-    """De eigennamen die in dit systeem voorkomen, als hint voor de transcriptie."""
+def _woordenlijst(db: Session) -> tuple[str, str]:
+    """De eigennamen uit dit systeem, plus hoe een ticketsleutel eruitziet.
+
+    Die tweede helft is geen overbodige luxe: zonder voorbeeld maakt de
+    transcriptie van "plat twee" moeiteloos "Plato", en dan valt er voor de
+    sleutelherkenning niets meer te redden.
+    """
     from models.board import Board, Ticket
     from models.lab import Lab
 
     woorden: List[str] = []
+    prefixen: List[str] = []
     try:
         for b in db.query(Board).all():
             if b.name:
                 woorden.append(b.name)
             if b.key_prefix:
                 woorden.append(b.key_prefix)
+                prefixen.append(b.key_prefix)
         woorden += [l.name for l in db.query(Lab).all() if l.name]
         projecten = {t[0] for t in db.query(Ticket.project).distinct().all() if t[0]}
         woorden += sorted(projecten)
@@ -46,7 +53,8 @@ def _woordenlijst(db: Session) -> str:
         log.warningx("Woordenlijst opbouwen mislukt", error=str(exc)[:200])
 
     uniek = list(dict.fromkeys(w.strip() for w in woorden if w and w.strip()))
-    return ", ".join(uniek[:60])
+    sleutels = ", ".join(f"{p}-12" for p in dict.fromkeys(prefixen) if p)
+    return ", ".join(uniek[:60]), sleutels
 
 
 def _sleutel(db: Session) -> str:
@@ -85,12 +93,18 @@ async def transcribeer_base64(db: Session, audio_base64: str,
     elif "ogg" in mime:
         extensie = "ogg"
 
-    hint = _woordenlijst(db)
+    hint, sleutels = _woordenlijst(db)
     velden = {"model": (None, model), "language": (None, "nl")}
+    stukjes = []
     if hint:
         # De hint is géén instructie maar een voorbeeld van hoe de woorden
         # geschreven horen te worden.
-        velden["prompt"] = (None, f"Termen die kunnen voorkomen: {hint}.")
+        stukjes.append(f"Termen die kunnen voorkomen: {hint}.")
+    if sleutels:
+        stukjes.append(f"Ticketsleutels schrijf je met een streepje en een "
+                       f"nummer, zoals {sleutels}.")
+    if stukjes:
+        velden["prompt"] = (None, " ".join(stukjes))
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(

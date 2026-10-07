@@ -264,21 +264,23 @@ def test_de_verboden_acties_bestaan_niet_als_tool():
         assert not any(v in naam.lower() for v in verboden), naam
 
 
-def test_zonder_openai_sleutel_blijft_de_assistent_bruikbaar(db):
-    """De sleutel is nodig om spraak te VERSTAAN, niet om na te denken.
+def test_zonder_openai_sleutel_bestaat_de_spraakfunctie_niet(db):
+    """Geen sleutel, geen tabblad -- en geen endpoints.
 
-    Het pijplijn-brein draait op de Claude-CLI. Zette je de assistent zonder
-    OpenAI-sleutel helemaal uit, dan was het typveld onbereikbaar en daarmee
-    de hele functie onbruikbaar voor wie alleen typt. Hij valt daarom terug op
-    de pijplijn in plaats van uit te gaan.
+    Een spraakassistent waar je alleen tegen kunt typen is geen spraak-
+    assistent. Het schuifje blijft wel staan zoals je het zette, zodat de
+    functie er gewoon is zodra je de sleutel invult.
     """
-    from services.settings_service import update_settings
+    from routers.voice_router import _staat_aan
+    from services.settings_service import get_settings, update_settings
 
     uit = update_settings(db, {"voice_enabled": True, "voice_brein": "realtime"})
-
-    assert uit["voice_enabled"] is True, "aanzetten zonder sleutel moet blijven staan"
+    assert uit["voice_enabled"] is True, "het schuifje blijft staan zoals gezet"
     assert uit["voice_brein"] == "pipeline", "realtime kan niet zonder sleutel"
-    assert uit["openai_key_configured"] is False
+    assert _staat_aan(get_settings(db)) is False, "zonder sleutel: niet zichtbaar"
+
+    update_settings(db, {"openai_key": "sk-test-sleutel"})
+    assert _staat_aan(get_settings(db)) is True, "met sleutel verschijnt hij"
 
 
 def test_de_spraakinstellingen_komen_ook_uit_get_settings(db):

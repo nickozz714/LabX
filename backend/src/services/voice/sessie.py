@@ -44,7 +44,20 @@ class VoiceSessieService:
         self.db.commit()
         self.db.refresh(s)
         self.noteer(s.id, "systeem", f"Sessie gestart ({brein}, {microfoon}).")
+        # Een sessie die opent met alleen een grijze systeemregel voelt alsof
+        # er niets gebeurd is. Deze begroeting kost geen modelaanroep en zegt
+        # meteen wat je kunt doen.
+        self.noteer(s.id, "assistent", self._begroeting(brein, microfoon))
         return s
+
+    def _begroeting(self, brein: str, microfoon: str) -> str:
+        voorbeeld = ("Vraag bijvoorbeeld wat er nu loopt, "
+                     "of hoe het met een ticket staat.")
+        if brein == "realtime":
+            return "Zet de microfoon aan en begin maar. " + voorbeeld
+        if microfoon == "open":
+            return "Ik luister. " + voorbeeld
+        return "Houd de praatknop ingedrukt, of typ. " + voorbeeld
 
     def stop(self, session_id: str, *, reden: str = "gestopt") -> Optional[VoiceSession]:
         s = self.db.get(VoiceSession, session_id)
