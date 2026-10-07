@@ -54,6 +54,8 @@ export function SpraakPage() {
   const [rtStatus, setRtStatus] = useState<string | null>(null);
   const isRealtime = sessie?.brein === "realtime";
   const openMicrofoon = status?.microfoon === "open";
+  // Welke stem er voorleest, en bij welke sessie de kosten horen.
+  const stemOpties = { tts: status?.tts, sessie: sessie?.id };
 
   useEffect(() => {
     spraakApi.status().then(setStatus).catch(() => setStatus({ aan: false }));
@@ -104,7 +106,7 @@ export function SpraakPage() {
       // Hardop, zodat meteen duidelijk is dat de sessie leeft. Voorlezen gaat
       // via de browser en kost niets.
       const groet = (vol.tijdlijn || []).find((e) => e.soort === "assistent");
-      if (groet) lees(groet.tekst, geluid);
+      if (groet) lees(groet.tekst, geluid, { tts: status?.tts, sessie: s.id });
     } catch (err) {
       setMelding(err instanceof ApiError ? err.message : "Sessie starten mislukt");
     } finally {
@@ -132,7 +134,7 @@ export function SpraakPage() {
       const uit = await spraakApi.zeg(sessie.id, wat.trim());
       setTekst("");
       const s = await verversen(sessie.id);
-      if (uit.antwoord) lees(uit.antwoord, geluid);
+      if (uit.antwoord) lees(uit.antwoord, geluid, stemOpties);
       // Een bevestiging die net verlopen is, hoort niet stil te blijven.
       if (!s.openstaand && uit.bevestiging) await verversen(sessie.id);
     } catch (err) {
@@ -214,7 +216,7 @@ export function SpraakPage() {
     try {
       const uit = await spraakApi.bevestig(sessie.id, akkoord);
       await verversen(sessie.id);
-      if (uit.melding) lees(uit.melding, geluid);
+      if (uit.melding) lees(uit.melding, geluid, stemOpties);
     } finally {
       setBezig(false);
     }

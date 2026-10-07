@@ -199,6 +199,8 @@ export interface AppSettingsDto {
   voice_meld_runs?: boolean;
   voice_sessie_minuten?: number;
   voice_dag_limiet_usd?: number;
+  voice_tts?: "browser" | "openai";
+  voice_tts_stem?: string | null;
   extra_args: string[];
   enable_tool_search: boolean;
   data_guard_default: boolean;

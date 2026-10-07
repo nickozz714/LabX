@@ -222,6 +222,34 @@ export function SettingsPage() {
               </Select>
             </div>
             <div>
+              <Label>Stem</Label>
+              <Select
+                value={settings.voice_tts === "openai"
+                  ? `openai:${settings.voice_tts_stem || "coral"}` : "browser"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const patch = v === "browser"
+                    ? { voice_tts: "browser" as const }
+                    : { voice_tts: "openai" as const, voice_tts_stem: v.split(":")[1] };
+                  setSettings({ ...settings, ...patch });
+                  save(patch);
+                }}
+              >
+                <option value="browser">Browserstem — gratis, klinkt machinaal</option>
+                <option value="openai:alloy">Alloy — neutraal</option>
+                <option value="openai:ash">Ash — laag, rustig</option>
+                <option value="openai:coral">Coral — warm</option>
+                <option value="openai:nova">Nova — helder</option>
+                <option value="openai:sage">Sage — kalm</option>
+                <option value="openai:shimmer">Shimmer — zacht</option>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                De browserstem kost niets. De andere klinken menselijk maar gaan
+                per zin via OpenAI; dat telt mee in je dagplafond. Lukt het even
+                niet, dan valt hij terug op de browserstem.
+              </p>
+            </div>
+            <div>
               <Label>Bevestigingswoord</Label>
               <Input
                 value={settings.voice_woord ?? ""}

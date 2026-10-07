@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from authentication import require_user
@@ -247,6 +247,44 @@ def tools(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     _vereis_aan(db)
     from services.voice.schema import TOOLSCHEMA
     return TOOLSCHEMA
+
+
+@router.post("/spreek")
+async def spreek(payload: Dict[str, Any],
+                 db: Session = Depends(get_db)) -> Response:
+    """Een zin voorlezen met een menselijke stem.
+
+    Alleen als dat zo ingesteld staat: het kost geld per zin, en de browser
+    kan het gratis (zij het machinaal). De kosten gaan naar de sessie zodat
+    het dagplafond blijft kloppen.
+    """
+    s = _vereis_aan(db)
+    if s.voice_tts != "openai":
+        raise HTTPException(status_code=409, detail="Voorlezen staat op de browserstem.")
+
+    tekst = str(payload.get("tekst") or "").strip()
+    if not tekst:
+        raise HTTPException(status_code=400, detail="Er is niets om voor te lezen")
+
+    from services.voice.tts import geschatte_kosten, spreek_uit
+    try:
+        audio = await spreek_uit(db, tekst)
+    except Exception as exc:  # noqa: BLE001 — de browser valt terug op zijn eigen stem
+        raise HTTPException(status_code=502, detail=str(exc)[:300])
+
+    sessie_id = str(payload.get("sessie") or "").strip()
+    if sessie_id and db.get(VoiceSession, sessie_id) is not None:
+        VoiceSessieService(db).noteer(sessie_id, "systeem", "Voorgelezen.",
+                                      kosten_usd=geschatte_kosten(tekst))
+    return Response(content=audio, media_type="audio/mpeg")
+
+
+@router.get("/stemmen")
+def stemmen(db: Session = Depends(get_db)) -> List[str]:
+    """De stemmen waaruit je kunt kiezen."""
+    _vereis_aan(db)
+    from services.voice.tts import STEMMEN
+    return list(STEMMEN)
 
 
 @router.post("/realtime-token")

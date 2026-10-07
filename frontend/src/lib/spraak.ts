@@ -8,7 +8,7 @@
  * - **Opnemen** met MediaRecorder. De audio gaat als één fragment naar de
  *   backend; die transcribeert hem.
  */
-import { api } from "@/lib/api";
+import { api, getToken } from "@/lib/api";
 
 export type SpraakStatus = {
   aan: boolean;
@@ -21,6 +21,7 @@ export type SpraakStatus = {
   dag_limiet_usd?: number;
   verval_seconden?: number;
   vandaag_usd?: number;
+  tts?: "browser" | "openai";
 };
 
 export type SpraakGebeurtenis = {
@@ -65,12 +66,53 @@ export const spraakApi = {
                                 { audio_base64: audioBase64, mime }),
   realtimeToken: () =>
     api.post<{ client_secret: string; model: string }>("/voice/realtime-token"),
+  stemmen: () => api.get<string[]>("/voice/stemmen"),
+
+  /** Voorgelezen audio. Bewust buiten `api` om: die verwacht JSON terug. */
+  spreek: async (tekst: string, sessie?: string): Promise<Blob> => {
+    const res = await fetch("/api/voice/spreek", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+      },
+      body: JSON.stringify({ tekst, sessie }),
+    });
+    if (!res.ok) throw new Error(`Voorlezen mislukt (${res.status})`);
+    return res.blob();
+  },
 };
 
-/** Voorlezen via de browser. Stil falen mag: niet kunnen praten is vervelend,
- *  maar het mag de werking niet blokkeren — de tekst staat ook op het scherm. */
-export function lees(tekst: string, aan = true) {
-  if (!aan || !tekst || typeof window === "undefined") return;
+/**
+ * De beste Nederlandse stem die deze browser te bieden heeft.
+ *
+ * `getVoices()` pakte eerder gewoon de eerste Nederlandse stem, en dat is op
+ * macOS meestal de compacte variant die als een antwoordapparaat klinkt. De
+ * betere stemmen staan er wel bij, maar verderop in de lijst: ze heten
+ * "Enhanced" of "Premium", of ze komen van het netwerk (`localService`
+ * onwaar) zoals de Siri-stemmen.
+ */
+function besteStem(synth: SpeechSynthesis): SpeechSynthesisVoice | undefined {
+  const nl = synth.getVoices().filter((v) => v.lang?.toLowerCase().startsWith("nl"));
+  if (!nl.length) return undefined;
+  const punten = (v: SpeechSynthesisVoice) => {
+    const naam = v.name.toLowerCase();
+    let p = 0;
+    if (naam.includes("premium")) p += 4;
+    if (naam.includes("enhanced")) p += 3;
+    if (naam.includes("siri")) p += 3;
+    if (!v.localService) p += 2;
+    if (naam.includes("compact")) p -= 4;
+    if (v.lang.toLowerCase() === "nl-nl") p += 1;   // niet nl-BE
+    return p;
+  };
+  return [...nl].sort((a, b) => punten(b) - punten(a))[0];
+}
+
+let huidigeAudio: HTMLAudioElement | null = null;
+
+/** Voorlezen met de browserstem. Gratis, direct, maar machinaal. */
+function leesMetBrowser(tekst: string) {
   try {
     const synth = window.speechSynthesis;
     if (!synth) return;
@@ -78,7 +120,7 @@ export function lees(tekst: string, aan = true) {
     const uiting = new SpeechSynthesisUtterance(tekst);
     uiting.lang = "nl-NL";
     uiting.rate = 1.05;
-    const stem = synth.getVoices().find((v) => v.lang?.startsWith("nl"));
+    const stem = besteStem(synth);
     if (stem) uiting.voice = stem;
     synth.speak(uiting);
   } catch {
@@ -86,11 +128,49 @@ export function lees(tekst: string, aan = true) {
   }
 }
 
+/**
+ * Voorlezen. Stil falen mag: niet kunnen praten is vervelend, maar het mag de
+ * werking niet blokkeren — de tekst staat ook op het scherm.
+ *
+ * Staat de OpenAI-stem aan, dan haalt dit de audio bij de server op. Gaat dat
+ * mis (geen sleutel, dagplafond, netwerk), dan valt hij terug op de
+ * browserstem in plaats van te zwijgen.
+ */
+export function lees(tekst: string, aan = true,
+                     opties: { tts?: string; sessie?: string } = {}) {
+  if (!aan || !tekst || typeof window === "undefined") return;
+  if (opties.tts !== "openai") {
+    leesMetBrowser(tekst);
+    return;
+  }
+  void (async () => {
+    try {
+      const blob = await spraakApi.spreek(tekst, opties.sessie);
+      zwijg();
+      const audio = new Audio(URL.createObjectURL(blob));
+      huidigeAudio = audio;
+      // De blob-URL weer vrijgeven; anders houdt elke zin geheugen vast.
+      audio.onended = () => URL.revokeObjectURL(audio.src);
+      await audio.play();
+    } catch {
+      leesMetBrowser(tekst);
+    }
+  })();
+}
+
 export function zwijg() {
   try {
     window.speechSynthesis?.cancel();
   } catch {
     /* niets aan de hand */
+  }
+  if (huidigeAudio) {
+    try {
+      huidigeAudio.pause();
+    } catch {
+      /* al gestopt */
+    }
+    huidigeAudio = null;
   }
 }
 

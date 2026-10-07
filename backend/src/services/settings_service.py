@@ -82,6 +82,9 @@ class ResolvedSettings:
         self.voice_realtime_model = getattr(row, "voice_realtime_model", None)
         self.voice_stt_model = getattr(row, "voice_stt_model", None)
         self.voice_brein_model = getattr(row, "voice_brein_model", None)
+        self.voice_tts = getattr(row, "voice_tts", None) or "browser"
+        self.voice_tts_stem = getattr(row, "voice_tts_stem", None)
+        self.voice_tts_model = getattr(row, "voice_tts_model", None)
         self.default_effort = row.default_effort
         self.fallback_model = row.fallback_model
         self.max_budget_usd = row.max_budget_usd
@@ -140,6 +143,8 @@ def get_public_settings(db: Session) -> Dict[str, Any]:
         "voice_meld_runs": bool(row.voice_meld_runs),
         "voice_sessie_minuten": row.voice_sessie_minuten,
         "voice_dag_limiet_usd": row.voice_dag_limiet_usd,
+        "voice_tts": resolved.voice_tts,
+        "voice_tts_stem": resolved.voice_tts_stem,
         "voice_realtime_model": row.voice_realtime_model,
         "voice_stt_model": row.voice_stt_model,
         "voice_brein_model": row.voice_brein_model,
@@ -166,7 +171,7 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
         "voice_enabled", "voice_brein", "voice_microfoon", "voice_bevestiging",
         "voice_woord", "voice_meld_runs", "voice_sessie_minuten",
         "voice_dag_limiet_usd", "voice_realtime_model", "voice_stt_model",
-        "voice_brein_model",
+        "voice_brein_model", "voice_tts", "voice_tts_stem", "voice_tts_model",
         "default_effort", "fallback_model", "max_budget_usd", "autocompact",
         "custom_agents_json", "default_agent", "auto_hooks",
     )

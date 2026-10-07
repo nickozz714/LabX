@@ -72,6 +72,12 @@ class AppSettings(Base):
     voice_realtime_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     voice_stt_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     voice_brein_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Voorlezen. "browser" is gratis en werkt offline maar klinkt als een
+    # machine; "openai" kost geld per zin en klinkt als een mens.
+    voice_tts: Mapped[str | None] = mapped_column(String(16), nullable=True,
+                                                  default="browser")
+    voice_tts_stem: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    voice_tts_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     default_effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
     fallback_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
