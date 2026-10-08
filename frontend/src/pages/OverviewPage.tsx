@@ -183,7 +183,7 @@ export function OverviewPage() {
   }
 
   return (
-    <div className="pagina veilig-onder mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
+    <div className="pagina veilig-onder space-y-6 p-4 sm:p-6">
       <OrchestratorStart />
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Overzicht</h1>
