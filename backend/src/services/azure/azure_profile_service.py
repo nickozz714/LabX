@@ -413,9 +413,16 @@ class AzureProfileService:
         identity["refreshed_at"] = _now_iso()
         row.identity_json = json.dumps(identity)
         self.db.commit()
+        # Een bundel bevat meerdere refresh tokens (per resource en per
+        # account). Dat er eentje verlopen is terwijl een andere het doet, is
+        # normaal en verandert niets aan de uitkomst: je bent ingelogd. Die
+        # AADSTS-tekst met trace- en correlatie-id's hoort dus niet in de
+        # melding -- alleen in de details, voor als het ooit wél misgaat.
+        wie = identity.get("account") or identity.get("user") or "dit profiel"
         return {"ok": True, "kind": row.kind, "renewed": renewed,
-                "detail": (f"{renewed} refresh token(s) vernieuwd" +
-                           (f"; {len(failures)} mislukt: {'; '.join(failures)}" if failures else "")),
+                "overgeslagen": len(failures),
+                "detail": f"Authenticatie werkt — ingelogd als {wie}.",
+                "meldingen": failures,
                 "identity": identity}
 
     @staticmethod

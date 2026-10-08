@@ -109,6 +109,7 @@ export function AzureProfilesPage() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [steps, setSteps] = useState<ApplyStep[] | null>(null);
+  const [details, setDetails] = useState<string[] | null>(null);
 
   function refresh() {
     azureProfilesApi.list().then(setProfiles);
@@ -122,7 +123,9 @@ export function AzureProfilesPage() {
     setBusyId(p.id);
     try {
       const r = await azureProfilesApi.verify(p.id);
-      report(p.name, `identiteit ${JSON.stringify(r.identity)}`);
+      const wie = (r.identity as Record<string, unknown>)?.account
+        ?? (r.identity as Record<string, unknown>)?.user ?? "onbekend";
+      report(p.name, `Authenticatie werkt — ingelogd als ${wie}.`);
       refresh();
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : "Verify mislukt");
@@ -131,9 +134,15 @@ export function AzureProfilesPage() {
     }
   }
 
-  function report(name: string, text: string, list?: ApplyStep[] | null) {
+  // `ruw` zijn de onbewerkte meldingen van Azure. Die horen niet in de
+  // hoofdmelding: een bundel bevat meerdere refresh tokens, en dat er eentje
+  // verlopen is terwijl een andere het doet verandert niets aan de uitkomst.
+  // Ze blijven wél bereikbaar, want als het ooit écht misgaat wil je ze zien.
+  function report(name: string, text: string, list?: ApplyStep[] | null,
+                  ruw?: string[] | null) {
     setMessage(`${name}: ${text}`);
     setSteps(list || null);
+    setDetails(ruw && ruw.length ? ruw : null);
   }
 
   async function refreshTokens(p: AzureProfileDto) {
@@ -141,7 +150,7 @@ export function AzureProfilesPage() {
     report(p.name, "bezig…");
     try {
       const r = await azureProfilesApi.refresh(p.id);
-      report(p.name, r.detail, r.apply?.steps);
+      report(p.name, r.detail, r.apply?.steps, r.meldingen);
       refresh();
     } catch (err) {
       report(p.name, err instanceof ApiError ? err.message : "Vernieuwen mislukt");
@@ -212,6 +221,16 @@ export function AzureProfilesPage() {
         </div>
       </div>
       {message && <p className="mb-1 text-sm text-muted-foreground">{message}</p>}
+      {details && (
+        <details className="mb-2 text-xs">
+          <summary className="cursor-pointer select-none text-muted-foreground">
+            Details van Azure ({details.length})
+          </summary>
+          <ul className="mt-1 space-y-0.5 text-muted-foreground">
+            {details.map((d, i) => <li key={i} className="break-words">{d}</li>)}
+          </ul>
+        </details>
+      )}
       {steps && (
         <ul className="mb-3 space-y-0.5 text-xs">
           {steps.map((st, i) => (
