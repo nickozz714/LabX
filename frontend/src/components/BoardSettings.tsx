@@ -48,6 +48,7 @@ export function BoardSettings({
   const [agentDoneColumn, setAgentDoneColumn] = useState(board.agent_done_column || "");
   const [archiveColumn, setArchiveColumn] = useState(board.archive_column || "");
   const [archiveDays, setArchiveDays] = useState(String(board.archive_days ?? 0));
+  const [tab, setTab] = useState<"algemeen" | "kolommen" | "agent" | "archief" | "koppeling">("algemeen");
   const [agentInstruction, setAgentInstruction] = useState(board.agent_instruction || "");
   const [provider, setProvider] = useState(board.provider);
   const [config, setConfig] = useState<Record<string, any>>({ ...board.provider_config });
@@ -183,6 +184,26 @@ export function BoardSettings({
   return (
     <Modal open onClose={onClose} title={`Instellingen — ${board.name}`} wide>
       <div className="space-y-4">
+        {/* Vijf onderwerpen op één hoop is geen formulier maar een
+            vragenlijst: automatisch archiveren stond onder Agent omdat daar
+            toevallig ook een kolomkiezer staat, en dat is geen reden. */}
+        <div className="flex flex-wrap gap-1 border-b border-border text-sm">
+          {(["algemeen", "kolommen", "agent", "archief", "koppeling"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setTab(s)}
+              className={`px-3 py-1.5 ${tab === s
+                ? "border-b-2 border-primary font-medium"
+                : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {{ algemeen: "Algemeen", kolommen: "Kolommen", agent: "Agent",
+                 archief: "Archief", koppeling: "Koppeling" }[s]}
+            </button>
+          ))}
+        </div>
+
+        {tab === "algemeen" && (<div className="space-y-3">
         {/* algemeen */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="col-span-2">
@@ -210,6 +231,9 @@ export function BoardSettings({
           </Select>
         </div>
 
+        </div>)}
+
+        {tab === "kolommen" && (<div className="space-y-3">
         {/* kolommen */}
         <Card className="p-3">
           <Label>Kolommen</Label>
@@ -262,6 +286,9 @@ export function BoardSettings({
           </p>
         </Card>
 
+        </div>)}
+
+        {tab === "agent" && (<div className="space-y-3">
         {/* agent */}
         <Card className="p-3">
           <Label>Agent</Label>
@@ -305,10 +332,27 @@ export function BoardSettings({
             </div>
           </div>
 
-          {/* Automatisch archiveren. Bewust uit tenzij je het aanzet: tickets
-              die vanzelf uit je bord verdwijnen zonder dat je daarom gevraagd
-              hebt, is het soort verrassing dat vertrouwen kost. */}
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="mt-2">
+            <Label>Vaste werkafspraken (elke agent-run op dit board krijgt deze mee)</Label>
+            <TextArea
+              rows={3}
+              className="text-xs"
+              value={agentInstruction}
+              onChange={(e) => setAgentInstruction(e.target.value)}
+              placeholder="Bijv.: werk in /workspace/repo, schrijf tests bij elke wijziging, push nooit naar main."
+            />
+          </div>
+        </Card>
+
+        </div>)}
+
+        {tab === "archief" && (<div className="space-y-3">
+        <Card className="p-3">
+          <Label>Automatisch archiveren</Label>
+          {/* Bewust uit tenzij je het aanzet: tickets die vanzelf uit je bord
+              verdwijnen zonder dat je daarom gevraagd hebt, is het soort
+              verrassing dat vertrouwen kost. */}
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <Label>Archiveer vanuit</Label>
               <Select value={archiveColumn} onChange={(e) => setArchiveColumn(e.target.value)}>
@@ -336,18 +380,10 @@ export function BoardSettings({
             en raakt iemand het daarna tóch weer aan, dan komt het vanzelf terug.
             Nul dagen of geen kolom betekent uit.
           </p>
-          <div className="mt-2">
-            <Label>Vaste werkafspraken (elke agent-run op dit board krijgt deze mee)</Label>
-            <TextArea
-              rows={3}
-              className="text-xs"
-              value={agentInstruction}
-              onChange={(e) => setAgentInstruction(e.target.value)}
-              placeholder="Bijv.: werk in /workspace/repo, schrijf tests bij elke wijziging, push nooit naar main."
-            />
-          </div>
         </Card>
+        </div>)}
 
+        {tab === "koppeling" && (<div className="space-y-3">
         {/* koppeling */}
         <Card className="p-3">
           <Label>Bron</Label>
@@ -588,6 +624,8 @@ export function BoardSettings({
             </div>
           )}
         </Card>
+
+        </div>)}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
