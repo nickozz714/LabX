@@ -755,3 +755,16 @@ export interface AgentRunStart {
   ticket_key: string;
   status: string;
 }
+
+
+/** Een repo die bij een lab geregistreerd staat, met zijn toestand. */
+export interface LabRepo {
+  name: string;
+  url: string | null;
+  branch: string | null;
+  token_opgeslagen: boolean;
+  huidige_branch?: string | null;
+  gewijzigd?: number;
+  bestanden?: string[];
+  fout?: string;
+}

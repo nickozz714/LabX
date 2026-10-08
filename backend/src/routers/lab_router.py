@@ -638,6 +638,35 @@ async def browser_stop(lab_id: str, db: Session = Depends(get_db)):
     return await _service(db).stop_browser(lab_id)
 
 
+@router.get("/{lab_id}/repos")
+async def list_lab_repos(lab_id: str, db: Session = Depends(get_db)):
+    """De geregistreerde repo's met hun toestand."""
+    return await _service(db).repo_overzicht(lab_id)
+
+
+@router.post("/{lab_id}/repos")
+async def register_lab_repo(lab_id: str, payload: Dict[str, Any],
+                            db: Session = Depends(get_db)):
+    """Een repo klonen en vastleggen bij dit lab."""
+    url = payload.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="url is verplicht")
+    naam = payload.get("naam") or str(url).rstrip("/").split("/")[-1].removesuffix(".git")
+    return await _service(db).registreer_repo(
+        lab_id, naam=str(naam), url=str(url),
+        branch=payload.get("branch"), token=payload.get("token"))
+
+
+@router.delete("/{lab_id}/repos/{naam}")
+async def unregister_lab_repo(lab_id: str, naam: str, db: Session = Depends(get_db)):
+    return _service(db).verwijder_repo(lab_id, naam)
+
+
+@router.post("/{lab_id}/repos/{naam}/pull")
+async def pull_lab_repo(lab_id: str, naam: str, db: Session = Depends(get_db)):
+    return await _service(db).repo_pull(lab_id, naam)
+
+
 @router.post("/{lab_id}/publish")
 async def publish_lab_repo(lab_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
     return await _service(db).publish(

@@ -2137,15 +2137,161 @@ exec ssh -N \\
         self._touch(p)
         return {"ok": bool(written), "az_dir": safe_dir, "written": written}
 
+    # ── repo's beheren ────────────────────────────────────────────────────
+    # Repo's werden alleen bij het AANMAKEN van een lab gekloond, en daarna
+    # typte je in de Git-tab blind een mapnaam. Wie zich vertypte kreeg "cd:
+    # no such file" en moest raden wat er wél stond. Een repo hoort eerst
+    # geregistreerd te worden; daarna kies je hem uit een lijst.
+
+    @staticmethod
+    def _repo_naam(naam: str) -> str:
+        import re as _re
+        schoon = (naam or "").strip().strip("/")
+        if not schoon or not _re.fullmatch(r"[A-Za-z0-9._-]+", schoon):
+            raise HTTPException(status_code=400, detail="Ongeldige mapnaam voor de repo")
+        return schoon
+
+    def _repo_zoek(self, p: Lab, naam: str) -> Optional[Dict[str, Any]]:
+        return next((r for r in (p.repos or []) if r.get("name") == naam), None)
+
+    async def registreer_repo(self, lab_id: str, *, naam: str, url: str,
+                              branch: Optional[str] = None,
+                              token: Optional[str] = None) -> Dict[str, Any]:
+        """Een repo klonen en vastleggen bij dit lab."""
+        import re as _re
+
+        p = self.get(lab_id)
+        naam = self._repo_naam(naam)
+        url = (url or "").strip()
+        if not url:
+            raise HTTPException(status_code=400, detail="URL is verplicht")
+        if branch and not _re.fullmatch(r"[A-Za-z0-9._/-]+", branch.strip()):
+            raise HTTPException(status_code=400, detail="Ongeldige branchnaam")
+        if self._repo_zoek(p, naam):
+            raise HTTPException(status_code=409, detail=f"'{naam}' is hier al geregistreerd")
+
+        spec: Dict[str, Any] = {"url": url, "name": naam}
+        if token:
+            spec["token"] = token
+        await self._clone_into_volume(p, spec)
+        if branch and branch.strip():
+            await self._git(p, naam, f'git checkout "$1"', branch.strip())
+
+        # Het token versleuteld bewaren, zodat je bij een volgende push niet
+        # opnieuw hoeft te plakken. In platte tekst in een JSON-kolom zou het
+        # bij elke export en elke databasekopie meereizen.
+        rij: Dict[str, Any] = {"name": naam, "url": url, "branch": (branch or "").strip() or None}
+        if token:
+            from utils.crypto import encrypt
+            rij["token_encrypted"] = encrypt(token)
+        p.repos = list(p.repos or []) + [rij]
+        self.db.commit()
+        self._touch(p)
+        return {"repo": naam, "url": url, "branch": rij["branch"]}
+
+    def verwijder_repo(self, lab_id: str, naam: str) -> Dict[str, Any]:
+        """Alleen uit de registratie. De map in /workspace blijft staan --
+        daar kan werk in zitten dat nog niet gepusht is, en dat weggooien
+        omdat iemand een vinkje weghaalt is geen redelijke uitkomst."""
+        p = self.get(lab_id)
+        naam = self._repo_naam(naam)
+        if not self._repo_zoek(p, naam):
+            raise HTTPException(status_code=404, detail=f"'{naam}' is hier niet geregistreerd")
+        p.repos = [r for r in (p.repos or []) if r.get("name") != naam]
+        self.db.commit()
+        return {"verwijderd": naam, "map_blijft": f"/workspace/{naam}"}
+
+    async def _git(self, p: Lab, naam: str, script: str, *args: str,
+                   token: Optional[str] = None, timeout: float = 120.0) -> str:
+        """Een git-commando in een kortlevende container naast het volume.
+
+        Niet in de lab-container zelf: dan zou een token in de omgeving van de
+        agent staan. Dit is dezelfde route die publish al nam.
+        """
+        import base64 as _b64
+
+        env = {"REPO": naam}
+        if token:
+            env["GIT_AUTH"] = _b64.b64encode(f"x-access-token:{token}".encode()).decode()
+        vol = ('set -e; cd "/workspace/$REPO"; '
+               'git config --global --add safe.directory "/workspace/$REPO"; ' + script)
+        try:
+            return await self.runtime.run_ephemeral(
+                image=p.image, volume=p.volume_name,
+                cmd=["sh", "-c", vol, "sh", *args], env=env, timeout=timeout) or ""
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=str(exc)[:500])
+
+    def _repo_token(self, rij: Dict[str, Any]) -> Optional[str]:
+        rauw = rij.get("token_encrypted")
+        if not rauw:
+            return None
+        try:
+            from utils.crypto import decrypt
+            return decrypt(rauw)
+        except Exception:  # noqa: BLE001 — een onleesbaar token is geen token
+            log.warningx("Repo-token niet te ontsleutelen", repo=rij.get("name"))
+            return None
+
+    async def repo_overzicht(self, lab_id: str) -> List[Dict[str, Any]]:
+        """De geregistreerde repo's met hun toestand: branch en of er iets
+        openstaat. Dat is wat je wilt weten vóór je commit."""
+        p = self.get(lab_id)
+        uit: List[Dict[str, Any]] = []
+        for rij in (p.repos or []):
+            naam = rij.get("name")
+            item: Dict[str, Any] = {"name": naam, "url": rij.get("url"),
+                                    "branch": rij.get("branch"),
+                                    "token_opgeslagen": bool(rij.get("token_encrypted"))}
+            try:
+                rauw = await self._git(
+                    p, naam,
+                    'git rev-parse --abbrev-ref HEAD; echo "---"; git status --porcelain',
+                    timeout=30)
+                kop, _, rest = (rauw or "").partition("---")
+                item["huidige_branch"] = kop.strip().splitlines()[-1] if kop.strip() else None
+                wijzigingen = [r for r in rest.strip().splitlines() if r.strip()]
+                item["gewijzigd"] = len(wijzigingen)
+                item["bestanden"] = wijzigingen[:20]
+            except HTTPException as exc:
+                # Een repo die niet meer op schijf staat mag de rest van de
+                # lijst niet onbruikbaar maken.
+                item["fout"] = str(exc.detail)[:200]
+            uit.append(item)
+        return uit
+
+    async def repo_pull(self, lab_id: str, naam: str) -> Dict[str, Any]:
+        p = self.get(lab_id)
+        rij = self._repo_zoek(p, self._repo_naam(naam))
+        if rij is None:
+            raise HTTPException(status_code=404, detail=f"'{naam}' is hier niet geregistreerd")
+        uit = await self._git(
+            p, rij["name"],
+            'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} pull --ff-only',
+            token=self._repo_token(rij), timeout=180)
+        self._touch(p)
+        return {"repo": rij["name"], "output": uit[:2000]}
+
     async def publish(self, lab_id: str, *, repo_name: str, branch: Optional[str] = None,
                       message: Optional[str] = None, token: Optional[str] = None,
                       remote_url: Optional[str] = None) -> Dict[str, Any]:
         import base64 as _b64
         import re as _re
         p = self.get(lab_id)
-        name = (repo_name or "").strip().strip("/")
-        if not name or not _re.fullmatch(r"[A-Za-z0-9._-]+", name):
-            raise HTTPException(status_code=400, detail="Ongeldige repo-naam")
+        name = self._repo_naam(repo_name)
+        # Alleen een geregistreerde repo. Blind een mapnaam typen leverde
+        # "cd: no such file" op zonder dat je kon zien wat er wél stond, en
+        # een token moest je elke keer opnieuw plakken.
+        rij = self._repo_zoek(p, name)
+        if rij is None:
+            bekend = ", ".join(r.get("name", "?") for r in (p.repos or [])) or "geen"
+            raise HTTPException(
+                status_code=404,
+                detail=f"'{name}' is hier niet geregistreerd. Bekend: {bekend}.")
+        if not token:
+            token = self._repo_token(rij)
+        if not branch and rij.get("branch"):
+            branch = rij["branch"]
         env: Dict[str, str] = {"DEST": name}
         if branch and branch.strip():
             if not _re.fullmatch(r"[A-Za-z0-9._/-]+", branch.strip()):

@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { dockerStatus, downloadLabFile, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra , LabRepo} from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { Download, Loader2, RefreshCw, Pencil, Trash2 } from "lucide-react";
@@ -1177,58 +1177,255 @@ function TunnelPaneel({ lab }: { lab: Lab }) {
   );
 }
 
+/**
+ * De Git-tab: eerst registreren, dan werken.
+ *
+ * Hiervoor typte je blind een mapnaam in een leeg veld. Klopte die niet, dan
+ * kreeg je "cd: no such file" en moest je raden wat er wél in /workspace
+ * stond — en een token moest je elke keer opnieuw plakken. Nu registreer je
+ * een repo één keer (hij wordt dan gekloond en het token versleuteld
+ * bewaard), en daarna kies je hem uit de lijst.
+ *
+ * Alle git-bewerkingen draaien in een kortlevende container naast het volume,
+ * niet in de lab-container zelf: anders zou een token in de omgeving van de
+ * agent staan.
+ */
 function PublishPanel({ lab }: { lab: Lab }) {
-  const [repo, setRepo] = useState("");
-  const [branch, setBranch] = useState("");
-  const [message, setMessage] = useState("");
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+  const balk = useMelding();
+  const bevestig = useBevestiging();
+  const [repos, setRepos] = useState<LabRepo[]>([]);
+  const [gekozen, setGekozen] = useState<string>("");
+  const [laden, setLaden] = useState(true);
+  const [bezig, setBezig] = useState(false);
+  const [uitvoer, setUitvoer] = useState<string | null>(null);
 
-  async function publish() {
-    setBusy(true);
-    setResult(null);
+  // Nieuwe repo registreren.
+  const [nieuwOpen, setNieuwOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [naam, setNaam] = useState("");
+  const [branch, setBranch] = useState("");
+  const [token, setToken] = useState("");
+
+  // Commit + push.
+  const [bericht, setBericht] = useState("");
+
+  async function laad() {
+    setLaden(true);
     try {
-      const r: any = await labsApi.publish(lab.id, {
-        repo, branch: branch || undefined, message: message || undefined, token: token || undefined,
-      });
-      setResult(r.output || "Gepubliceerd.");
+      const r = await labsApi.repos(lab.id);
+      setRepos(r);
+      setGekozen((g) => (g && r.some((x) => x.name === g) ? g : (r[0]?.name || "")));
     } catch (err) {
-      setResult(err instanceof ApiError ? err.message : "Publiceren mislukt");
+      balk.fout("Repo's laden mislukt", err instanceof ApiError ? err.message : String(err));
     } finally {
-      setBusy(false);
+      setLaden(false);
     }
   }
 
+  useEffect(() => {
+    laad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lab.id]);
+
+  const huidige = repos.find((r) => r.name === gekozen) || null;
+
+  async function registreren() {
+    if (!url.trim()) return;
+    setBezig(true);
+    try {
+      const r = await labsApi.registreerRepo(lab.id, {
+        url: url.trim(),
+        naam: naam.trim() || undefined,
+        branch: branch.trim() || undefined,
+        token: token.trim() || undefined,
+      });
+      balk.ok(`${r.repo} gekloond in /workspace`);
+      setNieuwOpen(false);
+      setUrl(""); setNaam(""); setBranch(""); setToken("");
+      await laad();
+      setGekozen(r.repo);
+    } catch (err) {
+      balk.fout("Registreren mislukt", err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  async function pullen() {
+    if (!huidige) return;
+    setBezig(true);
+    setUitvoer(null);
+    try {
+      const r = await labsApi.pullRepo(lab.id, huidige.name);
+      setUitvoer(r.output);
+      balk.ok("Opgehaald");
+      laad();
+    } catch (err) {
+      balk.fout("Pull mislukt", err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  async function publiceren() {
+    if (!huidige) return;
+    setBezig(true);
+    setUitvoer(null);
+    try {
+      const r = await labsApi.publish(lab.id, {
+        repo: huidige.name,
+        branch: huidige.branch || undefined,
+        message: bericht.trim() || undefined,
+      });
+      setUitvoer(r.output);
+      balk.ok(bericht.trim() ? "Gecommit en gepusht" : "Gepusht");
+      setBericht("");
+      laad();
+    } catch (err) {
+      balk.fout("Publiceren mislukt", err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  if (laden) return <p className="text-xs text-muted-foreground">Laden…</p>;
+
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        Commit + push van een repo in <code>/workspace</code> via een kortlevende helper-container —
-        het token komt nooit in de lab-container zelf terecht. Voor Azure-identiteiten in dit lab:
-        gebruik de Azure-profielen-pagina (sync → lab).
-      </p>
-      <div>
-        <Label>Repo-map (naam onder /workspace)</Label>
-        <Input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="repo" />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <Label>Branch (optioneel)</Label>
-          <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
+      {repos.length === 0 && !nieuwOpen && (
+        <div className="rounded border border-border p-3 text-sm">
+          <p className="font-medium">Nog geen repo in dit lab.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Registreer er een: LabX kloont hem in <code>/workspace</code> en onthoudt
+            het token versleuteld, zodat je dat niet elke keer opnieuw hoeft te plakken.
+            Zonder registratie kun je vanuit dit scherm niets met git doen — de agent
+            in het lab kan dat wél zelf, via de terminal.
+          </p>
+          <Button className="mt-2 px-2 py-1 text-xs" onClick={() => setNieuwOpen(true)}>
+            Repo toevoegen
+          </Button>
         </div>
-        <div>
-          <Label>Token (optioneel)</Label>
-          <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} />
+      )}
+
+      {repos.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Select className="w-64 text-xs" value={gekozen} onChange={(e) => setGekozen(e.target.value)}>
+            {repos.map((r) => (
+              <option key={r.name} value={r.name}>{r.name}</option>
+            ))}
+          </Select>
+          <Button variant="secondary" className="px-2 py-1 text-xs"
+                  onClick={() => setNieuwOpen((v) => !v)}>
+            + Repo
+          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="secondary" className="px-2 py-1 text-xs" disabled={bezig} onClick={pullen}>
+              Ophalen
+            </Button>
+            <Button
+              variant="danger"
+              className="px-2 py-1 text-xs"
+              onClick={async () => {
+                if (!huidige) return;
+                const ja = await bevestig.vraag({
+                  titel: `"${huidige.name}" losmaken?`,
+                  tekst: "Alleen de registratie verdwijnt. De map in /workspace blijft staan, "
+                       + "want daar kan werk in zitten dat nog niet gepusht is.",
+                  bevestig: "Losmaken",
+                });
+                if (!ja) return;
+                await labsApi.verwijderRepo(lab.id, huidige.name);
+                laad();
+              }}
+            >
+              Losmaken
+            </Button>
+          </div>
         </div>
-      </div>
-      <div>
-        <Label>Commit-bericht (optioneel — leeg = geen commit, alleen push)</Label>
-        <Input value={message} onChange={(e) => setMessage(e.target.value)} />
-      </div>
-      <Button onClick={publish} disabled={busy || !repo.trim()}>
-        {busy ? "Bezig…" : "Publiceren"}
-      </Button>
-      {result && <pre className="max-h-40 overflow-auto rounded bg-secondary p-2 text-xs whitespace-pre-wrap">{result}</pre>}
+      )}
+
+      {nieuwOpen && (
+        <div className="space-y-2 rounded border border-border p-3">
+          <div>
+            <Label>Repo-URL</Label>
+            <Input value={url} onChange={(e) => setUrl(e.target.value)}
+                   placeholder="https://github.com/org/repo.git" />
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div>
+              <Label>Mapnaam (leeg = uit de URL)</Label>
+              <Input value={naam} onChange={(e) => setNaam(e.target.value)} placeholder="repo" />
+            </div>
+            <div>
+              <Label>Branch (optioneel)</Label>
+              <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
+            </div>
+            <div>
+              <Label>Token (optioneel)</Label>
+              <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Het token wordt versleuteld opgeslagen en komt nooit in de lab-container:
+            git draait in een kortlevende container naast het volume.
+          </p>
+          <div className="flex gap-2">
+            <Button className="px-2 py-1 text-xs" disabled={bezig || !url.trim()} onClick={registreren}>
+              {bezig ? "Klonen…" : "Klonen en registreren"}
+            </Button>
+            <Button variant="secondary" className="px-2 py-1 text-xs" onClick={() => setNieuwOpen(false)}>
+              Annuleren
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {huidige && (
+        <div className="space-y-2 rounded border border-border p-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-mono">/workspace/{huidige.name}</span>
+            {huidige.huidige_branch && (
+              <Badge tone="violet">{huidige.huidige_branch}</Badge>
+            )}
+            {huidige.fout ? (
+              <span className="text-destructive">{huidige.fout}</span>
+            ) : (huidige.gewijzigd ?? 0) > 0 ? (
+              <Badge tone="yellow">{huidige.gewijzigd} gewijzigd</Badge>
+            ) : (
+              <span className="text-muted-foreground">niets gewijzigd</span>
+            )}
+            {huidige.token_opgeslagen && (
+              <span className="text-muted-foreground">· token bewaard</span>
+            )}
+          </div>
+
+          {(huidige.bestanden || []).length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer select-none text-muted-foreground">
+                Wat er openstaat
+              </summary>
+              <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto font-mono">
+                {(huidige.bestanden || []).map((b) => <li key={b}>{b}</li>)}
+              </ul>
+            </details>
+          )}
+
+          <div>
+            <Label>Commit-bericht (leeg = alleen pushen)</Label>
+            <Input value={bericht} onChange={(e) => setBericht(e.target.value)}
+                   placeholder="Wat heb je gewijzigd?" />
+          </div>
+          <Button className="px-2 py-1 text-xs" disabled={bezig} onClick={publiceren}>
+            {bezig ? "Bezig…" : bericht.trim() ? "Commit en push" : "Push"}
+          </Button>
+        </div>
+      )}
+
+      {uitvoer && (
+        <pre className="max-h-48 overflow-auto rounded bg-secondary p-3 text-xs whitespace-pre-wrap">
+          {uitvoer}
+        </pre>
+      )}
     </div>
   );
 }
