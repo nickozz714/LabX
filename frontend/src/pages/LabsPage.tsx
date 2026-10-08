@@ -894,11 +894,7 @@ function ProvisioningPanel({ lab, onChanged }: { lab: Lab; onChanged: () => void
         </div>
       </div>
 
-      <div>
-        <Label>Eigen setup-script</Label>
-        <TextArea rows={4} className="font-mono text-xs" value={script}
-                  onChange={(ev) => setScript(ev.target.value)} />
-      </div>
+      <SetupScriptVeld waarde={script} onChange={setScript} />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       <Button disabled={busy || !dirty} onClick={save}>
@@ -1709,6 +1705,104 @@ function FileBrowser({ lab }: { lab: Lab }) {
             />
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * Het eigen setup-script, met de regels erbij in plaats van eromheen.
+ *
+ * Een leeg tekstvak met "draait als root" eronder laat je raden: welke shell,
+ * in welke map, met of zonder netwerk, en wat er gebeurt als het al eens
+ * gedraaid heeft. Die vier dingen bepalen of je script werkt, dus die staan
+ * er nu bij — samen met een paar regels om in te voegen en een waarschuwing
+ * voor de fouten die iedereen één keer maakt.
+ */
+const VOORBEELDEN: { label: string; regel: string; uitleg: string }[] = [
+  { label: "Python-pakketten", regel: "pip install -q pandas pyarrow",
+    uitleg: "-q houdt het log leesbaar" },
+  { label: "Systeempakketten", regel: "apt-get update && apt-get install -y jq unzip",
+    uitleg: "-y, anders wacht hij op een antwoord dat nooit komt" },
+  { label: "Node-pakket", regel: "npm install -g --silent typescript",
+    uitleg: "globaal, zodat elke sessie het heeft" },
+  { label: "Map klaarzetten", regel: "mkdir -p /workspace/data",
+    uitleg: "-p: bestaat hij al, dan gebeurt er niets" },
+  { label: "Omgevingsvariabele", regel: 'echo \'export TZ=Europe/Amsterdam\' >> /etc/profile.d/labx.sh',
+    uitleg: "in /etc/profile.d, want een export hier geldt alleen nu" },
+];
+
+function scriptWaarschuwingen(tekst: string): string[] {
+  const uit: string[] = [];
+  const t = tekst || "";
+  if (/\bsudo\b/.test(t)) {
+    uit.push("`sudo` is niet nodig en bestaat meestal niet in het image — je draait al als root.");
+  }
+  if (/\bapt(-get)?\s+install\b/.test(t) && !/-y\b/.test(t)) {
+    uit.push("`apt-get install` zonder `-y` wacht op een bevestiging die niemand kan geven; "
+             + "het inrichten loopt dan vast tot de time-out.");
+  }
+  if (/\bapt(-get)?\s+install\b/.test(t) && !/apt(-get)?\s+update/.test(t)) {
+    uit.push("Zet er `apt-get update &&` voor: zonder pakkettenlijst vindt `install` niets.");
+  }
+  if (/^\s*cd\s/m.test(t) && !/\/workspace/.test(t)) {
+    uit.push("Een `cd` zonder volledig pad: het script start in /, niet in /workspace.");
+  }
+  if (/\bgit\s+clone\b/.test(t)) {
+    uit.push("Voor een repo is er de Git-tab: die kloont hem, onthoudt het token versleuteld "
+             + "en laat je er daarna mee werken. Hier zou je het token in platte tekst zetten.");
+  }
+  if (/\bnpm\s+install\b/.test(t) && !/-g\b/.test(t)) {
+    uit.push("`npm install` zonder `-g` installeert in de map waar het script toevallig staat.");
+  }
+  return uit;
+}
+
+function SetupScriptVeld({ waarde, onChange }: {
+  waarde: string;
+  onChange: (v: string) => void;
+}) {
+  const waarschuwingen = scriptWaarschuwingen(waarde);
+
+  function voegToe(regel: string) {
+    const huidig = (waarde || "").replace(/\s+$/, "");
+    onChange(huidig ? `${huidig}\n${regel}` : regel);
+  }
+
+  return (
+    <div>
+      <Label>Eigen setup-script</Label>
+      <div className="mb-1 rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground">
+        Draait met <code>sh</code>, als <strong>root</strong>, startend in <code>/</code>, mét
+        netwerk — ná de pakketten hierboven. Bij <em>elk</em> inrichten opnieuw, ook na een
+        herstart: schrijf het zo dat een tweede keer niets kapotmaakt. Alleen
+        <code> /workspace</code> overleeft een herbouw van de container.
+      </div>
+
+      <div className="mb-1 flex flex-wrap gap-1">
+        {VOORBEELDEN.map((v) => (
+          <button
+            key={v.label}
+            type="button"
+            title={`${v.regel}  —  ${v.uitleg}`}
+            onClick={() => voegToe(v.regel)}
+            className="rounded-full border border-border px-2 py-0.5 text-[11px]
+                       text-muted-foreground hover:border-primary/40 hover:bg-primary/5"
+          >
+            + {v.label}
+          </button>
+        ))}
+      </div>
+
+      <TextArea rows={5} className="font-mono text-xs" value={waarde}
+                placeholder="pip install -q pandas pyarrow"
+                onChange={(ev) => onChange(ev.target.value)} />
+
+      {waarschuwingen.length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-xs text-yellow-600 dark:text-yellow-500">
+          {waarschuwingen.map((w) => <li key={w}>⚠ {w}</li>)}
+        </ul>
       )}
     </div>
   );
