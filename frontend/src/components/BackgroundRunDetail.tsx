@@ -95,7 +95,15 @@ export function RunDetailModal({ run, onClose }: { run: BackgroundRunDto; onClos
             </Button>
           )}
         </div>
-        <div className="rounded-md border border-border bg-secondary/50 p-2 text-sm">{run.prompt}</div>
+        {/* De opdracht is Markdown — de agent krijgt hem ook zo. Als platte
+            tekst wordt het één muur waarin je koppen, lijstjes en codeblokken
+            niet meer uit elkaar houdt, en juist daar staat wat er van hem
+            verwacht wordt. Afgekapt op een hoogte met een eigen schuifbalk:
+            zo'n opdracht is al snel honderd regels. */}
+        <div className="markdown-body max-h-72 overflow-y-auto rounded-md border border-border
+                        bg-secondary/50 p-3 text-sm">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{run.prompt}</ReactMarkdown>
+        </div>
         {run.error && <p className="text-sm text-destructive">{run.error}</p>}
         {steps.length > 0 && (
           <div className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-border p-2 text-xs text-muted-foreground">
