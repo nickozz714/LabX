@@ -9,7 +9,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { GuardPage } from "@/pages/GuardPage";
 import { KluisPage } from "@/pages/KluisPage";
-import { LabsPage } from "@/pages/LabsPage";
+import { LabsPage, LabDetailPage } from "@/pages/LabsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SkillsPage } from "@/pages/SkillsPage";
@@ -52,6 +52,9 @@ function AppRoutes() {
         <Route index element={<Navigate to="/overzicht" replace />} />
         <Route path="overzicht" element={<OverviewPage />} />
         <Route path="labs" element={<LabsPage />} />
+        {/* Een lab open je niet even tussendoor; dat hoort een eigen
+            adres te hebben dat je kunt delen. */}
+        <Route path="labs/:labId" element={<LabDetailPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="boards" element={<BoardsPage />} />
         <Route path="boards/:boardId" element={<BoardPage />} />

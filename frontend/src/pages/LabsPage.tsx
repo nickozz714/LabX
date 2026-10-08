@@ -7,11 +7,12 @@
  * banner is the direct fix for issue 1 ("geen Docker aanwezig").
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { dockerStatus, downloadLabFile, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra , LabRepo} from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { Download, Loader2, RefreshCw, Pencil, Trash2 } from "lucide-react";
+import { Download, Loader2, RefreshCw, Pencil, Trash2 , ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
@@ -29,9 +30,9 @@ function statusTone(status: Lab["status"]) {
 }
 
 export function LabsPage() {
+  const navigate = useNavigate();
   const [labs, setLabs] = useState<Lab[]>([]);
   const [docker, setDocker] = useState<DockerStatus | null>(null);
-  const [selected, setSelected] = useState<Lab | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -39,10 +40,8 @@ export function LabsPage() {
     const [l, d] = await Promise.all([labsApi.list(), dockerStatus()]);
     setLabs(l);
     setDocker(d);
-    if (selected) {
-      const fresh = l.find((x) => x.id === selected.id);
-      setSelected(fresh || null);
-    }
+    // Het geopende lab bijwerken hoeft hier niet meer: dat is een eigen
+    // pagina die zijn eigen gegevens ophaalt.
     setLoading(false);
   }
 
@@ -83,7 +82,7 @@ export function LabsPage() {
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
           {labs.map((lab) => (
-            <Card key={lab.id} className="cursor-pointer p-4 hover:border-primary/40" onClick={() => setSelected(lab)}>
+            <Card key={lab.id} className="cursor-pointer p-4 hover:border-primary/40" onClick={() => navigate(`/labs/${lab.id}`)}>
               <div className="mb-1 flex items-center justify-between">
                 <span className="min-w-0 flex-1 break-words font-semibold">{lab.name}</span>
                 <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
@@ -125,7 +124,6 @@ export function LabsPage() {
         />
       )}
 
-      {selected && <LabDetailModal lab={selected} onClose={() => setSelected(null)} onChanged={refresh} />}
     </div>
   );
 }
@@ -445,7 +443,46 @@ function ProfielKeuze({ waarde, onChange }: { waarde: string; onChange: (v: stri
   );
 }
 
-function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
+/**
+ * De details van één lab, als volwaardige PAGINA.
+ *
+ * Dit was een pop-up. Daar paste de bestandsbrowser niet in: een boom naast
+ * een lijst naast een geopend bestand heeft breedte nodig, en een dialoog is
+ * per definitie smaller dan het scherm. Een lab open je bovendien niet even
+ * tussendoor -- je werkt erin, soms een half uur. Dat hoort een adres te
+ * hebben dat je kunt delen en waar de terugknop werkt.
+ */
+export function LabDetailPage() {
+  const { labId } = useParams<{ labId: string }>();
+  const navigate = useNavigate();
+  const [lab, setLab] = useState<Lab | null>(null);
+  const [fout, setFout] = useState<string | null>(null);
+
+  const laad = useCallback(() => {
+    if (!labId) return;
+    labsApi.get(labId)
+      .then(setLab)
+      .catch((err) => setFout(err instanceof ApiError ? err.message : "Lab niet gevonden"));
+  }, [labId]);
+
+  useEffect(() => { laad(); }, [laad]);
+
+  if (fout) {
+    return (
+      <div className="pagina veilig-onder p-4 sm:p-6">
+        <EmptyState>{fout}</EmptyState>
+      </div>
+    );
+  }
+  if (!lab) {
+    return <div className="p-4 text-sm text-muted-foreground sm:p-6">Laden…</div>;
+  }
+  return (
+    <LabDetail lab={lab} onChanged={laad} onClose={() => navigate("/labs")} />
+  );
+}
+
+function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
   // Vier tabbladen in plaats van tien over twee regels. Wat je ZELF instelt
   // staat vooraan; alles waarmee je in het lab wérkt zit onder Werkruimte met
   // een eigen striptje. Weg: Geheimen (dat is nu de Kluis), Commando (de
@@ -502,8 +539,15 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
   }
 
   return (
-    <Modal open onClose={onClose} title={lab.name} wide>
-      <div className="mb-3 flex items-center gap-2 text-sm">
+    <div className="pagina veilig-onder flex h-full min-h-0 flex-col p-4 sm:p-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button onClick={onClose} aria-label="Terug naar de labs"
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="text-xl font-bold">{lab.name}</h1>
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
         <span className="text-muted-foreground">{lab.image}</span>
         {lab.status === "running" ? (
@@ -551,6 +595,11 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
         </div>
       )}
 
+      {/* Instellingen, inrichting en toegang zijn gewone formulieren:
+          die schuiven in hun geheel. De werkruimte hieronder niet --
+          daar heeft elk deelvenster zijn eigen schuifbalk. */}
+      {tab !== "werk" && (
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
       {tab === "settings" && (
         <div className="space-y-3">
           <Toggle checked={lab.data_guard} onChange={(v) => toggle("data_guard", v)} label="Data-egress-guard (regels)" />
@@ -609,11 +658,18 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
 
       {tab === "inrichting" && <ProvisioningPanel lab={lab} onChanged={onChanged} />}
       {tab === "toegang" && <LabAllowlist lab={lab} onSaved={() => onChanged()} />}
-      {tab === "werk" && werkTab === "files" && <FileBrowser lab={lab} />}
-      {tab === "werk" && werkTab === "git" && <PublishPanel lab={lab} />}
-      {tab === "werk" && werkTab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
-      {tab === "werk" && werkTab === "browser" && <BrowserPanel lab={lab} />}
-    </Modal>
+        </div>
+      )}
+      {/* Geen overflow hier: de bestandsbrowser en de terminal regelen hun
+          eigen schuifgebieden. Eén schuifbalk eromheen zou de boom en de lijst
+          samen laten schuiven in plaats van ieder apart. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {tab === "werk" && werkTab === "files" && <FileBrowser lab={lab} />}
+        {tab === "werk" && werkTab === "git" && <PublishPanel lab={lab} />}
+        {tab === "werk" && werkTab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
+        {tab === "werk" && werkTab === "browser" && <BrowserPanel lab={lab} />}
+      </div>
+    </div>
   );
 }
 
@@ -1525,8 +1581,11 @@ function FileBrowser({ lab }: { lab: Lab }) {
       ? a.name.localeCompare(b.name, "nl")
       : a.is_dir ? -1 : 1));
 
+  const mappen = zichtbaar.filter((e) => e.is_dir).length;
+  const bestanden = zichtbaar.length - mappen;
+
   return (
-    <div>
+    <div className="flex h-full min-h-0 flex-col">
       {/* Kruimelpad: elk deel is klikbaar. Met alleen een ".."-regel moet je
           vier keer klikken om twee mappen omhoog te komen. */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1583,6 +1642,15 @@ function FileBrowser({ lab }: { lab: Lab }) {
       {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
       {melding && <p className="mb-2 text-xs text-muted-foreground">{melding}</p>}
 
+      <div className="flex min-h-0 flex-1 gap-3">
+      {/* De mappenboom links, zoals in een verkenner: springen tussen twee
+          mappen die ver uit elkaar liggen kost anders tien klikken omhoog en
+          weer omlaag. Verborgen op een telefoon -- daar is de breedte er niet
+          en helpt het kruimelpad genoeg. */}
+      <aside className="hidden w-56 shrink-0 overflow-y-auto rounded border border-border p-1 lg:block">
+        <MapBoom labId={lab.id} pad="/workspace" huidig={path} onKies={load} />
+      </aside>
+
       <div
         onDragOver={(e) => { e.preventDefault(); setSleep(true); }}
         onDragLeave={() => setSleep(false)}
@@ -1602,7 +1670,7 @@ function FileBrowser({ lab }: { lab: Lab }) {
             setError(err instanceof ApiError ? err.message : "Uploaden mislukt");
           }
         }}
-        className={`mb-3 max-h-80 overflow-y-auto rounded border ${
+        className={`min-h-0 min-w-0 flex-1 overflow-y-auto rounded border ${
           sleep ? "border-primary bg-secondary" : "border-border"}`}
       >
         <table className="w-full text-sm">
@@ -1672,9 +1740,17 @@ function FileBrowser({ lab }: { lab: Lab }) {
           </tbody>
         </table>
       </div>
+      </div>
+
+      {/* Een statusregel hoort erbij: zonder telt niemand hoeveel er staat,
+          en bij een filter wil je weten hoeveel je wegfiltert. */}
+      <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
+        <span>{mappen} map{mappen === 1 ? "" : "pen"}, {bestanden} bestand{bestanden === 1 ? "" : "en"}</span>
+        {zoek.trim() && <span>· gefilterd op “{zoek.trim()}”</span>}
+      </div>
 
       {open && (
-        <div className="rounded border border-border">
+        <div className="mt-2 shrink-0 rounded border border-border">
           <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
             <span className="font-mono">{open.pad}</span>
             {open.afgekapt && (
@@ -1804,6 +1880,64 @@ function SetupScriptVeld({ waarde, onChange }: {
           {waarschuwingen.map((w) => <li key={w}>⚠ {w}</li>)}
         </ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * De mappenboom links.
+ *
+ * Alleen mappen, en hij haalt een niveau pas op als je het openklapt: een lab
+ * met een node_modules erin zou anders bij het openen duizenden regels
+ * ophalen die niemand gevraagd heeft.
+ */
+function MapBoom({ labId, pad, huidig, onKies, diepte = 0 }: {
+  labId: string;
+  pad: string;
+  huidig: string;
+  onKies: (pad: string) => void;
+  diepte?: number;
+}) {
+  const [open, setOpen] = useState(diepte === 0);
+  const [mappen, setMappen] = useState<LabFileEntry[] | null>(null);
+
+  useEffect(() => {
+    if (!open || mappen !== null) return;
+    labsApi.files(labId, pad)
+      .then((r) => setMappen(r.entries.filter((e) => e.is_dir)))
+      .catch(() => setMappen([]));
+  }, [open, mappen, labId, pad]);
+
+  const naam = pad.split("/").filter(Boolean).pop() || "workspace";
+  const actief = huidig === pad;
+
+  return (
+    <div>
+      <div
+        className={`flex min-h-7 cursor-pointer items-center gap-1 rounded px-1 text-xs ${
+          actief ? "bg-secondary font-medium" : "hover:bg-secondary/60"}`}
+        style={{ paddingLeft: `${diepte * 12 + 4}px` }}
+        onClick={() => { onKies(pad); setOpen(true); }}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+          className="shrink-0 text-muted-foreground"
+          aria-label={open ? "Inklappen" : "Uitklappen"}
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </button>
+        <span className="truncate">{naam}</span>
+      </div>
+      {open && (mappen || []).map((m) => (
+        <MapBoom
+          key={m.name}
+          labId={labId}
+          pad={`${pad}/${m.name}`}
+          huidig={huidig}
+          onKies={onKies}
+          diepte={diepte + 1}
+        />
+      ))}
     </div>
   );
 }
