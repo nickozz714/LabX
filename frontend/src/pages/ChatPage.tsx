@@ -20,14 +20,14 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2, PanelLeft, Search, X } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Play, Plus, SendHorizontal, Shield, Square, Terminal, Trash2, PanelLeft, Search, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi, chatBijlageMap } from "@/lib/chat";
 import { labsApi, type Bijlage } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import type { BackgroundRunDto, ChatEvent, Lab, Message, Thread } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, Label, Modal } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { LabTerminal } from "@/components/LabTerminal";
@@ -108,6 +108,7 @@ export function ChatPage() {
   const knownRunStatusRef = useRef<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const invoerRef = useRef<HTMLTextAreaElement | null>(null);
   // Sticky auto-scroll: follow new content only while the user is (near) the
   // bottom — scrolling up to reread must never be hijacked by incoming
   // tokens. Updated by the container's own onScroll, read by the effect
@@ -216,6 +217,16 @@ export function ChatPage() {
   useEffect(() => {
     activeThreadIdRef.current = activeThread?.id ?? null;
   }, [activeThread?.id]);
+
+  // Het invoerveld begint op één regel en groeit mee met wat je typt. De hoogte
+  // moet eerst terug naar auto: anders kan hij alleen nog groeien en blijft een
+  // leeggemaakt veld even hoog als het langste bericht dat erin stond.
+  useEffect(() => {
+    const el = invoerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   async function openThread(t: Thread) {
     // Detach the local stream subscription of the previous thread — the turn
@@ -881,59 +892,89 @@ export function ChatPage() {
                 </Card>
               )}
             </div>
+            {/* Eén regel, zoals een berichtbalk hoort te zijn: paperclip links,
+                het veld in het midden, versturen rechts. Het was een blok van
+                drie knoppen onder elkaar naast een veld van twee regels hoog --
+                dat at een kwart van het scherm op en schreeuwde harder dan het
+                gesprek erboven. Het veld groeit mee met wat je typt, tot een
+                regel of zeven; daarna scrolt het. */}
             <div className="veilig-onder border-t border-border p-3">
               <BijlageLijst bijlagen={bijlagen}
                             onVerwijder={(path) =>
                               setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <TextArea
-                  rows={2}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      send();
-                    }
-                  }}
+              <div className="flex items-end gap-2">
+                <BijlageKnop
+                  labId={activeThread ? lab?.id : null}
+                  dir={chatBijlageMap(activeThread?.id || "")}
                   disabled={inputDisabled}
-                  placeholder={inputDisabled ? "Koppel en start eerst een lab…" : "Typ een bericht… (Markdown, Shift+Enter voor nieuwe regel, /model <naam> om het model te wisselen)"}
-                  className="resize-none"
+                  alleenIcoon
+                  onToegevoegd={(nieuwe) =>
+                    setBijlagen((prev) => [
+                      ...prev,
+                      ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
+                    ])}
                 />
-                <div className="flex items-stretch justify-end gap-2 sm:flex-col sm:gap-1">
-                  {/* Tijdens het streamen staat "Stuur" uit — dan hoort hier
-                      de uitweg te zitten, op de plek waar je hem zoekt en
-                      zonder dat je naar beneden hoeft te scrollen. */}
-                  {streaming ? (
-                    <Button variant="danger" busyLabel="Stoppen…" meldFouten={false}
-                            onClick={stopBeurt}>
-                      Stoppen
-                    </Button>
-                  ) : (
-                    <Button onClick={send} disabled={inputDisabled || (!input.trim() && !bijlagen.length)}>
-                      Stuur
-                    </Button>
-                  )}
-                  <Button
-                    variant="secondary"
-                    onClick={sendBackground}
-                    disabled={!activeThread || !lab || lab.status !== "running" || (!input.trim() && !bijlagen.length)}
-                    title="Start dit als achtergrondtaak: de chat blijft direct bruikbaar en je volgt de voortgang op het tabblad Achtergrondtaken"
-                  >
-                    Op de achtergrond
-                  </Button>
-                  <BijlageKnop
-                    labId={activeThread ? lab?.id : null}
-                    dir={chatBijlageMap(activeThread?.id || "")}
+
+                <div className="flex min-w-0 flex-1 items-end rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
+                  <textarea
+                    ref={invoerRef}
+                    rows={1}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        send();
+                      }
+                    }}
                     disabled={inputDisabled}
-                    compact
-                    onToegevoegd={(nieuwe) =>
-                      setBijlagen((prev) => [
-                        ...prev,
-                        ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
-                      ])}
+                    placeholder={inputDisabled
+                      ? "Koppel en start eerst een lab…"
+                      : "Typ een bericht… (Enter = sturen, Shift+Enter = nieuwe regel)"}
+                    className="max-h-44 w-full resize-none bg-transparent py-2 text-sm text-foreground
+                               outline-none placeholder:text-muted-foreground disabled:opacity-60"
                   />
                 </div>
+
+                {/* Achtergrondtaak: hetzelfde bericht, maar je kunt meteen
+                    verder. Icoon, want hij is zeldzamer dan Stuur -- maar wel
+                    naast Stuur, want je kiest ertussen op het moment van
+                    versturen. */}
+                <button
+                  type="button"
+                  onClick={sendBackground}
+                  disabled={!activeThread || !lab || lab.status !== "running" || (!input.trim() && !bijlagen.length)}
+                  title="Op de achtergrond starten: de chat blijft direct bruikbaar en je volgt de voortgang op het tabblad Taken"
+                  aria-label="Op de achtergrond starten"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border
+                             text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                >
+                  <Play size={16} />
+                </button>
+
+                {streaming ? (
+                  <button
+                    type="button"
+                    onClick={stopBeurt}
+                    title="De lopende beurt afbreken"
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-destructive px-3
+                               text-sm font-medium text-white hover:opacity-90"
+                  >
+                    <Square size={14} /> Stop
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={send}
+                    disabled={inputDisabled || (!input.trim() && !bijlagen.length)}
+                    title="Versturen (Enter)"
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3
+                               text-sm font-medium text-primary-foreground hover:opacity-90
+                               disabled:opacity-40"
+                  >
+                    <SendHorizontal size={15} /> Stuur
+                  </button>
+                )}
               </div>
             </div>
           </>
