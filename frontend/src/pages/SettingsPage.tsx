@@ -20,6 +20,7 @@ export function SettingsPage() {
   const [oauthToken, setOauthToken] = useState("");
   const [extraArgsText, setExtraArgsText] = useState("");
   const [saved, setSaved] = useState(false);
+  const [sectie, setSectie] = useState<"agent" | "guard" | "hooks" | "labs" | "overig">("agent");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
 
   useEffect(() => {
@@ -61,6 +62,27 @@ export function SettingsPage() {
     <div className="pagina veilig-onder space-y-6 p-4 sm:p-6">
       <h1 className="text-xl font-bold">Instellingen</h1>
 
+      {/* Acht kaarten onder elkaar in één kolom is geen pagina maar een
+          stapel: je scrolt langs van alles waar je niet voor kwam. Nu per
+          onderwerp, met de agent vooraan -- dat is waar je het vaakst moet
+          zijn. */}
+      <div className="flex flex-wrap gap-1 border-b border-border text-sm">
+        {(["agent", "guard", "hooks", "labs", "overig"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setSectie(s)}
+            className={`px-3 py-1.5 ${sectie === s
+              ? "border-b-2 border-primary font-medium"
+              : "text-muted-foreground hover:text-foreground"}`}
+          >
+            {{ agent: "Agent & orchestrator", guard: "Data-guard",
+               hooks: "Hooks", labs: "Labs",
+               overig: "Meldingen & account" }[s]}
+          </button>
+        ))}
+      </div>
+
+      {sectie === "agent" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Claude Code CLI — globaal (infrastructuur)</h2>
         <p className="text-xs text-muted-foreground">
@@ -429,7 +451,9 @@ export function SettingsPage() {
           Open de eerste-keer-wizard opnieuw (Docker-check + Claude-token)
         </button>
       </Card>
+      </div>)}
 
+      {sectie === "guard" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Data-guard standaarden</h2>
         <Toggle checked={settings.data_guard_default} onChange={(v) => save({ data_guard_default: v })} label="Data-egress-guard standaard aan voor nieuwe labs" />
@@ -485,7 +509,9 @@ export function SettingsPage() {
           </div>
         )}
       </Card>
+      </div>)}
 
+      {sectie === "hooks" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Automatische hooks (elke chat-beurt)</h2>
         <p className="text-xs text-muted-foreground">
@@ -570,7 +596,9 @@ export function SettingsPage() {
           + Hook toevoegen
         </Button>
       </Card>
+      </div>)}
 
+      {sectie === "labs" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Lab-standaarden</h2>
         <div className="grid grid-cols-2 gap-3">
@@ -586,6 +614,9 @@ export function SettingsPage() {
       </Card>
 
       <LabExtrasCard />
+      </div>)}
+
+      {sectie === "overig" && (<div className="space-y-6">
       {/* De kluis heeft een eigen tab gekregen: het is iets dat je erbij pakt
           terwijl je een skill schrijft, niet iets dat je één keer instelt. Hier
           blijft een wegwijzer staan, want hier zocht je hem. */}
@@ -602,6 +633,8 @@ export function SettingsPage() {
       <NotificationsCard />
 
       <AccountCard />
+      </div>)}
+
 
       {saved && <p className="text-sm text-success">Opgeslagen.</p>}
     </div>
