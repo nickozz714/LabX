@@ -14,7 +14,7 @@
  *   iets kiest.
  */
 import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
@@ -33,19 +33,45 @@ const INGEKLAPT_KEY = "labx_menu_ingeklapt";
 const NAV = [
   // Vooraan én het beginpunt van de app: wat draait er, wat wacht er, en hoe
   // liep het laatste af. Hier start je ook de orchestrator.
-  { to: "/overzicht", label: "Overzicht", icon: LayoutDashboard },
-  { to: "/labs", label: "Labs", icon: Boxes },
-  { to: "/chat", label: "Chat", icon: MessageSquare },
-  { to: "/boards", label: "Boards", icon: KanbanSquare },
-  { to: "/workbench", label: "Workbench", icon: Wrench },     // skills, workflows, scheduling
-  { to: "/uren", label: "Uren", icon: Clock },
-  { to: "/kluis", label: "Kluis", icon: Lock },               // geheimen + Azure-profielen
-  { to: "/guard", label: "Data-guard", icon: ShieldCheck },   // met het tabblad Audit
-  { to: "/settings", label: "Instellingen", icon: Settings },
+  { to: "/overzicht", label: "Overzicht", icon: LayoutDashboard, onder: "Wat draait er nu" },
+  { to: "/labs", label: "Labs", icon: Boxes, onder: "Je omgevingen" },
+  { to: "/chat", label: "Chat", icon: MessageSquare, onder: "Werken" },
+  { to: "/boards", label: "Boards", icon: KanbanSquare, onder: "Tickets en agent-runs" },
+  { to: "/workbench", label: "Workbench", icon: Wrench, onder: "Skills, workflows en planning" },
+  { to: "/uren", label: "Uren", icon: Clock, onder: "Tijd per lab" },
+  { to: "/kluis", label: "Kluis", icon: Lock, onder: "Geheimen en Azure-profielen" },
+  { to: "/guard", label: "Data-guard", icon: ShieldCheck, onder: "Wat er naar buiten mag" },
+  { to: "/settings", label: "Instellingen", icon: Settings, onder: "Deze installatie" },
 ];
+
+/** Pagina's met een eigen kop die niet in het menu staan. De orchestrator
+ *  bereik je vanaf het Overzicht; zonder deze regel zou de balk daar "Overzicht"
+ *  blijven zeggen en dat is precies de verwarring die een kop moet wegnemen. */
+const EXTRA_PAGINAS = [
+  { to: "/orchestrator", label: "Orchestrator", onder: "Praten met je labs" },
+  { to: "/workflows/", label: "Workflow", onder: "De tekenaar" },
+];
+
+/** Welke pagina hoort bij dit pad? Het langste passende begin wint, zodat
+ *  /labs/abc onder Labs valt en /workbench/skills onder Workbench. */
+function paginaVan(pad: string) {
+  const alles = [...NAV, ...EXTRA_PAGINAS];
+  let beste: { label: string; onder: string } | null = null;
+  let langste = -1;
+  for (const p of alles) {
+    const basis = p.to.replace(/\/$/, "");
+    if ((pad === basis || pad.startsWith(basis + "/")) && basis.length > langste) {
+      langste = basis.length;
+      beste = { label: p.label, onder: p.onder };
+    }
+  }
+  return beste;
+}
 
 export function Shell() {
   const { username, logout } = useAuth();
+  const { pathname } = useLocation();
+  const pagina = paginaVan(pathname);
   const [wizardDismissed, setWizardDismissed] = useState(
     () => localStorage.getItem(WIZARD_DISMISSED_KEY) === "1");
   const [checked, setChecked] = useState(false);
@@ -145,31 +171,17 @@ export function Shell() {
     </nav>
   );
 
-  const onderkant = (opTelefoon: boolean) => (
-    <div className="shrink-0 border-t border-sidebar-border px-2 py-2 text-xs text-sidebar-foreground/60">
-      {/* Licht, donker of meebewegen met het systeem. Onderin bij de andere
-          dingen die over JOU gaan en niet over waar je heen navigeert. */}
-      <div className="mb-1">
-        <ThemaKiezer compact={ingeklapt && !opTelefoon} />
+  // Thema en uitloggen stonden hier; die zitten nu rechts in de bovenbalk, waar
+  // ze op élke pagina op dezelfde plek staan. Wat overblijft is wie je bent en
+  // welke versie je draait -- dat hoort bij het menu en niet bij de handelingen.
+  const onderkant = (opTelefoon: boolean) =>
+    !ingeklapt || opTelefoon ? (
+      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-sidebar-border
+                      px-3 py-2 text-xs text-sidebar-foreground/60">
+        <span className="truncate">{username}</span>
+        <Versie />
       </div>
-      {(!ingeklapt || opTelefoon) && (
-        <div className="mb-1 flex items-center justify-between px-1">
-          <span className="truncate">{username}</span>
-          <Versie />
-        </div>
-      )}
-      <button
-        onClick={logout}
-        title="Uitloggen"
-        className={`flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-sm
-                    text-sidebar-foreground/75 hover:bg-sidebar-accent/10 ${
-                      ingeklapt && !opTelefoon ? "justify-center px-0" : ""}`}
-      >
-        <LogOut size={18} className="shrink-0" />
-        {(!ingeklapt || opTelefoon) && "Uitloggen"}
-      </button>
-    </div>
-  );
+    ) : null;
 
   return (
     <div className="flex h-app w-full overflow-hidden bg-background text-foreground">
@@ -195,28 +207,53 @@ export function Shell() {
         {onderkant(false)}
       </aside>
 
-      {/* ── Inhoud, met op een telefoon een smalle balk erboven ───────────── */}
+      {/* ── Inhoud, met overal dezelfde balk erboven ──────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* De balk beantwoordt links één vraag -- waar ben ik? -- en houdt
+            rechts de handelingen die niets met de pagina te maken hebben: hoe
+            het eruitziet, en eruit. Op elke pagina op dezelfde plek, want een
+            knop die verspringt moet je elke keer opnieuw zoeken. */}
         <header className="veilig-boven flex shrink-0 items-center gap-2 border-b border-sidebar-border
-                           bg-sidebar px-2 text-sidebar-foreground lg:hidden">
+                           bg-sidebar px-2 text-sidebar-foreground sm:px-3">
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
             aria-label="Menu openen"
-            className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-sidebar-accent/10"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-sidebar-accent/10 lg:hidden"
           >
             <Menu size={20} />
           </button>
-          <span className="flex items-center gap-2 text-base font-bold tracking-tight">
-            <span className="inline-block h-2 w-2 rounded-full bg-sidebar-accent" />
-            LabX
-          </span>
-          {runningCount > 0 && (
-            <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full
-                             bg-sidebar-accent px-1.5 text-[11px] font-bold text-white">
-              {runningCount}
+
+          <div className="flex min-w-0 flex-1 flex-col justify-center py-2">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-semibold leading-tight">
+                {pagina?.label || "LabX"}
+              </span>
+              {runningCount > 0 && (
+                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full
+                                 bg-sidebar-accent px-1 text-[10px] font-bold text-white"
+                      title={`${runningCount} lopende achtergrondtaak/-taken`}>
+                  {runningCount}
+                </span>
+              )}
             </span>
-          )}
+            {pagina && (
+              <span className="truncate text-[11px] leading-tight text-sidebar-foreground/55">
+                {pagina.onder}
+              </span>
+            )}
+          </div>
+
+          <ThemaKiezer />
+          <button
+            onClick={logout}
+            title="Uitloggen"
+            aria-label="Uitloggen"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md
+                       text-sidebar-foreground/50 hover:bg-sidebar-accent/10 hover:text-sidebar-foreground"
+          >
+            <LogOut size={15} />
+          </button>
         </header>
 
         <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
