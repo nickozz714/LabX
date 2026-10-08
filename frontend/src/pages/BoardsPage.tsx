@@ -46,7 +46,7 @@ export function BoardsPage() {
   }
 
   return (
-    <div className="veilig-onder p-4 sm:p-6">
+    <div className="pagina veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">Boards</h1>
         <Button onClick={() => setCreating(true)}>+ Nieuw board</Button>

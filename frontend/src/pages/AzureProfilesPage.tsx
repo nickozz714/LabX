@@ -19,6 +19,7 @@
  * host, naar één lab) blijven bestaan voor als je juist wél één ding wilt doen.
  */
 import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
 import { labsApi } from "@/lib/labs";
 import type { AzureProfileDto, Lab } from "@/lib/types";
@@ -189,7 +190,7 @@ export function AzureProfilesPage() {
   }
 
   return (
-    <div className="veilig-onder p-4 sm:p-6">
+    <div className="pagina veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex justify-between">
         <h1 className="text-xl font-bold">Azure-profielen</h1>
         <div className="flex gap-2">
@@ -225,88 +226,40 @@ export function AzureProfilesPage() {
       {profiles.length === 0 ? (
         <EmptyState>Nog geen Azure-profielen.</EmptyState>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {profiles.map((p) => (
-            <Card key={p.id} className="p-4">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="font-medium">{p.name}</span>
-                <Badge tone="violet">{p.kind}</Badge>
-              </div>
-              {p.identity && <pre className="mb-2 max-h-24 overflow-auto rounded bg-secondary p-2 text-xs">{JSON.stringify(p.identity, null, 2)}</pre>}
-              {/* Een Entra-app-profiel kent de az-bewerkingen niet: er is geen
-                  ~/.azure-bundel om door te zetten of te vernieuwen. Wat het
-                  wél heeft is een inlog, en die staat hier. */}
-              {p.kind === "entra_app" ? (
-                <EntraAppLogin profiel={p} onKlaar={refresh} />
-              ) : (
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {p.kind !== "bearer" && (
-                  <Button
-                    disabled={busyId === p.id}
-                    onClick={() => applyEverywhere(p)}
-                    title="Verifieert de sessie en zet hem door naar de host en elk lab dat dit profiel gebruikt"
-                  >
-                    {busyId === p.id ? "Bezig…" : "Overal toepassen"}
-                  </Button>
-                )}
-                {p.kind === "msal_bundle" && (
-                  <Button variant="secondary" disabled={busyId === p.id} onClick={() => setReauth(p)}>
-                    Opnieuw authenticeren…
-                  </Button>
-                )}
-                {p.kind !== "bearer" && (
-                  <Button
-                    variant="secondary"
-                    disabled={busyId === p.id}
-                    onClick={() => refreshTokens(p)}
-                    title="Wisselt het refresh token in voor een vers paar en zet dat meteen door"
-                  >
-                    Vernieuwen
-                  </Button>
-                )}
-                {/* Losse stappen, voor als je juist één ding wilt doen. */}
-                <details className="text-xs">
-                  <summary className="cursor-pointer select-none text-muted-foreground">Losse stappen</summary>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <Button variant="secondary" disabled={busyId === p.id} onClick={() => verify(p)}>
-                      Verifieer
-                    </Button>
-                    <Button variant="secondary" disabled={busyId === p.id} onClick={() => syncToHost(p)}>
-                      Sync → host
-                    </Button>
-                    <select
-                      disabled={busyId === p.id}
-                      onChange={(e) => syncToLab(p, e.target.value)}
-                      // Gestuurd op "" en niet defaultValue: anders blijft het
-                      // gekozen lab staan en levert hetzelfde lab nog eens
-                      // kiezen geen change-event op — de knop deed dan niets.
-                      value=""
-                      className="rounded border border-input bg-background px-2 py-1"
-                    >
-                      <option value="">Sync → lab…</option>
-                      {labs.map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.name} ({l.status})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </details>
-                <span className="flex-1" />
-                <Button variant="danger" onClick={() => azureProfilesApi.remove(p.id).then(refresh)}>
-                  Verwijderen
-                </Button>
-              </div>
-              )}
-              {p.kind === "entra_app" && (
-                <div className="mt-2 flex justify-end">
-                  <Button variant="danger" onClick={() => azureProfilesApi.remove(p.id).then(refresh)}>
-                    Verwijderen
-                  </Button>
-                </div>
-              )}
-            </Card>
-          ))}
+        /* Een tabel met één hoofdactie per rij. Eerder stonden er zes
+           knoppen, een uitklapper en een keuzelijst door elkaar in een blok,
+           en stond de ruwe JSON van de identiteit altijd open -- terwijl je
+           die hooguit af en toe wilt nakijken. Wat je bijna altijd doet is
+           "overal toepassen"; de rest hoort onder één menu. */
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Profiel</th>
+                <th className="hidden px-3 py-2 font-medium md:table-cell">Account</th>
+                <th className="px-3 py-2 font-medium">Soort</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {profiles.map((p) => (
+                <ProfielRij
+                  key={p.id}
+                  profiel={p}
+                  labs={labs}
+                  bezig={busyId === p.id}
+                  onVerify={() => verify(p)}
+                  onVernieuw={() => refreshTokens(p)}
+                  onOveral={() => applyEverywhere(p)}
+                  onHerauth={() => setReauth(p)}
+                  onSyncHost={() => syncToHost(p)}
+                  onSyncLab={(labId) => syncToLab(p, labId)}
+                  onVerwijder={() => azureProfilesApi.remove(p.id).then(refresh)}
+                  onKlaar={refresh}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       {creating && <CreateProfileModal onClose={() => setCreating(false)} onCreated={() => { setCreating(false); refresh(); }} />}
@@ -501,5 +454,127 @@ function ReauthProfileModal({
         </p>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Eén profiel als tabelrij.
+ *
+ * Eerder stonden hier zes knoppen, een uitklapper en een keuzelijst door
+ * elkaar in een blok, met de ruwe JSON van de identiteit altijd open. Die
+ * JSON wil je hooguit af en toe nakijken, en van die zes knoppen gebruik je
+ * er in de praktijk één. De rest hoort achter een menu — wel bereikbaar, niet
+ * in de weg.
+ */
+function ProfielRij({
+  profiel: p, labs, bezig,
+  onVerify, onVernieuw, onOveral, onHerauth, onSyncHost, onSyncLab, onVerwijder, onKlaar,
+}: {
+  profiel: AzureProfileDto;
+  labs: Lab[];
+  bezig: boolean;
+  onVerify: () => void;
+  onVernieuw: () => void;
+  onOveral: () => void;
+  onHerauth: () => void;
+  onSyncHost: () => void;
+  onSyncLab: (labId: string) => void;
+  onVerwijder: () => void;
+  onKlaar: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const identiteit = (p.identity || {}) as Record<string, unknown>;
+  const account = String(identiteit.account || identiteit.user || "—");
+
+  return (
+    <>
+      <tr className="border-b border-border last:border-0 hover:bg-muted/30">
+        <td className="px-3 py-2">
+          <button onClick={() => setOpen((v) => !v)}
+                  className="flex items-center gap-1.5 text-left font-medium hover:underline">
+            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {p.name}
+          </button>
+          <div className="pl-5 text-xs text-muted-foreground md:hidden">{account}</div>
+        </td>
+        <td className="hidden max-w-xs px-3 py-2 text-xs text-muted-foreground md:table-cell">
+          <span className="block truncate" title={account}>{account}</span>
+        </td>
+        <td className="px-3 py-2"><Badge tone="violet">{p.kind}</Badge></td>
+        <td className="px-3 py-2">
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {p.kind === "entra_app" ? (
+              <EntraAppLogin profiel={p} onKlaar={onKlaar} />
+            ) : (
+              <>
+                {/* De ene knop die je bijna altijd wilt. */}
+                {p.kind !== "bearer" && (
+                  <Button className="px-2 py-1 text-xs" disabled={bezig} onClick={onOveral}
+                          title="Verifieert de sessie en zet hem door naar de host en elk lab dat dit profiel gebruikt">
+                    {bezig ? "Bezig…" : "Overal toepassen"}
+                  </Button>
+                )}
+                <details className="relative">
+                  <summary className="cursor-pointer select-none rounded border border-border px-2 py-1
+                                      text-xs text-muted-foreground hover:bg-muted">
+                    Meer
+                  </summary>
+                  <div className="absolute right-0 z-20 mt-1 w-56 space-y-1 rounded-md border
+                                  border-border bg-background p-2 shadow-lg">
+                    {p.kind === "msal_bundle" && (
+                      <Button variant="secondary" className="w-full px-2 py-1 text-xs"
+                              disabled={bezig} onClick={onHerauth}>
+                        Opnieuw authenticeren…
+                      </Button>
+                    )}
+                    {p.kind !== "bearer" && (
+                      <Button variant="secondary" className="w-full px-2 py-1 text-xs"
+                              disabled={bezig} onClick={onVernieuw}
+                              title="Wisselt het refresh token in voor een vers paar en zet dat meteen door">
+                        Vernieuwen
+                      </Button>
+                    )}
+                    <Button variant="secondary" className="w-full px-2 py-1 text-xs"
+                            disabled={bezig} onClick={onVerify}>
+                      Verifieer
+                    </Button>
+                    <Button variant="secondary" className="w-full px-2 py-1 text-xs"
+                            disabled={bezig} onClick={onSyncHost}>
+                      Sync → host
+                    </Button>
+                    <select
+                      disabled={bezig}
+                      onChange={(e) => onSyncLab(e.target.value)}
+                      // Gestuurd op "": anders blijft het gekozen lab staan en
+                      // levert hetzelfde lab nog eens kiezen geen change-event
+                      // op — de keuze deed dan niets.
+                      value=""
+                      className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
+                    >
+                      <option value="">Sync → lab…</option>
+                      {labs.map((l) => (
+                        <option key={l.id} value={l.id}>{l.name} ({l.status})</option>
+                      ))}
+                    </select>
+                    <Button variant="danger" className="w-full px-2 py-1 text-xs" onClick={onVerwijder}>
+                      Verwijderen
+                    </Button>
+                  </div>
+                </details>
+              </>
+            )}
+          </div>
+        </td>
+      </tr>
+      {open && (
+        <tr className="border-b border-border bg-muted/20">
+          <td colSpan={4} className="px-3 py-2">
+            <pre className="max-h-48 overflow-auto rounded bg-secondary p-2 text-xs">
+              {JSON.stringify(p.identity ?? {}, null, 2)}
+            </pre>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

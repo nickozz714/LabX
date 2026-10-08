@@ -54,7 +54,7 @@ export function LabsPage() {
   }, []);
 
   return (
-    <div className="veilig-onder p-4 sm:p-6">
+    <div className="pagina veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">Labs</h1>
         <Button onClick={() => setCreateOpen(true)}>+ Nieuw lab</Button>

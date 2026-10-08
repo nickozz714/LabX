@@ -56,7 +56,7 @@ export function GuardPage() {
   useEffect(() => { laadStatus(); }, [laadStatus]);
 
   return (
-    <div className="veilig-onder mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
+    <div className="pagina veilig-onder mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
       <h1 className="flex items-center gap-2 text-xl font-bold">
         <ShieldCheck size={18} /> Data-guard
       </h1>

@@ -300,3 +300,12 @@ body {
   color: white;
 }
 .spraak-donker .knop-primair:hover:not(:disabled) { background-color: rgb(2 132 199); }
+
+/* De wortel van een schuifbare pagina.
+   `veilig-onder` dekte alleen de inkeping van een telefoon (0px op een
+   desktop), dus eindigde elke pagina kaal tegen de onderrand: de laatste rij
+   van een tabel plakte tegen het venster en het leek alsof er nog iets moest
+   komen. Deze ruimte hoort bij de pagina en niet bij het laatste element. */
+.pagina {
+  padding-bottom: calc(var(--veilig-onder) + 4rem);
+}

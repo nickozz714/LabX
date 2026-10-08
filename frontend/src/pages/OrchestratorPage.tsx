@@ -265,7 +265,7 @@ export function OrchestratorPage() {
 
   if (status && !status.aan) {
     return (
-      <div className="veilig-onder p-4 sm:p-6">
+      <div className="pagina veilig-onder p-4 sm:p-6">
         <EmptyState>
           De spraakassistent staat uit. Zet hem aan bij Instellingen — je hebt er
           een OpenAI-sleutel voor nodig.
