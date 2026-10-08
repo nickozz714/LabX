@@ -7,19 +7,20 @@
  * banner is the direct fix for issue 1 ("geen Docker aanwezig").
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { dockerStatus, downloadLabFile, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra , LabRepo} from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { Download, Loader2, RefreshCw, Pencil, Trash2 , ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { LabResources } from "@/components/LabResources";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
-import { LabGeheimen } from "@/components/LabGeheimen";
 import { HostMeter } from "@/components/HostMeter";
 import { useMelding } from "@/components/Meldingen";
+import { useBevestiging } from "@/components/Bevestiging";
 import { guardApi, type GuardProfiel } from "@/lib/guard";
 import { MODEL_OPTIONS, modelLabel } from "@/lib/modellen";
 import { getToken } from "@/lib/api";
@@ -29,9 +30,9 @@ function statusTone(status: Lab["status"]) {
 }
 
 export function LabsPage() {
+  const navigate = useNavigate();
   const [labs, setLabs] = useState<Lab[]>([]);
   const [docker, setDocker] = useState<DockerStatus | null>(null);
-  const [selected, setSelected] = useState<Lab | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -39,10 +40,8 @@ export function LabsPage() {
     const [l, d] = await Promise.all([labsApi.list(), dockerStatus()]);
     setLabs(l);
     setDocker(d);
-    if (selected) {
-      const fresh = l.find((x) => x.id === selected.id);
-      setSelected(fresh || null);
-    }
+    // Het geopende lab bijwerken hoeft hier niet meer: dat is een eigen
+    // pagina die zijn eigen gegevens ophaalt.
     setLoading(false);
   }
 
@@ -54,7 +53,7 @@ export function LabsPage() {
   }, []);
 
   return (
-    <div className="veilig-onder p-4 sm:p-6">
+    <div className="pagina veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">Labs</h1>
         <Button onClick={() => setCreateOpen(true)}>+ Nieuw lab</Button>
@@ -83,7 +82,7 @@ export function LabsPage() {
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
           {labs.map((lab) => (
-            <Card key={lab.id} className="cursor-pointer p-4 hover:border-primary/40" onClick={() => setSelected(lab)}>
+            <Card key={lab.id} className="cursor-pointer p-4 hover:border-primary/40" onClick={() => navigate(`/labs/${lab.id}`)}>
               <div className="mb-1 flex items-center justify-between">
                 <span className="min-w-0 flex-1 break-words font-semibold">{lab.name}</span>
                 <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
@@ -125,7 +124,6 @@ export function LabsPage() {
         />
       )}
 
-      {selected && <LabDetailModal lab={selected} onClose={() => setSelected(null)} onChanged={refresh} />}
     </div>
   );
 }
@@ -445,8 +443,53 @@ function ProfielKeuze({ waarde, onChange }: { waarde: string; onChange: (v: stri
   );
 }
 
-function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
-  const [tab, setTab] = useState<"settings" | "inrichting" | "browser" | "toegang" | "geheimen" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
+/**
+ * De details van één lab, als volwaardige PAGINA.
+ *
+ * Dit was een pop-up. Daar paste de bestandsbrowser niet in: een boom naast
+ * een lijst naast een geopend bestand heeft breedte nodig, en een dialoog is
+ * per definitie smaller dan het scherm. Een lab open je bovendien niet even
+ * tussendoor -- je werkt erin, soms een half uur. Dat hoort een adres te
+ * hebben dat je kunt delen en waar de terugknop werkt.
+ */
+export function LabDetailPage() {
+  const { labId } = useParams<{ labId: string }>();
+  const navigate = useNavigate();
+  const [lab, setLab] = useState<Lab | null>(null);
+  const [fout, setFout] = useState<string | null>(null);
+
+  const laad = useCallback(() => {
+    if (!labId) return;
+    labsApi.get(labId)
+      .then(setLab)
+      .catch((err) => setFout(err instanceof ApiError ? err.message : "Lab niet gevonden"));
+  }, [labId]);
+
+  useEffect(() => { laad(); }, [laad]);
+
+  if (fout) {
+    return (
+      <div className="pagina veilig-onder p-4 sm:p-6">
+        <EmptyState>{fout}</EmptyState>
+      </div>
+    );
+  }
+  if (!lab) {
+    return <div className="p-4 text-sm text-muted-foreground sm:p-6">Laden…</div>;
+  }
+  return (
+    <LabDetail lab={lab} onChanged={laad} onClose={() => navigate("/labs")} />
+  );
+}
+
+function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
+  // Vier tabbladen in plaats van tien over twee regels. Wat je ZELF instelt
+  // staat vooraan; alles waarmee je in het lab wérkt zit onder Werkruimte met
+  // een eigen striptje. Weg: Geheimen (dat is nu de Kluis), Commando (de
+  // Terminal kan hetzelfde en meer) en Guard-audit (hoort bij Data-guard, waar
+  // ook het spoor van alle andere labs staat).
+  const [tab, setTab] = useState<"settings" | "inrichting" | "toegang" | "werk">("settings");
+  const [werkTab, setWerkTab] = useState<"files" | "git" | "terminal" | "browser">("files");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
   const melding = useMelding();
 
@@ -496,8 +539,15 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
   }
 
   return (
-    <Modal open onClose={onClose} title={lab.name} wide>
-      <div className="mb-3 flex items-center gap-2 text-sm">
+    <div className="pagina veilig-onder flex h-full min-h-0 flex-col p-4 sm:p-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button onClick={onClose} aria-label="Terug naar de labs"
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="text-xl font-bold">{lab.name}</h1>
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
         <span className="text-muted-foreground">{lab.image}</span>
         {lab.status === "running" ? (
@@ -518,20 +568,38 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1 border-b border-border text-sm">
-        {(["settings", "inrichting", "browser", "toegang", "geheimen", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
+        {(["settings", "inrichting", "toegang", "werk"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 ${tab === t ? "border-b-2 border-primary font-medium" : "text-muted-foreground"}`}
           >
-            {{ settings: "Instellingen", inrichting: "Inrichting", browser: "Browser", toegang: "Toegang",
-               geheimen: "Geheimen",
-               git: "Git", files: "Bestanden", exec: "Commando", terminal: "Terminal",
-               audit: "Guard-audit" }[t]}
+            {{ settings: "Instellingen", inrichting: "Inrichting",
+               toegang: "Toegang", werk: "Werkruimte" }[t]}
           </button>
         ))}
       </div>
 
+      {tab === "werk" && (
+        <div className="mb-3 flex flex-wrap gap-1 text-xs">
+          {(["files", "git", "terminal", "browser"] as const).map((w) => (
+            <button
+              key={w}
+              onClick={() => setWerkTab(w)}
+              className={`rounded-md px-2.5 py-1 ${
+                werkTab === w ? "bg-secondary font-medium" : "text-muted-foreground hover:bg-muted"}`}
+            >
+              {{ files: "Bestanden", git: "Git", terminal: "Terminal", browser: "Browser" }[w]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Instellingen, inrichting en toegang zijn gewone formulieren:
+          die schuiven in hun geheel. De werkruimte hieronder niet --
+          daar heeft elk deelvenster zijn eigen schuifbalk. */}
+      {tab !== "werk" && (
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
       {tab === "settings" && (
         <div className="space-y-3">
           <Toggle checked={lab.data_guard} onChange={(v) => toggle("data_guard", v)} label="Data-egress-guard (regels)" />
@@ -589,15 +657,19 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       )}
 
       {tab === "inrichting" && <ProvisioningPanel lab={lab} onChanged={onChanged} />}
-      {tab === "browser" && <BrowserPanel lab={lab} />}
       {tab === "toegang" && <LabAllowlist lab={lab} onSaved={() => onChanged()} />}
-      {tab === "git" && <PublishPanel lab={lab} />}
-      {tab === "geheimen" && <LabGeheimen lab={lab} />}
-      {tab === "files" && <FileBrowser lab={lab} />}
-      {tab === "exec" && <ExecPanel lab={lab} />}
-      {tab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
-      {tab === "audit" && <GuardAuditPanel lab={lab} />}
-    </Modal>
+        </div>
+      )}
+      {/* Geen overflow hier: de bestandsbrowser en de terminal regelen hun
+          eigen schuifgebieden. Eén schuifbalk eromheen zou de boom en de lijst
+          samen laten schuiven in plaats van ieder apart. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {tab === "werk" && werkTab === "files" && <FileBrowser lab={lab} />}
+        {tab === "werk" && werkTab === "git" && <PublishPanel lab={lab} />}
+        {tab === "werk" && werkTab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
+        {tab === "werk" && werkTab === "browser" && <BrowserPanel lab={lab} />}
+      </div>
+    </div>
   );
 }
 
@@ -878,11 +950,7 @@ function ProvisioningPanel({ lab, onChanged }: { lab: Lab; onChanged: () => void
         </div>
       </div>
 
-      <div>
-        <Label>Eigen setup-script</Label>
-        <TextArea rows={4} className="font-mono text-xs" value={script}
-                  onChange={(ev) => setScript(ev.target.value)} />
-      </div>
+      <SetupScriptVeld waarde={script} onChange={setScript} />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       <Button disabled={busy || !dirty} onClick={save}>
@@ -1161,58 +1229,255 @@ function TunnelPaneel({ lab }: { lab: Lab }) {
   );
 }
 
+/**
+ * De Git-tab: eerst registreren, dan werken.
+ *
+ * Hiervoor typte je blind een mapnaam in een leeg veld. Klopte die niet, dan
+ * kreeg je "cd: no such file" en moest je raden wat er wél in /workspace
+ * stond — en een token moest je elke keer opnieuw plakken. Nu registreer je
+ * een repo één keer (hij wordt dan gekloond en het token versleuteld
+ * bewaard), en daarna kies je hem uit de lijst.
+ *
+ * Alle git-bewerkingen draaien in een kortlevende container naast het volume,
+ * niet in de lab-container zelf: anders zou een token in de omgeving van de
+ * agent staan.
+ */
 function PublishPanel({ lab }: { lab: Lab }) {
-  const [repo, setRepo] = useState("");
-  const [branch, setBranch] = useState("");
-  const [message, setMessage] = useState("");
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+  const balk = useMelding();
+  const bevestig = useBevestiging();
+  const [repos, setRepos] = useState<LabRepo[]>([]);
+  const [gekozen, setGekozen] = useState<string>("");
+  const [laden, setLaden] = useState(true);
+  const [bezig, setBezig] = useState(false);
+  const [uitvoer, setUitvoer] = useState<string | null>(null);
 
-  async function publish() {
-    setBusy(true);
-    setResult(null);
+  // Nieuwe repo registreren.
+  const [nieuwOpen, setNieuwOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [naam, setNaam] = useState("");
+  const [branch, setBranch] = useState("");
+  const [token, setToken] = useState("");
+
+  // Commit + push.
+  const [bericht, setBericht] = useState("");
+
+  async function laad() {
+    setLaden(true);
     try {
-      const r: any = await labsApi.publish(lab.id, {
-        repo, branch: branch || undefined, message: message || undefined, token: token || undefined,
-      });
-      setResult(r.output || "Gepubliceerd.");
+      const r = await labsApi.repos(lab.id);
+      setRepos(r);
+      setGekozen((g) => (g && r.some((x) => x.name === g) ? g : (r[0]?.name || "")));
     } catch (err) {
-      setResult(err instanceof ApiError ? err.message : "Publiceren mislukt");
+      balk.fout("Repo's laden mislukt", err instanceof ApiError ? err.message : String(err));
     } finally {
-      setBusy(false);
+      setLaden(false);
     }
   }
 
+  useEffect(() => {
+    laad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lab.id]);
+
+  const huidige = repos.find((r) => r.name === gekozen) || null;
+
+  async function registreren() {
+    if (!url.trim()) return;
+    setBezig(true);
+    try {
+      const r = await labsApi.registreerRepo(lab.id, {
+        url: url.trim(),
+        naam: naam.trim() || undefined,
+        branch: branch.trim() || undefined,
+        token: token.trim() || undefined,
+      });
+      balk.ok(`${r.repo} gekloond in /workspace`);
+      setNieuwOpen(false);
+      setUrl(""); setNaam(""); setBranch(""); setToken("");
+      await laad();
+      setGekozen(r.repo);
+    } catch (err) {
+      balk.fout("Registreren mislukt", err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  async function pullen() {
+    if (!huidige) return;
+    setBezig(true);
+    setUitvoer(null);
+    try {
+      const r = await labsApi.pullRepo(lab.id, huidige.name);
+      setUitvoer(r.output);
+      balk.ok("Opgehaald");
+      laad();
+    } catch (err) {
+      balk.fout("Pull mislukt", err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  async function publiceren() {
+    if (!huidige) return;
+    setBezig(true);
+    setUitvoer(null);
+    try {
+      const r = await labsApi.publish(lab.id, {
+        repo: huidige.name,
+        branch: huidige.branch || undefined,
+        message: bericht.trim() || undefined,
+      });
+      setUitvoer(r.output);
+      balk.ok(bericht.trim() ? "Gecommit en gepusht" : "Gepusht");
+      setBericht("");
+      laad();
+    } catch (err) {
+      balk.fout("Publiceren mislukt", err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  if (laden) return <p className="text-xs text-muted-foreground">Laden…</p>;
+
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        Commit + push van een repo in <code>/workspace</code> via een kortlevende helper-container —
-        het token komt nooit in de lab-container zelf terecht. Voor Azure-identiteiten in dit lab:
-        gebruik de Azure-profielen-pagina (sync → lab).
-      </p>
-      <div>
-        <Label>Repo-map (naam onder /workspace)</Label>
-        <Input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="repo" />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <Label>Branch (optioneel)</Label>
-          <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
+      {repos.length === 0 && !nieuwOpen && (
+        <div className="rounded border border-border p-3 text-sm">
+          <p className="font-medium">Nog geen repo in dit lab.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Registreer er een: LabX kloont hem in <code>/workspace</code> en onthoudt
+            het token versleuteld, zodat je dat niet elke keer opnieuw hoeft te plakken.
+            Zonder registratie kun je vanuit dit scherm niets met git doen — de agent
+            in het lab kan dat wél zelf, via de terminal.
+          </p>
+          <Button className="mt-2 px-2 py-1 text-xs" onClick={() => setNieuwOpen(true)}>
+            Repo toevoegen
+          </Button>
         </div>
-        <div>
-          <Label>Token (optioneel)</Label>
-          <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} />
+      )}
+
+      {repos.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Select className="w-64 text-xs" value={gekozen} onChange={(e) => setGekozen(e.target.value)}>
+            {repos.map((r) => (
+              <option key={r.name} value={r.name}>{r.name}</option>
+            ))}
+          </Select>
+          <Button variant="secondary" className="px-2 py-1 text-xs"
+                  onClick={() => setNieuwOpen((v) => !v)}>
+            + Repo
+          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="secondary" className="px-2 py-1 text-xs" disabled={bezig} onClick={pullen}>
+              Ophalen
+            </Button>
+            <Button
+              variant="danger"
+              className="px-2 py-1 text-xs"
+              onClick={async () => {
+                if (!huidige) return;
+                const ja = await bevestig.vraag({
+                  titel: `"${huidige.name}" losmaken?`,
+                  tekst: "Alleen de registratie verdwijnt. De map in /workspace blijft staan, "
+                       + "want daar kan werk in zitten dat nog niet gepusht is.",
+                  bevestig: "Losmaken",
+                });
+                if (!ja) return;
+                await labsApi.verwijderRepo(lab.id, huidige.name);
+                laad();
+              }}
+            >
+              Losmaken
+            </Button>
+          </div>
         </div>
-      </div>
-      <div>
-        <Label>Commit-bericht (optioneel — leeg = geen commit, alleen push)</Label>
-        <Input value={message} onChange={(e) => setMessage(e.target.value)} />
-      </div>
-      <Button onClick={publish} disabled={busy || !repo.trim()}>
-        {busy ? "Bezig…" : "Publiceren"}
-      </Button>
-      {result && <pre className="max-h-40 overflow-auto rounded bg-secondary p-2 text-xs whitespace-pre-wrap">{result}</pre>}
+      )}
+
+      {nieuwOpen && (
+        <div className="space-y-2 rounded border border-border p-3">
+          <div>
+            <Label>Repo-URL</Label>
+            <Input value={url} onChange={(e) => setUrl(e.target.value)}
+                   placeholder="https://github.com/org/repo.git" />
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div>
+              <Label>Mapnaam (leeg = uit de URL)</Label>
+              <Input value={naam} onChange={(e) => setNaam(e.target.value)} placeholder="repo" />
+            </div>
+            <div>
+              <Label>Branch (optioneel)</Label>
+              <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
+            </div>
+            <div>
+              <Label>Token (optioneel)</Label>
+              <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Het token wordt versleuteld opgeslagen en komt nooit in de lab-container:
+            git draait in een kortlevende container naast het volume.
+          </p>
+          <div className="flex gap-2">
+            <Button className="px-2 py-1 text-xs" disabled={bezig || !url.trim()} onClick={registreren}>
+              {bezig ? "Klonen…" : "Klonen en registreren"}
+            </Button>
+            <Button variant="secondary" className="px-2 py-1 text-xs" onClick={() => setNieuwOpen(false)}>
+              Annuleren
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {huidige && (
+        <div className="space-y-2 rounded border border-border p-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-mono">/workspace/{huidige.name}</span>
+            {huidige.huidige_branch && (
+              <Badge tone="violet">{huidige.huidige_branch}</Badge>
+            )}
+            {huidige.fout ? (
+              <span className="text-destructive">{huidige.fout}</span>
+            ) : (huidige.gewijzigd ?? 0) > 0 ? (
+              <Badge tone="yellow">{huidige.gewijzigd} gewijzigd</Badge>
+            ) : (
+              <span className="text-muted-foreground">niets gewijzigd</span>
+            )}
+            {huidige.token_opgeslagen && (
+              <span className="text-muted-foreground">· token bewaard</span>
+            )}
+          </div>
+
+          {(huidige.bestanden || []).length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer select-none text-muted-foreground">
+                Wat er openstaat
+              </summary>
+              <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto font-mono">
+                {(huidige.bestanden || []).map((b) => <li key={b}>{b}</li>)}
+              </ul>
+            </details>
+          )}
+
+          <div>
+            <Label>Commit-bericht (leeg = alleen pushen)</Label>
+            <Input value={bericht} onChange={(e) => setBericht(e.target.value)}
+                   placeholder="Wat heb je gewijzigd?" />
+          </div>
+          <Button className="px-2 py-1 text-xs" disabled={bezig} onClick={publiceren}>
+            {bezig ? "Bezig…" : bericht.trim() ? "Commit en push" : "Push"}
+          </Button>
+        </div>
+      )}
+
+      {uitvoer && (
+        <pre className="max-h-48 overflow-auto rounded bg-secondary p-3 text-xs whitespace-pre-wrap">
+          {uitvoer}
+        </pre>
+      )}
     </div>
   );
 }
@@ -1225,15 +1490,17 @@ function PublishPanel({ lab }: { lab: Lab }) {
  */
 function FileBrowser({ lab }: { lab: Lab }) {
   const [path, setPath] = useState("/workspace");
-  // `melding` is hieronder al een lokale statusregel in dit paneel; de
-  // meldingenbalk krijgt daarom een eigen naam.
   const balk = useMelding();
+  const bevestig = useBevestiging();
   const [bezigMet, setBezigMet] = useState<string | null>(null);
   const [entries, setEntries] = useState<LabFileEntry[]>([]);
-  const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [melding, setMelding] = useState<string | null>(null);
   const [sleep, setSleep] = useState(false);
+  const [zoek, setZoek] = useState("");
+  // Welk bestand er open is om te bekijken of te bewerken. Eén tegelijk.
+  const [open, setOpen] = useState<{ pad: string; inhoud: string; afgekapt: boolean } | null>(null);
+  const [bewerkt, setBewerkt] = useState<string | null>(null);
 
   async function load(p: string) {
     setError(null);
@@ -1241,7 +1508,8 @@ function FileBrowser({ lab }: { lab: Lab }) {
       const r = await labsApi.files(lab.id, p);
       setEntries(r.entries);
       setPath(r.path);
-      setContent(null);
+      setOpen(null);
+      setBewerkt(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Laden mislukt");
     }
@@ -1252,11 +1520,115 @@ function FileBrowser({ lab }: { lab: Lab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lab.id]);
 
+  async function openen(naam: string) {
+    const pad = `${path}/${naam}`;
+    try {
+      const r = await labsApi.readFile(lab.id, pad);
+      setOpen({ pad, inhoud: r.content, afgekapt: r.truncated });
+      setBewerkt(null);
+    } catch (err) {
+      balk.fout("Openen mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function hernoemen(naam: string) {
+    const nieuwNaam = window.prompt(
+      "Nieuwe naam, of een pad met een / erin om te verplaatsen.", naam);
+    if (!nieuwNaam || nieuwNaam === naam) return;
+    const doel = nieuwNaam.includes("/") ? nieuwNaam : `${path}/${nieuwNaam}`;
+    try {
+      await labsApi.renameFile(lab.id, `${path}/${naam}`, doel);
+      balk.ok(`${naam} → ${doel}`);
+      load(path);
+    } catch (err) {
+      balk.fout("Hernoemen mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function verwijderen(e: LabFileEntry) {
+    const ja = await bevestig.vraag({
+      titel: `"${e.name}" verwijderen?`,
+      tekst: e.is_dir ? "De hele map en alles erin gaat weg."
+                      : "Dit kan niet ongedaan gemaakt worden.",
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
+    try {
+      await labsApi.deleteFile(lab.id, `${path}/${e.name}`);
+      balk.ok(`${e.name} verwijderd`);
+      load(path);
+    } catch (err) {
+      balk.fout("Verwijderen mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function opslaan() {
+    if (!open || bewerkt === null) return;
+    try {
+      await labsApi.writeFile(lab.id, open.pad, bewerkt);
+      balk.ok("Opgeslagen");
+      setOpen({ ...open, inhoud: bewerkt });
+      setBewerkt(null);
+    } catch (err) {
+      balk.fout("Opslaan mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  // Mappen eerst, daarna op naam: dat is de volgorde waarin je zoekt.
+  const zichtbaar = entries
+    .filter((e) => !zoek.trim() || e.name.toLowerCase().includes(zoek.trim().toLowerCase()))
+    .sort((a, b) => (a.is_dir === b.is_dir
+      ? a.name.localeCompare(b.name, "nl")
+      : a.is_dir ? -1 : 1));
+
+  const mappen = zichtbaar.filter((e) => e.is_dir).length;
+  const bestanden = zichtbaar.length - mappen;
+
   return (
-    <div>
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Kruimelpad: elk deel is klikbaar. Met alleen een ".."-regel moet je
+          vier keer klikken om twee mappen omhoog te komen. */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">{path}</span>
+        <nav className="flex min-w-0 flex-wrap items-center gap-1 text-xs">
+          {path.replace(/^\//, "").split("/").map((deel, i, alle) => {
+            const naartoe = "/" + alle.slice(0, i + 1).join("/");
+            const laatste = i === alle.length - 1;
+            return (
+              <span key={naartoe} className="flex items-center gap-1">
+                {i > 0 && <span className="text-muted-foreground">/</span>}
+                <button
+                  onClick={() => !laatste && load(naartoe)}
+                  className={laatste ? "font-medium" : "text-primary hover:underline"}
+                >
+                  {deel}
+                </button>
+              </span>
+            );
+          })}
+        </nav>
         <div className="ml-auto flex items-center gap-2">
+          <input
+            value={zoek}
+            onChange={(e) => setZoek(e.target.value)}
+            placeholder="Filter…"
+            className="w-32 rounded border border-input bg-background px-2 py-1 text-xs placeholder:text-muted-foreground"
+          />
+          <Button
+            variant="secondary"
+            className="px-2 py-1 text-xs"
+            onClick={async () => {
+              const naam = window.prompt("Naam van de nieuwe map");
+              if (!naam) return;
+              try {
+                await labsApi.mkdir(lab.id, `${path}/${naam}`);
+                load(path);
+              } catch (err) {
+                balk.fout("Map maken mislukt", err instanceof ApiError ? err.message : String(err));
+              }
+            }}
+          >
+            + Map
+          </Button>
           <BijlageKnop
             labId={lab.status === "running" ? lab.id : null}
             dir={path}
@@ -1269,7 +1641,17 @@ function FileBrowser({ lab }: { lab: Lab }) {
       </div>
       {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
       {melding && <p className="mb-2 text-xs text-muted-foreground">{melding}</p>}
-      <ul
+
+      <div className="flex min-h-0 flex-1 gap-3">
+      {/* De mappenboom links, zoals in een verkenner: springen tussen twee
+          mappen die ver uit elkaar liggen kost anders tien klikken omhoog en
+          weer omlaag. Verborgen op een telefoon -- daar is de breedte er niet
+          en helpt het kruimelpad genoeg. */}
+      <aside className="hidden w-56 shrink-0 overflow-y-auto rounded border border-border p-1 lg:block">
+        <MapBoom labId={lab.id} pad="/workspace" huidig={path} onKies={load} />
+      </aside>
+
+      <div
         onDragOver={(e) => { e.preventDefault(); setSleep(true); }}
         onDragLeave={() => setSleep(false)}
         onDrop={async (e) => {
@@ -1280,134 +1662,282 @@ function FileBrowser({ lab }: { lab: Lab }) {
           try {
             const r = await labsApi.upload(lab.id, files, path);
             setMelding(`${r.files.length} bestand(en) in ${path} gezet.`
-              + (r.skipped.length ? ` Overgeslagen: ${r.skipped.map((s) => `${s.name} (${s.reden})`).join(", ")}` : ""));
+              + (r.skipped.length
+                ? ` Overgeslagen: ${r.skipped.map((s) => `${s.name} (${s.reden})`).join(", ")}`
+                : ""));
             load(path);
           } catch (err) {
             setError(err instanceof ApiError ? err.message : "Uploaden mislukt");
           }
         }}
-        className={`mb-3 max-h-48 divide-y divide-border overflow-y-auto rounded border text-sm
-          ${sleep ? "border-primary bg-secondary" : "border-border"}`}
+        className={`min-h-0 min-w-0 flex-1 overflow-y-auto rounded border ${
+          sleep ? "border-primary bg-secondary" : "border-border"}`}
       >
-        {path !== "/workspace" && (
-          <li className="cursor-pointer px-3 py-1.5 hover:bg-secondary" onClick={() => load(path.split("/").slice(0, -1).join("/") || "/workspace")}>
-            ..
-          </li>
-        )}
-        {entries.map((e) => (
-          <li
-            key={e.name}
-            className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-secondary"
-            onClick={() => (e.is_dir ? load(`${path}/${e.name}`) : labsApi.readFile(lab.id, `${path}/${e.name}`).then((r) => setContent(r.content)))}
-          >
-            <span>{e.is_dir ? "📁" : "📄"} {e.name}</span>
-            {e.bytes !== null && !e.is_dir && (
-              <span className="ml-auto text-[11px] text-muted-foreground">{leesbareMaat(e.bytes)}</span>
+        <table className="w-full text-sm">
+          <tbody>
+            {path !== "/workspace" && (
+              <tr className="cursor-pointer border-b border-border hover:bg-secondary"
+                  onClick={() => load(path.split("/").slice(0, -1).join("/") || "/workspace")}>
+                <td colSpan={3} className="px-3 py-1.5 text-muted-foreground">..</td>
+              </tr>
             )}
-            {/* Klikken op de regel opent een VOORBEELD (tekst, afgekapt op
-                200 kB). Deze knop haalt het bestand zelf op — ruwe bytes, dus
-                ook een parquet of een zip. Een map komt er als tar.gz uit. */}
-            <button
-              title={e.is_dir ? "Map downloaden als tar.gz" : "Bestand downloaden"}
-              className={`shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground
-                ${e.bytes === null || e.is_dir ? "ml-auto" : ""}`}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                setBezigMet(e.name);
-                downloadLabFile(lab.id, `${path}/${e.name}`)
-                  .then((naam) => balk.ok(`${naam} gedownload`))
-                  .catch((err) => balk.fout("Downloaden mislukt", String(err?.message || err)))
-                  .finally(() => setBezigMet(null));
-              }}
-            >
-              {bezigMet === e.name
-                ? <Loader2 size={13} className="animate-spin" />
-                : <Download size={13} />}
-            </button>
-          </li>
-        ))}
-        {entries.length === 0 && (
-          <li className="px-3 py-2 text-xs text-muted-foreground">
-            Leeg — sleep hier bestanden naartoe of gebruik de knop hierboven.
-          </li>
-        )}
-      </ul>
-      {content !== null && <pre className="max-h-64 overflow-auto rounded bg-secondary p-3 text-xs whitespace-pre-wrap">{content}</pre>}
-    </div>
-  );
-}
-
-function ExecPanel({ lab }: { lab: Lab }) {
-  const [command, setCommand] = useState("");
-  const [result, setResult] = useState<{ exit_code: number; output: string; guarded?: boolean; guard_reason?: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function run() {
-    setBusy(true);
-    try {
-      const r = await labsApi.exec(lab.id, command);
-      setResult(r);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div>
-      <div className="mb-2 flex gap-2">
-        <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="echo hallo" onKeyDown={(e) => e.key === "Enter" && run()} />
-        <Button onClick={run} disabled={busy || !command.trim()}>
-          {busy ? "…" : "Run"}
-        </Button>
+            {zichtbaar.map((e) => (
+              <tr key={e.name} className="border-b border-border last:border-0 hover:bg-secondary">
+                <td className="px-3 py-1.5">
+                  <button
+                    className="flex min-w-0 items-center gap-2 text-left"
+                    onClick={() => (e.is_dir ? load(`${path}/${e.name}`) : openen(e.name))}
+                  >
+                    <span className="shrink-0">{e.is_dir ? "📁" : "📄"}</span>
+                    <span className="truncate">{e.name}</span>
+                  </button>
+                </td>
+                <td className="whitespace-nowrap px-2 py-1.5 text-right text-[11px] text-muted-foreground">
+                  {e.bytes !== null && !e.is_dir ? leesbareMaat(e.bytes) : ""}
+                </td>
+                <td className="px-2 py-1.5">
+                  {/* Altijd zichtbaar en niet pas bij hover: op een touchscreen
+                      bestaat hover niet, en dan zijn deze knoppen onbereikbaar. */}
+                  <div className="flex items-center justify-end gap-0.5">
+                    <button title="Hernoemen of verplaatsen"
+                            onClick={() => hernoemen(e.name)}
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground">
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      title={e.is_dir ? "Map downloaden als tar.gz" : "Bestand downloaden"}
+                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                      onClick={() => {
+                        setBezigMet(e.name);
+                        downloadLabFile(lab.id, `${path}/${e.name}`)
+                          .then((naam) => balk.ok(`${naam} gedownload`))
+                          .catch((err) => balk.fout("Downloaden mislukt", String(err?.message || err)))
+                          .finally(() => setBezigMet(null));
+                      }}
+                    >
+                      {bezigMet === e.name
+                        ? <Loader2 size={13} className="animate-spin" />
+                        : <Download size={13} />}
+                    </button>
+                    <button title="Verwijderen"
+                            onClick={() => verwijderen(e)}
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {zichtbaar.length === 0 && (
+              <tr>
+                <td colSpan={3} className="px-3 py-2 text-xs text-muted-foreground">
+                  {zoek.trim()
+                    ? `Niets dat op "${zoek}" lijkt.`
+                    : "Leeg — sleep hier bestanden naartoe of gebruik de knop hierboven."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
-      {result && (
-        <div>
-          {result.guarded && <Badge tone="red">geblokkeerd door data-guard: {result.guard_reason}</Badge>}
-          <pre className="mt-2 max-h-64 overflow-auto rounded bg-secondary p-3 text-xs whitespace-pre-wrap">
-            exit {result.exit_code}
-            {"\n"}
-            {result.output}
-          </pre>
+      </div>
+
+      {/* Een statusregel hoort erbij: zonder telt niemand hoeveel er staat,
+          en bij een filter wil je weten hoeveel je wegfiltert. */}
+      <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
+        <span>{mappen} map{mappen === 1 ? "" : "pen"}, {bestanden} bestand{bestanden === 1 ? "" : "en"}</span>
+        {zoek.trim() && <span>· gefilterd op “{zoek.trim()}”</span>}
+      </div>
+
+      {open && (
+        <div className="mt-2 shrink-0 rounded border border-border">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
+            <span className="font-mono">{open.pad}</span>
+            {open.afgekapt && (
+              <span className="text-yellow-600" title="Alleen de eerste 200 kB is opgehaald">
+                afgekapt
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              {bewerkt !== null && (
+                <Button className="px-2 py-1 text-xs" onClick={opslaan}>Opslaan</Button>
+              )}
+              <Button variant="secondary" className="px-2 py-1 text-xs"
+                      onClick={() => { setOpen(null); setBewerkt(null); }}>
+                Sluiten
+              </Button>
+            </div>
+          </div>
+          {/* Bewerken mag niet als we maar een deel hebben: opslaan zou dan de
+              rest van het bestand weggooien. */}
+          {open.afgekapt ? (
+            <pre className="max-h-80 overflow-auto p-3 text-xs whitespace-pre-wrap">{open.inhoud}</pre>
+          ) : (
+            <textarea
+              value={bewerkt ?? open.inhoud}
+              onChange={(e) => setBewerkt(e.target.value)}
+              spellCheck={false}
+              className="h-80 w-full resize-y bg-background p-3 font-mono text-xs focus:outline-none"
+            />
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function GuardAuditPanel({ lab }: { lab: Lab }) {
-  const [items, setItems] = useState<any[]>([]);
 
-  useEffect(() => {
-    labsApi.guardAudit(lab.id).then((r) => setItems(r.items));
-  }, [lab.id]);
+/**
+ * Het eigen setup-script, met de regels erbij in plaats van eromheen.
+ *
+ * Een leeg tekstvak met "draait als root" eronder laat je raden: welke shell,
+ * in welke map, met of zonder netwerk, en wat er gebeurt als het al eens
+ * gedraaid heeft. Die vier dingen bepalen of je script werkt, dus die staan
+ * er nu bij — samen met een paar regels om in te voegen en een waarschuwing
+ * voor de fouten die iedereen één keer maakt.
+ */
+const VOORBEELDEN: { label: string; regel: string; uitleg: string }[] = [
+  { label: "Python-pakketten", regel: "pip install -q pandas pyarrow",
+    uitleg: "-q houdt het log leesbaar" },
+  { label: "Systeempakketten", regel: "apt-get update && apt-get install -y jq unzip",
+    uitleg: "-y, anders wacht hij op een antwoord dat nooit komt" },
+  { label: "Node-pakket", regel: "npm install -g --silent typescript",
+    uitleg: "globaal, zodat elke sessie het heeft" },
+  { label: "Map klaarzetten", regel: "mkdir -p /workspace/data",
+    uitleg: "-p: bestaat hij al, dan gebeurt er niets" },
+  { label: "Omgevingsvariabele", regel: 'echo \'export TZ=Europe/Amsterdam\' >> /etc/profile.d/labx.sh',
+    uitleg: "in /etc/profile.d, want een export hier geldt alleen nu" },
+];
+
+function scriptWaarschuwingen(tekst: string): string[] {
+  const uit: string[] = [];
+  const t = tekst || "";
+  if (/\bsudo\b/.test(t)) {
+    uit.push("`sudo` is niet nodig en bestaat meestal niet in het image — je draait al als root.");
+  }
+  if (/\bapt(-get)?\s+install\b/.test(t) && !/-y\b/.test(t)) {
+    uit.push("`apt-get install` zonder `-y` wacht op een bevestiging die niemand kan geven; "
+             + "het inrichten loopt dan vast tot de time-out.");
+  }
+  if (/\bapt(-get)?\s+install\b/.test(t) && !/apt(-get)?\s+update/.test(t)) {
+    uit.push("Zet er `apt-get update &&` voor: zonder pakkettenlijst vindt `install` niets.");
+  }
+  if (/^\s*cd\s/m.test(t) && !/\/workspace/.test(t)) {
+    uit.push("Een `cd` zonder volledig pad: het script start in /, niet in /workspace.");
+  }
+  if (/\bgit\s+clone\b/.test(t)) {
+    uit.push("Voor een repo is er de Git-tab: die kloont hem, onthoudt het token versleuteld "
+             + "en laat je er daarna mee werken. Hier zou je het token in platte tekst zetten.");
+  }
+  if (/\bnpm\s+install\b/.test(t) && !/-g\b/.test(t)) {
+    uit.push("`npm install` zonder `-g` installeert in de map waar het script toevallig staat.");
+  }
+  return uit;
+}
+
+function SetupScriptVeld({ waarde, onChange }: {
+  waarde: string;
+  onChange: (v: string) => void;
+}) {
+  const waarschuwingen = scriptWaarschuwingen(waarde);
+
+  function voegToe(regel: string) {
+    const huidig = (waarde || "").replace(/\s+$/, "");
+    onChange(huidig ? `${huidig}\n${regel}` : regel);
+  }
 
   return (
     <div>
-      <a href={`/api/labs/${lab.id}/guard-audit?format=csv`} className="mb-2 inline-block text-xs text-primary hover:underline">
-        Download CSV
-      </a>
-      <div className="max-h-72 overflow-auto rounded border border-border text-xs">
-        <table className="w-full">
-          <thead className="sticky top-0 bg-secondary">
-            <tr>
-              <th className="p-2 text-left">Tijd</th>
-              <th className="p-2 text-left">Blocked</th>
-              <th className="p-2 text-left">Reden</th>
-              <th className="p-2 text-left">Commando</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((it, i) => (
-              <tr key={i} className="border-t border-border">
-                <td className="p-2">{new Date(it.ts).toLocaleTimeString()}</td>
-                <td className="p-2">{it.data?.blocked ? <Badge tone="red">ja</Badge> : <Badge tone="green">nee</Badge>}</td>
-                <td className="p-2">{it.data?.guard_reason || "-"}</td>
-                <td className="p-2 font-mono">{(it.data?.command || "").slice(0, 60)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <Label>Eigen setup-script</Label>
+      <div className="mb-1 rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground">
+        Draait met <code>sh</code>, als <strong>root</strong>, startend in <code>/</code>, mét
+        netwerk — ná de pakketten hierboven. Bij <em>elk</em> inrichten opnieuw, ook na een
+        herstart: schrijf het zo dat een tweede keer niets kapotmaakt. Alleen
+        <code> /workspace</code> overleeft een herbouw van de container.
       </div>
+
+      <div className="mb-1 flex flex-wrap gap-1">
+        {VOORBEELDEN.map((v) => (
+          <button
+            key={v.label}
+            type="button"
+            title={`${v.regel}  —  ${v.uitleg}`}
+            onClick={() => voegToe(v.regel)}
+            className="rounded-full border border-border px-2 py-0.5 text-[11px]
+                       text-muted-foreground hover:border-primary/40 hover:bg-primary/5"
+          >
+            + {v.label}
+          </button>
+        ))}
+      </div>
+
+      <TextArea rows={5} className="font-mono text-xs" value={waarde}
+                placeholder="pip install -q pandas pyarrow"
+                onChange={(ev) => onChange(ev.target.value)} />
+
+      {waarschuwingen.length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-xs text-yellow-600 dark:text-yellow-500">
+          {waarschuwingen.map((w) => <li key={w}>⚠ {w}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * De mappenboom links.
+ *
+ * Alleen mappen, en hij haalt een niveau pas op als je het openklapt: een lab
+ * met een node_modules erin zou anders bij het openen duizenden regels
+ * ophalen die niemand gevraagd heeft.
+ */
+function MapBoom({ labId, pad, huidig, onKies, diepte = 0 }: {
+  labId: string;
+  pad: string;
+  huidig: string;
+  onKies: (pad: string) => void;
+  diepte?: number;
+}) {
+  const [open, setOpen] = useState(diepte === 0);
+  const [mappen, setMappen] = useState<LabFileEntry[] | null>(null);
+
+  useEffect(() => {
+    if (!open || mappen !== null) return;
+    labsApi.files(labId, pad)
+      .then((r) => setMappen(r.entries.filter((e) => e.is_dir)))
+      .catch(() => setMappen([]));
+  }, [open, mappen, labId, pad]);
+
+  const naam = pad.split("/").filter(Boolean).pop() || "workspace";
+  const actief = huidig === pad;
+
+  return (
+    <div>
+      <div
+        className={`flex min-h-7 cursor-pointer items-center gap-1 rounded px-1 text-xs ${
+          actief ? "bg-secondary font-medium" : "hover:bg-secondary/60"}`}
+        style={{ paddingLeft: `${diepte * 12 + 4}px` }}
+        onClick={() => { onKies(pad); setOpen(true); }}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+          className="shrink-0 text-muted-foreground"
+          aria-label={open ? "Inklappen" : "Uitklappen"}
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </button>
+        <span className="truncate">{naam}</span>
+      </div>
+      {open && (mappen || []).map((m) => (
+        <MapBoom
+          key={m.name}
+          labId={labId}
+          pad={`${pad}/${m.name}`}
+          huidig={huidig}
+          onKies={onKies}
+          diepte={diepte + 1}
+        />
+      ))}
     </div>
   );
 }

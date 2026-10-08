@@ -35,7 +35,7 @@ export function WorkflowsPage() {
   useEffect(refresh, []);
 
   return (
-    <div className="veilig-onder p-4 sm:p-6">
+    <div className="pagina veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-bold">Workflows</h1>
         <Button onClick={() => setCreating(true)}>+ Nieuwe workflow</Button>
@@ -43,77 +43,100 @@ export function WorkflowsPage() {
       {workflows.length === 0 ? (
         <EmptyState>Nog geen workflows. Een workflow is een reeks stappen (markdown) die de agent tegen een lab uitvoert.</EmptyState>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {workflows.map((w) => (
-            <Card key={w.id} className="p-4">
-              {/* min-w-0 is hier geen detail: een flex-kind krimpt standaard
-                  NIET onder zijn inhoud, dus een lange naam duwt de badge de
-                  kaart uit in plaats van zelf af te kappen. */}
-              <div className="flex items-start justify-between gap-2">
-                <span className="min-w-0 flex-1 cursor-pointer break-words font-medium"
-                      onClick={() => navigate(`/workflows/${w.id}`)}>{w.name}</span>
-                <button
-                  onClick={() => workflowApi.updateMeta(w.id, { is_enabled: !w.is_enabled })
-                    .then(refresh)
-                    .then(() => melding.ok(`Workflow '${w.name}' `
-                                           + (w.is_enabled ? "uitgezet" : "aangezet")))
-                    .catch((err) => melding.fout("Aanpassen mislukt", String(err)))}
-                  title="Aan/uit"
-                >
-                  <Badge tone={w.is_enabled ? "green" : "neutral"}>{w.is_enabled ? "aan" : "uit"}</Badge>
-                </button>
-              </div>
-              <div className="mt-1 cursor-pointer break-words text-xs text-muted-foreground"
-                   onClick={() => navigate(`/workflows/${w.id}`)}>{w.description}</div>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {(w.nodes || []).length || w.steps.length} activiteit(en)
-                  {(w.waarschuwingen || []).length > 0 && (
-                    <span className="ml-2 text-yellow-600"
-                          title={w.waarschuwingen.join("\n")}>
-                      ⚠ {w.waarschuwingen.length}
-                    </span>
-                  )}
-                </span>
-                {/* De twee knoppen horen bij elkaar, rechts. Los in een
-                    justify-between-rij belandt de eerste precies in het midden
-                    van de kaart — alsof hij bij niets hoort. */}
-                <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  className="px-3 py-1.5 text-xs sm:px-2 sm:py-0.5"
-                  onClick={() => setMonitoringVoor(monitoringVoor?.id === w.id ? null : w)}
-                >
-                  {monitoringVoor?.id === w.id ? "Monitoring sluiten" : "Monitoring"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="px-3 py-1.5 text-xs sm:px-2 sm:py-0.5"
-                  onClick={() => navigate(`/workflows/${w.id}`)}
-                >
-                  Bewerken
-                </Button>
-                <Button
-                  variant="danger"
-                  className="px-3 py-1.5 text-xs sm:px-2 sm:py-0.5"
-                  // De belofte TERUGGEVEN: daar herkent Button aan dat er iets
-                  // loopt en zet hij zichzelf op bezig. Met accolades eromheen
-                  // verdwijnt hij en lijkt er niets te gebeuren.
-                  onClick={async () => {
-                    const ja = await bevestig.vraag({
-                      titel: `Workflow "${w.name}" verwijderen?`,
-                      tekst: "De stappen erin gaan mee.",
-                      bevestig: "Verwijderen",
-                    });
-                    if (ja) await workflowApi.remove(w.id).then(refresh);
-                  }}
-                >
-                  Verwijderen
-                </Button>
-                </div>
-              </div>
-            </Card>
-          ))}
+        /* Een tabel en geen kaartjes. Vijf workflows in blokjes van twee
+           kolommen leest als een puzzel: je ogen springen heen en weer om te
+           vergelijken wat er aanstaat en hoeveel activiteiten erin zitten.
+           Onder elkaar met vaste kolommen scan je dat in één beweging. */
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Naam</th>
+                <th className="hidden px-3 py-2 font-medium sm:table-cell">Omschrijving</th>
+                <th className="px-3 py-2 font-medium">Activiteiten</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {workflows.map((w) => (
+                <tr key={w.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                  <td className="px-3 py-2">
+                    <button className="break-words text-left font-medium hover:underline"
+                            onClick={() => navigate(`/workflows/${w.id}`)}>
+                      {w.name}
+                    </button>
+                    {/* Op een smal scherm is er geen kolom voor; dan hoort hij
+                        onder de naam in plaats van te verdwijnen. */}
+                    <div className="break-words text-xs text-muted-foreground sm:hidden">
+                      {w.description}
+                    </div>
+                  </td>
+                  <td className="hidden max-w-xs px-3 py-2 text-xs text-muted-foreground sm:table-cell">
+                    <span className="line-clamp-2 break-words">{w.description}</span>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
+                    {(w.nodes || []).length || w.steps.length}
+                    {(w.waarschuwingen || []).length > 0 && (
+                      <span className="ml-2 text-yellow-600"
+                            title={w.waarschuwingen.join("\n")}>
+                        ⚠ {w.waarschuwingen.length}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      onClick={() => workflowApi.updateMeta(w.id, { is_enabled: !w.is_enabled })
+                        .then(refresh)
+                        .then(() => melding.ok(`Workflow '${w.name}' `
+                                               + (w.is_enabled ? "uitgezet" : "aangezet")))
+                        .catch((err) => melding.fout("Aanpassen mislukt", String(err)))}
+                      title="Aan/uit"
+                    >
+                      <Badge tone={w.is_enabled ? "green" : "neutral"}>
+                        {w.is_enabled ? "aan" : "uit"}
+                      </Badge>
+                    </button>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <Button variant="secondary" className="px-2 py-1 text-xs"
+                              onClick={() => setMonitoringVoor(monitoringVoor?.id === w.id ? null : w)}>
+                        {monitoringVoor?.id === w.id ? "Sluiten" : "Monitoring"}
+                      </Button>
+                      {/* Een workflow maak je zelden om hem één keer met de
+                          hand te draaien; de volgende stap is bijna altijd
+                          inplannen. Dat scheelt zoeken in een andere tab. */}
+                      <Button variant="secondary" className="px-2 py-1 text-xs"
+                              title="Een planning maken voor deze workflow"
+                              onClick={() => navigate(
+                                `/workbench/scheduling?workflow=${w.id}`)}>
+                        Inplannen
+                      </Button>
+                      <Button variant="secondary" className="px-2 py-1 text-xs"
+                              onClick={() => navigate(`/workflows/${w.id}`)}>
+                        Bewerken
+                      </Button>
+                      <Button
+                        variant="danger"
+                        className="px-2 py-1 text-xs"
+                        onClick={async () => {
+                          const ja = await bevestig.vraag({
+                            titel: `Workflow "${w.name}" verwijderen?`,
+                            tekst: "De stappen erin gaan mee.",
+                            bevestig: "Verwijderen",
+                          });
+                          if (ja) await workflowApi.remove(w.id).then(refresh);
+                        }}
+                      >
+                        Verwijderen
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       {monitoringVoor && (

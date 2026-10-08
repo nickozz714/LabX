@@ -189,6 +189,21 @@ export interface AppSettingsDto {
   chat_archive_days: number | null;
   /** Onder welke namen jij in Jira/DevOps staat — voor de urenschatting. */
   eigen_auteurs?: string[] | null;
+  /** Spraakassistent. De sleutel komt nooit terug; alleen of er een staat. */
+  openai_key_configured?: boolean;
+  voice_enabled?: boolean;
+  voice_brein?: "realtime" | "pipeline";
+  voice_microfoon?: "ptt" | "open";
+  voice_bevestiging?: "klik" | "spraak" | "beide";
+  voice_woord?: string | null;
+  voice_meld_runs?: boolean;
+  voice_sessie_minuten?: number;
+  voice_dag_limiet_usd?: number;
+  voice_tts?: "browser" | "openai" | "fish";
+  voice_tts_stem?: string | null;
+  voice_stt?: "openai" | "fish";
+  voice_fish_stem?: string | null;
+  fish_key_configured?: boolean;
   extra_args: string[];
   enable_tool_search: boolean;
   data_guard_default: boolean;
@@ -507,6 +522,8 @@ export interface BoardDto {
   lab_status?: string | null;
   columns: BoardColumnDto[];
   agent_column: string | null;
+  archive_column?: string | null;
+  archive_days?: number;
   /** Waar een ticket heen gaat zodra de agent eraan begint. */
   agent_busy_column: string | null;
   agent_done_column: string | null;
@@ -739,4 +756,17 @@ export interface AgentRunStart {
   ticket_id: number;
   ticket_key: string;
   status: string;
+}
+
+
+/** Een repo die bij een lab geregistreerd staat, met zijn toestand. */
+export interface LabRepo {
+  name: string;
+  url: string | null;
+  branch: string | null;
+  token_opgeslagen: boolean;
+  huidige_branch?: string | null;
+  gewijzigd?: number;
+  bestanden?: string[];
+  fout?: string;
 }

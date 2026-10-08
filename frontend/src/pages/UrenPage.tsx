@@ -73,7 +73,7 @@ export function UrenPage() {
   const scheef = t && t.bruto > 0 ? (t.overlap / t.bruto) * 100 : 0;
 
   return (
-    <div className="veilig-onder space-y-4 p-4 sm:p-6">
+    <div className="pagina veilig-onder space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-lg font-semibold">Uren</h1>

@@ -1,5 +1,5 @@
 import { api, getToken } from "@/lib/api";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra , LabRepo} from "@/lib/types";
 
 /** Eén regel uit de bestandsbrowser. `bytes` is null voor mappen, en ook voor
  *  een lab-image waarvan de `ls` geen groottes kan geven. */
@@ -119,6 +119,24 @@ export const labsApi = {
     api.get<{ path: string; content: string; truncated: boolean }>(`/labs/${id}/file?path=${encodeURIComponent(path)}`),
   writeFile: (id: string, path: string, content: string) =>
     api.put<{ ok: boolean }>(`/labs/${id}/file`, { path, content }),
+  // Hernoemen en verplaatsen zijn dezelfde bewerking; het verschil is alleen
+  // of de map in het doelpad anders is.
+  renameFile: (id: string, van: string, naar: string) =>
+    api.post<{ van: string; naar: string }>(`/labs/${id}/file/rename`, { van, naar }),
+  deleteFile: (id: string, path: string) =>
+    api.post<{ verwijderd: string }>(`/labs/${id}/file/delete`, { path }),
+  mkdir: (id: string, path: string) =>
+    api.post<{ map: string }>(`/labs/${id}/file/mkdir`, { path }),
+  // Repo-registratie. Een repo wordt eerst geregistreerd (en gekloond); pas
+  // daarna kun je hem kiezen om mee te werken.
+  repos: (id: string) => api.get<LabRepo[]>(`/labs/${id}/repos`),
+  registreerRepo: (id: string, payload: { url: string; naam?: string; branch?: string; token?: string }) =>
+    api.post<{ repo: string; url: string; branch: string | null }>(`/labs/${id}/repos`, payload),
+  verwijderRepo: (id: string, naam: string) =>
+    api.delete<{ verwijderd: string }>(`/labs/${id}/repos/${encodeURIComponent(naam)}`),
+  pullRepo: (id: string, naam: string) =>
+    api.post<{ repo: string; output: string }>(`/labs/${id}/repos/${encodeURIComponent(naam)}/pull`),
+
   secrets: (id: string) => api.get<LabGeheim[]>(`/labs/${id}/secrets`),
   putSecret: (id: string, naam: string, payload: Record<string, unknown>) =>
     api.put<LabGeheim>(`/labs/${id}/secrets/${encodeURIComponent(naam)}`, payload),
@@ -138,7 +156,9 @@ export const labsApi = {
     form.append("dir", dir);
     return api.upload<UploadResultaat>(`/labs/${id}/upload`, form);
   },
-  publish: (id: string, payload: Record<string, any>) => api.post(`/labs/${id}/publish`, payload),
+  publish: (id: string, payload: { repo: string; branch?: string; message?: string; token?: string }) =>
+    api.post<{ ok: boolean; repo: string; branch: string | null; output: string }>(
+      `/labs/${id}/publish`, payload),
   azLogin: (id: string, payload: Record<string, any>) => api.post(`/labs/${id}/az-login`, payload),
   guardAudit: (id: string, limit = 200) =>
     api.get<{ lab_id: string; total: number; items: any[] }>(`/labs/${id}/guard-audit?limit=${limit}`),

@@ -150,6 +150,31 @@ _BENIGN_CATEGORIES = ("infra", "inventory", "schema", "metadata", "file", "diff"
                       "status", "geen", "none")
 
 
+# Eén cijfer telt ook: "PostNL 11, DHL 7, DPD 5" is hét voorbeeld uit de
+# guard-prompt, en met een minimum van twee cijfers viel precies dat geval
+# buiten de boot. Het scheidingsteken ervoor houdt "check1" eruit, en de
+# eis van twee regels houdt "exit 0" eruit.
+_AGGREGAAT_REGEL = re.compile(r"^\s*\S.*?[\s:=]\s*[-+]?[\d.,]+\s*%?\s*$")
+
+
+def _lijkt_op_aggregaat(text: str) -> bool:
+    """Ziet dit eruit als een telling of verdeling?
+
+    De ondergrens van 200 tekens bestaat omdat het kleine model korte
+    technische uitvoer ("check1", "AZ_YES") aanziet voor klantdata. Maar juist
+    de blinde vlek waarvoor dit model bestaat -- een afgeleid aggregaat als
+    "Noord 128400 / West 98210" -- past makkelijk in vijftig tekens, en werd
+    daarmee nooit voorgelegd.
+
+    Daarom deze uitzondering: meerdere regels die eindigen op een getal zijn
+    een verdeling, niet een statuscheck. Een enkele regel blijft onder de
+    ondergrens vallen, dus "check1" verandert niets.
+    """
+    regels = [r for r in (text or "").splitlines() if r.strip()]
+    met_getal = [r for r in regels if _AGGREGAAT_REGEL.match(r)]
+    return len(met_getal) >= 2 and len(met_getal) >= 0.5 * len(regels)
+
+
 def _fail_closed() -> bool:
     return (os.getenv("DATA_GUARD_LLM_FAIL_CLOSED") or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -245,7 +270,7 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
     # these (see guard audit: `echo check1` → "customer-aggregate"). The
     # rules layer (track A) has already run and found nothing at this point.
     min_chars = int(os.getenv("DATA_GUARD_LLM_MIN_CHARS") or 200)
-    if len(text.strip()) < min_chars:
+    if len(text.strip()) < min_chars and not _lijkt_op_aggregaat(text):
         return None
     model = _model()
     url = _url()
@@ -320,7 +345,13 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
         log.warningx("data-guard LLM fout → fail-open (regels blijven de vloer)",
                      soort=type(exc).__name__, error=detail, duur=verstreken,
                      model=model, url=url)
-        return None
+        # Géén None: dat is niet te onderscheiden van "niet gevraagd", en
+        # daardoor stond er in het auditspoor niets over een controle die
+        # helemaal niet heeft plaatsgevonden. Je zag "doorgelaten" en nam aan
+        # dat het model had meegekeken. Dit zegt expliciet dat het uitviel.
+        return {"allowed": True, "uitgevoerd": False,
+                "reason": f"tweede mening overgeslagen: {type(exc).__name__}",
+                "storing": detail, "model": model, "url": url}
 
 
 # ── Best-effort provisioning of Ollama + the guard model ─────────────────────

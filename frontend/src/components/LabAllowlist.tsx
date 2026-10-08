@@ -10,6 +10,7 @@
  * on top, they are never a prerequisite for a tool to work.
  */
 import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { mcpServerApi, skillApi, toolApi } from "@/lib/skills";
 import type { MCPServerDto, SkillDto, ToolDto } from "@/lib/types";
 import { labsApi } from "@/lib/labs";
@@ -22,6 +23,8 @@ export function LabAllowlist({ lab, onSaved }: { lab: Lab; onSaved: (updated: La
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [allowMcp, setAllowMcp] = useState<Set<string>>(new Set(lab.allowed_mcp));
   const [allowTools, setAllowTools] = useState<Set<string>>(new Set(lab.allowed_tools));
+  // Welke servers je hebt opengeklapt. Dicht is de normale stand.
+  const [uitgeklapt, setUitgeklapt] = useState<Set<string>>(new Set());
   const [allowSkills, setAllowSkills] = useState<Set<string>>(new Set(lab.allowed_skills));
   const [saving, setSaving] = useState(false);
 
@@ -81,23 +84,53 @@ export function LabAllowlist({ lab, onSaved }: { lab: Lab; onSaved: (updated: La
 
       <div>
         <h3 className="mb-2 text-sm font-semibold">Externe MCP-servers &amp; tools</h3>
+        {/* Standaard dicht. Een server met vijftig tools duwt de rest van de
+            pagina weg, terwijl je in verreweg de meeste gevallen gewoon de
+            hele server aanzet. Uitklappen doe je alleen als je er een paar
+            los wilt kiezen. */}
         {hostToolsByServer.length === 0 ? (
           <p className="text-xs text-muted-foreground">Geen externe (host) MCP-servers geregistreerd.</p>
         ) : (
           <div className="space-y-3">
-            {hostToolsByServer.map(({ server, tools: serverTools }) => (
+            {hostToolsByServer.map(({ server, tools: serverTools }) => {
+              const open = uitgeklapt.has(server.slug);
+              const losGekozen = serverTools.filter((t) => allowTools.has(t.name)).length;
+              return (
               <div key={server.id} className="rounded-md border border-border p-2">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input
-                    type="checkbox"
-                    checked={allowMcp.has(server.slug)}
-                    onChange={() => toggle(allowMcp, setAllowMcp, server.slug)}
-                  />
-                  {server.name}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    (hele server toestaan — of kies losse tools hieronder)
-                  </span>
-                </label>
+                <div className="flex items-center gap-2">
+                  <label className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium">
+                    <input
+                      type="checkbox"
+                      checked={allowMcp.has(server.slug)}
+                      onChange={() => toggle(allowMcp, setAllowMcp, server.slug)}
+                    />
+                    <span className="truncate">{server.name}</span>
+                    <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                      (hele server)
+                    </span>
+                  </label>
+                  {serverTools.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const n = new Set(uitgeklapt);
+                        if (n.has(server.slug)) n.delete(server.slug);
+                        else n.add(server.slug);
+                        setUitgeklapt(n);
+                      }}
+                      className="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs
+                                 text-muted-foreground hover:bg-muted"
+                    >
+                      {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      {serverTools.length} tools
+                      {losGekozen > 0 && !allowMcp.has(server.slug) && (
+                        <span className="rounded-full bg-primary/15 px-1.5 text-[10px] font-medium text-primary">
+                          {losGekozen} gekozen
+                        </span>
+                      )}
+                    </button>
+                  )}
+                </div>
                 {/* Eén zin, op de plek waar je het aanzet. De guard kijkt niet
                     mee bij een host-server, dus wat hier binnenkomt gaat
                     ongefilterd naar het model. Bij metadata-servers is dat
@@ -112,8 +145,8 @@ export function LabAllowlist({ lab, onSaved }: { lab: Lab; onSaved: (updated: La
                     Alleen wat jíj mag zien, want Work IQ werkt namens jou.
                   </p>
                 )}
-                {serverTools.length > 0 && (
-                  <div className="ml-6 mt-1 space-y-1">
+                {open && serverTools.length > 0 && (
+                  <div className="ml-6 mt-2 max-h-64 space-y-1 overflow-y-auto border-l border-border pl-3">
                     {serverTools.map((t) => (
                       <label key={t.id} className="flex items-center gap-2 text-xs">
                         <input
@@ -122,13 +155,14 @@ export function LabAllowlist({ lab, onSaved }: { lab: Lab; onSaved: (updated: La
                           onChange={() => toggle(allowTools, setAllowTools, t.name)}
                           disabled={allowMcp.has(server.slug)}
                         />
-                        {t.name}
+                        <span className="font-mono">{t.name}</span>
                       </label>
                     ))}
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

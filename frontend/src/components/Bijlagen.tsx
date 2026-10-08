@@ -34,6 +34,7 @@ export function BijlageKnop({
   disabled,
   onToegevoegd,
   compact,
+  alleenIcoon,
 }: {
   labId: string | null | undefined;
   /** Doelmap in het lab. De aanroeper bepaalt die, zodat bijlagen van een
@@ -42,6 +43,9 @@ export function BijlageKnop({
   disabled?: boolean;
   onToegevoegd: (bijlagen: Bijlage[]) => void;
   compact?: boolean;
+  /** Alleen de paperclip, als vierkant knopje. Voor de berichtbalk, waar een
+   *  knop met het woord "Bijlage" erop de regel uit elkaar trekt. */
+  alleenIcoon?: boolean;
 }) {
   const invoer = useRef<HTMLInputElement>(null);
   const [bezig, setBezig] = useState(false);
@@ -74,11 +78,15 @@ export function BijlageKnop({
         disabled={uit}
         onClick={() => invoer.current?.click()}
         title={labId ? "Bestanden meesturen — ze worden in het lab gezet" : "Koppel eerst een lab"}
+        aria-label={alleenIcoon ? "Bijlage toevoegen" : undefined}
         className={`flex items-center gap-1 rounded border border-border text-muted-foreground
-          hover:bg-secondary disabled:opacity-40 ${compact ? "px-2 py-1 text-[11px]" : "px-2 py-1.5 text-xs"}`}
+          hover:bg-secondary disabled:opacity-40 ${
+            alleenIcoon
+              ? `size-9 shrink-0 justify-center rounded-lg ${bezig ? "animate-pulse" : ""}`
+              : compact ? "px-2 py-1 text-[11px]" : "px-2 py-1.5 text-xs"}`}
       >
-        <Paperclip size={13} />
-        {bezig ? "Uploaden…" : "Bijlage"}
+        <Paperclip size={alleenIcoon ? 16 : 13} />
+        {!alleenIcoon && (bezig ? "Uploaden…" : "Bijlage")}
       </button>
       <input ref={invoer} type="file" multiple hidden
              onChange={(e) => kies(e.target.files)} />

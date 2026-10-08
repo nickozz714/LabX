@@ -46,6 +46,9 @@ export function BoardSettings({
   const [agentColumn, setAgentColumn] = useState(board.agent_column || "");
   const [agentBusyColumn, setAgentBusyColumn] = useState(board.agent_busy_column || "");
   const [agentDoneColumn, setAgentDoneColumn] = useState(board.agent_done_column || "");
+  const [archiveColumn, setArchiveColumn] = useState(board.archive_column || "");
+  const [archiveDays, setArchiveDays] = useState(String(board.archive_days ?? 0));
+  const [tab, setTab] = useState<"algemeen" | "kolommen" | "agent" | "archief" | "koppeling">("algemeen");
   const [agentInstruction, setAgentInstruction] = useState(board.agent_instruction || "");
   const [provider, setProvider] = useState(board.provider);
   const [config, setConfig] = useState<Record<string, any>>({ ...board.provider_config });
@@ -131,6 +134,8 @@ export function BoardSettings({
         agent_column: agentColumn || null,
         agent_busy_column: agentBusyColumn || null,
         agent_done_column: agentDoneColumn || null,
+        archive_column: archiveColumn || null,
+        archive_days: Number(archiveDays) || 0,
         agent_instruction: agentInstruction.trim() || null,
         provider,
         provider_config: config,
@@ -179,6 +184,26 @@ export function BoardSettings({
   return (
     <Modal open onClose={onClose} title={`Instellingen — ${board.name}`} wide>
       <div className="space-y-4">
+        {/* Vijf onderwerpen op één hoop is geen formulier maar een
+            vragenlijst: automatisch archiveren stond onder Agent omdat daar
+            toevallig ook een kolomkiezer staat, en dat is geen reden. */}
+        <div className="flex flex-wrap gap-1 border-b border-border text-sm">
+          {(["algemeen", "kolommen", "agent", "archief", "koppeling"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setTab(s)}
+              className={`px-3 py-1.5 ${tab === s
+                ? "border-b-2 border-primary font-medium"
+                : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {{ algemeen: "Algemeen", kolommen: "Kolommen", agent: "Agent",
+                 archief: "Archief", koppeling: "Koppeling" }[s]}
+            </button>
+          ))}
+        </div>
+
+        {tab === "algemeen" && (<div className="space-y-3">
         {/* algemeen */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="col-span-2">
@@ -206,6 +231,9 @@ export function BoardSettings({
           </Select>
         </div>
 
+        </div>)}
+
+        {tab === "kolommen" && (<div className="space-y-3">
         {/* kolommen */}
         <Card className="p-3">
           <Label>Kolommen</Label>
@@ -258,6 +286,9 @@ export function BoardSettings({
           </p>
         </Card>
 
+        </div>)}
+
+        {tab === "agent" && (<div className="space-y-3">
         {/* agent */}
         <Card className="p-3">
           <Label>Agent</Label>
@@ -300,6 +331,7 @@ export function BoardSettings({
               </Select>
             </div>
           </div>
+
           <div className="mt-2">
             <Label>Vaste werkafspraken (elke agent-run op dit board krijgt deze mee)</Label>
             <TextArea
@@ -312,6 +344,46 @@ export function BoardSettings({
           </div>
         </Card>
 
+        </div>)}
+
+        {tab === "archief" && (<div className="space-y-3">
+        <Card className="p-3">
+          <Label>Automatisch archiveren</Label>
+          {/* Bewust uit tenzij je het aanzet: tickets die vanzelf uit je bord
+              verdwijnen zonder dat je daarom gevraagd hebt, is het soort
+              verrassing dat vertrouwen kost. */}
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Archiveer vanuit</Label>
+              <Select value={archiveColumn} onChange={(e) => setArchiveColumn(e.target.value)}>
+                <option value="">— uit —</option>
+                {columns.map((c) => (
+                  <option key={c.key} value={c.key}>{c.name}</option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label>Na hoeveel dagen</Label>
+              <Input
+                type="number"
+                min={0}
+                max={365}
+                value={archiveDays}
+                onChange={(e) => setArchiveDays(e.target.value)}
+                disabled={!archiveColumn}
+              />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Een ticket dat zo lang onaangeraakt in die kolom staat, gaat uit het bord.
+            Archiveren is geen verwijderen: het blijft onder <strong>Archief</strong> staan,
+            en raakt iemand het daarna tóch weer aan, dan komt het vanzelf terug.
+            Nul dagen of geen kolom betekent uit.
+          </p>
+        </Card>
+        </div>)}
+
+        {tab === "koppeling" && (<div className="space-y-3">
         {/* koppeling */}
         <Card className="p-3">
           <Label>Bron</Label>
@@ -552,6 +624,8 @@ export function BoardSettings({
             </div>
           )}
         </Card>
+
+        </div>)}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 

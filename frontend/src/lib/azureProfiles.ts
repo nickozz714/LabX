@@ -35,6 +35,10 @@ export const azureProfilesApi = {
   refresh: (id: number, apply = true) =>
     api.post<{
       ok: boolean; kind: string; renewed?: number; detail: string;
+      // De onbewerkte meldingen van Azure. Een bundel heeft meerdere refresh
+      // tokens; dat er eentje verlopen is terwijl een andere het doet, is
+      // normaal en hoort niet in de hoofdmelding.
+      overgeslagen?: number; meldingen?: string[];
       identity?: Record<string, any>;
       apply?: { ok: boolean; steps: ApplyStep[] };
     }>(`/azure-profiles/${id}/refresh?apply=${apply}`),

@@ -40,6 +40,28 @@ _ADDITIVE_COLUMNS = {
         ("chat_archive_days", "INTEGER"),
         # Onder welke namen je in Jira/DevOps staat, voor de urenschatting.
         ("eigen_auteurs", "JSON"),
+        # Spraakassistent. Alles standaard uit/leeg: een bestaande installatie
+        # merkt niets tot je hem zelf aanzet.
+        ("openai_key_encrypted", "TEXT"),
+        ("voice_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("voice_brein", "VARCHAR(16) NOT NULL DEFAULT 'pipeline'"),
+        ("voice_microfoon", "VARCHAR(16) NOT NULL DEFAULT 'ptt'"),
+        ("voice_bevestiging", "VARCHAR(16) NOT NULL DEFAULT 'beide'"),
+        ("voice_woord", "VARCHAR(64)"),
+        ("voice_meld_runs", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("voice_sessie_minuten", "INTEGER NOT NULL DEFAULT 30"),
+        ("voice_dag_limiet_usd", "FLOAT NOT NULL DEFAULT 5.0"),
+        ("voice_realtime_model", "VARCHAR(128)"),
+        ("voice_stt_model", "VARCHAR(128)"),
+        ("voice_brein_model", "VARCHAR(128)"),
+        ("voice_tts", "VARCHAR(16)"),
+        ("voice_tts_stem", "VARCHAR(32)"),
+        ("voice_tts_model", "VARCHAR(128)"),
+        ("fish_key_encrypted", "VARCHAR(512)"),
+        ("voice_stt", "VARCHAR(16)"),
+        ("voice_fish_stem", "VARCHAR(128)"),
+        ("voice_fish_tts_model", "VARCHAR(64)"),
+        ("voice_fish_stt_model", "VARCHAR(64)"),
         ("auto_recall_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
         ("auto_recall_tool_name", "VARCHAR(255)"),
         ("auto_recall_query_template", "TEXT"),
@@ -119,6 +141,9 @@ _ADDITIVE_COLUMNS = {
     "boards": [
         # Kolom waar een ticket heen gaat zodra de agent eraan begint.
         ("agent_busy_column", "VARCHAR(64)"),
+        # Automatisch archiveren: in welke kolom, en na hoeveel dagen.
+        ("archive_column", "VARCHAR(64)"),
+        ("archive_days", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "tickets": [
         ("acceptance_criteria", "TEXT"),
@@ -258,6 +283,7 @@ def init_db() -> None:
         skill_tool,
         thread,
         time_entry,
+        voice,
         tool,
         workflow,
     )

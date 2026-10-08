@@ -64,6 +64,32 @@ class ResolvedSettings:
             self.auto_hooks = []
         self.chat_archive_days = row.chat_archive_days
         self.eigen_auteurs = getattr(row, "eigen_auteurs", None) or []
+        # Spraakassistent. Deze moeten hier staan: de hele spraaklaag leest
+        # zijn instellingen via get_settings(), en wat hier ontbreekt is daar
+        # stilzwijgend de standaardwaarde -- inclusief "geen sleutel" en
+        # "geen bevestigingswoord".
+        self.openai_key_encrypted = getattr(row, "openai_key_encrypted", None)
+        self.voice_enabled = bool(getattr(row, "voice_enabled", False))
+        self.voice_brein = getattr(row, "voice_brein", None) or "pipeline"
+        self.voice_microfoon = getattr(row, "voice_microfoon", None) or "ptt"
+        self.voice_bevestiging = getattr(row, "voice_bevestiging", None) or "beide"
+        self.voice_woord = getattr(row, "voice_woord", None)
+        self.voice_meld_runs = bool(getattr(row, "voice_meld_runs", False))
+        self.voice_sessie_minuten = getattr(row, "voice_sessie_minuten", None) or 30
+        self.voice_dag_limiet_usd = getattr(row, "voice_dag_limiet_usd", None)
+        if self.voice_dag_limiet_usd is None:
+            self.voice_dag_limiet_usd = 5.0
+        self.voice_realtime_model = getattr(row, "voice_realtime_model", None)
+        self.voice_stt_model = getattr(row, "voice_stt_model", None)
+        self.voice_brein_model = getattr(row, "voice_brein_model", None)
+        self.voice_tts = getattr(row, "voice_tts", None) or "browser"
+        self.voice_tts_stem = getattr(row, "voice_tts_stem", None)
+        self.voice_tts_model = getattr(row, "voice_tts_model", None)
+        self.fish_key_encrypted = getattr(row, "fish_key_encrypted", None)
+        self.voice_stt = getattr(row, "voice_stt", None) or "openai"
+        self.voice_fish_stem = getattr(row, "voice_fish_stem", None)
+        self.voice_fish_tts_model = getattr(row, "voice_fish_tts_model", None)
+        self.voice_fish_stt_model = getattr(row, "voice_fish_stt_model", None)
         self.default_effort = row.default_effort
         self.fallback_model = row.fallback_model
         self.max_budget_usd = row.max_budget_usd
@@ -111,6 +137,25 @@ def get_public_settings(db: Session) -> Dict[str, Any]:
         "auto_recall_instruction": resolved.auto_recall_instruction,
         "chat_archive_days": resolved.chat_archive_days,
         "eigen_auteurs": resolved.eigen_auteurs,
+        # Spraakassistent. De sleutel zelf komt NOOIT terug — alleen of er een
+        # staat, zelfde patroon als het oauth-token.
+        "openai_key_configured": bool(row.openai_key_encrypted),
+        "voice_enabled": bool(row.voice_enabled),
+        "voice_brein": row.voice_brein,
+        "voice_microfoon": row.voice_microfoon,
+        "voice_bevestiging": row.voice_bevestiging,
+        "voice_woord": row.voice_woord,
+        "voice_meld_runs": bool(row.voice_meld_runs),
+        "voice_sessie_minuten": row.voice_sessie_minuten,
+        "voice_dag_limiet_usd": row.voice_dag_limiet_usd,
+        "fish_key_configured": bool(row.fish_key_encrypted),
+        "voice_stt": resolved.voice_stt,
+        "voice_fish_stem": resolved.voice_fish_stem,
+        "voice_tts": resolved.voice_tts,
+        "voice_tts_stem": resolved.voice_tts_stem,
+        "voice_realtime_model": row.voice_realtime_model,
+        "voice_stt_model": row.voice_stt_model,
+        "voice_brein_model": row.voice_brein_model,
         "default_effort": resolved.default_effort,
         "fallback_model": resolved.fallback_model,
         "max_budget_usd": resolved.max_budget_usd,
@@ -131,6 +176,12 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
         "auto_recall_instruction",
         "chat_archive_days",
         "eigen_auteurs",
+        "voice_enabled", "voice_brein", "voice_microfoon", "voice_bevestiging",
+        "voice_woord", "voice_meld_runs", "voice_sessie_minuten",
+        "voice_dag_limiet_usd", "voice_realtime_model", "voice_stt_model",
+        "voice_brein_model", "voice_tts", "voice_tts_stem", "voice_tts_model",
+        "voice_stt", "voice_fish_stem", "voice_fish_tts_model",
+        "voice_fish_stt_model",
         "default_effort", "fallback_model", "max_budget_usd", "autocompact",
         "custom_agents_json", "default_agent", "auto_hooks",
     )
@@ -144,6 +195,26 @@ def update_settings(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
             row.oauth_token_encrypted = encrypt(token)
         else:
             row.oauth_token_encrypted = None
+    if "openai_key" in payload:
+        sleutel = (payload["openai_key"] or "").strip()
+        if sleutel:
+            from utils.crypto import encrypt
+            row.openai_key_encrypted = encrypt(sleutel)
+        else:
+            row.openai_key_encrypted = None
+    if "fish_key" in payload:
+        sleutel = (payload["fish_key"] or "").strip()
+        if sleutel:
+            from utils.crypto import encrypt
+            row.fish_key_encrypted = encrypt(sleutel)
+        else:
+            row.fish_key_encrypted = None
+    # Het realtime-brein draait bij OpenAI, dus zonder sleutel kan dat niet.
+    # Het pijplijn-brein denkt met de Claude-CLI en heeft de sleutel alleen
+    # nodig om spraak te verstaan -- typen werkt dan gewoon. Daarom valt hij
+    # terug op de pijplijn in plaats van de hele assistent uit te zetten.
+    if row.voice_enabled and not row.openai_key_encrypted:
+        row.voice_brein = "pipeline"
     row.updated_at = _now_iso()
     db.commit()
     return get_public_settings(db)

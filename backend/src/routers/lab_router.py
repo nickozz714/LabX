@@ -519,6 +519,37 @@ async def write_lab_file(lab_id: str, payload: Dict[str, Any], db: Session = Dep
     return await _service(db).write_file(lab_id, path, str(payload.get("content") or ""))
 
 
+@router.post("/{lab_id}/file/rename")
+async def rename_lab_file(lab_id: str, payload: Dict[str, Any],
+                          db: Session = Depends(get_db)):
+    """Hernoemen en verplaatsen zijn dezelfde bewerking."""
+    van, naar = payload.get("van"), payload.get("naar")
+    if not van or not naar:
+        raise HTTPException(status_code=400, detail="van en naar zijn verplicht")
+    return await _service(db).hernoem_bestand(
+        lab_id, str(van), str(naar), worker_id=payload.get("worker_id"))
+
+
+@router.post("/{lab_id}/file/delete")
+async def delete_lab_file(lab_id: str, payload: Dict[str, Any],
+                          db: Session = Depends(get_db)):
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="path is verplicht")
+    return await _service(db).verwijder_bestand(
+        lab_id, str(path), worker_id=payload.get("worker_id"))
+
+
+@router.post("/{lab_id}/file/mkdir")
+async def mkdir_lab(lab_id: str, payload: Dict[str, Any],
+                    db: Session = Depends(get_db)):
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="path is verplicht")
+    return await _service(db).maak_map(
+        lab_id, str(path), worker_id=payload.get("worker_id"))
+
+
 @router.post("/{lab_id}/upload")
 async def upload_to_lab(lab_id: str,
                         files: List[UploadFile] = File(...),
@@ -605,6 +636,35 @@ async def browser_start(lab_id: str, payload: Optional[Dict[str, Any]] = None,
 @router.post("/{lab_id}/browser-stop")
 async def browser_stop(lab_id: str, db: Session = Depends(get_db)):
     return await _service(db).stop_browser(lab_id)
+
+
+@router.get("/{lab_id}/repos")
+async def list_lab_repos(lab_id: str, db: Session = Depends(get_db)):
+    """De geregistreerde repo's met hun toestand."""
+    return await _service(db).repo_overzicht(lab_id)
+
+
+@router.post("/{lab_id}/repos")
+async def register_lab_repo(lab_id: str, payload: Dict[str, Any],
+                            db: Session = Depends(get_db)):
+    """Een repo klonen en vastleggen bij dit lab."""
+    url = payload.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="url is verplicht")
+    naam = payload.get("naam") or str(url).rstrip("/").split("/")[-1].removesuffix(".git")
+    return await _service(db).registreer_repo(
+        lab_id, naam=str(naam), url=str(url),
+        branch=payload.get("branch"), token=payload.get("token"))
+
+
+@router.delete("/{lab_id}/repos/{naam}")
+async def unregister_lab_repo(lab_id: str, naam: str, db: Session = Depends(get_db)):
+    return _service(db).verwijder_repo(lab_id, naam)
+
+
+@router.post("/{lab_id}/repos/{naam}/pull")
+async def pull_lab_repo(lab_id: str, naam: str, db: Session = Depends(get_db)):
+    return await _service(db).repo_pull(lab_id, naam)
 
 
 @router.post("/{lab_id}/publish")

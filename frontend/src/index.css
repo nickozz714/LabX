@@ -16,6 +16,12 @@
  * used the media query, which silently went dark for anyone with a
  * system-level dark preference — not what "light themed like ND3X" means.)
  */
+/* `dark:` moet dezelfde klasse volgen als de rest van het thema. In Tailwind
+   v4 hangt die variant standaard aan de media-query, en dan zouden een paar
+   losse `dark:text-...`-regels het systeem volgen terwijl de app jouw keuze
+   volgt -- precies uit de pas dus. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: 0 0% 100%;
   --foreground: 222.2 84% 4.9%;
@@ -56,6 +62,58 @@
   --sidebar-border: 220 13% 91%;
 
   color-scheme: light;
+}
+
+/* ── Donkere modus ───────────────────────────────────────────────────────────
+   Dezelfde tokens, andere waarden. Omdat de hele app via deze variabelen
+   kleurt (bg-background, text-foreground, border-border) is dit genoeg -- er
+   hoeft geen enkele component iets van het thema te weten.
+
+   Op een KLASSE en niet op de media-query: met alleen `prefers-color-scheme`
+   kun je niet tegen je systeem in kiezen, en dat is precies wat de stand
+   "licht" of "donker" betekent. De stand "auto" zet die klasse op basis van
+   het systeem; zie lib/thema.ts. */
+.dark {
+  --background: 222 25% 8%;
+  --foreground: 213 31% 91%;
+
+  --card: 222 22% 11%;
+  --card-foreground: 213 31% 91%;
+
+  --popover: 222 22% 11%;
+  --popover-foreground: 213 31% 91%;
+
+  --primary: 217 91% 60%;
+  --primary-foreground: 222 47% 11%;
+
+  --secondary: 217 19% 18%;
+  --secondary-foreground: 213 31% 91%;
+
+  --muted: 217 19% 16%;
+  --muted-foreground: 215 16% 62%;
+
+  --accent: 263 70% 62%;
+  --accent-foreground: 213 31% 95%;
+
+  --destructive: 0 72% 55%;
+  --destructive-foreground: 210 40% 98%;
+
+  --success: 160 70% 45%;
+  --warning: 38 92% 58%;
+
+  --border: 217 19% 22%;
+  --input: 217 19% 22%;
+  --ring: 217 91% 60%;
+
+  --sidebar-background: 222 27% 10%;
+  --sidebar-foreground: 213 25% 80%;
+  --sidebar-accent: 217 91% 62%;
+  --sidebar-border: 217 19% 20%;
+
+  /* Zodat de browser ook zijn eigen onderdelen (schuifbalken, invoervelden,
+     keuzelijsten) donker tekent. Zonder dit krijg je witte schuifbalken in
+     een donkere app. */
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -146,6 +204,15 @@ body {
 
 .veilig-onder { padding-bottom: var(--veilig-onder); }
 .veilig-boven { padding-top: var(--veilig-boven); }
+
+/* Let op: deze twee ZETTEN padding, ze tellen er niet bij op. Ze staan na de
+   Tailwind-import, dus een `p-3` ernaast verliest zijn padding-bottom en op een
+   desktop (waar de inkeping 0px is) eindigt zo'n element kaal tegen de rand.
+   Dat gebeurde bij de berichtbalk van de chat.
+
+   Voor een balk die onderaan het venster plakt is dit de juiste klasse: eigen
+   ruimte plus de inkeping, in één regel. */
+.balk-onder { padding-bottom: calc(var(--veilig-onder) + 1.25rem); }
 
 /* Tot 1023px, niet tot 767: een iPhone in liggende stand is 844-956px breed
    en is nog steeds een telefoon. Met de grens op 767 zoomde Safari daar
@@ -242,3 +309,70 @@ body {
 .markdown-body-invert pre { background: hsl(var(--primary-foreground) / 0.15); }
 .markdown-body-invert th, .markdown-body-invert td { border-color: hsl(var(--primary-foreground) / 0.3); }
 .markdown-body-invert hr { border-top-color: hsl(var(--primary-foreground) / 0.3); }
+
+/* Push-to-talk op een telefoon. Ingedrukt houden is op iOS normaal het
+   gebaar voor "selecteer tekst" en het deelmenu; zonder deze regels kiest
+   Safari dat in plaats van jouw knop, en schuift de pagina onder je vinger
+   weg zodra je hem beweegt. */
+.praatknop {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Het donkere vlak van de orchestrator ────────────────────────────────────
+   De gedeelde Input- en Button-componenten zijn op het lichte thema gebouwd.
+   Ze hier overschrijven met losse klassen betekent vechten met de volgorde van
+   Tailwind-regels; één regel op de omgeving is voorspelbaarder en blijft ook
+   kloppen als die componenten veranderen. */
+.spraak-donker input,
+.spraak-donker textarea {
+  background-color: rgb(255 255 255 / 0.06);
+  border-color: rgb(255 255 255 / 0.12);
+  color: rgb(226 232 240);
+}
+.spraak-donker input::placeholder { color: rgb(100 116 139); }
+.spraak-donker input:focus {
+  border-color: rgb(56 189 248 / 0.5);
+  outline-color: rgb(56 189 248 / 0.4);
+}
+
+/* Knoppen op het donkere vlak. Twee klassen diep, dus deze wint van de losse
+   Tailwind-klassen in de Button-component zonder dat daar iets aan hoeft te
+   veranderen -- en zonder !important. */
+.spraak-donker .knop-donker {
+  background-color: rgb(255 255 255 / 0.07);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  color: rgb(226 232 240);
+}
+.spraak-donker .knop-donker:hover:not(:disabled) {
+  background-color: rgb(255 255 255 / 0.12);
+  border-color: rgb(56 189 248 / 0.45);
+}
+.spraak-donker .knop-donker:disabled { opacity: 0.45; }
+
+/* Opnemen: onmiskenbaar, ook vanuit een ooghoek. */
+.spraak-donker .knop-opnemen {
+  background-color: rgb(244 63 94 / 0.22);
+  border-color: rgb(244 63 94 / 0.55);
+  color: rgb(254 205 211);
+}
+
+/* Versturen en bevestigen houden hun kleur, maar wel passend bij het vlak. */
+.spraak-donker .knop-primair {
+  background-color: rgb(14 165 233);
+  border: 1px solid rgb(56 189 248 / 0.6);
+  color: white;
+}
+.spraak-donker .knop-primair:hover:not(:disabled) { background-color: rgb(2 132 199); }
+
+/* De wortel van een schuifbare pagina.
+   `veilig-onder` dekte alleen de inkeping van een telefoon (0px op een
+   desktop), dus eindigde elke pagina kaal tegen de onderrand: de laatste rij
+   van een tabel plakte tegen het venster en het leek alsof er nog iets moest
+   komen. Deze ruimte hoort bij de pagina en niet bij het laatste element. */
+.pagina {
+  padding-bottom: calc(var(--veilig-onder) + 4rem);
+}

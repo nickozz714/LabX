@@ -13,6 +13,7 @@ import { boardApi } from "@/lib/boards";
 import type { OverviewDto, OverviewRunDto, PlanDto } from "@/lib/types";
 import { Badge, Button, Card, EmptyState } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { OrchestratorStart } from "@/components/OrchestratorStart";
 import { Bot, Pause, Play, RefreshCw, X } from "lucide-react";
 
 const PLAN_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
@@ -65,7 +66,7 @@ export function OverviewPage() {
   if (laden) return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
   if (!data || data.boards.length === 0) {
     return (
-      <div className="veilig-onder p-4 sm:p-6">
+      <div className="pagina veilig-onder p-4 sm:p-6">
         <EmptyState>Nog geen boards. Maak er een aan bij Boards.</EmptyState>
       </div>
     );
@@ -182,7 +183,8 @@ export function OverviewPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-6">
+    <div className="pagina veilig-onder space-y-6 p-4 sm:p-6">
+      <OrchestratorStart />
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Overzicht</h1>
         <Button variant="ghost" className="text-xs" onClick={refresh}>

@@ -18,7 +18,7 @@ import { useMelding } from "@/components/Meldingen";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
-import { Archive, ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import type { Bijlage } from "@/lib/labs";
 
@@ -31,6 +31,7 @@ export function BoardPage() {
   const id = Number(boardId);
   const navigate = useNavigate();
 
+  const balk = useMelding();
   const [board, setBoard] = useState<BoardDto | null>(null);
   const [tickets, setTickets] = useState<TicketDto[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -141,6 +142,27 @@ export function BoardPage() {
       setBusy(false);
     }
   }
+
+  async function verplaatsKolom(index: number, richting: -1 | 1) {
+    if (!board) return;
+    const doel = index + richting;
+    if (doel < 0 || doel >= board.columns.length) return;
+    // Alleen de VOLGORDE verandert; de sleutels blijven, dus geen enkel ticket
+    // verhuist. Dat is wat dit veilig maakt om even te proberen.
+    const nieuw = [...board.columns];
+    [nieuw[index], nieuw[doel]] = [nieuw[doel], nieuw[index]];
+    setBoard({ ...board, columns: nieuw });
+    try {
+      await boardApi.update(board.id, { columns: nieuw });
+    } catch (err) {
+      // Mislukt het, dan het bord opnieuw ophalen: een lijst die alleen in
+      // het scherm verschoven is, is erger dan niets.
+      balk.fout("Volgorde niet opgeslagen",
+                err instanceof Error ? err.message : String(err));
+      refresh();
+    }
+  }
+
 
   async function onDrop(columnKey: string, voorTicketId?: number) {
     const ticketId = dragged.current;
@@ -351,8 +373,8 @@ export function BoardPage() {
             eentje vult bijna het scherm en klikt netjes in bij het vegen.
             Een kolom van 288px op een scherm van 390px geeft anders die
             halve-kolom-rand waar je steeds overheen scrolt. */}
-        <div className="schuif-x flex flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
-          {board.columns.map((col) => {
+        <div className="schuif-x group/bord flex flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
+          {board.columns.map((col, kolomIndex) => {
             const cards = tickets.filter((t) => t.status === col.key);
             const overLimit = col.wip_limit != null && cards.length > col.wip_limit;
             return (
@@ -363,11 +385,33 @@ export function BoardPage() {
                 onDrop={() => onDrop(col.key)}
               >
                 <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                  <span className="text-sm font-semibold">
-                    {col.name}
+                  <span className="flex min-w-0 items-center gap-1 text-sm font-semibold">
+                    {/* De volgorde verzetten waar je hem ziet. In de
+                        instellingen zou je moeten onthouden hoe het bord
+                        eruitzag; hier zie je het terwijl je het doet. */}
+                    <span className="flex shrink-0 flex-col leading-none opacity-0 transition-opacity group-hover/bord:opacity-100">
+                      <button
+                        disabled={kolomIndex === 0}
+                        title="Naar links"
+                        onClick={() => verplaatsKolom(kolomIndex, -1)}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-25"
+                      >
+                        <ChevronLeft size={13} />
+                      </button>
+                    </span>
+                    <span className="truncate">{col.name}</span>
                     {board.agent_column === col.key && (
-                      <Bot size={12} className="ml-1 inline text-muted-foreground" />
+                      <Bot size={12} className="inline shrink-0 text-muted-foreground" />
                     )}
+                    <button
+                      disabled={kolomIndex === board.columns.length - 1}
+                      title="Naar rechts"
+                      onClick={() => verplaatsKolom(kolomIndex, 1)}
+                      className="shrink-0 text-muted-foreground opacity-0 transition-opacity
+                                 hover:text-foreground disabled:opacity-25 group-hover/bord:opacity-100"
+                    >
+                      <ChevronRight size={13} />
+                    </button>
                   </span>
                   <span className="flex items-center gap-2">
                     {cards.length > 0 && (

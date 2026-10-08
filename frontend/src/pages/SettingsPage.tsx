@@ -9,7 +9,7 @@ import { labsApi } from "@/lib/labs";
 import { useAuth } from "@/contexts/AuthContext";
 import { api, ApiError } from "@/lib/api";
 import type { AppSettingsDto, GuardModelStatus, LabExtra } from "@/lib/types";
-import { Badge, Button, Card, Input, Label, TextArea, Toggle } from "@/components/ui";
+import { Badge, Button, Card, Input, Label, Select, TextArea, Toggle } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ClaimResourcesCard } from "@/components/ClaimResourcesCard";
@@ -20,6 +20,7 @@ export function SettingsPage() {
   const [oauthToken, setOauthToken] = useState("");
   const [extraArgsText, setExtraArgsText] = useState("");
   const [saved, setSaved] = useState(false);
+  const [sectie, setSectie] = useState<"agent" | "guard" | "hooks" | "labs" | "overig">("agent");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export function SettingsPage() {
 
   if (!settings) return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
 
-  async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string }) {
+  async function save(patch: Partial<AppSettingsDto> & { oauth_token?: string; openai_key?: string; fish_key?: string }) {
     try {
       const updated = await settingsApi.update({ ...settings, ...patch });
       setSettings(updated);
@@ -58,9 +59,30 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="veilig-onder mx-auto max-w-2xl space-y-6 p-4 sm:p-6">
+    <div className="pagina veilig-onder space-y-6 p-4 sm:p-6">
       <h1 className="text-xl font-bold">Instellingen</h1>
 
+      {/* Acht kaarten onder elkaar in één kolom is geen pagina maar een
+          stapel: je scrolt langs van alles waar je niet voor kwam. Nu per
+          onderwerp, met de agent vooraan -- dat is waar je het vaakst moet
+          zijn. */}
+      <div className="flex flex-wrap gap-1 border-b border-border text-sm">
+        {(["agent", "guard", "hooks", "labs", "overig"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setSectie(s)}
+            className={`px-3 py-1.5 ${sectie === s
+              ? "border-b-2 border-primary font-medium"
+              : "text-muted-foreground hover:text-foreground"}`}
+          >
+            {{ agent: "Agent & orchestrator", guard: "Data-guard",
+               hooks: "Hooks", labs: "Labs",
+               overig: "Meldingen & account" }[s]}
+          </button>
+        ))}
+      </div>
+
+      {sectie === "agent" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Claude Code CLI — globaal (infrastructuur)</h2>
         <p className="text-xs text-muted-foreground">
@@ -131,6 +153,229 @@ export function SettingsPage() {
             anders in, dan wordt diens tijd als de jouwe geteld — dus hou het bij jezelf.
           </p>
         </div>
+        {/* ── Orchestrator ────────────────────────────────────────────
+            Twee voorwaarden, allebei nodig: het schuifje aan én een sleutel.
+            Zonder sleutel valt er niets te verstaan, en dan hoort het tabblad
+            er ook niet te zijn. */}
+        <div className="rounded-lg border border-border p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold">Orchestrator</span>
+            <label className="flex cursor-pointer items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.voice_enabled)}
+                onChange={(e) => {
+                  const aan = e.target.checked;
+                  setSettings({ ...settings, voice_enabled: aan });
+                  save({ voice_enabled: aan });
+                }}
+              />
+              Aan
+            </label>
+          </div>
+
+          {/* Eén regel die zegt waar je staat, zodat je niet hoeft te raden
+              waarom de tab er nog niet is. */}
+          <p className={`mb-3 text-xs ${
+            settings.voice_enabled && settings.openai_key_configured
+              ? "text-green-600 dark:text-green-500"
+              : "text-muted-foreground"}`}>
+            {!settings.voice_enabled
+              ? "Staat uit — de orchestrator verschijnt niet op Overzicht."
+              : !settings.openai_key_configured
+                ? "Vul hieronder een OpenAI-sleutel in; pas dan verschijnt de orchestrator op Overzicht."
+                : "Klaar voor gebruik — je start hem vanaf Overzicht."}
+          </p>
+
+          <Label>OpenAI-sleutel</Label>
+          <Input
+            type="password"
+            placeholder={settings.openai_key_configured ? "•••••••• (ingesteld)" : "sk-…"}
+            onBlur={(e) => {
+              if (!e.target.value.trim()) return;
+              save({ openai_key: e.target.value.trim() });
+              e.target.value = "";
+            }}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Nodig om spraak te verstaan en voor het realtime-model. De sleutel
+            komt nooit terug uit de API — net als het Claude-token.
+          </p>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Brein</Label>
+              <Select
+                value={settings.voice_brein || "pipeline"}
+                onChange={(e) => {
+                  setSettings({ ...settings, voice_brein: e.target.value as "realtime" | "pipeline" });
+                  save({ voice_brein: e.target.value as "realtime" | "pipeline" });
+                }}
+              >
+                <option value="pipeline">Pijplijn (transcriptie + Claude) — goedkoper</option>
+                <option value="realtime">GPT-realtime — sneller, natuurlijker</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Microfoon</Label>
+              <Select
+                value={settings.voice_microfoon || "ptt"}
+                onChange={(e) => {
+                  setSettings({ ...settings, voice_microfoon: e.target.value as "ptt" | "open" });
+                  save({ voice_microfoon: e.target.value as "ptt" | "open" });
+                }}
+              >
+                <option value="ptt">Push-to-talk — alleen wat jij opstuurt</option>
+                <option value="open">Open microfoon — hoort iedereen in de kamer</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Bevestigen met</Label>
+              <Select
+                value={settings.voice_bevestiging || "beide"}
+                onChange={(e) => {
+                  setSettings({ ...settings, voice_bevestiging: e.target.value as "klik" | "spraak" | "beide" });
+                  save({ voice_bevestiging: e.target.value as "klik" | "spraak" | "beide" });
+                }}
+              >
+                <option value="beide">Allebei</option>
+                <option value="klik">Alleen klikken</option>
+                <option value="spraak">Alleen je stem</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Stem</Label>
+              <Select
+                value={settings.voice_tts === "openai"
+                  ? `openai:${settings.voice_tts_stem || "coral"}`
+                  : settings.voice_tts === "fish" ? "fish" : "browser"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const patch = v === "browser"
+                    ? { voice_tts: "browser" as const }
+                    : v === "fish"
+                      ? { voice_tts: "fish" as const }
+                      : { voice_tts: "openai" as const, voice_tts_stem: v.split(":")[1] };
+                  setSettings({ ...settings, ...patch });
+                  save(patch);
+                }}
+              >
+                <option value="browser">Browserstem — gratis, klinkt machinaal</option>
+                <option value="openai:alloy">Alloy — neutraal</option>
+                <option value="openai:ash">Ash — laag, rustig</option>
+                <option value="openai:coral">Coral — warm</option>
+                <option value="openai:nova">Nova — helder</option>
+                <option value="openai:sage">Sage — kalm</option>
+                <option value="openai:shimmer">Shimmer — zacht</option>
+                <option value="fish">Fish Audio — eigen stem (reference_id)</option>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                De browserstem kost niets. De andere klinken menselijk maar gaan
+                per zin naar een dienst; dat telt mee in je dagplafond. Lukt het
+                even niet, dan valt hij terug op de browserstem.
+              </p>
+            </div>
+            <div>
+              <Label>Verstaan door</Label>
+              <Select
+                value={settings.voice_stt || "openai"}
+                onChange={(e) => {
+                  const v = e.target.value as "openai" | "fish";
+                  setSettings({ ...settings, voice_stt: v });
+                  save({ voice_stt: v });
+                }}
+              >
+                <option value="openai">OpenAI — kent je bordprefixen</option>
+                <option value="fish">Fish Audio — alleen een taalhint</option>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                OpenAI krijgt een woordenlijst mee met je bordprefixen en
+                klantnamen; dat is wat van “Plato” weer “PLAT-2” maakt. Fish
+                neemt alleen een taalcode aan, dus reken op slechtere
+                ticketsleutels.
+              </p>
+            </div>
+            <div>
+              <Label>Fish Audio-sleutel</Label>
+              <Input
+                type="password"
+                placeholder={settings.fish_key_configured ? "•••••••• (ingesteld)" : "fish_…"}
+                onBlur={(e) => {
+                  if (!e.target.value.trim()) return;
+                  save({ fish_key: e.target.value.trim() });
+                  e.target.value = "";
+                }}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Alleen nodig als je hierboven Fish kiest. Let op: de gratis laag
+                van Fish is voor persoonlijk, niet-commercieel gebruik — prima om
+                de stem te beoordelen, niet om klantwerk mee te doen.
+              </p>
+            </div>
+            <div>
+              <Label>Fish-stem (reference_id)</Label>
+              <Input
+                value={settings.voice_fish_stem ?? ""}
+                placeholder="leeg = standaardstem"
+                onChange={(e) => setSettings({ ...settings, voice_fish_stem: e.target.value })}
+                onBlur={() => save({ voice_fish_stem: settings.voice_fish_stem })}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Het id van een stem uit de Fish-bibliotheek of een eigen
+                gekloonde stem. Laat leeg voor de standaard.
+              </p>
+            </div>
+            <div>
+              <Label>Bevestigingswoord</Label>
+              <Input
+                value={settings.voice_woord ?? ""}
+                placeholder="bevestigd"
+                onChange={(e) => setSettings({ ...settings, voice_woord: e.target.value })}
+                onBlur={() => save({ voice_woord: settings.voice_woord })}
+              />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Het woord moet je héle antwoord zijn: “Henk” bevestigt, “Henk, kun jij
+            even kijken?” niet. Kies daarom geen woord dat je in gewone gesprekken
+            gebruikt — zit er een Henk op kantoor, dan is “Henk” juist het
+            slechtste woord dat je kunt nemen. Een bevestiging vervalt na 20
+            seconden.
+          </p>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Sessielimiet (minuten, 0 = geen)</Label>
+              <Input
+                type="number" min={0}
+                value={settings.voice_sessie_minuten ?? 30}
+                onChange={(e) => setSettings({ ...settings, voice_sessie_minuten: Number(e.target.value) })}
+                onBlur={() => save({ voice_sessie_minuten: settings.voice_sessie_minuten })}
+              />
+            </div>
+            <div>
+              <Label>Dagplafond in dollars (0 = geen)</Label>
+              <Input
+                type="number" min={0} step="0.5"
+                value={settings.voice_dag_limiet_usd ?? 5}
+                onChange={(e) => setSettings({ ...settings, voice_dag_limiet_usd: Number(e.target.value) })}
+                onBlur={() => save({ voice_dag_limiet_usd: settings.voice_dag_limiet_usd })}
+              />
+            </div>
+          </div>
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.voice_meld_runs)}
+              onChange={(e) => {
+                setSettings({ ...settings, voice_meld_runs: e.target.checked });
+                save({ voice_meld_runs: e.target.checked });
+              }}
+            />
+            Zelf melden wanneer een run die hij startte klaar is
+          </label>
+        </div>
+
         <div>
           <Label>Extra CLI-argumenten (spatie-gescheiden)</Label>
           <Input
@@ -206,7 +451,9 @@ export function SettingsPage() {
           Open de eerste-keer-wizard opnieuw (Docker-check + Claude-token)
         </button>
       </Card>
+      </div>)}
 
+      {sectie === "guard" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Data-guard standaarden</h2>
         <Toggle checked={settings.data_guard_default} onChange={(v) => save({ data_guard_default: v })} label="Data-egress-guard standaard aan voor nieuwe labs" />
@@ -262,7 +509,9 @@ export function SettingsPage() {
           </div>
         )}
       </Card>
+      </div>)}
 
+      {sectie === "hooks" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Automatische hooks (elke chat-beurt)</h2>
         <p className="text-xs text-muted-foreground">
@@ -347,7 +596,9 @@ export function SettingsPage() {
           + Hook toevoegen
         </Button>
       </Card>
+      </div>)}
 
+      {sectie === "labs" && (<div className="space-y-6">
       <Card className="p-4 space-y-3">
         <h2 className="text-sm font-semibold">Lab-standaarden</h2>
         <div className="grid grid-cols-2 gap-3">
@@ -363,6 +614,9 @@ export function SettingsPage() {
       </Card>
 
       <LabExtrasCard />
+      </div>)}
+
+      {sectie === "overig" && (<div className="space-y-6">
       {/* De kluis heeft een eigen tab gekregen: het is iets dat je erbij pakt
           terwijl je een skill schrijft, niet iets dat je één keer instelt. Hier
           blijft een wegwijzer staan, want hier zocht je hem. */}
@@ -379,6 +633,8 @@ export function SettingsPage() {
       <NotificationsCard />
 
       <AccountCard />
+      </div>)}
+
 
       {saved && <p className="text-sm text-success">Opgeslagen.</p>}
     </div>
