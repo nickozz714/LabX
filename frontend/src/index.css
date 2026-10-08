@@ -16,6 +16,12 @@
  * used the media query, which silently went dark for anyone with a
  * system-level dark preference — not what "light themed like ND3X" means.)
  */
+/* `dark:` moet dezelfde klasse volgen als de rest van het thema. In Tailwind
+   v4 hangt die variant standaard aan de media-query, en dan zouden een paar
+   losse `dark:text-...`-regels het systeem volgen terwijl de app jouw keuze
+   volgt -- precies uit de pas dus. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: 0 0% 100%;
   --foreground: 222.2 84% 4.9%;
@@ -56,6 +62,58 @@
   --sidebar-border: 220 13% 91%;
 
   color-scheme: light;
+}
+
+/* ── Donkere modus ───────────────────────────────────────────────────────────
+   Dezelfde tokens, andere waarden. Omdat de hele app via deze variabelen
+   kleurt (bg-background, text-foreground, border-border) is dit genoeg -- er
+   hoeft geen enkele component iets van het thema te weten.
+
+   Op een KLASSE en niet op de media-query: met alleen `prefers-color-scheme`
+   kun je niet tegen je systeem in kiezen, en dat is precies wat de stand
+   "licht" of "donker" betekent. De stand "auto" zet die klasse op basis van
+   het systeem; zie lib/thema.ts. */
+.dark {
+  --background: 222 25% 8%;
+  --foreground: 213 31% 91%;
+
+  --card: 222 22% 11%;
+  --card-foreground: 213 31% 91%;
+
+  --popover: 222 22% 11%;
+  --popover-foreground: 213 31% 91%;
+
+  --primary: 217 91% 60%;
+  --primary-foreground: 222 47% 11%;
+
+  --secondary: 217 19% 18%;
+  --secondary-foreground: 213 31% 91%;
+
+  --muted: 217 19% 16%;
+  --muted-foreground: 215 16% 62%;
+
+  --accent: 263 70% 62%;
+  --accent-foreground: 213 31% 95%;
+
+  --destructive: 0 72% 55%;
+  --destructive-foreground: 210 40% 98%;
+
+  --success: 160 70% 45%;
+  --warning: 38 92% 58%;
+
+  --border: 217 19% 22%;
+  --input: 217 19% 22%;
+  --ring: 217 91% 60%;
+
+  --sidebar-background: 222 27% 10%;
+  --sidebar-foreground: 213 25% 80%;
+  --sidebar-accent: 217 91% 62%;
+  --sidebar-border: 217 19% 20%;
+
+  /* Zodat de browser ook zijn eigen onderdelen (schuifbalken, invoervelden,
+     keuzelijsten) donker tekent. Zonder dit krijg je witte schuifbalken in
+     een donkere app. */
+  color-scheme: dark;
 }
 
 @theme inline {

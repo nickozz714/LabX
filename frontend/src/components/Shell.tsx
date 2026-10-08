@@ -20,6 +20,7 @@ import { dockerStatus } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { Versie } from "@/components/Versie";
+import { ThemaKiezer } from "@/components/ThemaKiezer";
 import {
   Boxes, ChevronLeft, ChevronRight, KanbanSquare, LayoutDashboard, Lock, LogOut,
   MessageSquare, Menu, Settings, ShieldCheck, Wrench, Clock, X,
@@ -146,6 +147,11 @@ export function Shell() {
 
   const onderkant = (opTelefoon: boolean) => (
     <div className="shrink-0 border-t border-sidebar-border px-2 py-2 text-xs text-sidebar-foreground/60">
+      {/* Licht, donker of meebewegen met het systeem. Onderin bij de andere
+          dingen die over JOU gaan en niet over waar je heen navigeert. */}
+      <div className="mb-1">
+        <ThemaKiezer compact={ingeklapt && !opTelefoon} />
+      </div>
       {(!ingeklapt || opTelefoon) && (
         <div className="mb-1 flex items-center justify-between px-1">
           <span className="truncate">{username}</span>

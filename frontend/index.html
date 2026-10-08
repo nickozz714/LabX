@@ -5,6 +5,18 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LabX</title>
+      <script>
+      // Vóór de app: anders zie je bij elke herlaadbeurt een witte flits
+      // voordat het donker wordt. Bewust klein en zonder afhankelijkheden.
+      (function () {
+        try {
+          var w = localStorage.getItem("labx_thema") || "auto";
+          var donker = w === "donker" || (w === "auto" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (donker) document.documentElement.classList.add("dark");
+        } catch (e) { /* privemodus: dan gewoon licht */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
