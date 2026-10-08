@@ -1786,6 +1786,61 @@ exec ssh -N \\
             raise HTTPException(status_code=404, detail=result["output"][:300])
         return {"path": target, "content": result["output"], "truncated": result["truncated"]}
 
+    async def hernoem_bestand(self, lab_id: str, van: str, naar: str, *,
+                              worker_id: Optional[int] = None) -> Dict[str, Any]:
+        """Hernoemen én verplaatsen: dat is dezelfde bewerking.
+
+        Beide paden door `_safe_path`, dus je kunt niets buiten /workspace
+        slepen -- ook niet door het DOEL buiten de map te leggen.
+        """
+        p = self.get(lab_id)
+        cid = self._require_running(p, worker_id)
+        bron, doel = self._safe_path(van), self._safe_path(naar)
+        if bron == "/workspace":
+            raise HTTPException(status_code=400, detail="De werkmap zelf kan niet.")
+        # Paden als ARGUMENT en niet in de tekst van het commando: een naam met
+        # een aanhalingsteken erin zou anders uit de quotes breken.
+        result = await self.runtime.exec(
+            cid, ["sh", "-c",
+                  'test -e "$1" || { echo "bestaat niet"; exit 1; }; '
+                  'test -e "$2" && { echo "bestemming bestaat al"; exit 1; }; '
+                  'mkdir -p "$(dirname "$2")" && mv -- "$1" "$2"',
+                  "sh", bron, doel],
+            timeout=30)
+        if result["exit_code"] != 0:
+            raise HTTPException(status_code=400, detail=result["output"][:300] or "Verplaatsen mislukt")
+        self._touch(p)
+        return {"van": bron, "naar": doel}
+
+    async def verwijder_bestand(self, lab_id: str, path: str, *,
+                                worker_id: Optional[int] = None) -> Dict[str, Any]:
+        p = self.get(lab_id)
+        cid = self._require_running(p, worker_id)
+        target = self._safe_path(path)
+        # De werkmap zelf leegmaken is geen bestandsbewerking maar een ongeluk.
+        if target == "/workspace":
+            raise HTTPException(status_code=400, detail="De werkmap zelf kan niet.")
+        result = await self.runtime.exec(
+            cid, ["sh", "-c", 'test -e "$1" || { echo "bestaat niet"; exit 1; }; rm -rf -- "$1"',
+                  "sh", target],
+            timeout=30)
+        if result["exit_code"] != 0:
+            raise HTTPException(status_code=400, detail=result["output"][:300] or "Verwijderen mislukt")
+        self._touch(p)
+        return {"verwijderd": target}
+
+    async def maak_map(self, lab_id: str, path: str, *,
+                       worker_id: Optional[int] = None) -> Dict[str, Any]:
+        p = self.get(lab_id)
+        cid = self._require_running(p, worker_id)
+        target = self._safe_path(path)
+        result = await self.runtime.exec(
+            cid, ["sh", "-c", 'mkdir -p -- "$1"', "sh", target], timeout=30)
+        if result["exit_code"] != 0:
+            raise HTTPException(status_code=400, detail=result["output"][:300])
+        self._touch(p)
+        return {"map": target}
+
     async def download(self, lab_id: str, path: str, *,
                        worker_id: Optional[int] = None) -> Dict[str, Any]:
         """Een bestand of map uit het lab halen, als ruwe bytes.

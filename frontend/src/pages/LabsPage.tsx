@@ -11,7 +11,7 @@ import { dockerStatus, downloadLabFile, labsApi, type BrowserStatus, type LabFil
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { Download, Loader2, RefreshCw, Pencil, Trash2 } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
@@ -19,6 +19,7 @@ import { LabResources } from "@/components/LabResources";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { HostMeter } from "@/components/HostMeter";
 import { useMelding } from "@/components/Meldingen";
+import { useBevestiging } from "@/components/Bevestiging";
 import { guardApi, type GuardProfiel } from "@/lib/guard";
 import { MODEL_OPTIONS, modelLabel } from "@/lib/modellen";
 import { getToken } from "@/lib/api";
@@ -1240,15 +1241,17 @@ function PublishPanel({ lab }: { lab: Lab }) {
  */
 function FileBrowser({ lab }: { lab: Lab }) {
   const [path, setPath] = useState("/workspace");
-  // `melding` is hieronder al een lokale statusregel in dit paneel; de
-  // meldingenbalk krijgt daarom een eigen naam.
   const balk = useMelding();
+  const bevestig = useBevestiging();
   const [bezigMet, setBezigMet] = useState<string | null>(null);
   const [entries, setEntries] = useState<LabFileEntry[]>([]);
-  const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [melding, setMelding] = useState<string | null>(null);
   const [sleep, setSleep] = useState(false);
+  const [zoek, setZoek] = useState("");
+  // Welk bestand er open is om te bekijken of te bewerken. Eén tegelijk.
+  const [open, setOpen] = useState<{ pad: string; inhoud: string; afgekapt: boolean } | null>(null);
+  const [bewerkt, setBewerkt] = useState<string | null>(null);
 
   async function load(p: string) {
     setError(null);
@@ -1256,7 +1259,8 @@ function FileBrowser({ lab }: { lab: Lab }) {
       const r = await labsApi.files(lab.id, p);
       setEntries(r.entries);
       setPath(r.path);
-      setContent(null);
+      setOpen(null);
+      setBewerkt(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Laden mislukt");
     }
@@ -1267,11 +1271,112 @@ function FileBrowser({ lab }: { lab: Lab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lab.id]);
 
+  async function openen(naam: string) {
+    const pad = `${path}/${naam}`;
+    try {
+      const r = await labsApi.readFile(lab.id, pad);
+      setOpen({ pad, inhoud: r.content, afgekapt: r.truncated });
+      setBewerkt(null);
+    } catch (err) {
+      balk.fout("Openen mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function hernoemen(naam: string) {
+    const nieuwNaam = window.prompt(
+      "Nieuwe naam, of een pad met een / erin om te verplaatsen.", naam);
+    if (!nieuwNaam || nieuwNaam === naam) return;
+    const doel = nieuwNaam.includes("/") ? nieuwNaam : `${path}/${nieuwNaam}`;
+    try {
+      await labsApi.renameFile(lab.id, `${path}/${naam}`, doel);
+      balk.ok(`${naam} → ${doel}`);
+      load(path);
+    } catch (err) {
+      balk.fout("Hernoemen mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function verwijderen(e: LabFileEntry) {
+    const ja = await bevestig.vraag({
+      titel: `"${e.name}" verwijderen?`,
+      tekst: e.is_dir ? "De hele map en alles erin gaat weg."
+                      : "Dit kan niet ongedaan gemaakt worden.",
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
+    try {
+      await labsApi.deleteFile(lab.id, `${path}/${e.name}`);
+      balk.ok(`${e.name} verwijderd`);
+      load(path);
+    } catch (err) {
+      balk.fout("Verwijderen mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function opslaan() {
+    if (!open || bewerkt === null) return;
+    try {
+      await labsApi.writeFile(lab.id, open.pad, bewerkt);
+      balk.ok("Opgeslagen");
+      setOpen({ ...open, inhoud: bewerkt });
+      setBewerkt(null);
+    } catch (err) {
+      balk.fout("Opslaan mislukt", err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  // Mappen eerst, daarna op naam: dat is de volgorde waarin je zoekt.
+  const zichtbaar = entries
+    .filter((e) => !zoek.trim() || e.name.toLowerCase().includes(zoek.trim().toLowerCase()))
+    .sort((a, b) => (a.is_dir === b.is_dir
+      ? a.name.localeCompare(b.name, "nl")
+      : a.is_dir ? -1 : 1));
+
   return (
     <div>
+      {/* Kruimelpad: elk deel is klikbaar. Met alleen een ".."-regel moet je
+          vier keer klikken om twee mappen omhoog te komen. */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">{path}</span>
+        <nav className="flex min-w-0 flex-wrap items-center gap-1 text-xs">
+          {path.replace(/^\//, "").split("/").map((deel, i, alle) => {
+            const naartoe = "/" + alle.slice(0, i + 1).join("/");
+            const laatste = i === alle.length - 1;
+            return (
+              <span key={naartoe} className="flex items-center gap-1">
+                {i > 0 && <span className="text-muted-foreground">/</span>}
+                <button
+                  onClick={() => !laatste && load(naartoe)}
+                  className={laatste ? "font-medium" : "text-primary hover:underline"}
+                >
+                  {deel}
+                </button>
+              </span>
+            );
+          })}
+        </nav>
         <div className="ml-auto flex items-center gap-2">
+          <input
+            value={zoek}
+            onChange={(e) => setZoek(e.target.value)}
+            placeholder="Filter…"
+            className="w-32 rounded border border-input bg-background px-2 py-1 text-xs placeholder:text-muted-foreground"
+          />
+          <Button
+            variant="secondary"
+            className="px-2 py-1 text-xs"
+            onClick={async () => {
+              const naam = window.prompt("Naam van de nieuwe map");
+              if (!naam) return;
+              try {
+                await labsApi.mkdir(lab.id, `${path}/${naam}`);
+                load(path);
+              } catch (err) {
+                balk.fout("Map maken mislukt", err instanceof ApiError ? err.message : String(err));
+              }
+            }}
+          >
+            + Map
+          </Button>
           <BijlageKnop
             labId={lab.status === "running" ? lab.id : null}
             dir={path}
@@ -1284,7 +1389,8 @@ function FileBrowser({ lab }: { lab: Lab }) {
       </div>
       {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
       {melding && <p className="mb-2 text-xs text-muted-foreground">{melding}</p>}
-      <ul
+
+      <div
         onDragOver={(e) => { e.preventDefault(); setSleep(true); }}
         onDragLeave={() => setSleep(false)}
         onDrop={async (e) => {
@@ -1295,60 +1401,118 @@ function FileBrowser({ lab }: { lab: Lab }) {
           try {
             const r = await labsApi.upload(lab.id, files, path);
             setMelding(`${r.files.length} bestand(en) in ${path} gezet.`
-              + (r.skipped.length ? ` Overgeslagen: ${r.skipped.map((s) => `${s.name} (${s.reden})`).join(", ")}` : ""));
+              + (r.skipped.length
+                ? ` Overgeslagen: ${r.skipped.map((s) => `${s.name} (${s.reden})`).join(", ")}`
+                : ""));
             load(path);
           } catch (err) {
             setError(err instanceof ApiError ? err.message : "Uploaden mislukt");
           }
         }}
-        className={`mb-3 max-h-48 divide-y divide-border overflow-y-auto rounded border text-sm
-          ${sleep ? "border-primary bg-secondary" : "border-border"}`}
+        className={`mb-3 max-h-80 overflow-y-auto rounded border ${
+          sleep ? "border-primary bg-secondary" : "border-border"}`}
       >
-        {path !== "/workspace" && (
-          <li className="cursor-pointer px-3 py-1.5 hover:bg-secondary" onClick={() => load(path.split("/").slice(0, -1).join("/") || "/workspace")}>
-            ..
-          </li>
-        )}
-        {entries.map((e) => (
-          <li
-            key={e.name}
-            className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-secondary"
-            onClick={() => (e.is_dir ? load(`${path}/${e.name}`) : labsApi.readFile(lab.id, `${path}/${e.name}`).then((r) => setContent(r.content)))}
-          >
-            <span>{e.is_dir ? "📁" : "📄"} {e.name}</span>
-            {e.bytes !== null && !e.is_dir && (
-              <span className="ml-auto text-[11px] text-muted-foreground">{leesbareMaat(e.bytes)}</span>
+        <table className="w-full text-sm">
+          <tbody>
+            {path !== "/workspace" && (
+              <tr className="cursor-pointer border-b border-border hover:bg-secondary"
+                  onClick={() => load(path.split("/").slice(0, -1).join("/") || "/workspace")}>
+                <td colSpan={3} className="px-3 py-1.5 text-muted-foreground">..</td>
+              </tr>
             )}
-            {/* Klikken op de regel opent een VOORBEELD (tekst, afgekapt op
-                200 kB). Deze knop haalt het bestand zelf op — ruwe bytes, dus
-                ook een parquet of een zip. Een map komt er als tar.gz uit. */}
-            <button
-              title={e.is_dir ? "Map downloaden als tar.gz" : "Bestand downloaden"}
-              className={`shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground
-                ${e.bytes === null || e.is_dir ? "ml-auto" : ""}`}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                setBezigMet(e.name);
-                downloadLabFile(lab.id, `${path}/${e.name}`)
-                  .then((naam) => balk.ok(`${naam} gedownload`))
-                  .catch((err) => balk.fout("Downloaden mislukt", String(err?.message || err)))
-                  .finally(() => setBezigMet(null));
-              }}
-            >
-              {bezigMet === e.name
-                ? <Loader2 size={13} className="animate-spin" />
-                : <Download size={13} />}
-            </button>
-          </li>
-        ))}
-        {entries.length === 0 && (
-          <li className="px-3 py-2 text-xs text-muted-foreground">
-            Leeg — sleep hier bestanden naartoe of gebruik de knop hierboven.
-          </li>
-        )}
-      </ul>
-      {content !== null && <pre className="max-h-64 overflow-auto rounded bg-secondary p-3 text-xs whitespace-pre-wrap">{content}</pre>}
+            {zichtbaar.map((e) => (
+              <tr key={e.name} className="border-b border-border last:border-0 hover:bg-secondary">
+                <td className="px-3 py-1.5">
+                  <button
+                    className="flex min-w-0 items-center gap-2 text-left"
+                    onClick={() => (e.is_dir ? load(`${path}/${e.name}`) : openen(e.name))}
+                  >
+                    <span className="shrink-0">{e.is_dir ? "📁" : "📄"}</span>
+                    <span className="truncate">{e.name}</span>
+                  </button>
+                </td>
+                <td className="whitespace-nowrap px-2 py-1.5 text-right text-[11px] text-muted-foreground">
+                  {e.bytes !== null && !e.is_dir ? leesbareMaat(e.bytes) : ""}
+                </td>
+                <td className="px-2 py-1.5">
+                  {/* Altijd zichtbaar en niet pas bij hover: op een touchscreen
+                      bestaat hover niet, en dan zijn deze knoppen onbereikbaar. */}
+                  <div className="flex items-center justify-end gap-0.5">
+                    <button title="Hernoemen of verplaatsen"
+                            onClick={() => hernoemen(e.name)}
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground">
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      title={e.is_dir ? "Map downloaden als tar.gz" : "Bestand downloaden"}
+                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                      onClick={() => {
+                        setBezigMet(e.name);
+                        downloadLabFile(lab.id, `${path}/${e.name}`)
+                          .then((naam) => balk.ok(`${naam} gedownload`))
+                          .catch((err) => balk.fout("Downloaden mislukt", String(err?.message || err)))
+                          .finally(() => setBezigMet(null));
+                      }}
+                    >
+                      {bezigMet === e.name
+                        ? <Loader2 size={13} className="animate-spin" />
+                        : <Download size={13} />}
+                    </button>
+                    <button title="Verwijderen"
+                            onClick={() => verwijderen(e)}
+                            className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {zichtbaar.length === 0 && (
+              <tr>
+                <td colSpan={3} className="px-3 py-2 text-xs text-muted-foreground">
+                  {zoek.trim()
+                    ? `Niets dat op "${zoek}" lijkt.`
+                    : "Leeg — sleep hier bestanden naartoe of gebruik de knop hierboven."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <div className="rounded border border-border">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
+            <span className="font-mono">{open.pad}</span>
+            {open.afgekapt && (
+              <span className="text-yellow-600" title="Alleen de eerste 200 kB is opgehaald">
+                afgekapt
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              {bewerkt !== null && (
+                <Button className="px-2 py-1 text-xs" onClick={opslaan}>Opslaan</Button>
+              )}
+              <Button variant="secondary" className="px-2 py-1 text-xs"
+                      onClick={() => { setOpen(null); setBewerkt(null); }}>
+                Sluiten
+              </Button>
+            </div>
+          </div>
+          {/* Bewerken mag niet als we maar een deel hebben: opslaan zou dan de
+              rest van het bestand weggooien. */}
+          {open.afgekapt ? (
+            <pre className="max-h-80 overflow-auto p-3 text-xs whitespace-pre-wrap">{open.inhoud}</pre>
+          ) : (
+            <textarea
+              value={bewerkt ?? open.inhoud}
+              onChange={(e) => setBewerkt(e.target.value)}
+              spellCheck={false}
+              className="h-80 w-full resize-y bg-background p-3 font-mono text-xs focus:outline-none"
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
-

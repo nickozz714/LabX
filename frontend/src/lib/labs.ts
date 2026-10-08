@@ -119,6 +119,14 @@ export const labsApi = {
     api.get<{ path: string; content: string; truncated: boolean }>(`/labs/${id}/file?path=${encodeURIComponent(path)}`),
   writeFile: (id: string, path: string, content: string) =>
     api.put<{ ok: boolean }>(`/labs/${id}/file`, { path, content }),
+  // Hernoemen en verplaatsen zijn dezelfde bewerking; het verschil is alleen
+  // of de map in het doelpad anders is.
+  renameFile: (id: string, van: string, naar: string) =>
+    api.post<{ van: string; naar: string }>(`/labs/${id}/file/rename`, { van, naar }),
+  deleteFile: (id: string, path: string) =>
+    api.post<{ verwijderd: string }>(`/labs/${id}/file/delete`, { path }),
+  mkdir: (id: string, path: string) =>
+    api.post<{ map: string }>(`/labs/${id}/file/mkdir`, { path }),
   secrets: (id: string) => api.get<LabGeheim[]>(`/labs/${id}/secrets`),
   putSecret: (id: string, naam: string, payload: Record<string, unknown>) =>
     api.put<LabGeheim>(`/labs/${id}/secrets/${encodeURIComponent(naam)}`, payload),

@@ -519,6 +519,37 @@ async def write_lab_file(lab_id: str, payload: Dict[str, Any], db: Session = Dep
     return await _service(db).write_file(lab_id, path, str(payload.get("content") or ""))
 
 
+@router.post("/{lab_id}/file/rename")
+async def rename_lab_file(lab_id: str, payload: Dict[str, Any],
+                          db: Session = Depends(get_db)):
+    """Hernoemen en verplaatsen zijn dezelfde bewerking."""
+    van, naar = payload.get("van"), payload.get("naar")
+    if not van or not naar:
+        raise HTTPException(status_code=400, detail="van en naar zijn verplicht")
+    return await _service(db).hernoem_bestand(
+        lab_id, str(van), str(naar), worker_id=payload.get("worker_id"))
+
+
+@router.post("/{lab_id}/file/delete")
+async def delete_lab_file(lab_id: str, payload: Dict[str, Any],
+                          db: Session = Depends(get_db)):
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="path is verplicht")
+    return await _service(db).verwijder_bestand(
+        lab_id, str(path), worker_id=payload.get("worker_id"))
+
+
+@router.post("/{lab_id}/file/mkdir")
+async def mkdir_lab(lab_id: str, payload: Dict[str, Any],
+                    db: Session = Depends(get_db)):
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="path is verplicht")
+    return await _service(db).maak_map(
+        lab_id, str(path), worker_id=payload.get("worker_id"))
+
+
 @router.post("/{lab_id}/upload")
 async def upload_to_lab(lab_id: str,
                         files: List[UploadFile] = File(...),
