@@ -514,53 +514,14 @@ function ProfielRij({
                     {bezig ? "Bezig…" : "Overal toepassen"}
                   </Button>
                 )}
-                <details className="relative">
-                  <summary className="cursor-pointer select-none rounded border border-border px-2 py-1
-                                      text-xs text-muted-foreground hover:bg-muted">
-                    Meer
-                  </summary>
-                  <div className="absolute right-0 z-20 mt-1 w-56 space-y-1 rounded-md border
-                                  border-border bg-background p-2 shadow-lg">
-                    {p.kind === "msal_bundle" && (
-                      <Button variant="secondary" className="w-full px-2 py-1 text-xs"
-                              disabled={bezig} onClick={onHerauth}>
-                        Opnieuw authenticeren…
-                      </Button>
-                    )}
-                    {p.kind !== "bearer" && (
-                      <Button variant="secondary" className="w-full px-2 py-1 text-xs"
-                              disabled={bezig} onClick={onVernieuw}
-                              title="Wisselt het refresh token in voor een vers paar en zet dat meteen door">
-                        Vernieuwen
-                      </Button>
-                    )}
-                    <Button variant="secondary" className="w-full px-2 py-1 text-xs"
-                            disabled={bezig} onClick={onVerify}>
-                      Verifieer
-                    </Button>
-                    <Button variant="secondary" className="w-full px-2 py-1 text-xs"
-                            disabled={bezig} onClick={onSyncHost}>
-                      Sync → host
-                    </Button>
-                    <select
-                      disabled={bezig}
-                      onChange={(e) => onSyncLab(e.target.value)}
-                      // Gestuurd op "": anders blijft het gekozen lab staan en
-                      // levert hetzelfde lab nog eens kiezen geen change-event
-                      // op — de keuze deed dan niets.
-                      value=""
-                      className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
-                    >
-                      <option value="">Sync → lab…</option>
-                      {labs.map((l) => (
-                        <option key={l.id} value={l.id}>{l.name} ({l.status})</option>
-                      ))}
-                    </select>
-                    <Button variant="danger" className="w-full px-2 py-1 text-xs" onClick={onVerwijder}>
-                      Verwijderen
-                    </Button>
-                  </div>
-                </details>
+                <button
+                  type="button"
+                  onClick={() => setOpen((v) => !v)}
+                  className="rounded border border-border px-2 py-1 text-xs
+                             text-muted-foreground hover:bg-muted"
+                >
+                  {open ? "Minder" : "Meer"}
+                </button>
               </>
             )}
           </div>
@@ -568,10 +529,59 @@ function ProfielRij({
       </tr>
       {open && (
         <tr className="border-b border-border bg-muted/20">
-          <td colSpan={4} className="px-3 py-2">
-            <pre className="max-h-48 overflow-auto rounded bg-secondary p-2 text-xs">
-              {JSON.stringify(p.identity ?? {}, null, 2)}
-            </pre>
+          <td colSpan={4} className="px-3 py-3">
+            {/* De acties staan HIER en niet in een uitklapmenu in de cel: dat
+                menu was absoluut gepositioneerd binnen een tabel met
+                overflow-x-auto, en werd daardoor afgeknipt -- de knop
+                Verwijderen viel half buiten beeld. Een uitgeklapte rij heeft
+                die beperking niet en laat alles tegelijk zien. */}
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]">
+              <pre className="max-h-48 overflow-auto rounded bg-secondary p-2 text-xs">
+                {JSON.stringify(p.identity ?? {}, null, 2)}
+              </pre>
+              {p.kind !== "entra_app" && (
+                <div className="flex flex-col gap-1.5 lg:w-56">
+                  {p.kind === "msal_bundle" && (
+                    <Button variant="secondary" className="px-2 py-1 text-xs"
+                            disabled={bezig} onClick={onHerauth}>
+                      Opnieuw authenticeren…
+                    </Button>
+                  )}
+                  {p.kind !== "bearer" && (
+                    <Button variant="secondary" className="px-2 py-1 text-xs"
+                            disabled={bezig} onClick={onVernieuw}
+                            title="Wisselt het refresh token in voor een vers paar en zet dat meteen door">
+                      Vernieuwen
+                    </Button>
+                  )}
+                  <Button variant="secondary" className="px-2 py-1 text-xs"
+                          disabled={bezig} onClick={onVerify}>
+                    Verifieer
+                  </Button>
+                  <Button variant="secondary" className="px-2 py-1 text-xs"
+                          disabled={bezig} onClick={onSyncHost}>
+                    Sync → host
+                  </Button>
+                  <select
+                    disabled={bezig}
+                    onChange={(e) => onSyncLab(e.target.value)}
+                    // Gestuurd op "": anders blijft het gekozen lab staan en
+                    // levert hetzelfde lab nog eens kiezen geen change-event
+                    // op -- de keuze deed dan niets.
+                    value=""
+                    className="rounded border border-input bg-background px-2 py-1 text-xs"
+                  >
+                    <option value="">Sync → lab…</option>
+                    {labs.map((l) => (
+                      <option key={l.id} value={l.id}>{l.name} ({l.status})</option>
+                    ))}
+                  </select>
+                  <Button variant="danger" className="mt-1 px-2 py-1 text-xs" onClick={onVerwijder}>
+                    Verwijderen
+                  </Button>
+                </div>
+              )}
+            </div>
           </td>
         </tr>
       )}
