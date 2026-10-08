@@ -17,7 +17,6 @@ import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
 import { LabResources } from "@/components/LabResources";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
-import { LabGeheimen } from "@/components/LabGeheimen";
 import { HostMeter } from "@/components/HostMeter";
 import { useMelding } from "@/components/Meldingen";
 import { guardApi, type GuardProfiel } from "@/lib/guard";
@@ -446,7 +445,13 @@ function ProfielKeuze({ waarde, onChange }: { waarde: string; onChange: (v: stri
 }
 
 function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
-  const [tab, setTab] = useState<"settings" | "inrichting" | "browser" | "toegang" | "geheimen" | "git" | "files" | "exec" | "terminal" | "audit">("settings");
+  // Vier tabbladen in plaats van tien over twee regels. Wat je ZELF instelt
+  // staat vooraan; alles waarmee je in het lab wérkt zit onder Werkruimte met
+  // een eigen striptje. Weg: Geheimen (dat is nu de Kluis), Commando (de
+  // Terminal kan hetzelfde en meer) en Guard-audit (hoort bij Data-guard, waar
+  // ook het spoor van alle andere labs staat).
+  const [tab, setTab] = useState<"settings" | "inrichting" | "toegang" | "werk">("settings");
+  const [werkTab, setWerkTab] = useState<"files" | "git" | "terminal" | "browser">("files");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
   const melding = useMelding();
 
@@ -518,19 +523,32 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1 border-b border-border text-sm">
-        {(["settings", "inrichting", "browser", "toegang", "geheimen", "git", "files", "exec", "terminal", "audit"] as const).map((t) => (
+        {(["settings", "inrichting", "toegang", "werk"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 ${tab === t ? "border-b-2 border-primary font-medium" : "text-muted-foreground"}`}
           >
-            {{ settings: "Instellingen", inrichting: "Inrichting", browser: "Browser", toegang: "Toegang",
-               geheimen: "Geheimen",
-               git: "Git", files: "Bestanden", exec: "Commando", terminal: "Terminal",
-               audit: "Guard-audit" }[t]}
+            {{ settings: "Instellingen", inrichting: "Inrichting",
+               toegang: "Toegang", werk: "Werkruimte" }[t]}
           </button>
         ))}
       </div>
+
+      {tab === "werk" && (
+        <div className="mb-3 flex flex-wrap gap-1 text-xs">
+          {(["files", "git", "terminal", "browser"] as const).map((w) => (
+            <button
+              key={w}
+              onClick={() => setWerkTab(w)}
+              className={`rounded-md px-2.5 py-1 ${
+                werkTab === w ? "bg-secondary font-medium" : "text-muted-foreground hover:bg-muted"}`}
+            >
+              {{ files: "Bestanden", git: "Git", terminal: "Terminal", browser: "Browser" }[w]}
+            </button>
+          ))}
+        </div>
+      )}
 
       {tab === "settings" && (
         <div className="space-y-3">
@@ -589,14 +607,11 @@ function LabDetailModal({ lab, onClose, onChanged }: { lab: Lab; onClose: () => 
       )}
 
       {tab === "inrichting" && <ProvisioningPanel lab={lab} onChanged={onChanged} />}
-      {tab === "browser" && <BrowserPanel lab={lab} />}
       {tab === "toegang" && <LabAllowlist lab={lab} onSaved={() => onChanged()} />}
-      {tab === "git" && <PublishPanel lab={lab} />}
-      {tab === "geheimen" && <LabGeheimen lab={lab} />}
-      {tab === "files" && <FileBrowser lab={lab} />}
-      {tab === "exec" && <ExecPanel lab={lab} />}
-      {tab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
-      {tab === "audit" && <GuardAuditPanel lab={lab} />}
+      {tab === "werk" && werkTab === "files" && <FileBrowser lab={lab} />}
+      {tab === "werk" && werkTab === "git" && <PublishPanel lab={lab} />}
+      {tab === "werk" && werkTab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
+      {tab === "werk" && werkTab === "browser" && <BrowserPanel lab={lab} />}
     </Modal>
   );
 }
@@ -1337,77 +1352,3 @@ function FileBrowser({ lab }: { lab: Lab }) {
   );
 }
 
-function ExecPanel({ lab }: { lab: Lab }) {
-  const [command, setCommand] = useState("");
-  const [result, setResult] = useState<{ exit_code: number; output: string; guarded?: boolean; guard_reason?: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function run() {
-    setBusy(true);
-    try {
-      const r = await labsApi.exec(lab.id, command);
-      setResult(r);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div>
-      <div className="mb-2 flex gap-2">
-        <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="echo hallo" onKeyDown={(e) => e.key === "Enter" && run()} />
-        <Button onClick={run} disabled={busy || !command.trim()}>
-          {busy ? "…" : "Run"}
-        </Button>
-      </div>
-      {result && (
-        <div>
-          {result.guarded && <Badge tone="red">geblokkeerd door data-guard: {result.guard_reason}</Badge>}
-          <pre className="mt-2 max-h-64 overflow-auto rounded bg-secondary p-3 text-xs whitespace-pre-wrap">
-            exit {result.exit_code}
-            {"\n"}
-            {result.output}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GuardAuditPanel({ lab }: { lab: Lab }) {
-  const [items, setItems] = useState<any[]>([]);
-
-  useEffect(() => {
-    labsApi.guardAudit(lab.id).then((r) => setItems(r.items));
-  }, [lab.id]);
-
-  return (
-    <div>
-      <a href={`/api/labs/${lab.id}/guard-audit?format=csv`} className="mb-2 inline-block text-xs text-primary hover:underline">
-        Download CSV
-      </a>
-      <div className="max-h-72 overflow-auto rounded border border-border text-xs">
-        <table className="w-full">
-          <thead className="sticky top-0 bg-secondary">
-            <tr>
-              <th className="p-2 text-left">Tijd</th>
-              <th className="p-2 text-left">Blocked</th>
-              <th className="p-2 text-left">Reden</th>
-              <th className="p-2 text-left">Commando</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((it, i) => (
-              <tr key={i} className="border-t border-border">
-                <td className="p-2">{new Date(it.ts).toLocaleTimeString()}</td>
-                <td className="p-2">{it.data?.blocked ? <Badge tone="red">ja</Badge> : <Badge tone="green">nee</Badge>}</td>
-                <td className="p-2">{it.data?.guard_reason || "-"}</td>
-                <td className="p-2 font-mono">{(it.data?.command || "").slice(0, 60)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}

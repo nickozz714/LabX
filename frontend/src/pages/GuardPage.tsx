@@ -23,6 +23,8 @@
  * om de vraag te beantwoorden of de guard het goed doet.
  */
 import { useCallback, useEffect, useState } from "react";
+import { labsApi } from "@/lib/labs";
+import type { Lab } from "@/lib/types";
 import { AlertTriangle, Check, Eye, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import {
@@ -397,11 +399,22 @@ function RegelVenster({ doel, detectors, onClose, onKlaar }: {
 function AuditLijst() {
   const [rijen, setRijen] = useState<GuardAuditRegel[]>([]);
   const [filter, setFilter] = useState("");
+  const [labFilter, setLabFilter] = useState("");
+  const [labs, setLabs] = useState<Lab[]>([]);
   const [open, setOpen] = useState<GuardAuditDetail | null>(null);
 
+  // Het labtabblad "Guard-audit" is weg: het spoor hoort op één plek, naast
+  // dat van alle andere labs. Daarom hier een filter per lab, anders was dat
+  // overzicht per lab verdwenen in plaats van verhuisd.
+  useEffect(() => { labsApi.list().then(setLabs).catch(() => undefined); }, []);
+
   const laad = useCallback(async () => {
-    setRijen(await guardApi.audit({ outcome: filter || undefined, limit: 100 }));
-  }, [filter]);
+    setRijen(await guardApi.audit({
+      outcome: filter || undefined,
+      lab_id: labFilter || undefined,
+      limit: 100,
+    }));
+  }, [filter, labFilter]);
 
   useEffect(() => { laad().catch(() => undefined); }, [laad]);
 
@@ -414,6 +427,11 @@ function AuditLijst() {
           <option value="geblokkeerd">Geblokkeerd</option>
           <option value="geweigerd">Opdracht geweigerd</option>
           <option value="doorgelaten">Doorgelaten</option>
+        </Select>
+        <Select className="w-52 text-xs" value={labFilter}
+                onChange={(e) => setLabFilter(e.target.value)}>
+          <option value="">Alle labs</option>
+          {labs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </Select>
         <span className="text-xs text-muted-foreground">
           Bewaard met de originele uitvoer, versleuteld, 14 dagen.

@@ -20,7 +20,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2, PanelLeft} from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, Shield, Terminal, Trash2, PanelLeft, Search, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi, chatBijlageMap } from "@/lib/chat";
@@ -55,6 +55,7 @@ export function ChatPage() {
   const bevestig = useBevestiging();
   const melding = useMelding();
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [zoekterm, setZoekterm] = useState("");
   // Sessies achter agent-runs op een ticket. Standaard uit: op een bord met
   // tachtig tickets zou de lijst niet meer te lezen zijn. Aan als je erin wilt
   // doorpraten — of vanzelf, als je via een ticket binnenkomt.
@@ -452,20 +453,31 @@ export function ChatPage() {
   // De categorieën. Ze worden afgeleid en niet opgeslagen: een chat draait ín
   // een lab (threads.lab_id is NOT NULL), dus dat lab ís zijn categorie.
   const threadGroups: ThreadGroup[] = (() => {
+    // Filteren op titel. Een lab met twintig chats vind je niet meer terug op
+    // het oog; dit zoekt binnen wat je nu ziet (je chats of het archief), dus
+    // het blijft doen wat je verwacht.
+    const zoek = zoekterm.trim().toLowerCase();
+    const zichtbaar = zoek
+      ? threads.filter((t) => (t.title || "").toLowerCase().includes(zoek))
+      : threads;
+
     const byLab = new Map<string, Thread[]>();
-    for (const t of threads) {
+    for (const t of zichtbaar) {
       byLab.set(t.lab_id, [...(byLab.get(t.lab_id) || []), t]);
     }
-    const groups: ThreadGroup[] = labs.map((l) => ({
+    let groups: ThreadGroup[] = labs.map((l) => ({
       id: l.id, name: l.name, lab: l, threads: byLab.get(l.id) || [],
     }));
     // Chats waarvan het lab niet in de lijst staat — terwijl de labs nog laden,
     // of als er een verdwijnt. Ze mogen niet uit beeld vallen.
     const known = new Set(labs.map((l) => l.id));
-    const rest = threads.filter((t) => !known.has(t.lab_id));
+    const rest = zichtbaar.filter((t) => !known.has(t.lab_id));
     if (rest.length) {
       groups.push({ id: "__overig__", name: "Overige chats", lab: null, threads: rest });
     }
+    // Terwijl je zoekt hebben lege labs geen betekenis: die zouden de ene
+    // treffer wegdrukken tussen vijftien lege kopjes.
+    if (zoek) groups = groups.filter((g) => g.threads.length > 0);
     return groups;
   })();
   const inputDisabled = !activeThread || !lab || lab.status !== "running" || streaming;
@@ -512,6 +524,22 @@ export function ChatPage() {
             <input type="checkbox" checked={toonBoard} onChange={(e) => setToonBoard(e.target.checked)} />
             board
           </label>
+        </div>
+        <div className="relative mb-2">
+          <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={zoekterm}
+            onChange={(e) => setZoekterm(e.target.value)}
+            placeholder="Zoek een chat…"
+            className="w-full rounded border border-input bg-background py-1.5 pl-7 pr-7 text-xs
+                       placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          {zoekterm && (
+            <button onClick={() => setZoekterm("")} aria-label="Zoekterm wissen"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted">
+              <X size={12} />
+            </button>
+          )}
         </div>
         <button
           onClick={() => setToonArchief((v) => !v)}
