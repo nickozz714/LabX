@@ -51,6 +51,23 @@ const EFFORT_OPTIONS = [
   { value: "max", label: "Max" },
 ];
 
+/** Een datum zoals je hem in een lijst wilt lezen: vandaag en gisteren bij
+ *  naam, deze week de dag, daarvoor de datum. "8/25/2026" zegt minder dan
+ *  "gisteren" als je zoekt waar je gebleven was. */
+function korteDatum(waarde?: string | null): string {
+  if (!waarde) return "";
+  const d = new Date(waarde);
+  if (Number.isNaN(d.getTime())) return "";
+  const nu = new Date();
+  const dag = 24 * 60 * 60 * 1000;
+  const begin = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const verschil = Math.round((begin(nu) - begin(d)) / dag);
+  if (verschil === 0) return `vandaag ${d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}`;
+  if (verschil === 1) return "gisteren";
+  if (verschil < 7) return d.toLocaleDateString("nl-NL", { weekday: "long" });
+  return d.toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
+}
+
 export function ChatPage() {
   const bevestig = useBevestiging();
   const melding = useMelding();
@@ -480,6 +497,9 @@ export function ChatPage() {
     if (zoek) groups = groups.filter((g) => g.threads.length > 0);
     return groups;
   })();
+  // Wat de teller onderin telt: wat je nú in de lijst ziet, dus inclusief het
+  // zoekfilter. Een chat hoort bij precies één lab, dus dubbel tellen kan niet.
+  const zichtbareChats = threadGroups.reduce((n, g) => n + g.threads.length, 0);
   const inputDisabled = !activeThread || !lab || lab.status !== "running" || streaming;
 
   // Cumulative token/cost counter for this conversation, summed from the
@@ -516,7 +536,11 @@ export function ChatPage() {
         <button type="button" aria-label="Chatlijst sluiten" onClick={() => setLijstOpen(false)}
                 className="fixed inset-0 z-30 bg-foreground/30 lg:hidden" />
       )}
-      <aside className={`${lijstOpen ? "absolute inset-y-0 left-0 z-40 w-[80vw] max-w-xs shadow-xl" : "hidden"} shrink-0 overflow-y-auto border-r border-border bg-background p-3 lg:static lg:z-auto lg:block lg:w-64 lg:max-w-none lg:shadow-none`}>
+      <aside className={`${lijstOpen ? "absolute inset-y-0 left-0 z-40 flex w-[80vw] max-w-xs shadow-xl" : "hidden"} min-h-0 shrink-0 flex-col overflow-hidden border-r border-border bg-background lg:static lg:z-auto lg:flex lg:w-64 lg:max-w-none lg:shadow-none`}>
+        {/* Kop en zoekveld blijven staan; alleen de lijst eronder scrollt. Bij
+            veertig chats scrolde het zoekveld anders weg precies op het moment
+            dat je het nodig had. */}
+        <div className="shrink-0 border-b border-border p-3 pb-2">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold">{toonArchief ? "Archief" : "Chats"}</h2>
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground"
@@ -525,6 +549,25 @@ export function ChatPage() {
             board
           </label>
         </div>
+        {/* Een nieuwe chat beginnen is de meest voorkomende handeling en zat
+            achter een plusje dat pas bij hover verschijnt -- op een touchscreen
+            dus helemaal niet. */}
+        <Button
+          className="mb-2 w-full justify-center text-xs"
+          disabled={!labs.some((l) => l.status === "running")}
+          title={labs.some((l) => l.status === "running")
+            ? "Nieuwe chat in het eerste draaiende lab"
+            : "Er draait geen lab"}
+          onClick={() => {
+            const lab = (activeThread && labs.find((l) => l.id === activeThread.lab_id
+                                                   && l.status === "running"))
+              || labs.find((l) => l.status === "running");
+            if (lab) createThreadForLab(lab.id);
+          }}
+        >
+          <Plus size={14} /> Nieuwe chat
+        </Button>
+
         <div className="relative mb-2">
           <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -548,7 +591,9 @@ export function ChatPage() {
           <Archive size={12} />
           {toonArchief ? "Terug naar je chats" : "Archief bekijken"}
         </button>
+        </div>
 
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {labs.length === 0 && threadGroups.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             Nog geen labs — maak er eerst een aan op de Labs-pagina.
@@ -620,7 +665,16 @@ export function ChatPage() {
                             }`}
                             title={t.actief ? "Er loopt nu een beurt in deze chat" : undefined}
                           />
-                          <span className="flex-1 truncate">{t.title}</span>
+                          {/* Titel met de datum eronder. Een lijst van veertig
+                              chats met alleen titels zegt niets over wanneer
+                              je ergens mee bezig was, en dat is juist waarop
+                              je zoekt. */}
+                          <span className="flex min-w-0 flex-1 flex-col">
+                            <span className="truncate">{t.title}</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {korteDatum(t.updated_at || t.created_at)}
+                            </span>
+                          </span>
                           {t.source === "board" && (
                             <span className="shrink-0 rounded bg-secondary px-1 text-[10px] text-muted-foreground"
                                   title="Sessie van een agent-run op een ticket">
@@ -632,7 +686,7 @@ export function ChatPage() {
                               e.stopPropagation();
                               setRenaming(t);
                             }}
-                            className="hidden shrink-0 text-muted-foreground hover:text-foreground group-hover:block"
+                            className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground focus:opacity-100 group-hover:opacity-100"
                             title="Naam wijzigen"
                           >
                             <Pencil size={13} />
@@ -642,7 +696,7 @@ export function ChatPage() {
                               e.stopPropagation();
                               archiveThread(t);
                             }}
-                            className="hidden shrink-0 text-muted-foreground hover:text-foreground group-hover:block"
+                            className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground focus:opacity-100 group-hover:opacity-100"
                             title={t.archived_at
                               ? "Terughalen naar je chats"
                               : "Archiveren — uit de lijst, maar blijft te openen"}
@@ -654,7 +708,7 @@ export function ChatPage() {
                               e.stopPropagation();
                               removeThread(t);
                             }}
-                            className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
+                            className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive focus:opacity-100 group-hover:opacity-100"
                             title="Verwijderen"
                           >
                             <Trash2 size={13} />
@@ -668,6 +722,16 @@ export function ChatPage() {
             })}
           </div>
         )}
+        </div>
+
+        {/* Hoeveel chats zie je eigenlijk? Onderin, zoals in ND3X: het is geen
+            knop, het is het antwoord op "heb ik alles?" -- zeker als er een
+            filter aan staat. */}
+        <div className="shrink-0 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+          {zichtbareChats} {zichtbareChats === 1 ? "chat" : "chats"}
+          {zoekterm.trim() && ` van ${threads.length}`}
+          {toonArchief && " in het archief"}
+        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -683,88 +747,107 @@ export function ChatPage() {
           </div>
         ) : (
           <>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-2 text-sm sm:px-4">
+            {/* De balk was één rij waarin titel, lab, model, effort en het
+                paneelknopje om dezelfde ruimte vochten en bij elke smalle
+                breedte omklapten. Nu: de titel groot, en wát er onder de motor
+                zit als kleine labels eronder -- dat lees je als bijschrift en
+                niet als even belangrijk als de titel. */}
+            <div className="flex items-start gap-2 border-b border-border px-3 py-2 sm:px-4">
               <button type="button" onClick={() => setLijstOpen(true)}
-                      className="-ml-1 flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-muted-foreground hover:text-foreground lg:hidden">
+                      className="-ml-1 mt-0.5 flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-muted-foreground hover:text-foreground lg:hidden">
                 <PanelLeft size={15} /> Chats
               </button>
-              {/* truncate werkt op de TEKST, niet op een flex-container:
-                  stond het op de span eromheen, dan liep een lange tickettitel
-                  gewoon door. Potlood blijft op desktop, waar hover bestaat. */}
-              <span className="group flex min-w-0 flex-1 items-center gap-1 font-medium">
-                <span className="truncate">{activeThread.title}</span>
-                <button
-                  onClick={() => setRenaming(activeThread)}
-                  className="hidden shrink-0 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 lg:inline-flex"
-                  title="Naam wijzigen"
-                >
-                  <Pencil size={13} />
-                </button>
-              </span>
-              {activeThread.archived_at && (
-                <span className="flex items-center gap-1.5 rounded-md bg-secondary px-2 py-0.5 text-xs text-muted-foreground">
-                  <Archive size={12} /> gearchiveerd
+
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                {/* truncate werkt op de TEKST, niet op een flex-container:
+                    stond het op de span eromheen, dan liep een lange
+                    tickettitel gewoon door. Potlood blijft op desktop, waar
+                    hover bestaat. */}
+                <span className="group flex min-w-0 items-center gap-1">
+                  <span className="truncate text-sm font-semibold">{activeThread.title}</span>
                   <button
-                    onClick={() => archiveThread(activeThread)}
-                    className="font-semibold text-primary hover:underline"
-                    title="Terug naar je chats"
+                    onClick={() => setRenaming(activeThread)}
+                    className="hidden shrink-0 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 lg:inline-flex"
+                    title="Naam wijzigen"
                   >
-                    terughalen
+                    <Pencil size={13} />
                   </button>
                 </span>
-              )}
-              {lab && <Badge tone={lab.status === "running" ? "green" : "red"}>⬢ {lab.name} — {lab.status}</Badge>}
-              {lab && lab.status !== "running" && (
-                <span className="ml-2 text-xs text-muted-foreground">Start dit lab om te kunnen chatten.</span>
-              )}
-              {lab && (
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Model</span>
-                  <select
-                    value={activeThread.model || ""}
-                    onChange={(e) => setThreadModel(activeThread.id, e.target.value || null)}
-                    className="max-w-[9rem] rounded-md border border-input bg-background px-2 py-1 text-xs sm:max-w-none"
-                    title="Model voor deze chat — of typ /model <naam> in het bericht"
-                  >
-                    {MODEL_OPTIONS.map((m) => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => pinAsDefault("model", activeThread.model)}
-                    title="Maak dit het standaardmodel voor nieuwe chats"
-                    className="hidden text-muted-foreground hover:text-foreground sm:inline-flex"
-                  >
-                    <Pin size={13} />
-                  </button>
+
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                  {lab && (
+                    <span className="flex items-center gap-1" title={`Lab ${lab.name} — ${lab.status}`}>
+                      <span className={`size-1.5 rounded-full ${
+                        lab.status === "running" ? "bg-success" : "bg-destructive"}`} />
+                      <span className="truncate">{lab.name}</span>
+                    </span>
+                  )}
+                  {lab && (
+                    <span className="flex items-center gap-1">
+                      {/* Borderloos: een select die eruitziet als een invulveld
+                          trekt in een bijschriftregel te veel aandacht. */}
+                      <select
+                        value={activeThread.model || ""}
+                        onChange={(e) => setThreadModel(activeThread.id, e.target.value || null)}
+                        className="max-w-[9rem] cursor-pointer rounded border border-transparent bg-transparent py-0.5 pl-1 pr-4 text-[11px] text-foreground hover:border-input focus:border-input focus:outline-none"
+                        title="Model voor deze chat — of typ /model <naam> in het bericht"
+                      >
+                        {MODEL_OPTIONS.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => pinAsDefault("model", activeThread.model)}
+                        title="Maak dit het standaardmodel voor nieuwe chats"
+                        className="hidden text-muted-foreground hover:text-foreground sm:inline-flex"
+                      >
+                        <Pin size={12} />
+                      </button>
+                    </span>
+                  )}
+                  {lab && (
+                    <span className="flex items-center gap-1">
+                      <select
+                        value={activeThread.effort || ""}
+                        onChange={(e) => setThreadEffort(activeThread.id, e.target.value || null)}
+                        className="max-w-[9rem] cursor-pointer rounded border border-transparent bg-transparent py-0.5 pl-1 pr-4 text-[11px] text-foreground hover:border-input focus:border-input focus:outline-none"
+                        title="Reasoning effort (hoeveelheid denkwerk) voor deze chat — of typ /effort <niveau> in het bericht"
+                      >
+                        {EFFORT_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => pinAsDefault("effort", activeThread.effort)}
+                        title="Maak dit de standaard-effort voor nieuwe chats"
+                        className="hidden text-muted-foreground hover:text-foreground sm:inline-flex"
+                      >
+                        <Pin size={12} />
+                      </button>
+                    </span>
+                  )}
+                  {activeThread.archived_at && (
+                    <span className="flex items-center gap-1">
+                      <Archive size={11} /> gearchiveerd
+                      <button
+                        onClick={() => archiveThread(activeThread)}
+                        className="font-semibold text-primary hover:underline"
+                        title="Terug naar je chats"
+                      >
+                        terughalen
+                      </button>
+                    </span>
+                  )}
+                  {lab && lab.status !== "running" && (
+                    <span className="text-destructive">Start dit lab om te kunnen chatten.</span>
+                  )}
                 </div>
-              )}
-              {lab && (
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" title="Hoeveel denkwerk het model per beurt mag doen (reasoning effort)">Effort</span>
-                  <select
-                    value={activeThread.effort || ""}
-                    onChange={(e) => setThreadEffort(activeThread.id, e.target.value || null)}
-                    className="max-w-[9rem] rounded-md border border-input bg-background px-2 py-1 text-xs sm:max-w-none"
-                    title="Reasoning effort (hoeveelheid denkwerk) voor deze chat — of typ /effort <niveau> in het bericht"
-                  >
-                    {EFFORT_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => pinAsDefault("effort", activeThread.effort)}
-                    title="Maak dit de standaard-effort voor nieuwe chats"
-                    className="hidden text-muted-foreground hover:text-foreground sm:inline-flex"
-                  >
-                    <Pin size={13} />
-                  </button>
-                </div>
-              )}
+              </div>
+
               {lab && (
                 <button
                   onClick={() => setSidePanelOpen((v) => !v)}
-                  className="ml-auto flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  className="mt-0.5 flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                   title={sidePanelOpen ? "Zijpaneel verbergen" : "Zijpaneel tonen (lab-beheer & achtergrondtaken)"}
                 >
                   <PanelRight size={14} /> {sidePanelOpen ? "" : "Paneel"}
