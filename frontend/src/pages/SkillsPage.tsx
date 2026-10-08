@@ -7,6 +7,7 @@
  * and collects a free-text instruction PER tool.
  */
 import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { mcpServerApi, skillApi, toolApi, type CatalogEntry } from "@/lib/skills";
 import type { MCPServerDto, SkillDto, SkillScope, SkillToolLink, ToolDto } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
@@ -587,6 +588,8 @@ function ToolsSection() {
   const melding = useMelding();
   const [tools, setTools] = useState<ToolDto[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Welke servers je hebt opengeklapt. Dicht is de normale stand.
+  const [uitgeklapt, setUitgeklapt] = useState<Set<string>>(new Set());
   function refresh() {
     return toolApi.list().then(setTools);
   }
@@ -657,17 +660,37 @@ function ToolsSection() {
         <div className="space-y-4">
           {Object.entries(grouped).map(([serverName, group]) => {
             const allSelected = group.tools.every((t) => selected.has(t.id));
+            const open = uitgeklapt.has(serverName);
+            const aan = group.tools.filter((t) => t.is_enabled).length;
             return (
               <div key={serverName}>
-                <div className="mb-1 flex items-center gap-2">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
                   <label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                     <input
                       type="checkbox"
                       checked={allSelected}
                       onChange={(e) => group.tools.forEach((t) => toggleSelect(t.id, e.target.checked))}
                     />
-                    {serverName} ({group.tools.length})
+                    {serverName}
                   </label>
+                  {/* Dicht tenzij je er in moet zijn. Tweeënveertig tools met
+                      hun hele beschrijving eronder duwen al het andere van de
+                      pagina af, terwijl je meestal alleen wilt weten hoeveel
+                      er aanstaan. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const n = new Set(uitgeklapt);
+                      if (n.has(serverName)) n.delete(serverName);
+                      else n.add(serverName);
+                      setUitgeklapt(n);
+                    }}
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs
+                               text-muted-foreground hover:bg-muted"
+                  >
+                    {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    {aan} van {group.tools.length} aan
+                  </button>
                   {group.serverId != null && (
                     <>
                       {/* Kale tekstknoppen: die erven de spinner van Button
@@ -684,7 +707,7 @@ function ToolsSection() {
                     </>
                   )}
                 </div>
-                <div className="space-y-2">
+                <div className={`space-y-2 ${open ? "" : "hidden"}`}>
                   {group.tools.map((t) => (
                     <Card key={t.id} className={`p-3 ${t.is_enabled ? "" : "opacity-60"}`}>
                       <div className="flex items-center gap-2">
