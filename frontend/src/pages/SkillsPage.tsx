@@ -21,24 +21,20 @@ import { useBevestiging } from "@/components/Bevestiging";
 
 type Section = "skills" | "tools" | "mcp";
 
-export function SkillsPage() {
-  const [section, setSection] = useState<Section>("skills");
+/**
+ * Skills, Tools en MCP-servers.
+ *
+ * Deze drie hadden een eigen tabstrip ónder die van de Workbench. Twee rijen
+ * tabbladen boven elkaar leest niet: je ziet twee navigaties en moet eerst
+ * uitvogelen welke bij welke hoort. Ze zijn nu gewone Workbench-tabbladen; de
+ * sectie komt uit de route.
+ */
+export function SkillsPage({ sectie = "skills" }: { sectie?: Section }) {
   return (
     <div className="pagina veilig-onder p-4 sm:p-6">
-      <div className="mb-4 flex gap-1 border-b border-border text-sm">
-        {(["skills", "tools", "mcp"] as Section[]).map((s) => (
-          <button
-            key={s}
-            onClick={() => setSection(s)}
-            className={`px-3 py-1.5 ${section === s ? "border-b-2 border-primary font-medium" : "text-muted-foreground"}`}
-          >
-            {{ skills: "Skills", tools: "Tools", mcp: "MCP-servers" }[s]}
-          </button>
-        ))}
-      </div>
-      {section === "skills" && <SkillsSection />}
-      {section === "tools" && <ToolsSection />}
-      {section === "mcp" && <McpSection />}
+      {sectie === "skills" && <SkillsSection />}
+      {sectie === "tools" && <ToolsSection />}
+      {sectie === "mcp" && <McpSection />}
     </div>
   );
 }

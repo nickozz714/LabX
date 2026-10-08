@@ -5,15 +5,20 @@
  * doet hij het". Als losse tabs vraten ze een kwart van de bovenbalk.
  */
 import { Outlet } from "react-router-dom";
-import { CalendarClock, Workflow, Wrench } from "lucide-react";
+import { CalendarClock, Plug, Sparkles, Workflow, Wrench } from "lucide-react";
 
 import { SubTabs } from "@/components/SubTabs";
 
 export function WorkbenchPage() {
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* Eén rij. Skills, Tools en MCP-servers hadden hun eigen strip hierónder;
+          twee navigaties boven elkaar laat je eerst uitzoeken welke bij welke
+          hoort. */}
       <SubTabs tabs={[
-        { to: "/workbench/skills", label: "Skills & Tools", icon: Wrench },
+        { to: "/workbench/skills", label: "Skills", icon: Sparkles },
+        { to: "/workbench/tools", label: "Tools", icon: Wrench },
+        { to: "/workbench/mcp", label: "MCP-servers", icon: Plug },
         { to: "/workbench/workflows", label: "Workflows", icon: Workflow },
         { to: "/workbench/scheduling", label: "Scheduling", icon: CalendarClock },
       ]} />

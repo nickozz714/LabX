@@ -60,7 +60,9 @@ function AppRoutes() {
         {/* Wat de agent kan, en wanneer hij het doet. */}
         <Route path="workbench" element={<WorkbenchPage />}>
           <Route index element={<Navigate to="skills" replace />} />
-          <Route path="skills" element={<SkillsPage />} />
+          <Route path="skills" element={<SkillsPage sectie="skills" />} />
+          <Route path="tools" element={<SkillsPage sectie="tools" />} />
+          <Route path="mcp" element={<SkillsPage sectie="mcp" />} />
           <Route path="workflows" element={<WorkflowsPage />} />
           <Route path="scheduling" element={<SchedulesPage />} />
         </Route>
