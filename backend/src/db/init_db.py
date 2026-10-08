@@ -141,6 +141,9 @@ _ADDITIVE_COLUMNS = {
     "boards": [
         # Kolom waar een ticket heen gaat zodra de agent eraan begint.
         ("agent_busy_column", "VARCHAR(64)"),
+        # Automatisch archiveren: in welke kolom, en na hoeveel dagen.
+        ("archive_column", "VARCHAR(64)"),
+        ("archive_days", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "tickets": [
         ("acceptance_criteria", "TEXT"),

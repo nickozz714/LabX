@@ -96,9 +96,15 @@ class BoardService:
                 raise HTTPException(status_code=400, detail="name mag niet leeg zijn")
             b.name = name
         for field in ("description", "lab_id", "agent_column", "agent_busy_column",
-                      "agent_done_column", "agent_instruction", "provider_config"):
+                      "agent_done_column", "agent_instruction", "provider_config",
+                      "archive_column"):
             if field in payload:
                 setattr(b, field, payload[field] or (None if field != "provider_config" else {}))
+        if "archive_days" in payload:
+            # Bovengrens van een jaar: hoger is in de praktijk "nooit", en dan
+            # hoor je de kolom leeg te laten in plaats van een getal te
+            # verzinnen waar niemand meer op rekent.
+            b.archive_days = max(0, min(int(payload["archive_days"] or 0), 365))
         if "key_prefix" in payload and payload["key_prefix"]:
             b.key_prefix = str(payload["key_prefix"]).strip().upper()[:16]
         if "columns" in payload and payload["columns"] is not None:
@@ -496,6 +502,8 @@ class BoardService:
             "id": b.id, "name": b.name, "description": b.description,
             "key_prefix": b.key_prefix, "lab_id": b.lab_id, "columns": b.columns or [],
             "agent_column": b.agent_column,
+            "archive_column": b.archive_column,
+            "archive_days": b.archive_days,
             "agent_busy_column": getattr(b, "agent_busy_column", None),
             "agent_done_column": b.agent_done_column,
             "agent_instruction": b.agent_instruction,

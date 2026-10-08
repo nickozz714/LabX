@@ -522,6 +522,8 @@ export interface BoardDto {
   lab_status?: string | null;
   columns: BoardColumnDto[];
   agent_column: string | null;
+  archive_column?: string | null;
+  archive_days?: number;
   /** Waar een ticket heen gaat zodra de agent eraan begint. */
   agent_busy_column: string | null;
   agent_done_column: string | null;

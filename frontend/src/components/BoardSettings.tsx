@@ -46,6 +46,8 @@ export function BoardSettings({
   const [agentColumn, setAgentColumn] = useState(board.agent_column || "");
   const [agentBusyColumn, setAgentBusyColumn] = useState(board.agent_busy_column || "");
   const [agentDoneColumn, setAgentDoneColumn] = useState(board.agent_done_column || "");
+  const [archiveColumn, setArchiveColumn] = useState(board.archive_column || "");
+  const [archiveDays, setArchiveDays] = useState(String(board.archive_days ?? 0));
   const [agentInstruction, setAgentInstruction] = useState(board.agent_instruction || "");
   const [provider, setProvider] = useState(board.provider);
   const [config, setConfig] = useState<Record<string, any>>({ ...board.provider_config });
@@ -131,6 +133,8 @@ export function BoardSettings({
         agent_column: agentColumn || null,
         agent_busy_column: agentBusyColumn || null,
         agent_done_column: agentDoneColumn || null,
+        archive_column: archiveColumn || null,
+        archive_days: Number(archiveDays) || 0,
         agent_instruction: agentInstruction.trim() || null,
         provider,
         provider_config: config,
@@ -300,6 +304,38 @@ export function BoardSettings({
               </Select>
             </div>
           </div>
+
+          {/* Automatisch archiveren. Bewust uit tenzij je het aanzet: tickets
+              die vanzelf uit je bord verdwijnen zonder dat je daarom gevraagd
+              hebt, is het soort verrassing dat vertrouwen kost. */}
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Archiveer vanuit</Label>
+              <Select value={archiveColumn} onChange={(e) => setArchiveColumn(e.target.value)}>
+                <option value="">— uit —</option>
+                {columns.map((c) => (
+                  <option key={c.key} value={c.key}>{c.name}</option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label>Na hoeveel dagen</Label>
+              <Input
+                type="number"
+                min={0}
+                max={365}
+                value={archiveDays}
+                onChange={(e) => setArchiveDays(e.target.value)}
+                disabled={!archiveColumn}
+              />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Een ticket dat zo lang onaangeraakt in die kolom staat, gaat uit het bord.
+            Archiveren is geen verwijderen: het blijft onder <strong>Archief</strong> staan,
+            en raakt iemand het daarna tóch weer aan, dan komt het vanzelf terug.
+            Nul dagen of geen kolom betekent uit.
+          </p>
           <div className="mt-2">
             <Label>Vaste werkafspraken (elke agent-run op dit board krijgt deze mee)</Label>
             <TextArea

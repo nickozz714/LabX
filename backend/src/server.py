@@ -172,6 +172,23 @@ async def _chat_archief_tick() -> None:
         db.close()
 
 
+async def _bord_archief_tick() -> None:
+    """Tickets die lang genoeg in de ingestelde kolom staan uit het bord halen.
+    Per bord instelbaar; nul dagen is uit. Zie services/boards/archief.py."""
+    from services.boards.archief import (
+        archiveer_afgeronde_tickets, haal_ten_onrechte_gearchiveerde_terug,
+    )
+
+    db = SessionLocal()
+    try:
+        # Eerst terughalen wat na het archiveren toch weer is opgepakt, dan pas
+        # opnieuw opruimen -- anders zet dezelfde ronde hem meteen weer opzij.
+        haal_ten_onrechte_gearchiveerde_terug(db)
+        archiveer_afgeronde_tickets(db)
+    finally:
+        db.close()
+
+
 async def _hervat_limiet_tick() -> None:
     """Werk dat op een gebruikslimiet stilviel weer oppakken zodra de limiet
     opengaat. Alleen voor runs die NIET in een planning zitten; die hervat de
@@ -312,6 +329,9 @@ async def lifespan(_app: FastAPI):
     # Eens per uur; de termijn staat in dagen, dus fijner meten heeft geen zin.
     # Wel meteen bij het starten: dan is de lijst na een herstart direct schoon.
     scheduler.register(name="chat_archief", interval_seconds=3600, fn=_chat_archief_tick,
+                       run_immediately=True)
+    # Zelfde ritme en dezelfde reden: de termijn staat in dagen.
+    scheduler.register(name="bord_archief", interval_seconds=3600, fn=_bord_archief_tick,
                        run_immediately=True)
     await scheduler.start()
     # De MCP-gateway alvast één keer laten importeren. De CLI start hem per run

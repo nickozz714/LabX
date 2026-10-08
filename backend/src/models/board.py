@@ -68,6 +68,12 @@ class Board(Base):
     # (bv. "werk in /workspace/repo, schrijf tests, push niet").
     agent_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Automatisch archiveren: alles wat `archive_days` in `archive_column`
+    # staat gaat uit het bord. Niet verwijderd -- archiveren, dus terug te
+    # vinden. 0 of leeg is uit.
+    archive_column: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    archive_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     # --- externe koppeling -------------------------------------------------
     provider: Mapped[str] = mapped_column(String(32), nullable=False, default="local")
     # Niet-geheime providerconfig (organisatie, project, JQL/WIQL, statusmap).
