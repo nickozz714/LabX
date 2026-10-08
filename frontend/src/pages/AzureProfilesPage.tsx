@@ -23,7 +23,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
 import { labsApi } from "@/lib/labs";
 import type { AzureProfileDto, Lab } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea } from "@/components/ui";
+import { Badge, Button, EmptyState, Input, Label, Modal, Select, TextArea } from "@/components/ui";
 import { AzureBundlePicker, bundleComplete } from "@/components/AzureBundlePicker";
 import { EntraAppLogin, EntraStappen } from "@/components/EntraAppLogin";
 import type { ApplyStep } from "@/lib/azureProfiles";
