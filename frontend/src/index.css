@@ -205,6 +205,15 @@ body {
 .veilig-onder { padding-bottom: var(--veilig-onder); }
 .veilig-boven { padding-top: var(--veilig-boven); }
 
+/* Let op: deze twee ZETTEN padding, ze tellen er niet bij op. Ze staan na de
+   Tailwind-import, dus een `p-3` ernaast verliest zijn padding-bottom en op een
+   desktop (waar de inkeping 0px is) eindigt zo'n element kaal tegen de rand.
+   Dat gebeurde bij de berichtbalk van de chat.
+
+   Voor een balk die onderaan het venster plakt is dit de juiste klasse: eigen
+   ruimte plus de inkeping, in één regel. */
+.balk-onder { padding-bottom: calc(var(--veilig-onder) + 1.25rem); }
+
 /* Tot 1023px, niet tot 767: een iPhone in liggende stand is 844-956px breed
    en is nog steeds een telefoon. Met de grens op 767 zoomde Safari daar
    alsnog in bij elke focus. */

@@ -20,7 +20,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Play, Plus, SendHorizontal, Shield, Square, Terminal, Trash2, PanelLeft, Search, X } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, SendHorizontal, Shield, Square, Terminal, Trash2, PanelLeft, Search, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi, chatBijlageMap } from "@/lib/chat";
@@ -67,6 +67,10 @@ function korteDatum(waarde?: string | null): string {
   if (verschil < 7) return d.toLocaleDateString("nl-NL", { weekday: "long" });
   return d.toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
 }
+
+/** Hoe hoog het invoerveld hoogstens wordt: ongeveer vijf regels. Daarboven
+ *  scrolt het veld in plaats van het gesprek weg te duwen. */
+const MAX_INVOER_HOOGTE = 128;
 
 export function ChatPage() {
   const bevestig = useBevestiging();
@@ -218,14 +222,23 @@ export function ChatPage() {
     activeThreadIdRef.current = activeThread?.id ?? null;
   }, [activeThread?.id]);
 
-  // Het invoerveld begint op één regel en groeit mee met wat je typt. De hoogte
-  // moet eerst terug naar auto: anders kan hij alleen nog groeien en blijft een
-  // leeggemaakt veld even hoog als het langste bericht dat erin stond.
+  // Het invoerveld begint op één regel en groeit mee met wat je typt -- maar tot
+  // een grens. Zonder die grens duwt een geplakte lap tekst het gesprek bijna
+  // van het scherm, en juist dan wil je terugzien waar je op antwoordt. Vanaf
+  // die grens scrolt het veld zelf.
+  //
+  // De hoogte moet eerst terug naar auto: anders kan hij alleen nog groeien en
+  // blijft een leeggemaakt veld even hoog als het langste bericht dat erin
+  // stond.
   useEffect(() => {
     const el = invoerRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const nodig = el.scrollHeight;
+    el.style.height = `${Math.min(nodig, MAX_INVOER_HOOGTE)}px`;
+    // Alleen een schuifbalk als er echt iets te schuiven valt; anders flikkert
+    // hij in beeld bij de eerste regelovergang.
+    el.style.overflowY = nodig > MAX_INVOER_HOOGTE ? "auto" : "hidden";
   }, [input]);
 
   async function openThread(t: Thread) {
@@ -898,7 +911,7 @@ export function ChatPage() {
                 dat at een kwart van het scherm op en schreeuwde harder dan het
                 gesprek erboven. Het veld groeit mee met wat je typt, tot een
                 regel of zeven; daarna scrolt het. */}
-            <div className="veilig-onder border-t border-border p-3">
+            <div className="balk-onder border-t border-border px-3 pt-3">
               <BijlageLijst bijlagen={bijlagen}
                             onVerwijder={(path) =>
                               setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
@@ -931,7 +944,7 @@ export function ChatPage() {
                     placeholder={inputDisabled
                       ? "Koppel en start eerst een lab…"
                       : "Typ een bericht… (Enter = sturen, Shift+Enter = nieuwe regel)"}
-                    className="max-h-44 w-full resize-none bg-transparent py-2 text-sm text-foreground
+                    className="w-full resize-none bg-transparent py-2 text-sm text-foreground
                                outline-none placeholder:text-muted-foreground disabled:opacity-60"
                   />
                 </div>
@@ -949,7 +962,7 @@ export function ChatPage() {
                   className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border
                              text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"
                 >
-                  <Play size={16} />
+                  <Bot size={17} />
                 </button>
 
                 {streaming ? (

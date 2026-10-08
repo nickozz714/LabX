@@ -467,7 +467,7 @@ export function OrchestratorPage() {
 
       {/* ── Invoer ──────────────────────────────────────────────────────── */}
       {sessie && (
-        <div className="veilig-onder relative border-t border-white/10 bg-black/20 px-3 py-3 sm:px-6">
+        <div className="balk-onder relative border-t border-white/10 bg-black/20 px-3 pt-3 sm:px-6">
           <div className="flex items-center gap-2">
             <Input
               value={tekst}
