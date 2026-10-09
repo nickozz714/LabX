@@ -36,6 +36,9 @@ networks:
 volumes:
   labx_data:
   labx_claude_home:
+  # Apart van labx_data: modelgewichten zijn een paar GB en horen niet in het
+  # volume waar de database staat die je wilt kunnen back-uppen.
+  labx_ollama:
 
 services:
   api:
@@ -69,17 +72,14 @@ services:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       LABX_CLI_PATH: ${LABX_CLI_PATH:-claude}
       LABX_CLI_DEFAULT_MODEL: ${LABX_CLI_DEFAULT_MODEL:-claude-sonnet-5}
-      # Het tweede-opinie-guardmodel staat standaard UIT: de Ollama op deze
-      # server draait als eigen container op `proxy_net` en publiceert geen
-      # host-poort, dus host.docker.internal:11434 (de auto-resolve) bestaat
-      # hier niet. Wil je hem wel: hang deze service ook aan proxy_net
-      # (networks: [labx-labs, proxy_net] + een `proxy_net: {external: true}`
-      # bovenin) en zet DATA_GUARD_LLM_ENABLED=1 met
-      # DATA_GUARD_LLM_URL=http://ollama:11434. Zonder guard-model blijft de
-      # regelgebaseerde egress-guard gewoon werken.
-      DATA_GUARD_LLM_ENABLED: ${DATA_GUARD_LLM_ENABLED:-0}
+      # Het tweede-opinie-guardmodel. Dit stond UIT met als reden "er draait
+      # hier al een Ollama op proxy_net" -- die container bestaat niet meer, en
+      # daarmee stond de tweede mening stil zonder dat iets dat zei. Nu draait
+      # Ollama als onderdeel van deze stack (zie hieronder) en wijst de URL
+      # daarheen.
+      DATA_GUARD_LLM_ENABLED: ${DATA_GUARD_LLM_ENABLED:-1}
       DATA_GUARD_LLM_MODEL: ${DATA_GUARD_LLM_MODEL:-qwen2.5:1.5b}
-      DATA_GUARD_LLM_URL: ${DATA_GUARD_LLM_URL:-}
+      DATA_GUARD_LLM_URL: ${DATA_GUARD_LLM_URL:-http://labx-ollama:11434}
       # De browser praat same-origin via de web-container, dus CORS hoeft niet
       # open te staan.
       LABX_CORS_ORIGINS: ${LABX_CORS_ORIGINS:-http://${LABX_BIND_IP}:${LABX_WEB_PORT}}
@@ -96,3 +96,24 @@ services:
       # Alleen de LAN-IP: bereikbaar vanaf het netwerk en via WireGuard,
       # nergens anders.
       - "${LABX_BIND_IP}:${LABX_WEB_PORT}:80"
+
+  # Het lokale model voor de tweede mening van de data-guard ("spoor B").
+  #
+  # Waarom dit meedraait en niet achter een profiel staat: als de guard in de
+  # instellingen AAN staat maar het model er niet is, valt de controle stil
+  # zonder dat iemand het ziet. Dat is precies hoe er eerder klantgegevens
+  # langs zijn gekomen -- XML-rijen die de regellaag destijds niet herkende en
+  # die alleen dit model had tegengehouden.
+  #
+  # Geen gepubliceerde host-poort: alleen de api-container praat ermee, over
+  # het interne netwerk. Het model zelf haalt LabX binnen (Data-guard ->
+  # guardmodel ophalen), of met de hand:
+  #   docker exec labx-ollama ollama pull qwen2.5:1.5b
+  ollama:
+    image: ollama/ollama:latest
+    container_name: labx-ollama
+    restart: unless-stopped
+    networks:
+      - labx-labs
+    volumes:
+      - labx_ollama:/root/.ollama:rw
