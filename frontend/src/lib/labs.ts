@@ -63,6 +63,10 @@ export type HostMetrics = {
 };
 
 export const labsApi = {
+  /** Draait de hostagent, en waar? Het aanmaakscherm vraagt dit vóórdat je een
+   *  hostlab maakt dat toch niet kan werken. */
+  hostAgentStatus: () => api.get<{ bereikbaar: boolean; adres: string; hint: string | null }>(
+    "/labs/host-agent/status"),
   list: () => api.get<Lab[]>("/labs"),
   hostMetrics: () => api.get<HostMetrics>("/labs/host-metrics"),
   get: (id: string) => api.get<Lab>(`/labs/${id}`),

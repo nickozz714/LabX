@@ -98,6 +98,59 @@ class LabService:
     def __init__(self, db: Session, runtime: Optional[DockerRuntime] = None) -> None:
         self.db = db
         self.runtime = runtime or DockerRuntime()
+        #: Hostlabs krijgen een eigen runtime, per lab. Gecachet omdat elke
+        #: tool-aanroep hem opnieuw zou opbouwen.
+        self._host_runtimes: Dict[str, Any] = {}
+
+    # ── waar draait dit lab? ─────────────────────────────────────────────────
+
+    @staticmethod
+    def is_host(p: Lab) -> bool:
+        """NULL telt als container: elk bestaand lab blijft wat het was."""
+        return (p.kind or "container") == "host"
+
+    def runtime_voor(self, p: Lab):
+        """De runtime van DIT lab.
+
+        Alles erboven -- de gateway-tools, de data-guard, de kluis, het
+        auditspoor -- blijft hetzelfde; alleen de plek waar het commando landt
+        verschilt. Daarom dezelfde methoden en niet een aparte route.
+        """
+        if not self.is_host(p):
+            return self.runtime
+        if p.id not in self._host_runtimes:
+            from services.lab.host_runtime import HostAgentFout, HostRuntime
+            from utils.crypto import decrypt
+
+            if not p.host_project_dir:
+                raise HTTPException(status_code=400,
+                                    detail="Dit hostlab heeft geen projectmap ingesteld.")
+            if not p.host_agent_token_encrypted:
+                raise HTTPException(
+                    status_code=400,
+                    detail=("Dit hostlab heeft geen agent-token. Zet in de "
+                            "labinstellingen hetzelfde token als in "
+                            "LABX_HOST_AGENT_TOKEN op de machine."))
+            try:
+                token = decrypt(p.host_agent_token_encrypted)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=500,
+                                    detail=f"Agent-token niet te ontsleutelen: {exc}")
+            self._host_runtimes[p.id] = HostRuntime(
+                project_dir=p.host_project_dir, token=token)
+        return self._host_runtimes[p.id]
+
+    def _weiger_bij_host(self, p: Lab, wat: str) -> None:
+        """Wat op een host geen betekenis heeft, mag niet stil slagen.
+
+        Een knop die niets doet is waar je het langst naar zoekt; liever een
+        melding die zegt waarom.
+        """
+        if self.is_host(p):
+            raise HTTPException(
+                status_code=400,
+                detail=(f"{wat} bestaat niet voor een hostlab: er is geen container, "
+                        f"alleen de projectmap {p.host_project_dir}."))
 
     # ── queries ───────────────────────────────────────────────────────────────
 
@@ -684,6 +737,8 @@ exec ssh -N \\
         Geeft de nieuwe werker terug, of None als het plafond bereikt is (of
         het lab niet draait). De werker is bij terugkeer nog aan het inrichten;
         claimen kan pas als dat klaar is."""
+        p = self.get(lab_id)
+        self._weiger_bij_host(p, "Een extra werker starten")
         from models.lab_worker import LabWorker
 
         p = self.get(lab_id)
@@ -987,6 +1042,7 @@ exec ssh -N \\
         ondergrens. Het plafond blijft van de mens — daar mag ook de agent
         niet overheen."""
         p = self.get(lab_id)
+        self._weiger_bij_host(p, "Opschalen")
         self.ensure_workers(p)
         if count is not None:
             min_workers = int(count)
@@ -1084,6 +1140,9 @@ exec ssh -N \\
         security_profile: Optional[str] = None,
         model: Optional[str] = None,
         chat_deelt_werker: bool = True,
+        kind: Optional[str] = None,
+        host_project_dir: Optional[str] = None,
+        host_agent_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -1102,6 +1161,14 @@ exec ssh -N \\
                 raise HTTPException(status_code=400, detail=f"Onbekende omgeving '{environment}'")
             image = preset["image"]
         specs = self._resolve_repo_specs(repos)
+
+        if (kind or "container") == "host":
+            return await self._create_host(
+                name=name, project_dir=host_project_dir, agent_token=host_agent_token,
+                data_guard=data_guard, llm_guard=llm_guard,
+                allowed_mcp=allowed_mcp, allowed_tools=allowed_tools,
+                allowed_skills=allowed_skills,
+                security_profile=security_profile, model=model)
 
         lid = str(uuid4())
         now = _now_iso()
@@ -1186,6 +1253,67 @@ exec ssh -N \\
             provision_in_background(p.id)
         return self._to_dict(p)
 
+    async def _create_host(self, *, name: str, project_dir: Optional[str],
+                           agent_token: Optional[str], data_guard: bool,
+                           llm_guard: bool, allowed_mcp: Optional[List[str]],
+                           allowed_tools: Optional[List[str]],
+                           allowed_skills: Optional[List[str]],
+                           security_profile: Optional[str],
+                           model: Optional[str]) -> Dict[str, Any]:
+        """Een lab dat op de machine zelf draait.
+
+        Geen image, geen volume, geen container -- alleen een map en een token.
+        Wat hier NIET gebeurt is net zo belangrijk als wat er wel gebeurt: geen
+        pull, geen inrichting, geen werkers. Die horen bij een container, en
+        stilzwijgend overslaan zou betekenen dat `provision_status` en
+        `worker_count` iets beweren wat niet klopt.
+        """
+        from utils.crypto import encrypt
+
+        map_ = (project_dir or "").strip()
+        if not map_:
+            raise HTTPException(status_code=400,
+                                detail="Een hostlab heeft een projectmap nodig.")
+        if not (agent_token or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=("Een hostlab heeft het token van de hostagent nodig "
+                        "(LABX_HOST_AGENT_TOKEN op de machine zelf)."))
+
+        lid = str(uuid4())
+        now = _now_iso()
+        p = Lab(
+            id=lid, name=name[:255], status="stopped",
+            kind="host", host_project_dir=map_[:1024],
+            host_agent_token_encrypted=encrypt(agent_token.strip()),
+            # Velden die een container nodig heeft en een hostlab niet. Ze
+            # staan NOT NULL in het schema, dus ze krijgen een waarde die
+            # leesbaar maakt dat ze niet gelden.
+            image="(host)", volume_name=f"labx_host_{lid[:12]}",
+            network_alias=f"labx-host-{lid[:12]}",
+            cpu_limit=0.0, mem_limit_mb=0,
+            allow_network=True,
+            # Geen TTL: een projectmap verloopt niet, en een lab dat zichzelf
+            # 's nachts opruimt terwijl er een run in staat is een valkuil.
+            ttl_hours=24 * 14, expires_at=None,
+            repos=[], ports=[],
+            data_guard=bool(data_guard), llm_guard=bool(llm_guard),
+            allowed_mcp=[str(x) for x in (allowed_mcp or [])],
+            allowed_tools=[str(x) for x in (allowed_tools or [])],
+            allowed_skills=[str(x) for x in (allowed_skills or [])],
+            extras=[], setup_script=None,
+            provision_status="skipped", provision_log=[],
+            min_workers=1, max_workers=1, worker_count=1, chat_deelt_werker=True,
+            security_profile=_profielsleutel(security_profile),
+            model=(model or "").strip() or None,
+            created_at=now, updated_at=now,
+        )
+        self.db.add(p)
+        self.db.commit()
+        self.db.refresh(p)
+        log.infox("Hostlab aangemaakt", lab_id=p.id, project=map_)
+        return self._to_dict(p)
+
     async def ensure_running(self, lab_id: str) -> Dict[str, Any]:
         """Zorg dat dit lab draait, en start het anders.
 
@@ -1209,6 +1337,22 @@ exec ssh -N \\
     async def start(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
         if p.status == "running":
+            return self._to_dict(p)
+        if self.is_host(p):
+            # Een hostlab "start" niet: de machine draait al. Wat we wél doen
+            # is kijken of de agent er is, want anders zet je hem op running
+            # terwijl het eerste commando meteen strandt.
+            rt = self.runtime_voor(p)
+            if not await rt.is_bereikbaar():
+                raise HTTPException(
+                    status_code=409,
+                    detail=("De hostagent is niet bereikbaar. Start hem op de machine "
+                            "zelf met `python3 host-agent/labx_host_agent.py` en "
+                            "probeer opnieuw."))
+            p.status = "running"
+            p.updated_at = _now_iso()
+            self.db.commit()
+            self.db.refresh(p)
             return self._to_dict(p)
         if not p.container_id:
             raise HTTPException(status_code=409, detail="Lab heeft geen container (status error?)")
@@ -1307,6 +1451,7 @@ exec ssh -N \\
         Bij hetzelfde image betekent dit "haal de nieuwste versie van dit tag
         op" — dat is wat bijwerken hier ís."""
         p = self.get(lab_id)
+        self._weiger_bij_host(p, "Opnieuw opbouwen")
         target = (image or p.image or default_image()).strip()[:255]
         if not target:
             raise HTTPException(status_code=400, detail="Geen image opgegeven")
@@ -1553,6 +1698,15 @@ exec ssh -N \\
 
     async def stop(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
+        if self.is_host(p):
+            # Er valt niets te stoppen -- de machine blijft draaien. "Uit"
+            # betekent hier: LabX voert er niets meer in uit. Dat is een
+            # eerlijker belofte dan doen alsof er een container afgaat.
+            p.status = "stopped"
+            p.updated_at = _now_iso()
+            self.db.commit()
+            self.db.refresh(p)
+            return self._to_dict(p)
         for w in self.ensure_workers(p):
             if not w.container_id:
                 continue
@@ -1628,6 +1782,14 @@ exec ssh -N \\
     # ── execution & files ─────────────────────────────────────────────────────
 
     def _require_running(self, p: Lab, worker_id: Optional[int] = None) -> str:
+        if self.is_host(p):
+            # Geen container om te controleren; de agent is de enige vraag, en
+            # die wordt bij de eerste aanroep vanzelf gesteld. Het pad hoort
+            # hier wel te staan, want alles erboven verwacht een "id".
+            if p.status != "running":
+                raise HTTPException(status_code=409,
+                                    detail="Dit hostlab staat uit (zet hem eerst aan)")
+            return p.host_project_dir or ""
         if p.status != "running" or not p.container_id:
             raise HTTPException(status_code=409, detail="Lab draait niet (start hem eerst)")
         cid = self.container_for(p, worker_id)
@@ -1694,7 +1856,7 @@ exec ssh -N \\
                 detail=(f"Onbekend geheim: {', '.join(onbekend)}. Zet hem eerst met "
                         f"`lab__secret_put`, of kijk met `lab__secret_list` welke er zijn."))
 
-        result = await self.runtime.exec(cid, ["sh", "-lc", wrapper, uitvoerbaar],
+        result = await self.runtime_voor(p).exec(cid, ["sh", "-lc", wrapper, uitvoerbaar],
                                          timeout=max(5.0, min(timeout, 600.0)))
         # En de andere kant op: een geheim dat tóch in de uitvoer belandt
         # (geëchood, in een header, in een foutmelding) gaat er hier uit.
@@ -1748,12 +1910,12 @@ exec ssh -N \\
         # `-A` laat . en .. weg, `-p` zet een / achter mappen, `-L` volgt links
         # (anders is de grootte die van de link), `--` beschermt tegen een pad
         # dat met - begint.
-        result = await self.runtime.exec(
+        result = await self.runtime_voor(p).exec(
             cid, ["sh", "-c", 'ls -lApL --time-style=long-iso -- "$1"', "sh", target],
             timeout=20)
         met_groottes = result["exit_code"] == 0
         if not met_groottes:
-            result = await self.runtime.exec(
+            result = await self.runtime_voor(p).exec(
                 cid, ["sh", "-c", 'ls -ApL -- "$1"', "sh", target], timeout=20)
             if result["exit_code"] != 0:
                 raise HTTPException(status_code=404, detail=result["output"][:300])
@@ -1781,7 +1943,7 @@ exec ssh -N \\
         p = self.get(lab_id)
         cid = self._require_running(p, worker_id)
         target = self._safe_path(path)
-        result = await self.runtime.exec(cid, ["head", "-c", "200000", "--", target], timeout=30)
+        result = await self.runtime_voor(p).exec(cid, ["head", "-c", "200000", "--", target], timeout=30)
         if result["exit_code"] != 0:
             raise HTTPException(status_code=404, detail=result["output"][:300])
         return {"path": target, "content": result["output"], "truncated": result["truncated"]}
@@ -1800,7 +1962,7 @@ exec ssh -N \\
             raise HTTPException(status_code=400, detail="De werkmap zelf kan niet.")
         # Paden als ARGUMENT en niet in de tekst van het commando: een naam met
         # een aanhalingsteken erin zou anders uit de quotes breken.
-        result = await self.runtime.exec(
+        result = await self.runtime_voor(p).exec(
             cid, ["sh", "-c",
                   'test -e "$1" || { echo "bestaat niet"; exit 1; }; '
                   'test -e "$2" && { echo "bestemming bestaat al"; exit 1; }; '
@@ -1820,7 +1982,7 @@ exec ssh -N \\
         # De werkmap zelf leegmaken is geen bestandsbewerking maar een ongeluk.
         if target == "/workspace":
             raise HTTPException(status_code=400, detail="De werkmap zelf kan niet.")
-        result = await self.runtime.exec(
+        result = await self.runtime_voor(p).exec(
             cid, ["sh", "-c", 'test -e "$1" || { echo "bestaat niet"; exit 1; }; rm -rf -- "$1"',
                   "sh", target],
             timeout=30)
@@ -1834,7 +1996,7 @@ exec ssh -N \\
         p = self.get(lab_id)
         cid = self._require_running(p, worker_id)
         target = self._safe_path(path)
-        result = await self.runtime.exec(
+        result = await self.runtime_voor(p).exec(
             cid, ["sh", "-c", 'mkdir -p -- "$1"', "sh", target], timeout=30)
         if result["exit_code"] != 0:
             raise HTTPException(status_code=400, detail=result["output"][:300])
@@ -1862,7 +2024,7 @@ exec ssh -N \\
 
         # Bestaat het, en is het een map? `test` is goedkoper dan een `stat` die
         # we toch moeten ontleden.
-        soort = await self.runtime.exec(
+        soort = await self.runtime_voor(p).exec(
             cid, ["sh", "-c", 'if [ -d "$1" ]; then echo map; elif [ -f "$1" ]; then echo bestand; '
                   'else echo weg; fi', "sh", target], timeout=15)
         wat = (soort["output"] or "").strip()
@@ -1891,7 +2053,7 @@ exec ssh -N \\
         # Pad als ARGUMENT, niet in de tekst van het commando: een naam met een
         # aanhalingsteken erin zou anders uit de quotes breken en de rest als
         # commando uitvoeren. Dat pad komt van een client, dus dat kan niet.
-        result = await self.runtime.exec(
+        result = await self.runtime_voor(p).exec(
             cid, ["sh", "-c", 'mkdir -p "$1" && cat > "$2"', "sh", parent, target],
             stdin=(content or "").encode("utf-8"), timeout=30)
         if result["exit_code"] != 0:
@@ -1928,7 +2090,7 @@ exec ssh -N \\
                 detail=f"Samen te groot ({totaal // (1024*1024)} MB); "
                        f"maximaal {MAX_TOTAAL_BYTES // (1024*1024)} MB per keer.")
 
-        mk = await self.runtime.exec(cid, ["sh", "-c", 'mkdir -p "$1"', "sh", doelmap],
+        mk = await self.runtime_voor(p).exec(cid, ["sh", "-c", 'mkdir -p "$1"', "sh", doelmap],
                                      timeout=20)
         if mk["exit_code"] != 0:
             raise HTTPException(status_code=500, detail=mk["output"][:300])
@@ -1952,7 +2114,7 @@ exec ssh -N \\
                 continue
             naam = unieke_naam(naam, bezet)
             doel = f"{doelmap}/{naam}"
-            res = await self.runtime.exec(
+            res = await self.runtime_voor(p).exec(
                 cid, ["sh", "-c", 'cat > "$1"', "sh", doel],
                 stdin=data, timeout=120)
             if res["exit_code"] != 0:
@@ -2008,7 +2170,7 @@ exec ssh -N \\
             return uit
         # De [c]-truc: zonder de blokhaken vindt grep zijn eigen commandoregel
         # en meldt hij altijd dat er een browser draait.
-        res = await self.runtime.exec(cid, ["sh", "-c",
+        res = await self.runtime_voor(p).exec(cid, ["sh", "-c",
             "curl -sf -o /dev/null http://127.0.0.1:6080/vnc.html && echo VNC; "
             "ps -eo args 2>/dev/null | grep -qE '[c]hrome|[c]hromium' && echo BROWSER; "
             "true"], timeout=20)
@@ -2071,7 +2233,7 @@ exec ssh -N \\
         gesloten = await close_for_container(cid)
         # Wat de sessiepool niet opruimt (een browser die zijn ouder overleefde)
         # alsnog: anders blijft het profiel op slot en start de volgende niet.
-        await self.runtime.exec(cid, ["sh", "-c",
+        await self.runtime_voor(p).exec(cid, ["sh", "-c",
             "pkill -f '[c]hrome' >/dev/null 2>&1; pkill -f '[c]hromium' >/dev/null 2>&1; true"],
             timeout=20)
         return {"ok": True, "sessies_gesloten": gesloten}
@@ -2090,7 +2252,7 @@ exec ssh -N \\
         p = self.get(lab_id)
         cid = self._require_running(p, worker_id)
         veilig = self._safe_path(path)
-        res = await self.runtime.exec(
+        res = await self.runtime_voor(p).exec(
             cid, ["sh", "-c", f"test -f '{veilig}' && base64 -w0 '{veilig}' || true"],
             timeout=60, max_chars=int(max_bytes * 1.4))
         data = (res.get("output") or "").strip()
@@ -2126,10 +2288,10 @@ exec ssh -N \\
                 status_code=400,
                 detail="Geen az-sessie meegegeven: sync eerst een Azure-profiel naar dit lab.")
         safe_dir = az_dir if az_dir.startswith("/") and ".." not in az_dir.split("/") else "/root/.azure"
-        await self.runtime.exec(cid, ["sh", "-c", f"mkdir -p '{safe_dir}'"], timeout=15)
+        await self.runtime_voor(p).exec(cid, ["sh", "-c", f"mkdir -p '{safe_dir}'"], timeout=15)
         written = []
         for fname, content in payload.items():
-            res = await self.runtime.exec(
+            res = await self.runtime_voor(p).exec(
                 cid, ["sh", "-c", f"cat > '{safe_dir}/{fname}'"],
                 stdin=content.encode("utf-8"), timeout=20)
             if res["exit_code"] == 0:
@@ -2339,6 +2501,13 @@ exec ssh -N \\
         return {
             "id": p.id, "name": p.name,
             "status": p.status, "image": p.image,
+            # "container" of "host". De frontend verbergt hierop alles wat
+            # alleen voor een container bestaat -- werkers, poorten, TTL,
+            # opnieuw opbouwen.
+            "kind": p.kind or "container",
+            "host_project_dir": p.host_project_dir,
+            # Of het token er LIGT; de waarde zelf komt er nooit uit.
+            "heeft_agent_token": bool(p.host_agent_token_encrypted),
             "network_alias": p.network_alias,
             "cpu_limit": p.cpu_limit, "mem_limit_mb": p.mem_limit_mb,
             "allow_network": bool(p.allow_network),

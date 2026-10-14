@@ -118,6 +118,10 @@ _ADDITIVE_COLUMNS = {
         ("max_workers", "INTEGER NOT NULL DEFAULT 1"),
         ("security_profile", "VARCHAR(32) NOT NULL DEFAULT 'generiek'"),
         ("model", "VARCHAR(128)"),
+        # NULL telt als "container": elk bestaand lab blijft wat het was.
+        ("kind", "VARCHAR(16)"),
+        ("host_project_dir", "VARCHAR(1024)"),
+        ("host_agent_token_encrypted", "TEXT"),
         # NULL = de meegeleverde standaard (zie services/lab/resources.py).
         ("claim_resources", "TEXT"),
     ],
