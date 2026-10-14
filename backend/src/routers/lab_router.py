@@ -299,7 +299,32 @@ async def create_lab(payload: Dict[str, Any], db: Session = Depends(get_db)):
         max_workers=int(payload.get("max_workers") or payload.get("min_workers") or 1),
         security_profile=payload.get("security_profile"),
         model=payload.get("model"),
+        # "host" = op deze machine, binnen één projectmap, via de hostagent.
+        # Leeg of "container" = zoals het altijd ging.
+        kind=payload.get("kind"),
+        host_project_dir=payload.get("host_project_dir"),
+        host_agent_token=payload.get("host_agent_token"),
     )
+
+
+@router.get("/host-agent/status")
+async def host_agent_status():
+    """Draait de hostagent, en waar?
+
+    Een eigen endpoint zodat het aanmaakscherm het kan zeggen VOORDAT je een
+    hostlab maakt dat toch niet werkt.
+    """
+    from services.lab.host_runtime import HostRuntime
+
+    rt = HostRuntime(project_dir="", token="")
+    bereikbaar = await rt.is_bereikbaar()
+    return {
+        "bereikbaar": bereikbaar,
+        "adres": rt._basis,
+        "hint": None if bereikbaar else (
+            "Start de agent op de machine zelf: "
+            "`LABX_HOST_AGENT_TOKEN=<token> python3 host-agent/labx_host_agent.py`"),
+    }
 
 
 @router.get("/{lab_id}")

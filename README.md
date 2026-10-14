@@ -76,6 +76,12 @@ en een Claude-abonnement (`claude setup-token`). De app haalt voorgebakken image
 GHCR (met lokale build als fallback), genereert zelf secrets en leidt je bij de eerste
 start door de setup: accountnaam + wachtwoord kiezen, Docker-check, setup-token plakken.
 
+**Hostlab (macOS)** — een lab dat op je eigen machine draait in plaats van in
+een container, voor klanten die aanmelden vanaf een beheerd apparaat eisen.
+Start `host-agent/start.sh` en kies bij het aanmaken van een lab "op deze
+machine". Zie [host-agent/README.md](host-agent/README.md) voor wat de grenzen
+wél en niet zijn.
+
 **Docker Compose (server of lokaal):**
 
 ```bash

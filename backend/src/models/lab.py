@@ -135,6 +135,21 @@ class Lab(Base):
     # oppakt hoort hetzelfde model te gebruiken als de chat ernaast.
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
+    # ── waar dit lab draait ──────────────────────────────────────────────────
+    # "container" (de normale vorm) of "host": op de machine zelf, binnen één
+    # projectmap, via de hostagent. Dat laatste bestaat omdat een klant kan
+    # eisen dat je aanmeldt vanaf een apparaat dat zij kennen -- een container
+    # is geen apparaat en kan die claim niet afgeven.
+    #
+    # NULL telt als "container": elk bestaand lab blijft precies wat het was.
+    kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Alleen bij een hostlab: de map waarbinnen alles moet blijven. De zandbak
+    # van de agent sluit de rest van de thuismap af, dus dit is geen afspraak
+    # maar een grens in de kernel.
+    host_project_dir: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Het gedeelde geheim met de agent, Fernet-versleuteld.
+    host_agent_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Wat dit lab over zijn eigen wereld weet; zie services/lab/profielen.py.
     # Een lab dat in Fabric werkt produceert de hele dag technische uitvoer, en
     # een guard die dat niet weet blokkeert precies het werk waarvoor het lab

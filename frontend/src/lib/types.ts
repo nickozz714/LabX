@@ -1,6 +1,14 @@
 export interface Lab {
   id: string;
   name: string;
+  /** Waar dit lab draait. "container" is de normale vorm; "host" draait op de
+   *  machine zelf, binnen één projectmap, via de hostagent. Dat bestaat omdat
+   *  een klant kan eisen dat je aanmeldt vanaf een apparaat dat zij kennen —
+   *  een container is geen apparaat en kan die claim niet afgeven. */
+  kind?: "container" | "host";
+  host_project_dir?: string | null;
+  /** Of het agent-token er LIGT; de waarde zelf komt nooit uit de API. */
+  heeft_agent_token?: boolean;
   status: "creating" | "running" | "stopped" | "error" | "expired";
   image: string;
   network_alias: string | null;

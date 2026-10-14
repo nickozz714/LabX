@@ -155,6 +155,20 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [ports, setPorts] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Waar het lab draait. "container" is de normale vorm; "host" draait op deze
+  // machine, binnen één map, via de agent.
+  const [soort, setSoort] = useState<"container" | "host">("container");
+  const [projectMap, setProjectMap] = useState("");
+  const [agentToken, setAgentToken] = useState("");
+  const [agent, setAgent] = useState<{ bereikbaar: boolean; adres: string; hint: string | null } | null>(null);
+
+  useEffect(() => {
+    // Of de agent draait, vóórdat je een hostlab maakt dat toch niet kan
+    // starten. Dat scheelt de ronde "waarom doet hij niets".
+    if (soort === "host" && !agent) {
+      labsApi.hostAgentStatus().then(setAgent).catch(() => setAgent(null));
+    }
+  }, [soort, agent]);
 
   useEffect(() => {
     labsApi.images().then((r) => setPresets(r.presets));
@@ -193,6 +207,18 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         .filter(Boolean)
         .map(Number)
         .filter((n) => Number.isFinite(n));
+      if (soort === "host") {
+        await labsApi.create({
+          name, kind: "host",
+          host_project_dir: projectMap.trim(),
+          host_agent_token: agentToken.trim(),
+          data_guard: dataGuard, llm_guard: llmGuard,
+          security_profile: profiel,
+          model: model || undefined,
+        });
+        onCreated();
+        return;
+      }
       const useCustom = environment === "__custom__";
       await labsApi.create({
         name,
@@ -222,6 +248,69 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <Label>Naam</Label>
           <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </div>
+        {/* Waar het draait. Deze keuze staat bovenaan omdat hij de helft van
+            het formulier wegneemt: een hostlab heeft geen image, geen geheugen,
+            geen poorten en geen werkers. */}
+        <div>
+          <Label>Waar draait dit lab?</Label>
+          <select
+            value={soort}
+            onChange={(e) => setSoort(e.target.value as "container" | "host")}
+            className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+          >
+            <option value="container">In een container (normaal)</option>
+            <option value="host">Op deze machine, in één projectmap</option>
+          </select>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {soort === "container"
+              ? "Afgeschermd en wegwerpbaar. Azure-toegang komt uit een profiel dat je eraan koppelt."
+              : "Voor een klant die eist dat je aanmeldt vanaf een apparaat dat zij kennen. Commando's draaien als jij, met je eigen az-sessie — maar alleen binnen de projectmap."}
+          </p>
+        </div>
+
+        {soort === "host" ? (
+          <>
+            {agent && !agent.bereikbaar && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                De hostagent draait niet ({agent.adres}). {agent.hint}
+              </div>
+            )}
+            {agent?.bereikbaar && (
+              <div className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-xs text-success">
+                Hostagent gevonden op {agent.adres}.
+              </div>
+            )}
+            <div>
+              <Label>Projectmap</Label>
+              <Input value={projectMap} onChange={(e) => setProjectMap(e.target.value)}
+                     placeholder="/Users/jij/klanten/klant-a" className="font-mono text-xs" />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Alles blijft hierbinnen. De rest van je thuismap is afgesloten — ook
+                <code> ~/.ssh</code> en <code> ~/.azure</code> — en dat is een grens in de
+                kernel, geen afspraak. De map moet in je thuismap liggen.
+              </p>
+            </div>
+            <div>
+              <Label>Token van de hostagent</Label>
+              <Input type="password" value={agentToken} autoComplete="new-password"
+                     onChange={(e) => setAgentToken(e.target.value)} />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Hetzelfde als <code>LABX_HOST_AGENT_TOKEN</code> waarmee je de agent start.
+                Gaat versleuteld de kluis in en komt er nooit meer uit.
+              </p>
+            </div>
+            <div>
+              <Label>Azure</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Geen profiel nodig. Dit lab krijgt een eigen <code>AZURE_CONFIG_DIR</code> in de
+                projectmap, dus je logt daar één keer in met
+                <code> az login --tenant …</code> en het lab komt niet bij de sessies van je
+                andere klanten.
+              </p>
+            </div>
+          </>
+        ) : (
+        <>
         <div>
           <Label>Omgeving</Label>
           <select
@@ -335,8 +424,14 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
             Zet het plafond gelijk aan het minimum om niet te schalen.
           </p>
         </div>
+        </>
+        )}
         <div className="space-y-2 rounded-md border border-border p-3">
-          <Toggle checked={allowNetwork} onChange={setAllowNetwork} label="Netwerktoegang" />
+          {/* Netwerk aan/uit hoort bij een container: op de host bepaalt de
+              zandbak de schijf, niet het netwerk. */}
+          {soort === "container" && (
+            <Toggle checked={allowNetwork} onChange={setAllowNetwork} label="Netwerktoegang" />
+          )}
           <Toggle checked={dataGuard} onChange={setDataGuard} label="Data-egress-guard (regels)" />
           <Toggle checked={llmGuard} onChange={setLlmGuard} label="Lokaal model als extra check (spoor B)" />
           {dataGuard && <ProfielKeuze waarde={profiel} onChange={setProfiel} />}
@@ -488,6 +583,10 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
   // een eigen striptje. Weg: Geheimen (dat is nu de Kluis), Commando (de
   // Terminal kan hetzelfde en meer) en Guard-audit (hoort bij Data-guard, waar
   // ook het spoor van alle andere labs staat).
+  // Een hostlab heeft geen image om in te richten, geen werkers om te schalen
+  // en geen container om opnieuw op te bouwen. Dat verbergen we hier in plaats
+  // van knoppen te tonen die de server toch weigert.
+  const isHost = lab.kind === "host";
   const [tab, setTab] = useState<"settings" | "inrichting" | "toegang" | "werk">("settings");
   const [werkTab, setWerkTab] = useState<"files" | "git" | "terminal" | "browser">("files");
   const [guardStatus, setGuardStatus] = useState<GuardModelStatus | null>(null);
@@ -567,8 +666,21 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
         </Button>
       </div>
 
+      {isHost && (
+        <div className="mb-3 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs">
+          <strong>Dit lab draait op deze machine</strong>, binnen{" "}
+          <code className="font-mono">{lab.host_project_dir}</code>. Commando's lopen als jij,
+          met je eigen <code>az</code>-sessie uit die map — maar de rest van je thuismap is
+          afgesloten, ook <code>~/.ssh</code> en <code>~/.azure</code>. Werkers, poorten,
+          opnieuw opbouwen en een vervaltijd bestaan hier niet.
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap gap-1 border-b border-border text-sm">
-        {(["settings", "inrichting", "toegang", "werk"] as const).map((t) => (
+        {(isHost
+            ? (["settings", "toegang", "werk"] as const)
+            : (["settings", "inrichting", "toegang", "werk"] as const)
+          ).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -727,6 +839,7 @@ function WerkerRegel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
     }
   }
 
+  if (lab.kind === "host") return null;   // één machine, niets te schalen
   return (
     <div className="space-y-2">
       <Label>Werkers (containers) — nu {lab.worker_count || 1} actief</Label>
