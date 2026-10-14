@@ -577,6 +577,100 @@ export function LabDetailPage() {
   );
 }
 
+/**
+ * Het statuspaneel van een hostlab.
+ *
+ * Twee vragen die je bij een hostlab elke ochtend hebt en die je anders met een
+ * commando moet stellen: draait de agent nog, en kom ik werkelijk uit waar ik
+ * denk? Dat laatste is bij een klant met een IP- of apparaateis geen detail,
+ * en het is precies het soort ding dat stil verschuift.
+ */
+function HostPaneel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
+  const [agent, setAgent] = useState<{ bereikbaar: boolean; adres: string; hint: string | null } | null>(null);
+  const [ip, setIp] = useState<string | null>(null);
+  const [bezigIp, setBezigIp] = useState(false);
+  const [nieuwToken, setNieuwToken] = useState("");
+  const melding = useMelding();
+
+  useEffect(() => {
+    let weg = false;
+    const kijk = () => labsApi.hostAgentStatus()
+      .then((s) => !weg && setAgent(s)).catch(() => !weg && setAgent(null));
+    kijk();
+    const t = setInterval(kijk, 10000);
+    return () => { weg = true; clearInterval(t); };
+  }, []);
+
+  async function vraagIp() {
+    setBezigIp(true);
+    try {
+      // Van binnenuit vragen, niet van de LabX-kant: de vraag is waar dít lab
+      // vandaan komt, en dat kan iets anders zijn dan waar de server zit.
+      const r = await labsApi.exec(lab.id, "curl -s -m 10 https://1.1.1.1/cdn-cgi/trace | grep '^ip='");
+      const m = (r.output || "").match(/ip=([0-9a-fA-F.:]+)/);
+      setIp(m ? m[1] : "(geen antwoord)");
+    } catch (err) {
+      melding.fout("Uitgaand adres opvragen mislukt",
+                   err instanceof Error ? err.message : String(err));
+    } finally {
+      setBezigIp(false);
+    }
+  }
+
+  async function wisselToken() {
+    try {
+      await labsApi.update(lab.id, { host_agent_token: nieuwToken.trim() });
+      setNieuwToken("");
+      onChanged();
+      melding.ok("Agent-token vervangen");
+    } catch (err) {
+      melding.fout("Token vervangen mislukt",
+                   err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div className="mb-3 space-y-2 rounded-md border border-border p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`size-2 rounded-full ${agent?.bereikbaar ? "bg-success" : "bg-destructive"}`} />
+        <span className="font-medium">
+          {agent?.bereikbaar ? "Hostagent draait" : "Hostagent niet bereikbaar"}
+        </span>
+        <span className="font-mono text-[11px] text-muted-foreground">{agent?.adres}</span>
+        <Button variant="secondary" className="ml-auto text-xs" disabled={bezigIp || !agent?.bereikbaar}
+                onClick={vraagIp}>
+          {bezigIp ? "Bezig…" : "Waar kom ik vandaan?"}
+        </Button>
+      </div>
+      {!agent?.bereikbaar && agent?.hint && (
+        <p className="text-xs text-destructive">{agent.hint}</p>
+      )}
+      {ip && (
+        <p className="text-xs">
+          Uitgaand adres: <span className="font-mono">{ip}</span>
+          <span className="text-muted-foreground">
+            {" "}— vergelijk dit met wat de klant heeft toegelaten.
+          </span>
+        </p>
+      )}
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground">Agent-token vervangen</summary>
+        <div className="mt-2 flex gap-2">
+          <Input type="password" value={nieuwToken} autoComplete="new-password"
+                 placeholder="nieuw token" onChange={(e) => setNieuwToken(e.target.value)} />
+          <Button variant="secondary" disabled={!nieuwToken.trim()} onClick={wisselToken}>
+            Opslaan
+          </Button>
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Draai je het token om op de machine, zet het hier ook. Leeg laten betekent
+          niet wijzigen.
+        </p>
+      </details>
+    </div>
+  );
+}
+
 function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
   // Vier tabbladen in plaats van tien over twee regels. Wat je ZELF instelt
   // staat vooraan; alles waarmee je in het lab wérkt zit onder Werkruimte met
@@ -666,6 +760,7 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
         </Button>
       </div>
 
+      {isHost && <HostPaneel lab={lab} onChanged={onChanged} />}
       {isHost && (
         <div className="mb-3 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs">
           <strong>Dit lab draait op deze machine</strong>, binnen{" "}
