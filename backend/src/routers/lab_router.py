@@ -347,6 +347,7 @@ async def update_lab(lab_id: str, payload: Dict[str, Any], db: Session = Depends
         model=payload.get("model") if "model" in payload else "__unset__",
         azure_profile_id=payload.get("azure_profile_id") if "azure_profile_id" in payload else "__unset__",
         claim_resources=payload.get("claim_resources") if "claim_resources" in payload else "__unset__",
+        host_agent_token=payload.get("host_agent_token") if "host_agent_token" in payload else "__unset__",
     )
 
 

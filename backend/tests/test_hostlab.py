@@ -182,6 +182,27 @@ def test_met_agent_gaat_hij_wel_aan(db, monkeypatch):
     assert uit["status"] == "stopped"
 
 
+def test_de_chat_kan_een_hostlab_vanzelf_aanzetten(db, monkeypatch):
+    """ensure_running is de weg waarlangs de chat een lab aanzet dat vanzelf
+    uit is gegaan. Die eiste een container_id -- en dan strandt een hostlab
+    meteen op "heeft geen container", bij een lab dat prima kon werken."""
+    import asyncio
+
+    from services.lab.host_runtime import HostRuntime
+
+    lab = asyncio.run(_maak_hostlab(db))
+
+    async def _er(self):
+        return True
+
+    monkeypatch.setattr(HostRuntime, "is_bereikbaar", _er)
+    uit = asyncio.run(_svc(db).ensure_running(lab["id"]))
+    assert uit["ok"] is True and uit["started"] is True
+    # En nog eens: dan staat hij al aan en gebeurt er niets.
+    uit = asyncio.run(_svc(db).ensure_running(lab["id"]))
+    assert uit["started"] is False
+
+
 # ── de runtime kiest op het lab, niet op een instelling ──────────────────────
 
 def test_een_containerlab_houdt_de_docker_runtime(db):

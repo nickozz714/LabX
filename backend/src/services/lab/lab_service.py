@@ -1323,6 +1323,14 @@ exec ssh -N \\
         "lab draait niet" bij een handeling die hij prima had kunnen doen.
         """
         p = self.get(lab_id)
+        if self.is_host(p):
+            # Een hostlab heeft geen container_id; "draait" betekent hier dat
+            # de agent bereikbaar is. Zonder deze tak strandde de chat meteen
+            # op "heeft geen container" -- bij een lab dat prima kon werken.
+            if p.status == "running":
+                return {"ok": True, "started": False, "status": p.status}
+            await self.start(lab_id)
+            return {"ok": True, "started": True, "status": self.get(lab_id).status}
         if p.status == "running" and p.container_id:
             return {"ok": True, "started": False, "status": p.status}
         if not p.container_id:
@@ -1628,8 +1636,21 @@ exec ssh -N \\
                               security_profile: Optional[str] = None,
                               model: Any = "__unset__",
                               azure_profile_id: Any = "__unset__",
-                              claim_resources: Any = "__unset__") -> Dict[str, Any]:
+                              claim_resources: Any = "__unset__",
+                              host_agent_token: Any = "__unset__") -> Dict[str, Any]:
         p = self.get(lab_id)
+        if host_agent_token != "__unset__" and str(host_agent_token or "").strip():
+            # Het token kunnen VERVANGEN zonder het lab opnieuw te maken: hij
+            # verloopt niet, maar je draait hem wel een keer om. Een lege
+            # waarde betekent "niet wijzigen" -- anders wis je hem door een
+            # ander veld aan te passen.
+            from utils.crypto import encrypt
+            if not self.is_host(p):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Alleen een hostlab heeft een agent-token.")
+            p.host_agent_token_encrypted = encrypt(str(host_agent_token).strip())
+            self._host_runtimes.pop(p.id, None)   # oude runtime heeft het oude token
         if data_guard is not None:
             p.data_guard = bool(data_guard)
         if llm_guard is not None:
