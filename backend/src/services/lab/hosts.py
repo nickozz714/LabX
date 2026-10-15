@@ -62,6 +62,11 @@ class LabHostService:
 
         rij = self.db.query(LabHost).filter(LabHost.machine_id == mid).first()
         nieuw = rij is None
+        # Was hij weg? Dan zijn zijn labs mogelijk veranderd terwijl wij niet
+        # keken -- een machine die herstart heeft geen labcontainers meer.
+        # Dit moet VOOR het bijwerken van `laatst_gezien`, want daarna is hij
+        # per definitie online.
+        kwam_terug = bool(rij) and rij.status == "gekoppeld" and not self.is_online(rij)
         if nieuw:
             rij = LabHost(machine_id=mid, naam=(naam or mid)[:255], status="nieuw",
                           koppelcode=_koppelcode(), created_at=_nu(), updated_at=_nu())
@@ -77,6 +82,11 @@ class LabHostService:
         rij.updated_at = _nu()
         self.db.commit()
         self.db.refresh(rij)
+
+        if kwam_terug:
+            log.infox("Lab-host is terug; zijn labs worden nagekeken",
+                      naam=rij.naam, host_id=rij.id)
+            _reconcile_in_achtergrond(rij.id)
 
         # De code gaat alleen terug naar een host die nog NIET gekoppeld is --
         # anders zou een aanmelding van buiten hem kunnen uitlezen.
@@ -231,3 +241,34 @@ class LabHostService:
             "labs": labs,
             "created_at": rij.created_at, "updated_at": rij.updated_at,
         }
+
+
+def _reconcile_in_achtergrond(host_id: int) -> None:
+    """De labs van een teruggekeerde machine nakijken, buiten het verzoek om.
+
+    De agent wacht op dit antwoord en moet er niet op blijven hangen: bij hem
+    bijpraten kan een paar seconden SSH kosten. Een eigen sessie, want die van
+    het verzoek is straks dicht.
+    """
+    import asyncio
+
+    async def _werk() -> None:
+        from db.database import SessionLocal
+        from services.lab.lab_service import LabService
+
+        db = SessionLocal()
+        try:
+            n = await LabService(db).reconcile_host(host_id)
+            if n:
+                log.infox("Labs bijgewerkt na terugkeer", host_id=host_id, aantal=n)
+        except Exception as exc:  # noqa: BLE001 — nooit een aanmelding laten stuklopen
+            log.warningx("Nakijken na terugkeer mislukt", host_id=host_id,
+                         error=str(exc)[:200])
+        finally:
+            db.close()
+
+    try:
+        asyncio.get_running_loop().create_task(_werk())
+    except RuntimeError:
+        # Geen lopende lus (een test, een los script): dan gewoon niet.
+        pass

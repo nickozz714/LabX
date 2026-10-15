@@ -498,3 +498,128 @@ def test_de_pad_reparatie_laat_bestaande_inhoud_staan(tmp_path, monkeypatch):
     inhoud = (tmp_path / ".zshenv").read_text()
     assert ".cargo/env" in inhoud
     assert "/usr/local/bin" in inhoud
+
+
+# ── een machine die terugkomt ────────────────────────────────────────────────
+
+def test_een_machine_die_herstart_laat_zijn_labs_startbaar_achter(db):
+    """De vraag die hierachter zit: zet ik de andere computers uit en LabX
+    aan, herstelt dat dan als ze terugkomen?
+
+    Bij het opstarten slaat LabX een onbereikbare machine over -- terecht,
+    want "ik kon er niet bij" is iets anders dan "de container is weg". Maar
+    daarna keek niemand meer. Een Mac die 's nachts herstart heeft geen
+    labcontainers meer (die starten met --restart no), terwijl LabX nog
+    "running" zegt; dan faalt pas je eerste commando.
+
+    Een verdwenen container levert hier `stopped` op en geen `error`: er is
+    niets stuk, het volume staat er nog, en starten maakt een nieuwe aan.
+    """
+    import asyncio
+
+    from services.lab.lab_service import LabService
+
+    svc = _svc(db)
+    uit = _meld(db)
+    host = svc.lijst()[0]
+    svc.koppelen(host.id, code=uit["koppelcode"], docker_host="ssh://nick@werkpc")
+
+    p = _lab(db, host_id=host.id)
+    p.status = "running"
+    p.container_id = "c-van-voor-de-herstart"
+    db.commit()
+
+    class LeegNaHerstart:
+        async def list_managed(self):
+            return []          # de machine is herstart: niets meer over
+
+    lab_svc = LabService(db)
+    lab_svc._docker_op_host = lambda h: LeegNaHerstart()   # noqa: ARG005
+    aantal = asyncio.run(lab_svc.reconcile_host(host.id))
+
+    db.refresh(p)
+    assert aantal == 1
+    assert p.status == "stopped", "geen 'error': er is niets stuk"
+    assert p.container_id is None, "zodat starten een verse container maakt"
+    assert not p.error
+
+
+def test_een_lab_dat_gewoon_nog_draait_blijft_met_rust(db):
+    """Terugkomen is geen reden om iets te veranderen aan wat het nog doet."""
+    import asyncio
+
+    from services.lab.lab_service import LabService
+
+    svc = _svc(db)
+    uit = _meld(db)
+    host = svc.lijst()[0]
+    svc.koppelen(host.id, code=uit["koppelcode"], docker_host="ssh://nick@werkpc")
+
+    p = _lab(db, host_id=host.id)
+    p.status = "running"
+    p.container_id = "c-leeft-nog"
+    db.commit()
+
+    class NogSteedsDaar:
+        async def list_managed(self):
+            return [{"id": "c-leeft-nog", "name": "labx-lab-abc", "state": "running"}]
+
+    lab_svc = LabService(db)
+    lab_svc._docker_op_host = lambda h: NogSteedsDaar()   # noqa: ARG005
+    asyncio.run(lab_svc.reconcile_host(host.id))
+
+    db.refresh(p)
+    assert p.status == "running"
+    assert p.container_id == "c-leeft-nog"
+
+
+def test_een_machine_die_nog_steeds_weg_is_verandert_niets(db):
+    """Onbereikbaar blijft onbereikbaar: dan weten we nog steeds niets, en
+    raden is erger dan wachten."""
+    import asyncio
+
+    from services.lab.lab_service import LabService
+
+    svc = _svc(db)
+    uit = _meld(db)
+    host = svc.lijst()[0]
+    svc.koppelen(host.id, code=uit["koppelcode"], docker_host="ssh://nick@werkpc")
+    p = _lab(db, host_id=host.id)
+    p.status = "running"
+    p.container_id = "c1"
+    db.commit()
+
+    class Weg:
+        async def list_managed(self):
+            raise RuntimeError("ssh: Host is down")
+
+    lab_svc = LabService(db)
+    lab_svc._docker_op_host = lambda h: Weg()   # noqa: ARG005
+    assert asyncio.run(lab_svc.reconcile_host(host.id)) == 0
+    db.refresh(p)
+    assert p.status == "running"
+
+
+def test_terugkomen_na_offline_zet_het_nakijken_in_gang(db, monkeypatch):
+    """De aanmelding zelf mag er niet op wachten -- de agent hangt eraan --
+    maar hij moet het wél in gang zetten."""
+    from services.lab import hosts as hosts_mod
+
+    svc = _svc(db)
+    uit = _meld(db)
+    host = svc.lijst()[0]
+    svc.koppelen(host.id, code=uit["koppelcode"], docker_host="ssh://nick@werkpc")
+
+    # Hem lang geleden voor het laatst gezien = offline.
+    host.laatst_gezien = "2026-10-01T10:00:00+00:00"
+    db.commit()
+
+    gezien = []
+    monkeypatch.setattr(hosts_mod, "_reconcile_in_achtergrond", gezien.append)
+    _meld(db)
+    assert gezien == [host.id]
+
+    # En een gewone hartslag van een machine die gewoon online was, niet.
+    gezien.clear()
+    _meld(db)
+    assert gezien == []

@@ -201,6 +201,68 @@ class LabService:
                         f"Verhoog het maximum bij Labs → Machines, of kies een "
                         f"andere machine."))
 
+    async def reconcile_host(self, host_id: int) -> int:
+        """De labs van ÉÉN machine weer in overeenstemming brengen.
+
+        Draait wanneer een lab-host terugkomt na offline te zijn geweest. Dat
+        gat was er: bij het opstarten slaat LabX een onbereikbare machine over
+        -- terecht, want "ik kon er niet bij" is iets anders dan "de container
+        is weg" -- maar daarna keek niemand er meer naar. Een Mac die 's
+        nachts herstart heeft geen labcontainers meer (die starten met
+        `--restart no`), terwijl LabX nog "running" zegt. Dan faalt pas je
+        eerste commando, en op een plek die nergens naar verwijst.
+
+        Een container die weg is, levert hier `stopped` op en geen `error`:
+        er is niets stuk, het volume staat er nog, en starten maakt gewoon een
+        nieuwe aan. Een lab op "error" zetten omdat een machine opnieuw is
+        opgestart, is een storing verzinnen.
+        """
+        from models.lab_host import LabHost
+
+        host = self.db.get(LabHost, int(host_id))
+        if host is None or host.status != "gekoppeld" or not host.docker_host:
+            return 0
+        labs = self.db.query(Lab).filter(Lab.host_id == host_id).all()
+        if not labs:
+            return 0
+
+        rt = self._docker_op_host(host_id)
+        try:
+            levend = {m["id"]: m for m in await rt.list_managed()}
+        except Exception as exc:  # noqa: BLE001 — nog steeds niet bereikbaar
+            log.warningx("Host-reconcile overgeslagen (niet bereikbaar)",
+                         host=host.naam, error=str(exc)[:200])
+            return 0
+
+        gewijzigd = 0
+        for p in labs:
+            if self.is_host(p):
+                continue
+            for w in self.ensure_workers(p):
+                m = levend.get(w.container_id) if w.container_id else None
+                if w.container_id and not m:
+                    w.container_id = None
+                    w.status = "stopped"
+                    w.provision_status = "pending"
+                    w.updated_at = _now_iso()
+                elif m:
+                    w.status = "running" if m["state"] == "running" else "stopped"
+            self._spiegel_werker1(p)
+
+            m = levend.get(p.container_id) if p.container_id else None
+            nieuw = ("running" if m and m["state"] == "running"
+                     else "stopped")
+            if p.status != nieuw or (p.container_id and not m):
+                p.status = nieuw
+                p.error = None
+                p.updated_at = _now_iso()
+                gewijzigd += 1
+                log.infox("Lab bijgewerkt na terugkeer van zijn machine",
+                          lab_id=p.id, lab=p.name, status=nieuw, host=host.naam)
+        if gewijzigd:
+            self.db.commit()
+        return gewijzigd
+
     async def _bouw_containers_opnieuw(self, p: Lab) -> None:
         """Verse containers voor elke werker van dit lab, op zijn eigen machine.
 
