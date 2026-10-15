@@ -402,3 +402,48 @@ def test_een_waarschuwing_mag_de_verhuizing_nooit_breken(db):
     uit = asyncio.run(_svc(db, hier, daar).verplaats(p.id, host_id=host.id))
     assert uit["waarschuwing"] is None
     assert db.get(type(p), p.id).host_id == host.id
+
+
+# ── starten zonder container ─────────────────────────────────────────────────
+
+def test_een_lab_zonder_container_kan_gewoon_gestart_worden(db):
+    """Dit maakte een lab onstartbaar op het moment dat starten juist het
+    goede antwoord was.
+
+    Na een verhuizing (of een opgeruimde container, of een herbouw die
+    halverwege sneuvelde) heeft een lab geen container_id. `start()` weigerde
+    dat met "Lab heeft geen container (status error?)" -- een knop die niets
+    doet en een melding die naar een foutstatus wijst die er niet is. Terwijl
+    het volume er gewoon staat en het image vastligt.
+    """
+    hier = NepRuntime("server")
+    hier.volumes.add("labx_lab_abc")
+    p = _lab(db, status="stopped", container_id=None)
+
+    from services.lab.lab_service import LabService
+
+    svc = LabService(db, runtime=hier)
+    uit = asyncio.run(svc.start(p.id))
+
+    assert uit["status"] == "running"
+    db.refresh(p)
+    assert p.container_id == "nieuw-op-server"
+    assert [x for x in hier.sporen if x[0] == "run_container"]
+
+
+def test_starten_zonder_container_zet_de_vervaltijd_opnieuw(db):
+    """Starten is gebruik; anders valt hij bij de eerstvolgende ronde meteen
+    weer om."""
+    hier = NepRuntime("server")
+    hier.volumes.add("labx_lab_abc")
+    p = _lab(db, status="stopped", container_id=None)
+    p.expires_at = "2026-10-11T08:00:00+00:00"
+    p.error = "iets ouds"
+    db.commit()
+
+    from services.lab.lab_service import LabService
+
+    asyncio.run(LabService(db, runtime=hier).start(p.id))
+    db.refresh(p)
+    assert p.expires_at > "2026-10-15"
+    assert p.error is None

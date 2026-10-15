@@ -201,6 +201,22 @@ class LabService:
                         f"Verhoog het maximum bij Labs → Machines, of kies een "
                         f"andere machine."))
 
+    async def _bouw_containers_opnieuw(self, p: Lab) -> None:
+        """Verse containers voor elke werker van dit lab, op zijn eigen machine.
+
+        Het volume blijft waar het is -- dat is het werk. Alleen de
+        containerlaag wordt nieuw, en die was toch al wegwerpbaar.
+        """
+        await self.runtime_voor(p).create_volume(p.volume_name)
+        for w in self.ensure_workers(p):
+            await self._start_worker_container(p, w)
+            w.status = "running"
+            w.error = None
+            w.provision_status = "pending"
+            w.updated_at = _now_iso()
+        self._spiegel_werker1(p)
+        self.db.commit()
+
     async def _sluit_tunnels_indien_leeg(self, host_id: Optional[int]) -> None:
         """Tunnels naar een machine opruimen zodra er geen lab meer op staat.
 
@@ -1824,9 +1840,10 @@ exec ssh -N \\
         if p.status == "running" and p.container_id:
             return {"ok": True, "started": False, "status": p.status}
         if not p.container_id:
-            raise HTTPException(status_code=409, detail=(
-                f"Lab '{p.name}' heeft geen container (status {p.status}) — "
-                "hij moet opnieuw aangemaakt worden."))
+            # Zelfde verhaal als in start(): opnieuw aanmaken IS het antwoord,
+            # dus doen we dat in plaats van de aanroeper ermee op te zadelen.
+            await self.start(lab_id)
+            return {"ok": True, "started": True, "status": self.get(lab_id).status}
         was = p.status
         await self.start(lab_id)
         log.infox("Lab automatisch gestart", lab_id=lab_id, vorige_status=was)
@@ -1853,7 +1870,30 @@ exec ssh -N \\
             self.db.refresh(p)
             return self._to_dict(p)
         if not p.container_id:
-            raise HTTPException(status_code=409, detail="Lab heeft geen container (status error?)")
+            # GEEN container? Dan maken we er een.
+            #
+            # Hier stond een weigering ("Lab heeft geen container (status
+            # error?)"), en die maakte een lab onstartbaar op precies het
+            # moment dat starten het goede antwoord was: na een verhuizing,
+            # na een opgeruimde container, na een herbouw die halverwege
+            # sneuvelde. Het volume is er, het image staat vast -- "start"
+            # betekent dan letterlijk dit. Weigeren liet de gebruiker achter
+            # met een knop die niets doet en een melding die naar een
+            # foutstatus wijst die er niet is.
+            log.infox("Lab zonder container gestart; containers worden opnieuw aangemaakt",
+                      lab_id=p.id, lab=p.name)
+            await self._bouw_containers_opnieuw(p)
+            p.status = "running"
+            p.error = None
+            p.updated_at = p.last_used_at = _now_iso()
+            p.expires_at = _expiry_from_now(p.ttl_hours)
+            if p.allow_network:
+                p.provision_status = "pending"
+            self.db.commit()
+            if p.allow_network:
+                provision_in_background(p.id)
+            self.db.refresh(p)
+            return self._to_dict(p)
         try:
             await self.runtime_voor(p).start(p.container_id)
         except Exception as exc:  # noqa: BLE001
