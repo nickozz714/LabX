@@ -240,17 +240,24 @@ export function zwijg() {
  * andere zin te krijgen.
  */
 export async function vraagMicrofoon(): Promise<MediaStream> {
-  if (typeof window !== "undefined" && window.isSecureContext === false) {
+  const onveilig = (typeof window !== "undefined" && window.isSecureContext === false)
+    || !navigator.mediaDevices?.getUserMedia;
+  if (onveilig) {
+    // Een browserregel, geen instelling van ons: zonder beveiligde context
+    // bestaat `navigator.mediaDevices` niet eens. Dat is terecht op het
+    // openbare web en onhandig op je eigen netwerk, dus hoort de melding te
+    // zeggen wat je eraan DOET -- "gebruik https" alleen is een doodlopend
+    // spoor op een server die nooit publiek wordt.
+    const hier = typeof window !== "undefined" ? window.location.origin : "";
     throw new Error(
-      "Praten kan alleen op een beveiligde verbinding. Deze pagina draait op "
-      + "http, en dan geeft de browser geen enkele site toegang tot de "
-      + "microfoon. Gebruik https, of open LabX op localhost.");
-  }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error(
-      "Deze browser biedt geen microfoon aan op deze pagina. Dat komt bijna "
-      + "altijd doordat de verbinding niet beveiligd is (http in plaats van "
-      + "https).");
+      `De browser staat de microfoon niet toe op ${hier}, omdat dat geen `
+      + "beveiligde verbinding is. Drie manieren om dat op te lossen, van snel "
+      + "naar netjes:\n"
+      + `1. In Chrome: open chrome://flags/#unsafely-treat-insecure-origin-as-secure, `
+      + `zet er ${hier} in, schakel het aan en herstart de browser. `
+      + "Dat geldt alleen voor deze ene site op jouw computer.\n"
+      + "2. Gebruik de LabX-desktopapp; die heeft dit probleem niet.\n"
+      + "3. Zet https voor LabX (een certificaat van je eigen netwerk is genoeg).");
   }
   try {
     return await navigator.mediaDevices.getUserMedia({ audio: true });

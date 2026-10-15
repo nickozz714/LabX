@@ -362,7 +362,9 @@ export function OrchestratorPage() {
       </div>
 
       {melding && (
-        <div className="relative mx-3 mt-2 rounded-md border border-rose-400/30 bg-rose-400/10 p-2 text-xs text-rose-200 sm:mx-6">
+        /* `whitespace-pre-line`: sommige meldingen leggen stap voor stap uit
+           wat je kunt doen, en die regels horen regels te blijven. */
+        <div className="relative mx-3 mt-2 whitespace-pre-line rounded-md border border-rose-400/30 bg-rose-400/10 p-2 text-xs leading-relaxed text-rose-200 sm:mx-6">
           {melding}
         </div>
       )}

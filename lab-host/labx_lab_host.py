@@ -233,7 +233,25 @@ def _geheugen_mb() -> tuple[Optional[int], Optional[int]]:
             totaal = int(subprocess.run(["sysctl", "-n", "hw.memsize"],
                                         capture_output=True, text=True,
                                         timeout=5).stdout.strip()) // (1024 * 1024)
-            # `vm_stat` geeft pagina's; vrij = free + inactive + speculative.
+            # EERST macOS zelf vragen. `memory_pressure` drukt één getal af dat
+            # het systeem zelf hanteert, en dat is beter dan onze eigen
+            # optelsom -- die mist de gecomprimeerde laag. Op een MacBook met
+            # 24 GB telde die som uit op 5,5 GB "vrij" terwijl macOS zelf 44%
+            # (ruim 10 GB) zei. Een lab-host die zichzelf veel voller meldt
+            # dan hij is, krijgt werk dat hij prima aankon.
+            try:
+                mp = subprocess.run(["memory_pressure"], capture_output=True,
+                                    text=True, timeout=5).stdout
+                for regel in mp.splitlines():
+                    if "free percentage" in regel:
+                        pct = int(regel.split(":")[1].strip().rstrip("%"))
+                        return totaal, totaal * pct // 100
+            except Exception:  # noqa: BLE001 — dan de optelsom hieronder
+                pass
+
+            # Terugval: `vm_stat` geeft pagina's; vrij = free + inactive +
+            # speculative. Een ondergrens, want gecomprimeerd geheugen dat weer
+            # vrij kan komen telt hier niet mee.
             vm = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5).stdout
             paginagrootte = 4096
             vrij_paginas = 0
