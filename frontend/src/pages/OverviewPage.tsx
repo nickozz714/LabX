@@ -14,6 +14,7 @@ import type { OverviewDto, OverviewRunDto, PlanDto } from "@/lib/types";
 import { Badge, Button, Card, EmptyState } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { OrchestratorStart } from "@/components/OrchestratorStart";
+import { NetwerkCapaciteit } from "@/components/NetwerkCapaciteit";
 import { Bot, Pause, Play, RefreshCw, X } from "lucide-react";
 
 const PLAN_TOON: Record<string, "green" | "red" | "yellow" | "neutral" | "violet"> = {
@@ -191,6 +192,10 @@ export function OverviewPage() {
           <RefreshCw size={13} /> Verversen
         </Button>
       </div>
+
+      {/* Boven "nu bezig": als de server het zwaar heeft, wil je op dit
+          scherm meteen zien dat er elders nog ruimte staat. */}
+      <NetwerkCapaciteit />
 
       <Card className="p-0">
         <div className="border-b border-border px-3 py-2 text-sm font-semibold">

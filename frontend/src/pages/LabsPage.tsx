@@ -878,7 +878,10 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
   }
 
   return (
-    <div className="pagina veilig-onder flex h-full min-h-0 flex-col p-4 sm:p-6">
+    /* Geen `pagina`: dit scherm schuift niet zelf, het vult de hoogte en
+       heeft zijn eigen schuifvlak. Met `pagina` erbij eindigde dat vlak 4rem
+       boven de onderrand en leek de inhoud afgekapt. */
+    <div className="flex h-full min-h-0 flex-col p-4 pb-0 sm:p-6 sm:pb-0">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <button onClick={onClose} aria-label="Terug naar de labs"
                 className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
@@ -953,7 +956,7 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
           die schuiven in hun geheel. De werkruimte hieronder niet --
           daar heeft elk deelvenster zijn eigen schuifbalk. */}
       {tab !== "werk" && (
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="schuifvlak-onder min-h-0 flex-1 overflow-y-auto pr-1">
       {tab === "settings" && (
         <div className="space-y-3">
           <Toggle checked={lab.data_guard} onChange={(v) => toggle("data_guard", v)} label="Data-egress-guard (regels)" />

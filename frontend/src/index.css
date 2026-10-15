@@ -376,3 +376,13 @@ body {
 .pagina {
   padding-bottom: calc(var(--veilig-onder) + 4rem);
 }
+
+/* Voor een pagina die NIET zelf schuift maar het scherm vult en zijn eigen
+   schuifbalk binnenin heeft (het labdetail, de werkruimte). Daar hoort die
+   4rem juist niet: hij knipt de onderkant van het scherm af, zodat het
+   schuifvlak hoog boven de rand eindigt en de inhoud afgekapt lijkt terwijl
+   er ruimte over is. De marge hoort hier bij de INHOUD van het schuifvlak,
+   niet bij de pagina eromheen. */
+.schuifvlak-onder {
+  padding-bottom: calc(var(--veilig-onder) + 1rem);
+}

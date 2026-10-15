@@ -17,6 +17,8 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { dockerStatus } from "@/lib/labs";
+import { OrchestratorProvider } from "@/contexts/OrchestratorContext";
+import { OrchestratorKnop } from "@/components/OrchestratorKnop";
 import { settingsApi } from "@/lib/settings";
 import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { Versie } from "@/components/Versie";
@@ -69,7 +71,19 @@ function paginaVan(pad: string) {
   return beste;
 }
 
+/**
+ * De provider staat BUITEN de Shell en niet in een pagina: alleen zo overleeft
+ * een spraaksessie het wisselen van pagina, en kan de balk hem laten zien.
+ */
 export function Shell() {
+  return (
+    <OrchestratorProvider>
+      <ShellBinnen />
+    </OrchestratorProvider>
+  );
+}
+
+function ShellBinnen() {
   const { username, logout } = useAuth();
   const { pathname } = useLocation();
   const pagina = paginaVan(pathname);
@@ -245,6 +259,9 @@ export function Shell() {
             )}
           </div>
 
+          {/* Staat er een sessie open, dan hoort die zichtbaar te zijn —
+              op élke pagina, niet alleen op die van de orchestrator. */}
+          <OrchestratorKnop />
           <ThemaKiezer />
           <button
             onClick={logout}

@@ -14,7 +14,7 @@
  * - Zolang je nog niets gevraagd hebt, staan er voorbeeldvragen om aan te
  *   tikken. Een leeg scherm met een microfoon vertelt je niet wat kan.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Square, Send, Volume2, VolumeX, Loader2, Search, MessageSquare } from "lucide-react";
 
 import { Badge, Button, EmptyState, Input } from "@/components/ui";
@@ -26,8 +26,8 @@ import { Gesprek } from "@/components/Gesprek";
 import { ApiError } from "@/lib/api";
 import { Opname, lees, spraakApi, zwijg } from "@/lib/spraak";
 import { startRealtime } from "@/lib/spraakRealtime";
-import type { RealtimeSessie } from "@/lib/spraakRealtime";
-import type { SpraakSessie, SpraakStatus } from "@/lib/spraak";
+import { useOrchestrator } from "@/contexts/OrchestratorContext";
+import type { SpraakSessie } from "@/lib/spraak";
 
 /** Voorbeeldvragen voor een leeg gesprek. Bewust alleen dingen die altijd
  *  werken, dus niets dat van een bepaald ticket of bord uitgaat. */
@@ -39,8 +39,12 @@ const VOORBEELDEN = [
 ];
 
 export function OrchestratorPage() {
-  const [status, setStatus] = useState<SpraakStatus | null>(null);
-  const [sessie, setSessie] = useState<SpraakSessie | null>(null);
+  // De sessie en de realtime-verbinding leven BOVEN deze pagina, zodat ze het
+  // wegnavigeren overleven. Alles hieronder is scherm en hoort wél hier.
+  const {
+    status, sessie, setSessie, verversen, realtime,
+    luistert, setLuistert, rtStatus, setRtStatus, stop: stopContext,
+  } = useOrchestrator();
   const [tekst, setTekst] = useState("");
   const [bezig, setBezig] = useState(false);
   const [opnemen, setOpnemen] = useState(false);
@@ -50,12 +54,7 @@ export function OrchestratorPage() {
 
   const opname = useRef(new Opname());
 
-  // Het realtime-brein houdt een eigen verbinding open; die hoort bij deze
-  // pagina en moet dus ook met de pagina mee verdwijnen.
-  const realtime = useRef<RealtimeSessie | null>(null);
-  const [luistert, setLuistert] = useState(false);
   const [rtOpnemen, setRtOpnemen] = useState(false);
-  const [rtStatus, setRtStatus] = useState<string | null>(null);
   const [niveau, setNiveau] = useState(0);
   const [steunOpen, setSteunOpen] = useState(false);
   const [gesprekOpen, setGesprekOpen] = useState(false);
@@ -75,17 +74,12 @@ export function OrchestratorPage() {
   const isRealtime = sessie?.brein === "realtime";
   const openMicrofoon = status?.microfoon === "open";
   // Welke stem er voorleest, en bij welke sessie de kosten horen.
-  const stemOpties = { tts: status?.tts, sessie: sessie?.id };
-
-  useEffect(() => {
-    spraakApi.status().then(setStatus).catch(() => setStatus({ aan: false }));
-  }, []);
-
-  const verversen = useCallback(async (id: string) => {
-    const s = await spraakApi.haal(id);
-    setSessie(s);
-    return s;
-  }, []);
+  const stemOpties = {
+    tts: status?.tts, sessie: sessie?.id,
+    // Als de echte stem omvalt, hoor je dat als "ineens machinaal" en niet als
+    // een storing. Dus zeggen wat er is.
+    opTerugval: (reden: string) => setMelding(reden),
+  };
 
   // De aftelklok van een openstaande bevestiging. Twintig seconden is kort
   // genoeg dat je moet kúnnen zien dat de klok loopt.
@@ -131,12 +125,10 @@ export function OrchestratorPage() {
     };
   }, [opnemen]);
 
-  // Een open microfoon die blijft luisteren nadat je weg navigeert is precies
-  // wat je niet wilt.
-  useEffect(() => () => {
-    realtime.current?.stop();
-    realtime.current = null;
-  }, []);
+  // GEEN opruimen bij het verlaten van deze pagina: de sessie hoort door te
+  // lopen als je even iets anders opzoekt. Dat een open microfoon dan blijft
+  // luisteren is niet weggepoetst maar zichtbaar gemaakt -- zie
+  // OrchestratorKnop in de balk, met "stop" binnen één klik.
 
   async function startSessie() {
     setBezig(true);
@@ -147,7 +139,10 @@ export function OrchestratorPage() {
       // Hardop, zodat meteen duidelijk is dat de sessie leeft. Voorlezen gaat
       // via de browser en kost niets.
       const groet = (vol.tijdlijn || []).find((e) => e.soort === "assistent");
-      if (groet) lees(groet.tekst, geluid, { tts: status?.tts, sessie: s.id });
+      if (groet) lees(groet.tekst, geluid, {
+        tts: status?.tts, sessie: s.id,
+        opTerugval: (reden: string) => setMelding(reden),
+      });
     } catch (err) {
       setMelding(err instanceof ApiError ? err.message : "Sessie starten mislukt");
     } finally {
@@ -157,14 +152,8 @@ export function OrchestratorPage() {
 
   async function stopSessie() {
     if (!sessie) return;
-    realtime.current?.stop();
-    realtime.current = null;
-    setLuistert(false);
     setRtOpnemen(false);
-    setRtStatus(null);
-    zwijg();
-    await spraakApi.stop(sessie.id).catch(() => {});
-    setSessie(null);
+    await stopContext();
   }
 
   async function stuur(wat: string) {
@@ -191,8 +180,13 @@ export function OrchestratorPage() {
       await opname.current.start();
       setOpnemen(true);
       zwijg();   // niet tegen jezelf in praten
-    } catch {
-      setMelding("Ik kan de microfoon niet gebruiken. Staat die toegang aan?");
+    } catch (err) {
+      // De oorzaak staat in de melding zelf (zie vraagMicrofoon): een http-pagina
+      // heeft helemaal geen microfoon om toegang voor te geven, en dan ga je in
+      // de browserinstellingen zoeken naar iets wat er niet is.
+      setMelding(err instanceof Error
+        ? err.message
+        : "Ik kan de microfoon niet gebruiken.");
     }
   }
 

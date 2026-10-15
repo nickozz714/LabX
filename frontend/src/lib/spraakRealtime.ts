@@ -18,6 +18,7 @@
  *    bevestigd is, dan was het bevestigingswoord een formaliteit.
  */
 import { getToken } from "@/lib/api";
+import { vraagMicrofoon } from "@/lib/spraak";
 
 const OPENAI_CALLS = "https://api.openai.com/v1/realtime/calls";
 
@@ -126,7 +127,7 @@ export async function startRealtime(
   meld: RealtimeMeldingen = {},
 ): Promise<RealtimeSessie> {
   meld.onStatus?.("Microfoon aanvragen…");
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const stream = await vraagMicrofoon();
 
   // Bij push-to-talk staat de server-VAD uit: OpenAI beslist dan niet zelf
   // wanneer je uitgesproken bent, dus moet de browser elke beurt afsluiten.

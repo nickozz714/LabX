@@ -121,6 +121,15 @@ function besteStem(synth: SpeechSynthesis): SpeechSynthesisVoice | undefined {
 
 let huidigeAudio: HTMLAudioElement | null = null;
 
+/** Hoe snel de browserstem praat.
+ *
+ *  1.0 is het tempo van een voorleesstem en dat is te traag voor een
+ *  assistent waar je een gesprek mee voert: je zit te wachten tot hij klaar
+ *  is met iets wat je al weet. 1.25 leest als iemand die een beetje haast
+ *  heeft; daarboven gaat de Nederlandse stem brouwen op samengestelde
+ *  woorden ("achtergrondtaken", "beveiligingsprofiel"). */
+const SPREEKTEMPO = 1.25;
+
 /** Voorlezen met de browserstem. Gratis, direct, maar machinaal. */
 function leesMetBrowser(tekst: string) {
   try {
@@ -129,7 +138,7 @@ function leesMetBrowser(tekst: string) {
     synth.cancel();
     const uiting = new SpeechSynthesisUtterance(tekst);
     uiting.lang = "nl-NL";
-    uiting.rate = 1.05;
+    uiting.rate = SPREEKTEMPO;
     const stem = besteStem(synth);
     if (stem) uiting.voice = stem;
     synth.speak(uiting);
@@ -146,8 +155,17 @@ function leesMetBrowser(tekst: string) {
  * mis (geen sleutel, dagplafond, netwerk), dan valt hij terug op de
  * browserstem in plaats van te zwijgen.
  */
+//: Of we de terugval al gemeld hebben. Eén keer per laadbeurt: elke zin zou
+//: dezelfde melding geven en dan lees je hem niet meer.
+let terugvalGemeld = false;
+
 export function lees(tekst: string, aan = true,
-                     opties: { tts?: string; sessie?: string } = {}) {
+                     opties: {
+                       tts?: string; sessie?: string;
+                       /** Wordt aangeroepen als de echte stem het niet deed en
+                        *  hij terugvalt op de browserstem. */
+                       opTerugval?: (reden: string) => void;
+                     } = {}) {
   if (!aan || !tekst || typeof window === "undefined") return;
   if (opties.tts !== "openai") {
     leesMetBrowser(tekst);
@@ -158,12 +176,30 @@ export function lees(tekst: string, aan = true,
       const blob = await spraakApi.spreek(tekst, opties.sessie);
       zwijg();
       const audio = new Audio(URL.createObjectURL(blob));
+      // Dezelfde reden als bij de browserstem, maar voorzichtiger: dit is een
+      // echte stem en die gaat eerder klinken als een opgenomen bandje dat te
+      // snel wordt afgespeeld.
+      audio.playbackRate = 1.15;
       huidigeAudio = audio;
       // De blob-URL weer vrijgeven; anders houdt elke zin geheugen vast.
       audio.onended = () => URL.revokeObjectURL(audio.src);
       await audio.play();
-    } catch {
+    } catch (fout) {
+      // Hier zat een stille verslechtering: de echte stem mislukte en je
+      // kreeg de browserstem terug. Dat klinkt als "de assistent is ineens
+      // machinaal geworden" en niet als "je sleutel is verlopen" -- terwijl
+      // dat laatste is wat er aan de hand is, en het enige wat je kunt
+      // oplossen. Eén keer melden is genoeg.
       leesMetBrowser(tekst);
+      if (!terugvalGemeld) {
+        terugvalGemeld = true;
+        const reden = fout instanceof Error ? fout.message : String(fout);
+        opties.opTerugval?.(
+          /verlopen|expired|401|sleutel|api key/i.test(reden)
+            ? "De OpenAI-stem doet het niet (de sleutel lijkt verlopen), dus je "
+              + "hoort nu de browserstem. Zet een nieuwe sleutel bij Instellingen."
+            : `De OpenAI-stem doet het niet, dus je hoort de browserstem. ${reden}`);
+      }
     }
   })();
 }
@@ -191,13 +227,58 @@ export function zwijg() {
  * en past bij push-to-talk. Voor de open microfoon doet het realtime-brein
  * zijn eigen ding via WebRTC.
  */
+/**
+ * De microfoon opvragen, en bij weigering zeggen WAAROM.
+ *
+ * Hier zat de val. `navigator.mediaDevices` bestaat helemaal niet op een
+ * pagina die niet als veilig geldt -- en dat is elke http-pagina op een
+ * IP-adres of hostnaam. De aanroep gooide dan een TypeError, die werd gevangen
+ * als "de microfoon doet het niet; staat de toegang aan?", en dan sta je in de
+ * browserinstellingen te zoeken naar een toestemming die er niet eens is.
+ *
+ * Alle vier de oorzaken hebben een andere oplossing, dus ze horen ook een
+ * andere zin te krijgen.
+ */
+export async function vraagMicrofoon(): Promise<MediaStream> {
+  if (typeof window !== "undefined" && window.isSecureContext === false) {
+    throw new Error(
+      "Praten kan alleen op een beveiligde verbinding. Deze pagina draait op "
+      + "http, en dan geeft de browser geen enkele site toegang tot de "
+      + "microfoon. Gebruik https, of open LabX op localhost.");
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error(
+      "Deze browser biedt geen microfoon aan op deze pagina. Dat komt bijna "
+      + "altijd doordat de verbinding niet beveiligd is (http in plaats van "
+      + "https).");
+  }
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    const naam = (err as DOMException)?.name;
+    if (naam === "NotAllowedError" || naam === "SecurityError") {
+      throw new Error(
+        "De browser houdt de microfoon tegen. Geef deze site toegang via het "
+        + "slotje in de adresbalk en probeer opnieuw.");
+    }
+    if (naam === "NotFoundError" || naam === "OverconstrainedError") {
+      throw new Error("Ik vind hier geen microfoon.");
+    }
+    if (naam === "NotReadableError") {
+      throw new Error(
+        "De microfoon is in gebruik door een ander programma.");
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
 export class Opname {
   private recorder: MediaRecorder | null = null;
   private brokken: Blob[] = [];
   private stream: MediaStream | null = null;
 
   async start(): Promise<void> {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    this.stream = await vraagMicrofoon();
     this.brokken = [];
     // Safari kent webm niet; laat de browser zelf kiezen als dat zo is.
     const type = MediaRecorder.isTypeSupported("audio/webm")
