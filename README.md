@@ -78,8 +78,8 @@ start door de setup: accountnaam + wachtwoord kiezen, Docker-check, setup-token 
 
 **Hostlab (macOS)** — een lab dat op je eigen machine draait in plaats van in
 een container, voor klanten die aanmelden vanaf een beheerd apparaat eisen.
-Start `host-agent/start.sh` en kies bij het aanmaken van een lab "op deze
-machine". Zie [host-agent/README.md](host-agent/README.md) voor wat de grenzen
+Start `backend/host-agent/start.sh` en kies bij het aanmaken van een lab "op deze
+machine". Zie [backend/host-agent/README.md](backend/host-agent/README.md) voor wat de grenzen
 wél en niet zijn.
 
 **Docker Compose (server of lokaal):**

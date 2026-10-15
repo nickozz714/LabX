@@ -286,3 +286,55 @@ def test_een_machine_die_uit_staat_meldt_geen_labs_kapot(db, monkeypatch):
     asyncio.run(LabService(db, runtime=Leeg()).reconcile_on_start())
     db.refresh(p)
     assert p.status == "running", "onbereikbaar is geen bewijs dat de container weg is"
+
+
+# ── het script op die andere computer krijgen ────────────────────────────────
+
+def test_het_agent_script_is_zonder_login_op_te_halen():
+    """De enige plek waar nog niemand kan inloggen.
+
+    Op de computer die mee gaat doen is geen LabX-account, en er valt er ook
+    geen te maken. Zou dit eindpunt een token eisen, dan moest je dat token in
+    een curl-regel plakken en bleef het achter in de shell-geschiedenis van een
+    vreemde machine. Er staat niets geheims in: het is clientcode, hij voert
+    geen commando's uit, en hij krijgt pas iets zodra een MENS de koppelcode
+    bevestigt.
+    """
+    from fastapi.testclient import TestClient
+
+    import server
+
+    # Geen `with`: dat draait de lifespan, en die registreert geplande taken
+    # die maar één keer mogen bestaan in een proces. Voor een routevraag is de
+    # opstart van de app niet nodig.
+    r = TestClient(server.app).get("/api/lab-hosts/agent")
+    assert r.status_code == 200, r.text
+    assert "labx_lab_host" in r.text
+    compile(r.text, "labx_lab_host.py", "exec")   # en het is geen half bestand
+
+
+def test_de_beveiligde_lab_host_routes_blijven_dicht():
+    """Spiegelbeeld van hierboven: alleen het script is open."""
+    from fastapi.testclient import TestClient
+
+    import server
+
+    client = TestClient(server.app)
+    for pad in ("/api/lab-hosts", "/api/lab-hosts/sleutel", "/api/lab-hosts/1"):
+        assert client.get(pad).status_code == 401, pad
+
+
+def test_de_open_router_staat_voor_de_beveiligde():
+    """Dit ging mis en kostte een 401 op de ene plek waar niemand kan inloggen.
+
+    `/lab-hosts/{host_id}` vangt ook `/lab-hosts/agent` af, en de
+    router-dependency van de beveiligde router weigert VOORDAT iemand kijkt of
+    "agent" wel een getal is. De volgorde van include_router is hier dus geen
+    smaak maar gedrag.
+    """
+    from pathlib import Path
+
+    bron = (Path(__file__).resolve().parents[1] / "src" / "server.py").read_text()
+    open_op = bron.index("lab_host_router.open_router")
+    beveiligd_op = bron.index("lab_host_router.router, prefix")
+    assert open_op < beveiligd_op, "de open router moet eerst ge-include worden"

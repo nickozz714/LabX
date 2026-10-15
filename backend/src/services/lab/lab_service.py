@@ -1805,7 +1805,7 @@ exec ssh -N \\
                 raise HTTPException(
                     status_code=409,
                     detail=("De hostagent is niet bereikbaar. Start hem op de machine "
-                            "zelf met `python3 host-agent/labx_host_agent.py` en "
+                            "zelf met `python3 backend/host-agent/labx_host_agent.py` en "
                             "probeer opnieuw."))
             p.status = "running"
             p.updated_at = _now_iso()

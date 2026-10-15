@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from authentication import require_user
@@ -52,6 +52,36 @@ def aanmelden(body: Dict[str, Any], request: Request, db: Session = Depends(get_
         agent_url=agent_url,
         docker_host=body.get("docker_host"),
         capaciteit=body.get("capaciteit") or {})
+
+
+@open_router.get("/agent")
+def agent_script():
+    """Het agent-script, om op te halen op de machine die mee gaat doen.
+
+    OPEN, net als /aanmelden, en om dezelfde reden: op die computer is nog
+    geen LabX-account en er valt er ook geen te maken. Een token in een
+    curl-regel zetten zou hem bovendien in de shell-geschiedenis van een
+    vreemde machine achterlaten.
+
+    Er staat niets geheims in: het is dezelfde clientcode die in de repo
+    staat, hij voert geen commando's uit, en hij krijgt pas iets zodra een
+    mens de koppelcode bevestigt.
+    """
+    from pathlib import Path
+
+    from fastapi.responses import PlainTextResponse
+
+    # /app/host-agent in de image, ../../host-agent vanuit de broncheckout.
+    for kandidaat in (Path("/app/host-agent/labx_lab_host.py"),
+                      Path(__file__).resolve().parents[2] / "host-agent" / "labx_lab_host.py"):
+        if kandidaat.is_file():
+            return PlainTextResponse(
+                kandidaat.read_text(encoding="utf-8"),
+                headers={"Content-Disposition": 'attachment; filename="labx_lab_host.py"'})
+    raise HTTPException(
+        status_code=404,
+        detail=("Het agent-script zit niet in deze installatie. Haal het uit de "
+                "repo: backend/host-agent/labx_lab_host.py"))
 
 
 @router.get("/sleutel")

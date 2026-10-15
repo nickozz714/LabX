@@ -81,6 +81,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir azure-cli
 
 COPY src/ ./src/
+# De agents die op ANDERE machines draaien. Ze horen in de image omdat LabX
+# ze uitserveert: je kunt een script niet op een vreemde computer krijgen
+# zonder die computer aan te raken, en dan is "haal hem bij LabX op" de
+# kortst mogelijke aanraking. Zie GET /api/lab-hosts/agent.
+COPY host-agent/ ./host-agent/
 
 ENV PYTHONPATH=/app/src
 ENV LABX_HOME=/data

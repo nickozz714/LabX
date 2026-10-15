@@ -2,7 +2,7 @@
 
 De tegenhanger van `DockerRuntime`. Dezelfde methoden, een heel andere plek:
 niet in een container maar op de computer waar LabX op staat, binnen één
-projectmap, via de hostagent (zie host-agent/labx_host_agent.py).
+projectmap, via de hostagent (zie backend/host-agent/labx_host_agent.py).
 
 Waarom dat soms moet: een klant kan eisen dat je aanmeldt vanaf een apparaat
 dat zij kennen. Een container is geen apparaat en kan die claim niet afgeven --
@@ -126,7 +126,7 @@ class HostRuntime:
         except Exception as exc:  # noqa: BLE001
             raise HostAgentFout(
                 f"De hostagent is niet bereikbaar op {self._basis}. Draait hij? "
-                f"Start hem met `python3 host-agent/labx_host_agent.py` op de "
+                f"Start hem met `python3 backend/host-agent/labx_host_agent.py` op de "
                 f"machine zelf. ({str(exc)[:160]})") from exc
 
         if r.status_code == 401:
@@ -159,7 +159,7 @@ class HostRuntime:
             "agent": self._basis,
             "hint": None if bereikbaar else (
                 "De hostagent draait niet. Start hem op de machine zelf met "
-                "`python3 host-agent/labx_host_agent.py`."),
+                "`python3 backend/host-agent/labx_host_agent.py`."),
         }
 
     # ── wat een hostlab niet kan ─────────────────────────────────────────────

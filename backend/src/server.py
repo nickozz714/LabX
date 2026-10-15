@@ -387,11 +387,16 @@ app.include_router(mcp_router.router, prefix="/api")
 app.include_router(workflow_router.router, prefix="/api")
 app.include_router(schedule_router.router, prefix="/api")
 app.include_router(azure_profile_router.router, prefix="/api")
-app.include_router(lab_host_router.router, prefix="/api")
 # Open, met opzet: een agent op een pc in je netwerk heeft geen LabX-account.
 # Aanmelden levert ook niets op — de machine staat dan op "nieuw" en krijgt
 # geen labs tot een mens de koppelcode bevestigt.
+#
+# EERST deze, en dat is geen smaak: `/lab-hosts/{host_id}` in de beveiligde
+# router vangt ook `/lab-hosts/agent` af, en zijn router-dependency weigert
+# vóórdat iemand kijkt of "agent" wel een getal is. Het ophalen van het
+# agent-script gaf daardoor 401 op de ene plek waar nog niemand kan inloggen.
 app.include_router(lab_host_router.open_router, prefix="/api")
+app.include_router(lab_host_router.router, prefix="/api")
 app.include_router(board_router.router, prefix="/api")
 app.include_router(notify_router.router, prefix="/api")
 app.include_router(guard_router.router, prefix="/api")

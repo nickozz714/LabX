@@ -442,7 +442,15 @@ function KoppelVenster({ host, onClose, onGekoppeld }: {
 }
 
 function ZoDoeJeDatUitleg() {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  // Het adres waarop die andere computer DEZE LabX bereikt. Niet "localhost":
+  // dat is op die machine zijn eigen computer, en dan meldt hij zich bij
+  // niets. Draai je hier wel op localhost, dan moet je je eigen LAN-adres
+  // invullen -- dat zegt de tekst er dan ook bij.
+  const basis = window.location.origin;
+  const opLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(basis);
+  const haal = `curl -fsSL ${basis}/api/lab-hosts/agent -o labx_lab_host.py`;
+  const start = `python3 labx_lab_host.py --labx ${basis}`;
   return (
     <Card className="p-4">
       <button className="flex w-full items-center justify-between text-left text-sm font-semibold"
@@ -453,12 +461,26 @@ function ZoDoeJeDatUitleg() {
       {open && (
         <div className="mt-3 space-y-3 text-sm text-muted-foreground">
           <p>
-            Op die computer draait Docker, staat SSH aan, en start je de
-            LabX-agent <strong>in een gewoon terminalvenster</strong>:
+            Zet op die computer eerst <strong>Docker</strong> aan en{" "}
+            <strong>externe login</strong> (macOS: Systeeminstellingen →
+            Algemeen → Delen → Externe login). Open daarna een{" "}
+            <strong>gewoon terminalvenster</strong> en plak deze twee regels:
           </p>
-          <pre className="overflow-x-auto rounded-md bg-secondary/50 p-3 font-mono text-xs">
-{`python3 labx_lab_host.py --labx http://jouw-labx:8080`}
-          </pre>
+          <div className="rounded-md bg-secondary/50 p-3">
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <pre className="overflow-x-auto font-mono text-xs">{haal}
+{start}</pre>
+              <KopieerKnop tekst={`${haal}\n${start}`} label="Kopiëren" />
+            </div>
+          </div>
+          {opLocalhost && (
+            <p className="rounded-md border border-warning/30 bg-warning/10 p-2 text-xs text-warning">
+              Let op: je bekijkt LabX nu op <code>{basis}</code>. Op die andere
+              computer wijst dat naar zichzélf. Vervang het door het adres
+              waarop deze machine in je netwerk te bereiken is, bijvoorbeeld{" "}
+              <code>http://192.168.2.10:8081</code>.
+            </p>
+          )}
           <p>
             Hij meldt zich elke 30 seconden, toont een koppelcode, en houdt de
             machine wakker zolang er labs op draaien. Commando&apos;s voert hij
@@ -473,11 +495,15 @@ function ZoDoeJeDatUitleg() {
             LabX niet. Dat ziet er bedrieglijk uit als &quot;hij draait&quot;.
           </p>
           <p>
-            <strong className="text-foreground">Externe login</strong> staat bij
-            Systeeminstellingen → Algemeen → Delen. Het koppelvenster hierboven
-            geeft de sleutelregel die je één keer op die machine plakt; de agent
-            zorgt zelf dat docker ook in het PATH van een SSH-sessie staat, want
-            daar staat Docker Desktop standaard niet in.
+            Hij toont dan een <strong>koppelcode</strong>. Druk hierboven bij die
+            machine op &quot;Koppelen&quot;, vul die code in met het SSH-adres,
+            en plak de sleutelregel uit dat venster één keer op die computer.
+            Daarna zegt &quot;Verbinding testen&quot; of het klopt.
+          </p>
+          <p>
+            Om het PATH hoef je niet te denken: de agent zorgt zelf dat docker
+            ook vindbaar is in een SSH-sessie, want daar staat Docker Desktop
+            standaard niet in.
           </p>
         </div>
       )}
