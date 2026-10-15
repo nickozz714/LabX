@@ -281,7 +281,16 @@ def _reconcile_in_achtergrond(host_id: int) -> None:
     try:
         taak = asyncio.get_running_loop().create_task(_werk())
     except RuntimeError:
-        # Geen lopende lus (een test, een los script): dan gewoon niet.
+        # GEEN LOPENDE LUS. Dat is hier de normale situatie en niet de
+        # uitzondering: `/aanmelden` is een synchrone endpoint, en FastAPI
+        # draait die in een threadpool. Hier stond een stille `return`, en
+        # daarmee gebeurde er precies niets -- het logboek zei "Lab-host is
+        # terug" en daarna kwam er nooit meer iets. Een eigen thread met een
+        # eigen lus is genoeg: dit werk praat alleen met SSH en de database.
+        import threading
+
+        threading.Thread(target=lambda: asyncio.run(_werk()),
+                         name=f"labx-reconcile-{host_id}", daemon=True).start()
         return
     _LOPEND.add(taak)
     taak.add_done_callback(_LOPEND.discard)

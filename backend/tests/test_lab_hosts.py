@@ -657,3 +657,39 @@ def test_de_achtergrondtaak_blijft_leven_tot_hij_klaar_is():
     asyncio.run(main())
     assert gedaan == [True], "de taak mag niet verdwijnen voordat hij klaar is"
     assert not hosts_mod._LOPEND, "en daarna moet hij zich wel opruimen"
+
+
+def test_het_nakijken_komt_ook_op_gang_zonder_lopende_event_lus(db, monkeypatch):
+    """Dit was de echte oorzaak, en hij hield zich twee keer verstopt.
+
+    `/aanmelden` is een SYNCHRONE endpoint, en FastAPI draait die in een
+    threadpool. Daar is geen lopende event-lus, dus `get_running_loop()`
+    faalde -- en er stond een stille `return` achter. Resultaat op de server:
+    het logboek zei "Lab-host is terug", en daarna kwam er nooit iets. Geen
+    succes, geen fout.
+
+    Deze test draait expliciet BUITEN een lus, want precies daar ging het mis.
+    """
+    import threading
+    import time
+
+    from services.lab import hosts as hosts_mod
+
+    gedaan = threading.Event()
+
+    async def _nep(self, host_id):      # noqa: ARG001
+        gedaan.set()
+        return 0
+
+    from services.lab.lab_service import LabService
+    monkeypatch.setattr(LabService, "reconcile_host", _nep)
+
+    svc = _svc(db)
+    uit = _meld(db)
+    host = svc.lijst()[0]
+    svc.koppelen(host.id, code=uit["koppelcode"], docker_host="ssh://nick@werkpc")
+    host.laatst_gezien = "2026-10-01T10:00:00+00:00"
+    db.commit()
+
+    _meld(db)     # de terugkeer
+    assert gedaan.wait(timeout=5), "het nakijken is nooit op gang gekomen"
