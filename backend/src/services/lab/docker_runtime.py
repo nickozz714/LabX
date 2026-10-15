@@ -310,6 +310,20 @@ class DockerRuntime:
         ips = [x for x in out.split() if x]
         return ips[0] if ips else None
 
+    async def architectuur(self) -> Optional[str]:
+        """Waar deze daemon op draait: `x86_64`, `aarch64`, ...
+
+        Nodig bij het verplaatsen. Een lab van een amd64-server naar een
+        Apple Silicon-Mac tillen werkt voor het volume prima, maar niet elk
+        pakket bestaat voor beide: Google Chrome heeft geen arm64-build voor
+        Linux, en dat merk je anders pas als het inrichten halverwege stukloopt
+        op een muur aan apt-uitvoer.
+        """
+        code, out, _ = await self._run_cli("info", "--format", "{{.Architecture}}",
+                                           timeout=20)
+        waarde = (out or "").strip()
+        return waarde if code == 0 and waarde else None
+
     async def port_map(self, container_id: str) -> Dict[int, int]:
         """{container_port: host_port} for ports published for browser access
         from the docker host. NOT how the backend itself reaches a lab port —

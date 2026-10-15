@@ -43,8 +43,9 @@ def db(monkeypatch):
 class NepRuntime:
     """Een daemon die onthoudt wat er met hem gebeurde."""
 
-    def __init__(self, naam):
+    def __init__(self, naam, arch="x86_64"):
         self.naam = naam
+        self.arch = arch
         self.volumes = set()
         self.verwijderde_containers = []
         self.sporen = []
@@ -71,6 +72,9 @@ class NepRuntime:
 
     async def remove(self, container_id, **kw):
         self.verwijderde_containers.append(container_id)
+
+    async def architectuur(self):
+        return self.arch
 
     async def run_container(self, **kw):
         self.sporen.append(("run_container", kw.get("name")))
@@ -331,3 +335,70 @@ def test_na_het_punt_van_geen_terugkeer_wijst_het_lab_naar_de_NIEUWE_machine(db)
     assert "NIEUWE machine" in str(fout.value.detail)
     assert "labx_lab_abc" in daar.volumes
     assert "labx_lab_abc" not in hier.volumes
+
+
+# ── wat de eerste echte verhuizing naar een Mac liet zien ────────────────────
+
+def test_verhuizen_naar_een_andere_processor_wordt_gemeld(db):
+    """Het volume gaat prima mee -- bestanden zijn bestanden. De containerlaag
+    wordt opnieuw opgebouwd, en daar bestaat niet alles voor allebei: Google
+    Chrome heeft geen arm64-build voor Linux. Dat liep bij de eerste echte
+    verhuizing (amd64-server -> Apple Silicon) stuk op een muur apt-uitvoer,
+    waar nergens uit bleek dat de ARCHITECTUUR het probleem was.
+    """
+    hier = NepRuntime("server", arch="x86_64")
+    daar = NepRuntime("macbook", arch="aarch64")
+    hier.volumes.add("labx_lab_abc")
+    host = _host(db)
+    p = _lab(db)
+
+    uit = asyncio.run(_svc(db, hier, daar).verplaats(p.id, host_id=host.id))
+    assert uit["waarschuwing"]
+    assert "aarch64" in uit["waarschuwing"] and "x86_64" in uit["waarschuwing"]
+
+
+def test_dezelfde_processor_geeft_geen_ruis(db):
+    hier, daar = NepRuntime("server"), NepRuntime("werkpc")
+    hier.volumes.add("labx_lab_abc")
+    host = _host(db)
+    p = _lab(db)
+    uit = asyncio.run(_svc(db, hier, daar).verplaats(p.id, host_id=host.id))
+    assert uit["waarschuwing"] is None
+
+
+def test_een_verlopen_lab_krijgt_bij_verhuizen_een_verse_vervaltijd(db):
+    """Je verplaatst hem, dus je wilt hem nog. Bleef hij verlopen, dan keek je
+    na de verhuizing naar een lab dat niets doet -- en de reden daarvoor was
+    iets van vorige week."""
+    hier, daar = NepRuntime("server"), NepRuntime("werkpc")
+    hier.volumes.add("labx_lab_abc")
+    host = _host(db)
+    p = _lab(db, status="expired")
+    p.expires_at = "2026-10-11T08:13:09+00:00"
+    p.error = "iets ouds"
+    db.commit()
+
+    uit = asyncio.run(_svc(db, hier, daar).verplaats(p.id, host_id=host.id))
+    db.refresh(p)
+    assert p.status == "stopped", "verlopen blijven is hier een doodlopend spoor"
+    assert p.expires_at > "2026-10-15"
+    assert p.error is None
+    assert "verlopen" in (uit.get("melding") or "")
+
+
+def test_een_waarschuwing_mag_de_verhuizing_nooit_breken(db):
+    """Een daemon die geen architectuur wil zeggen is geen reden om een
+    geslaagde verhuizing alsnog te laten mislukken."""
+    hier, daar = NepRuntime("server"), NepRuntime("werkpc")
+    hier.volumes.add("labx_lab_abc")
+
+    async def _stuk():
+        raise RuntimeError("docker info weigert")
+
+    daar.architectuur = _stuk
+    host = _host(db)
+    p = _lab(db)
+
+    uit = asyncio.run(_svc(db, hier, daar).verplaats(p.id, host_id=host.id))
+    assert uit["waarschuwing"] is None
+    assert db.get(type(p), p.id).host_id == host.id

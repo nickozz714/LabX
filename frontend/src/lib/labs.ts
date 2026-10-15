@@ -105,7 +105,13 @@ export const labsApi = {
    *  server. Het volume gaat mee, de containerlaag niet — daarom richt het lab
    *  zich op de nieuwe machine opnieuw in. */
   verplaats: (id: string, hostId: number | null) =>
-    api.post<Lab>(`/labs/${id}/verplaatsen`, { host_id: hostId }),
+    api.post<Lab & {
+      /** Andere processorsoort op de nieuwe machine: je werk gaat mee, maar
+       *  niet elk pakket bestaat voor allebei. */
+      waarschuwing?: string | null;
+      /** Bijvoorbeeld: hij was verlopen en heeft een verse vervaltijd. */
+      melding?: string | null;
+    }>(`/labs/${id}/verplaatsen`, { host_id: hostId }),
   images: () => api.get<{ presets: ImagePreset[]; local_images: string[]; default_image: string }>("/labs/images"),
   searchImages: (q: string) =>
     api.get<{ ok: boolean; results: any[]; error?: string }>(`/labs/images/search?q=${encodeURIComponent(q)}`),

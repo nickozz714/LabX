@@ -1638,6 +1638,11 @@ exec ssh -N \\
         if host_id:
             self._controleer_ruimte_op_host(host_id)
         bron = self.runtime_voor(p)
+        # Een VERLOPEN lab verplaatsen is een duidelijk teken dat je hem nog
+        # wilt. Hem verlopen laten betekent dat je na de verhuizing naar een
+        # lab kijkt dat niets doet, zonder dat ergens staat waarom -- en dat
+        # "waarom" is dan iets van vorige week.
+        was_verlopen = p.status == "expired"
         draaide = p.status == "running"
         naam_oud = p.host_id
 
@@ -1704,6 +1709,11 @@ exec ssh -N \\
                                  lab_id=p.id, error=str(exc)[:200])
 
             p.status = "stopped"
+            if was_verlopen:
+                p.expires_at = _expiry_from_now(p.ttl_hours)
+                p.error = None
+                log.infox("Verlopen lab verplaatst en weer geldig gemaakt",
+                          lab_id=p.id, vervalt=p.expires_at)
             self.db.commit()
 
             # Verse containers op de nieuwe machine. NIET via start(): die
@@ -1762,7 +1772,37 @@ exec ssh -N \\
 
         self.db.refresh(p)
         log.infox("Lab verplaatst", lab_id=p.id, naar=host_id, draaide=draaide)
-        return self._to_dict(p)
+        uit = self._to_dict(p)
+        uit["waarschuwing"] = await self._architectuur_waarschuwing(bron, doel)
+        if uit["waarschuwing"]:
+            log.warningx("Verhuisd naar een andere architectuur", lab_id=p.id,
+                         melding=uit["waarschuwing"])
+        if was_verlopen:
+            uit["melding"] = ("Dit lab was verlopen; hij heeft een verse "
+                              "vervaltijd gekregen. Start hem om verder te gaan.")
+        return uit
+
+    @staticmethod
+    async def _architectuur_waarschuwing(bron, doel) -> Optional[str]:
+        """Draait de nieuwe machine op een ander soort processor?
+
+        Het volume gaat prima mee -- bestanden zijn bestanden. De
+        CONTAINERLAAG wordt opnieuw opgebouwd, en daar bestaat niet alles voor
+        allebei: Google Chrome heeft geen arm64-build voor Linux, en een lab
+        dat van een amd64-server naar een Apple Silicon-Mac verhuist, loopt
+        daar bij het inrichten op stuk. Dat is geen fout die je wilt
+        ONTDEKKEN; dat is er een die je vooraf gezegd wilt krijgen.
+        """
+        try:
+            a, b = await asyncio.gather(bron.architectuur(), doel.architectuur())
+        except Exception:  # noqa: BLE001 -- een waarschuwing mag nooit de oorzaak zijn
+            return None
+        if not a or not b or a == b:
+            return None
+        return (f"Deze machine draait op {b}, de vorige op {a}. Je werk gaat mee, "
+                f"maar niet elk pakket bestaat voor allebei — Google Chrome "
+                f"bijvoorbeeld niet voor arm64. Kijk na het inrichten bij "
+                f"Inrichting of alles er nog is.")
 
     async def ensure_running(self, lab_id: str) -> Dict[str, Any]:
         """Zorg dat dit lab draait, en start het anders.

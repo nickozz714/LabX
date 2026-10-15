@@ -657,11 +657,16 @@ function MachinePaneel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) 
     setBezig(true);
     setFout(null);
     try {
-      await labsApi.verplaats(lab.id, doel === "" ? null : Number(doel));
+      const uit = await labsApi.verplaats(lab.id, doel === "" ? null : Number(doel));
       setOpen(false);
       onChanged();
-      melding.ok(`${lab.name} verplaatst`,
-                 "Het lab richt zich op de nieuwe machine opnieuw in.");
+      // Een andere processorsoort is geen fout maar wel iets wat je moet
+      // weten VOORDAT het inrichten erop stukloopt. Daarom als melding die
+      // blijft staan, niet als groen vinkje dat wegvalt.
+      if (uit.waarschuwing) melding.info(`${lab.name} verplaatst`, uit.waarschuwing);
+      else melding.ok(`${lab.name} verplaatst`,
+                      uit.melding
+                      || "Het lab richt zich op de nieuwe machine opnieuw in.");
     } catch (err) {
       setFout(err instanceof ApiError ? err.message : String(err));
     } finally {
