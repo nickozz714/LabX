@@ -120,6 +120,8 @@ _ADDITIVE_COLUMNS = {
         ("model", "VARCHAR(128)"),
         # NULL telt als "container": elk bestaand lab blijft wat het was.
         ("kind", "VARCHAR(16)"),
+        # NULL = deze server, zoals elk bestaand lab.
+        ("host_id", "INTEGER"),
         ("host_project_dir", "VARCHAR(1024)"),
         ("host_agent_token_encrypted", "TEXT"),
         # NULL = de meegeleverde standaard (zie services/lab/resources.py).
@@ -275,6 +277,7 @@ def init_db() -> None:
         guard_rule,
         lab,
         lab_extra,
+        lab_host,
         secret,
         lab_secret,
         lab_worker,

@@ -143,6 +143,11 @@ class Lab(Base):
     #
     # NULL telt als "container": elk bestaand lab blijft precies wat het was.
     kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Op WELKE machine dit lab draait. NULL = deze server, zoals altijd. Wijst
+    # het naar een lab-host, dan praat de docker-CLI via SSH met de daemon
+    # daar -- verder verandert er niets: dezelfde containers, dezelfde tools,
+    # dezelfde guard.
+    host_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Alleen bij een hostlab: de map waarbinnen alles moet blijven. De zandbak
     # van de agent sluit de rest van de thuismap af, dus dit is geen afspraak
     # maar een grens in de kernel.

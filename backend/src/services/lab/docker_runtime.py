@@ -51,19 +51,33 @@ _DEFAULT_EXEC_TIMEOUT_S = 120
 _MAX_OUTPUT_CHARS = 60_000
 
 
-def _docker_env() -> Dict[str, str]:
+def _docker_env(docker_host: Optional[str] = None) -> Dict[str, str]:
     env = dict(os.environ)
-    if settings.DOCKER_HOST:
-        env["DOCKER_HOST"] = settings.DOCKER_HOST
+    doel = docker_host or settings.DOCKER_HOST
+    if doel:
+        env["DOCKER_HOST"] = doel
     return env
 
 
 class DockerRuntime:
-    """Container lifecycle + exec for labs, against the shared (sibling) daemon."""
+    """Container lifecycle + exec for labs, against the shared (sibling) daemon.
 
-    def __init__(self, docker_bin: Optional[str] = None) -> None:
+    `docker_host` kiest WELKE daemon. Leeg = die van deze machine (de socket
+    uit de instellingen); een `ssh://gebruiker@pc` wijst naar een andere
+    computer in het netwerk. De docker-CLI regelt die verbinding zelf -- geen
+    open poort, geen eigen protocol, en de authenticatie is gewoon je
+    SSH-sleutel.
+
+    Alles erboven merkt er niets van: dezelfde methoden, dezelfde argumenten.
+    Dat is met opzet, want een lab hoort niet te weten waar hij toevallig
+    draait.
+    """
+
+    def __init__(self, docker_bin: Optional[str] = None,
+                 docker_host: Optional[str] = None) -> None:
         self._bin = docker_bin or settings.DOCKER_BIN
         self._network = settings.LAB_NETWORK
+        self._docker_host = docker_host
 
     async def _run_cli(
         self, *args: str, stdin: Optional[bytes] = None, timeout: float = 60.0,
@@ -73,7 +87,7 @@ class DockerRuntime:
             stdin=asyncio.subprocess.PIPE if stdin is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=_docker_env(),
+            env=_docker_env(self._docker_host),
         )
         try:
             out, err = await asyncio.wait_for(proc.communicate(stdin), timeout=timeout)
@@ -94,9 +108,24 @@ class DockerRuntime:
         return shutil.which(self._bin) is not None
 
     async def daemon_up(self) -> bool:
+        """Praat deze runtime met een daemon die antwoordt?
+
+        Ook op de UITVOER kijken en niet alleen op de exit-code. `docker info
+        --format ...` geeft namelijk 0 terug terwijl het faalt:
+
+            $ DOCKER_HOST=ssh://nick@bestaat-niet docker info --format '{{.ServerVersion}}'
+            error during connect: ... exec: "ssh": executable file not found
+            $ echo $?
+            0
+
+        Op alleen de code vertrouwen betekende dat de knop "verbinding testen"
+        groen gaf voor een machine die er niet is -- en dat je dat pas merkt
+        als er een lab op moet starten.
+        """
         try:
-            code, _, _ = await self._run_cli("info", "--format", "{{.ServerVersion}}", timeout=10)
-            return code == 0
+            code, out, _ = await self._run_cli(
+                "info", "--format", "{{.ServerVersion}}", timeout=15)
+            return code == 0 and bool((out or "").strip())
         except Exception:  # noqa: BLE001
             return False
 
@@ -128,6 +157,10 @@ class DockerRuntime:
                 "gemount — mount de socket op de api-service in docker-compose.yml zodat "
                 "labs als sibling-containers naast LabX kunnen starten."
             )
+        elif not daemon_ok and self._docker_host:
+            hint = (f"Geen contact met de Docker op {self._docker_host}. Staat die "
+                    f"machine aan, draait Docker er, en kan deze server er met SSH bij "
+                    f"(sleutel uitgewisseld, host bekend in known_hosts)?")
         elif not daemon_ok:
             hint = "docker info faalt — draait de daemon, en heeft dit proces toegang tot de socket?"
         return {
@@ -135,7 +168,7 @@ class DockerRuntime:
             "daemon_up": daemon_ok,
             "in_container": in_container,
             "socket_mounted": socket_mounted,
-            "docker_host": settings.DOCKER_HOST,
+            "docker_host": self._docker_host or settings.DOCKER_HOST,
             "network": self._network,
             "hint": hint,
         }
@@ -340,7 +373,7 @@ class DockerRuntime:
         proc = await asyncio.create_subprocess_exec(
             self._bin, "exec", "-w", workdir, container_id, *cmd,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=_docker_env(),
+            env=_docker_env(self._docker_host),
         )
         try:
             while True:

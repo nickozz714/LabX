@@ -362,6 +362,7 @@ from routers import (
     board_router, notify_router, guard_router, resource_router, secret_router,
     time_router,
     voice_router,
+    lab_host_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -380,6 +381,11 @@ app.include_router(mcp_router.router, prefix="/api")
 app.include_router(workflow_router.router, prefix="/api")
 app.include_router(schedule_router.router, prefix="/api")
 app.include_router(azure_profile_router.router, prefix="/api")
+app.include_router(lab_host_router.router, prefix="/api")
+# Open, met opzet: een agent op een pc in je netwerk heeft geen LabX-account.
+# Aanmelden levert ook niets op — de machine staat dan op "nieuw" en krijgt
+# geen labs tot een mens de koppelcode bevestigt.
+app.include_router(lab_host_router.open_router, prefix="/api")
 app.include_router(board_router.router, prefix="/api")
 app.include_router(notify_router.router, prefix="/api")
 app.include_router(guard_router.router, prefix="/api")

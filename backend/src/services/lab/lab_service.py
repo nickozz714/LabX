@@ -99,9 +99,10 @@ class LabService:
     def __init__(self, db: Session, runtime: Optional[DockerRuntime] = None) -> None:
         self.db = db
         self.runtime = runtime or DockerRuntime()
-        #: Hostlabs krijgen een eigen runtime, per lab. Gecachet omdat elke
-        #: tool-aanroep hem opnieuw zou opbouwen.
-        self._host_runtimes: Dict[str, Any] = {}
+        #: Runtimes die niet de standaard zijn: per hostlab (sleutel = lab-id)
+        #: en per lab-host (sleutel = host-id). Gecachet omdat elke
+        #: tool-aanroep hem anders opnieuw opbouwt.
+        self._host_runtimes: Dict[Any, Any] = {}
 
     # ── waar draait dit lab? ─────────────────────────────────────────────────
 
@@ -113,12 +114,23 @@ class LabService:
     def runtime_voor(self, p: Lab):
         """De runtime van DIT lab.
 
-        Alles erboven -- de gateway-tools, de data-guard, de kluis, het
-        auditspoor -- blijft hetzelfde; alleen de plek waar het commando landt
-        verschilt. Daarom dezelfde methoden en niet een aparte route.
+        Drie mogelijkheden, en alles erboven -- de gateway-tools, de
+        data-guard, de kluis, het auditspoor -- merkt het verschil niet:
+
+        - een gewoon lab: de Docker van deze server;
+        - een lab op een LAB-HOST: dezelfde Docker-aansturing, maar via SSH
+          naar een andere computer in het netwerk;
+        - een hostlab: geen container, maar commando's op de machine zelf.
+
+        Daarom dezelfde methoden en niet een aparte route per soort.
         """
         if not self.is_host(p):
-            return self.runtime
+            host_id = getattr(p, "host_id", None)
+            if not host_id:
+                return self.runtime
+            if host_id not in self._host_runtimes:
+                self._host_runtimes[host_id] = self._docker_op_host(host_id)
+            return self._host_runtimes[host_id]
         if p.id not in self._host_runtimes:
             from services.lab.host_runtime import HostAgentFout, HostRuntime
             from utils.crypto import decrypt
@@ -140,6 +152,26 @@ class LabService:
             self._host_runtimes[p.id] = HostRuntime(
                 project_dir=p.host_project_dir, token=token)
         return self._host_runtimes[p.id]
+
+    def _docker_op_host(self, host_id: int) -> DockerRuntime:
+        """Een DockerRuntime die praat met de daemon van een andere machine.
+
+        Alleen voor een host die GEKOPPELD is. Een machine die zich wel heeft
+        gemeld maar nog niet is toegelaten, krijgt geen werk -- anders zou
+        alles wat zich op je netwerk als lab-host voordoet, labs kunnen gaan
+        draaien.
+        """
+        from models.lab_host import LabHost
+
+        host = self.db.get(LabHost, int(host_id))
+        if host is None:
+            raise HTTPException(status_code=404, detail="De lab-host bestaat niet meer.")
+        if host.status != "gekoppeld" or not host.docker_host:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Lab-host '{host.naam}' is niet gekoppeld. Bevestig hem eerst "
+                        f"bij Labs → Machines."))
+        return DockerRuntime(docker_host=host.docker_host)
 
     def _weiger_bij_host(self, p: Lab, wat: str) -> None:
         """Wat op een host geen betekenis heeft, mag niet stil slagen.
@@ -1167,6 +1199,20 @@ exec ssh -N \\
         name = (name or "").strip()
         if not name:
             raise HTTPException(status_code=400, detail="Naam is verplicht")
+
+        # Een HOSTLAB heeft geen Docker nodig: zijn commando's draaien op de
+        # machine zelf, via de agent. De controle hieronder eist wél Docker, en
+        # stond dus in de weg -- dat dit nooit opviel, kwam doordat
+        # `daemon_up()` exit-code 0 van een MISLUKTE `docker info` als "ja"
+        # las. Zodra die eerlijk werd, viel dit om.
+        if (kind or "container") == "host":
+            return await self._create_host(
+                name=name, project_dir=host_project_dir, agent_token=host_agent_token,
+                data_guard=data_guard, llm_guard=llm_guard,
+                allowed_mcp=allowed_mcp, allowed_tools=allowed_tools,
+                allowed_skills=allowed_skills,
+                security_profile=security_profile, model=model)
+
         diag = await self.runtime.diagnose()
         if not diag["cli_present"] or not diag["daemon_up"]:
             raise HTTPException(
@@ -1181,14 +1227,6 @@ exec ssh -N \\
                 raise HTTPException(status_code=400, detail=f"Onbekende omgeving '{environment}'")
             image = preset["image"]
         specs = self._resolve_repo_specs(repos)
-
-        if (kind or "container") == "host":
-            return await self._create_host(
-                name=name, project_dir=host_project_dir, agent_token=host_agent_token,
-                data_guard=data_guard, llm_guard=llm_guard,
-                allowed_mcp=allowed_mcp, allowed_tools=allowed_tools,
-                allowed_skills=allowed_skills,
-                security_profile=security_profile, model=model)
 
         lid = str(uuid4())
         now = _now_iso()

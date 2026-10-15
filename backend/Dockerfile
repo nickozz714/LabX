@@ -13,6 +13,10 @@ FROM python:3.12-slim
 RUN apt-get update -qq \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
        curl ca-certificates gnupg \
+       `# openssh-client: de docker-CLI praat met DOCKER_HOST=ssh://... via` \
+       `# een echte ssh. Zonder dit mislukt elke lab-host in het netwerk met` \
+       `# "exec: ssh: executable file not found in $PATH".` \
+       openssh-client \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs \
     && npm install -g @anthropic-ai/claude-code \
