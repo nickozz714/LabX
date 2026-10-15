@@ -190,10 +190,14 @@ class PlanService:
         """Een vrije werker van het lab pakken, of vertellen wie hem bezet houdt.
 
         Een lab heeft één of meer werkers (containers) die /workspace delen.
-        Elke lopende planning bezet er één: twee runs in dezelfde container
-        vechten om dezelfde bestanden, processen en `az`-sessie. Zijn er drie
-        werkers, dan lopen er dus drie planningen naast elkaar — ook binnen
-        hetzelfde bord."""
+        Hoeveel werk er in één werker past, zegt het lab met
+        `sessies_per_werker`: op 1 krijgt elk ticket zijn eigen container, op
+        meer delen ze er een — en dan delen ze ook de bestanden, de processen
+        en de `az`-sessie, met alles wat daarbij hoort.
+
+        Werk gaat altijd eerst naar de minst drukke werker. Zo blijft "meerdere
+        sessies tegelijk" iets dat je krijgt als het nodig is, en niet iets dat
+        meteen gebeurt omdat werker 1 vooraan staat."""
         from models.lab import Lab
         from services.lab.lab_service import LabService
 
@@ -217,22 +221,37 @@ class PlanService:
             return None, None
 
         borden = [b.id for b in self.db.query(Board).filter(Board.lab_id == board.lab_id).all()]
-        bezet_rijen = (self.db.query(TicketPlanItem.worker_id, TicketPlan.id)
+        bezet_rijen = (self.db.query(TicketPlanItem.worker_id, TicketPlan.id,
+                                     TicketPlanItem.run_id)
                        .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
                        .filter(TicketPlan.board_id.in_(borden),
                                TicketPlanItem.state == "running").all())
-        bezet = {r[0] for r in bezet_rijen if r[0]}
-        # En wat er BUITEN de planningen om draait. Een ticket dat met de hand
-        # is gestart heeft geen planningsregel, dus die runs waren hier
-        # onzichtbaar: een planning kon een werker pakken waar al iemand zat.
-        # Sinds handmatige starts zelf een werker kiezen, is dat geen
-        # theoretisch geval meer.
-        bezet |= lab_svc.bezette_werkers(lab.id)
+        # VOL is niet hetzelfde als BEZIG. Hier stond:
+        #
+        #     bezet = {r[0] for r in bezet_rijen if r[0]}
+        #
+        # oftewel: elke werker waar één planningsticket op draait, telt als
+        # bezet. Dat klopte toen een werker één run aankon. Sinds het lab
+        # `sessies_per_werker` heeft, klopt het niet meer -- en omdat
+        # `bezette_werkers()` wél meetelt, keek niemand er nog naar: de werker
+        # was al uitgesloten voordat de telling aan bod kwam.
+        #
+        # Gevolg bij een lab met drie werkers en drie sessies per werker: negen
+        # plekken op papier, één ticket tegelijk in de praktijk. Je stelt
+        # capaciteit in en krijgt hem niet, zonder dat ergens staat waarom.
+        #
+        # Nu telt het: een werker valt af als hij VOL is (dat is precies wat
+        # `bezette_werkers` teruggeeft), en van wat er over is krijgt de minst
+        # drukke het werk.
         # Een lopend item zonder werker (van vóór deze functie) bezet het lab
         # als geheel — anders zou hij naast zichzelf gaan draaien.
         if any(r[0] is None for r in bezet_rijen):
             return None, next((r[1] for r in bezet_rijen if r[0] is None), None)
-        vrij = [w for w in werkers if w.id not in bezet]
+
+        telling = self._telling(lab_svc, lab, bezet_rijen)
+        ruimte = lab_svc.sessies_per_werker(lab)
+        vrij = sorted((w for w in werkers if telling.get(w.id, 0) < ruimte),
+                      key=lambda w: telling.get(w.id, 0))
         if vrij:
             lab_svc.touch_worker(vrij[0].id)
             return vrij[0], None
@@ -281,6 +300,74 @@ class PlanService:
         if werker is None and bezet_door is not None:
             return False, None, bezet_door
         return True, (werker.id if werker is not None else None), None
+
+    @staticmethod
+    def _telling(lab_svc: Any, lab: Any, bezet_rijen: Any) -> Dict[int, int]:
+        """Hoeveel er NU op elke werker draait — runs plus verse claims.
+
+        `LabService.bezetting()` telt RUNS. Een ticket dat net een werker
+        geclaimd heeft maar waarvan de run nog niet bestaat, telt daar dus nog
+        niet mee -- en binnen één ronde zouden twee tickets dan dezelfde plek
+        pakken. Alleen de items ZONDER run tellen we erbij; met run zitten ze
+        al in de telling en zou het dubbel zijn.
+
+        Eén functie, omdat het claimen en het uitleggen waarom er niets bijkomt
+        anders uit elkaar lopen -- en dan zegt het scherm "vol" terwijl er
+        geplaatst wordt, of andersom.
+        """
+        telling = dict(lab_svc.bezetting(lab.id))
+        for wid, _plan_id, run_id in bezet_rijen:
+            if wid and not run_id:
+                telling[wid] = telling.get(wid, 0) + 1
+        return telling
+
+    def _lopende_items(self, lab_id: str) -> Any:
+        from models.board import Board as _B
+
+        borden = [b.id for b in self.db.query(_B).filter(_B.lab_id == lab_id).all()]
+        return (self.db.query(TicketPlanItem.worker_id, TicketPlan.id,
+                              TicketPlanItem.run_id)
+                .join(TicketPlan, TicketPlan.id == TicketPlanItem.plan_id)
+                .filter(TicketPlan.board_id.in_(borden),
+                        TicketPlanItem.state == "running").all())
+
+    def _capaciteit_in_woorden(self, plan: TicketPlan) -> Optional[str]:
+        """Waarom er niets bijkomt, in een zin die je kunt lezen.
+
+        De getallen staan al in de database -- hoeveel werkers er zijn, welke
+        nog ingericht worden, hoeveel sessies er per werker passen. Ze stonden
+        alleen nergens bij elkaar, en dus moest je het zelf uitzoeken.
+        """
+        from models.lab import Lab
+        from services.lab.lab_service import LabService
+
+        board = self.db.get(Board, plan.board_id)
+        lab = self.db.get(Lab, board.lab_id) if board and board.lab_id else None
+        if lab is None:
+            return None
+        svc = LabService(self.db)
+        alle = svc.workers(lab.id)
+        bruikbaar = svc.claimbare_werkers(lab)
+        inrichten = [w for w in alle
+                     if w.index > 1 and w.provision_status not in ("ok", "skipped")
+                     and w.status == "running"]
+        per_werker = svc.sessies_per_werker(lab)
+        telling = self._telling(svc, lab, self._lopende_items(lab.id))
+        vol = {w.id for w in bruikbaar if telling.get(w.id, 0) >= per_werker}
+
+        if inrichten:
+            namen = ", ".join(f"werker {w.index}" for w in inrichten)
+            return (f"Wacht op capaciteit: {len(bruikbaar)} van de {len(alle)} werkers is "
+                    f"bruikbaar. {namen} wordt nog ingericht en krijgt pas werk als dat "
+                    f"gelukt is — anders landt een agent in een container zonder zijn "
+                    f"gereedschap.")
+        if alle and len(vol) >= len(bruikbaar) and bruikbaar:
+            plekken = len(bruikbaar) * per_werker
+            return (f"Wacht op capaciteit: alle {len(bruikbaar)} werkers zitten vol "
+                    f"({plekken} sessies in totaal, {per_werker} per werker). Zet het "
+                    f"plafond of het aantal sessies per werker hoger als er meer naast "
+                    f"elkaar mag draaien.")
+        return None
 
     def _vraag_werker_bij(self, lab_id: str) -> None:
         """Bijschalen op de achtergrond: een container starten en inrichten
@@ -451,6 +538,16 @@ class PlanService:
                 # ingericht — komt deze planning vanzelf aan bod.
                 uitslag["wacht_op_planning"] = None if bezet_door == -1 else bezet_door
                 uitslag["wacht_op_werker"] = bezet_door == -1
+                # En zéggen waarom. Zonder dit staat er alleen "1 loopt" terwijl
+                # je drie werkers hebt ingesteld, en is de enige manier om te
+                # weten waarom in de database kijken. Dat is precies het soort
+                # stilte waar je een halfuur naar zit te staren.
+                reden = self._capaciteit_in_woorden(plan)
+                if reden and plan.note != reden:
+                    plan.note = reden
+                    plan.updated_at = _now_iso()
+                    self.db.commit()
+                uitslag["reden"] = reden
                 break
 
             if plan.state == "scheduled":

@@ -13,6 +13,7 @@ ND3X-public/src/services/playground/playground_service.py, single-tenant
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -523,8 +524,27 @@ class LabService:
         entries: List[Dict[str, Any]] = []
         failed = 0
         for step in steps:
-            for w in werkers:
-                entry = await self._run_provision_step(w.container_id, step, force=force)
+            # Dezelfde stap in ALLE werkers tegelijk. Dat mag, want het zijn
+            # losse containers met elk hun eigen apt- en pip-staat; het slot
+            # waar ze vroeger op wachtten zat per LAB, niet per container.
+            #
+            # Dat kostte echt wat: een lab met Playwright dat naar drie werkers
+            # opschaalt, deed de Chromium-installatie drie keer achter elkaar.
+            # Tot die klaar was telde een werker als "nog aan het inrichten" en
+            # kreeg hij geen werk -- dus je zag drie werkers draaien en één
+            # ticket lopen.
+            #
+            # Wel met een rem: de machine die dit allemaal moet doen is dezelfde
+            # die de agents draait. Drie tegelijk is de winst; acht tegelijk is
+            # een server die op zijn knieën gaat.
+            rem = asyncio.Semaphore(_PROVISION_TEGELIJK)
+
+            async def _stap(w):
+                async with rem:
+                    return await self._run_provision_step(w.container_id, step, force=force)
+
+            resultaten = await asyncio.gather(*[_stap(w) for w in werkers])
+            for w, entry in zip(werkers, resultaten):
                 if len(werkers) > 1:
                     entry["key"] = f"{entry['key']}@w{w.index}"
                     entry["label"] = f"{entry['label']} (werker {w.index})"
@@ -2571,6 +2591,11 @@ exec ssh -N \\
 # Eén taak per lab, met de taak-referentie vastgehouden zodat de garbage
 # collector hem niet halverwege opruimt (zelfde patroon als
 # services/agent/background_runs.py).
+#: Hoeveel werkers tegelijk ingericht worden. De machine die dit doet, draait
+#: ook de agents -- parallel inrichten is winst, maar acht Chromium-downloads
+#: naast elkaar maakt alles traag, inclusief het werk dat al liep.
+_PROVISION_TEGELIJK = 3
+
 _PROVISION_TASKS: Dict[str, Any] = {}
 
 

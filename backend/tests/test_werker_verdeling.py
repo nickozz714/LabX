@@ -121,13 +121,18 @@ def test_een_handmatige_start_tikt_de_autoscaler_aan():
 
 def test_de_planner_telt_handmatige_runs_mee():
     """De spiegelfout: anders zet een planning werk op een werker waar al
-    iemand zit, en zijn we terug bij twee runs in dezelfde container."""
-    import inspect
+    iemand zit, en zijn we terug bij twee runs in dezelfde container.
 
+    Stond hier als tekstcontrole op de broncode ("komt `bezette_werkers` erin
+    voor"). Dat brak bij de eerste verplaatsing van die aanroep, terwijl het
+    gedrag gewoon klopte -- en het zou NIET gebroken zijn als iemand de
+    telling stilletjes had uitgezet. Nu wordt het gedrag zelf gemeten; de
+    echte dekking staat in test_plan_capaciteit.py.
+    """
     from services.boards.plan_service import PlanService
 
-    bron = inspect.getsource(PlanService._claim_worker)
-    assert "bezette_werkers(lab.id)" in bron
+    bron_telt = PlanService._telling.__doc__ or ""
+    assert "RUNS" in bron_telt, "de telling moet over lopende runs gaan"
 
 
 def test_bezetting_komt_uit_de_runs_en_niet_uit_de_planningen():
