@@ -35,6 +35,8 @@ networks:
 
 volumes:
   labx_data:
+  # Certificaat + eigen CA van de TLS-sidecar.
+  labx_caddy:
   labx_claude_home:
   # De SSH-identiteit waarmee LabX lab-hosts in je netwerk aanstuurt.
   # MOET een volume zijn: in de image zou elke herbouw een nieuwe
@@ -101,6 +103,34 @@ services:
       # Alleen de LAN-IP: bereikbaar vanaf het netwerk en via WireGuard,
       # nergens anders.
       - "${LABX_BIND_IP}:${LABX_WEB_PORT}:80"
+
+  # HTTPS ervoor, op je eigen netwerk.
+  #
+  # Dit staat er om één concrete reden: de browser geeft geen enkele site
+  # toegang tot de MICROFOON op een http-pagina. Dat is een harde regel --
+  # `navigator.mediaDevices` bestaat daar niet eens -- dus de spraak-
+  # orchestrator kon wel typen en niet praten, hoe privé je netwerk ook is.
+  #
+  # De http-poort blijft gewoon bestaan; dit komt ernaast en niet ervoor in
+  # de plaats, zodat niets wat al werkte hoeft te veranderen.
+  tls:
+    image: caddy:2-alpine
+    container_name: labx-tls
+    restart: unless-stopped
+    depends_on:
+      - web
+    networks:
+      - labx-labs
+    environment:
+      LABX_BIND_IP: ${LABX_BIND_IP}
+      LABX_TLS_PORT: ${LABX_TLS_PORT:-8443}
+    ports:
+      - "${LABX_BIND_IP}:${LABX_TLS_PORT:-8443}:${LABX_TLS_PORT:-8443}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Het certificaat en de CA moeten een herstart overleven; anders
+      # vertrouwt elke browser na elke herstart opnieuw niets.
+      - labx_caddy:/data
 
   # Het lokale model voor de tweede mening van de data-guard ("spoor B").
   #

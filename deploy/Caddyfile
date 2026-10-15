@@ -1,0 +1,42 @@
+# TLS-afhandeling voor LabX op je eigen netwerk.
+#
+# Waarom dit bestaat: de browser geeft geen enkele site toegang tot de
+# MICROFOON op een http-pagina. Dat is een harde regel en geen instelling —
+# `navigator.mediaDevices` bestaat daar domweg niet. De spraakorchestrator
+# kon daardoor wel typen en niet praten. Dit zet er https voor, met een
+# certificaat van Caddy's eigen CA; daarmee geldt de pagina als beveiligd en
+# werkt de microfoon.
+#
+# De app zelf blijft gewoon http praten op het interne netwerk. LabX doet
+# zijn eigen login; dit ding doet alleen TLS.
+{
+	admin off
+	auto_https disable_redirects
+	default_sni 192.168.2.15
+}
+
+https://{$LABX_BIND_IP}:{$LABX_TLS_PORT} {
+	tls internal
+
+	# De root-CA, zodat een laptop of telefoon dit certificaat één keer kan
+	# vertrouwen. Zonder dit krijg je bij elk bezoek een waarschuwing, en een
+	# waarschuwing die je elke dag wegklikt is geen waarschuwing meer.
+	handle /ca.crt {
+		root * /data/caddy/pki/authorities/local
+		rewrite * /root.crt
+		header Content-Type application/x-x509-ca-cert
+		header Content-Disposition "attachment; filename=labx-ca.crt"
+		file_server
+	}
+
+	handle {
+		# WebSockets (terminal, chat, het browserscherm van een lab) lopen
+		# hier gewoon doorheen. Test je dat met curl, dan krijg je een 404:
+		# curl kiest HTTP/2, en daar bestaat de Upgrade-kop niet. Browsers
+		# openen voor een WebSocket vanzelf een HTTP/1.1-verbinding, en dan
+		# komt er netjes een 101. Met `curl --http1.1` zie je dat ook.
+		reverse_proxy web:80 {
+			header_up X-Forwarded-Proto https
+		}
+	}
+}

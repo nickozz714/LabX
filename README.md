@@ -93,6 +93,17 @@ docker compose up -d --build
 - Web-UI: http://localhost:8080 — API: http://localhost:8090 (Swagger op `/docs`)
 - Optioneel lokaal guard-model meestarten: `docker compose --profile with-ollama up -d`
 
+**HTTPS op je eigen netwerk** — `deploy/Caddyfile` + de `tls`-service zetten een
+TLS-sidecar voor LabX (Caddy met een eigen CA). Nodig voor de microfoon in de
+spraakorchestrator: browsers geven op een http-pagina geen toegang tot de microfoon,
+hoe privé je netwerk ook is. De http-poort blijft gewoon bestaan.
+
+```bash
+echo "LABX_TLS_PORT=8443" >> .env
+docker compose --env-file .env -f deploy/docker-compose.server.yml up -d tls
+# Eenmalig: haal https://<server>:8443/ca.crt op en vertrouw hem op je laptop.
+```
+
 **Interne server-deployment** — `deploy/docker-compose.server.yml` draait LabX op een
 eigen server zonder hem aan het internet te hangen: de web-container publiceert op één
 LAN-IP (`${LABX_BIND_IP}:${LABX_WEB_PORT}`) in plaats van `0.0.0.0`, de API krijgt
