@@ -1,0 +1,18 @@
+# Wat NIET de build-context in hoeft. Zonder dit stuurt een root-context 2,6 GB
+# aan Tauri-bouwsel en node_modules naar de daemon bij elke build -- en bij een
+# lab-host op een andere machine gaat dat ook nog over SSH.
+.git
+.github
+desktop/
+docs/
+deploy/
+scripts/
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/.venv
+.env
+data/
+*.db
+*.sqlite3

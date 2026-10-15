@@ -449,8 +449,15 @@ function ZoDoeJeDatUitleg() {
   // invullen -- dat zegt de tekst er dan ook bij.
   const basis = window.location.origin;
   const opLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(basis);
-  const haal = `curl -fsSL ${basis}/api/lab-hosts/agent -o labx_lab_host.py`;
-  const start = `python3 labx_lab_host.py --labx ${basis}`;
+  // De gewone weg: één regel die het script van GitHub haalt en meteen
+  // start. De terugval eronder is voor een machine zonder internet — die
+  // haalt hetzelfde script bij deze LabX op, en heeft dan gegarandeerd de
+  // versie die bij deze installatie hoort.
+  const viaGithub =
+    `curl -fsSL https://raw.githubusercontent.com/nickozz714/LabX/main/lab-host/install.sh \\\n`
+    + `  | sh -s -- --labx ${basis}`;
+  const viaLabX = `curl -fsSL ${basis}/api/lab-hosts/agent -o labx_lab_host.py\n`
+    + `python3 labx_lab_host.py --labx ${basis}`;
   return (
     <Card className="p-4">
       <button className="flex w-full items-center justify-between text-left text-sm font-semibold"
@@ -467,12 +474,26 @@ function ZoDoeJeDatUitleg() {
             <strong>gewoon terminalvenster</strong> en plak deze twee regels:
           </p>
           <div className="rounded-md bg-secondary/50 p-3">
-            <div className="mb-2 flex items-start justify-between gap-2">
-              <pre className="overflow-x-auto font-mono text-xs">{haal}
-{start}</pre>
-              <KopieerKnop tekst={`${haal}\n${start}`} label="Kopiëren" />
+            <div className="flex items-start justify-between gap-2">
+              <pre className="overflow-x-auto font-mono text-xs">{viaGithub}</pre>
+              <KopieerKnop tekst={viaGithub} label="Kopiëren" />
             </div>
           </div>
+          <details className="text-xs">
+            <summary className="cursor-pointer">
+              Die computer kan niet bij GitHub?
+            </summary>
+            <div className="mt-2 rounded-md bg-secondary/50 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <pre className="overflow-x-auto font-mono text-xs">{viaLabX}</pre>
+                <KopieerKnop tekst={viaLabX} label="Kopiëren" />
+              </div>
+            </div>
+            <p className="mt-2">
+              Deze LabX serveert hetzelfde script uit, dus je krijgt
+              gegarandeerd de versie die bij deze installatie hoort.
+            </p>
+          </details>
           {opLocalhost && (
             <p className="rounded-md border border-warning/30 bg-warning/10 p-2 text-xs text-warning">
               Let op: je bekijkt LabX nu op <code>{basis}</code>. Op die andere
@@ -485,7 +506,12 @@ function ZoDoeJeDatUitleg() {
             Hij meldt zich elke 30 seconden, toont een koppelcode, en houdt de
             machine wakker zolang er labs op draaien. Commando&apos;s voert hij
             niet uit: dat gaat over SSH, zodat wie de agent overneemt niets kan
-            starten.
+            starten.{" "}
+            <a href="https://github.com/nickozz714/LabX/blob/main/lab-host/README.md"
+               target="_blank" rel="noreferrer"
+               className="underline underline-offset-2">
+              Volledige instructies
+            </a>.
           </p>
           <p>
             <strong className="text-foreground">Op een Mac</strong> moet het een

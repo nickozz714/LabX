@@ -58,7 +58,7 @@ ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     # Het Nederlandse spaCy-model voor Presidio. Presidio's herkenning van
     # NAMEN, PLAATSEN en telefoonnummers draait op dit model; zonder model
@@ -80,12 +80,16 @@ RUN pip install --no-cache-dir -r requirements.txt \
     # trixie under us once (see the ICU note above), and pip works regardless.
     && pip install --no-cache-dir azure-cli
 
-COPY src/ ./src/
-# De agents die op ANDERE machines draaien. Ze horen in de image omdat LabX
-# ze uitserveert: je kunt een script niet op een vreemde computer krijgen
-# zonder die computer aan te raken, en dan is "haal hem bij LabX op" de
-# kortst mogelijke aanraking. Zie GET /api/lab-hosts/agent.
-COPY host-agent/ ./host-agent/
+COPY backend/src/ ./src/
+# De lab-host-agent draait op een ANDERE computer, maar hoort in deze image
+# omdat LabX hem uitserveert (GET /api/lab-hosts/agent). Je krijgt een script
+# niet op een vreemde machine zonder die machine aan te raken; dan is "haal
+# hem op bij LabX" de kortst mogelijke aanraking -- en werkt het ook op een
+# netwerk zonder internet, waar de GitHub-regel het laat afweten.
+#
+# Hiervoor bouwt deze image vanuit de REPO-WORTEL en niet vanuit backend/;
+# zie .dockerignore voor wat er dan buiten blijft.
+COPY lab-host/ ./lab-host/
 
 ENV PYTHONPATH=/app/src
 ENV LABX_HOME=/data

@@ -44,7 +44,9 @@ jobs:
       - name: Build & push backend (${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:
-          context: backend
+          # De wortel: de backend-image neemt ook lab-host/ mee.
+          context: .
+          file: backend/Dockerfile
           push: true
           build-args: |
             LABX_VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'edge' }}

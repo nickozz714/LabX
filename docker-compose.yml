@@ -20,7 +20,9 @@ services:
     # Voorgebakken image van GHCR (docker compose pull) met lokale build als
     # fallback (docker compose up --build) — zie .github/workflows/images.yml.
     build:
-      context: ./backend
+      # De wortel, niet backend/: de image moet ook lab-host/ meenemen.
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         # Het versienummer in de bundel bakken. De desktop-app geeft zijn eigen
         # versie mee; met de hand bouwen geeft "dev", en dat is dan ook waar.

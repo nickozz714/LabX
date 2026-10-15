@@ -71,17 +71,17 @@ def agent_script():
 
     from fastapi.responses import PlainTextResponse
 
-    # /app/host-agent in de image, ../../host-agent vanuit de broncheckout.
-    for kandidaat in (Path("/app/host-agent/labx_lab_host.py"),
-                      Path(__file__).resolve().parents[2] / "host-agent" / "labx_lab_host.py"):
+    # /app/lab-host in de image, ../../../lab-host vanuit een broncheckout.
+    for kandidaat in (Path("/app/lab-host/labx_lab_host.py"),
+                      Path(__file__).resolve().parents[3] / "lab-host" / "labx_lab_host.py"):
         if kandidaat.is_file():
             return PlainTextResponse(
                 kandidaat.read_text(encoding="utf-8"),
                 headers={"Content-Disposition": 'attachment; filename="labx_lab_host.py"'})
     raise HTTPException(
         status_code=404,
-        detail=("Het agent-script zit niet in deze installatie. Haal het uit de "
-                "repo: backend/host-agent/labx_lab_host.py"))
+        detail=("Het agent-script zit niet in deze installatie. Haal hem op bij "
+                "github.com/nickozz714/LabX, map lab-host/."))
 
 
 @router.get("/sleutel")

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host-agent"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "host-agent"))
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "darwin", reason="sandbox-exec bestaat alleen op macOS")

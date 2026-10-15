@@ -337,7 +337,7 @@ async def host_agent_status():
         "adres": rt._basis,
         "hint": None if bereikbaar else (
             "Start de agent op de machine zelf: "
-            "`LABX_HOST_AGENT_TOKEN=<token> python3 backend/host-agent/labx_host_agent.py`"),
+            "`LABX_HOST_AGENT_TOKEN=<token> python3 host-agent/labx_host_agent.py`"),
     }
 
 
