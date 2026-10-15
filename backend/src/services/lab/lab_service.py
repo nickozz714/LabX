@@ -393,7 +393,14 @@ class LabService:
         by_container = {m["id"]: m for m in managed}
         known_container_ids = set()
         fixed = 0
-        for p in self.db.query(Lab).filter(Lab.status.in_(("running", "creating"))).all():
+        # "error" hoort hier ook bij, en dat ontbrak. Een lab dat ooit op
+        # error is gezet werd nooit meer bekeken, dus bleef het staan met een
+        # tekst van herstarts geleden -- ook als zijn container intussen
+        # gewoon weer draaide. Reconcile bestaat juist om de database te laten
+        # kloppen met de werkelijkheid; dan moet hij ook naar de toestanden
+        # kijken die verouderd KUNNEN zijn.
+        for p in (self.db.query(Lab)
+                  .filter(Lab.status.in_(("running", "creating", "error"))).all()):
             if self.is_host(p):
                 continue   # een hostlab heeft geen container om tegen te spiegelen
             if (p.host_id or None) not in bereikbaar:
@@ -427,6 +434,13 @@ class LabService:
             live_status = "running" if m["state"] == "running" else "stopped"
             if live_status != p.status:
                 p.status = live_status
+                p.updated_at = _now_iso()
+                fixed += 1
+            if p.error:
+                # Zijn container staat er en doet het; dan is een foutmelding
+                # van vorige week geen informatie meer maar ruis -- en ruis
+                # waar je naar gaat zoeken.
+                p.error = None
                 p.updated_at = _now_iso()
                 fixed += 1
             # De werkers volgen wat de daemon zegt; een container die weg is,

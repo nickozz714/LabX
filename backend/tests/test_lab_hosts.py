@@ -726,3 +726,37 @@ def test_na_een_herstart_van_labx_is_een_verdwenen_container_stopped(db, monkeyp
     assert p.status == "stopped", "geen 'error': er is niets stuk"
     assert p.container_id is None, "zodat starten een verse container maakt"
     assert not p.error
+
+
+def test_een_lab_dat_ooit_op_error_stond_wordt_opnieuw_bekeken(db, monkeypatch):
+    """Reconcile keek alleen naar running/creating. Een lab dat ooit op error
+    was gezet, werd daarna nooit meer bekeken -- en bleef dus staan met een
+    melding van herstarts geleden, ook als zijn container allang weer draaide.
+
+    Dat is precies het tegenovergestelde van wat reconcile moet doen: de
+    database laten kloppen met de werkelijkheid. Dan hoor je juist te kijken
+    naar de toestanden die verouderd KUNNEN zijn.
+    """
+    import asyncio
+
+    from services.lab.lab_service import LabService
+
+    p = _lab(db, id="lab-oude-fout")
+    p.status = "error"
+    p.error = "Container niet meer gevonden na herstart van LabX"
+    p.container_id = "c-leeft-gewoon"
+    db.commit()
+
+    class Leeft:
+        async def list_managed(self):
+            return [{"id": "c-leeft-gewoon", "name": "labx-lab-abc", "state": "running"}]
+
+        async def remove(self, cid, **kw):
+            return None
+
+    monkeypatch.setattr("services.lab.lab_service.DockerRuntime", lambda **kw: Leeft())
+    asyncio.run(LabService(db, runtime=Leeft()).reconcile_on_start())
+
+    db.refresh(p)
+    assert p.status == "running"
+    assert not p.error, "een foutmelding van vorige week is ruis, geen informatie"
