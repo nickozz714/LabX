@@ -201,6 +201,24 @@ class LabService:
                         f"Verhoog het maximum bij Labs → Machines, of kies een "
                         f"andere machine."))
 
+    async def _sluit_tunnels_indien_leeg(self, host_id: Optional[int]) -> None:
+        """Tunnels naar een machine opruimen zodra er geen lab meer op staat.
+
+        Niet eerder: ze zijn gedeeld per machine, en een tunnel dichtgooien
+        waar een ander lab nog doorheen praat is een leeg browserscherm bij een
+        lab waar niets mee aan de hand is.
+        """
+        if not host_id:
+            return
+        if self.db.query(Lab).filter(Lab.host_id == host_id).count():
+            return
+        from models.lab_host import LabHost
+        from services.lab.poort_tunnel import tunnels
+
+        host = self.db.get(LabHost, int(host_id))
+        if host and host.docker_host:
+            await tunnels.sluit_machine(host.docker_host)
+
     def _host_naam(self, host_id: Optional[int]) -> Optional[str]:
         if not host_id:
             return None
@@ -1635,6 +1653,11 @@ exec ssh -N \\
         # volume dat daar wél voor bedoeld is.
         werkmap = "/data" if os.path.isdir("/data") else tempfile.gettempdir()
         tar = os.path.join(werkmap, f"labx-verhuis-{p.id[:12]}.tar.gz")
+        # Het punt van geen terugkeer: vanaf het moment dat het volume op de
+        # NIEUWE machine staat en van de oude weg is, is "terugzetten waar hij
+        # stond" geen herstel meer maar een leugen -- het lab zou dan wijzen
+        # naar een machine waar zijn werk niet meer staat.
+        verhuisd = False
         try:
             # 1. Alles stoppen en weghalen op de oude machine. Eerst stoppen,
             #    want een volume uitpakken terwijl er in geschreven wordt geeft
@@ -1668,6 +1691,8 @@ exec ssh -N \\
             p.updated_at = _now_iso()
             self.db.commit()
             self._host_runtimes.pop(naam_oud, None)
+            await self._sluit_tunnels_indien_leeg(naam_oud)
+            verhuisd = True
 
             # 4. Het oude volume opruimen -- pas NU, als het nieuwe er staat.
             #    Andersom zou een mislukte import je werk kosten.
@@ -1680,30 +1705,55 @@ exec ssh -N \\
 
             p.status = "stopped"
             self.db.commit()
+
+            # Verse containers op de nieuwe machine. NIET via start(): die
+            # weigert een lab zonder container_id ("hij moet opnieuw aangemaakt
+            # worden") -- precies de toestand die een verhuizing zelf maakt.
+            # Hier wéten we dat opnieuw aanmaken het goede antwoord is.
             if draaide:
-                await self.start(p.id)
+                for w in self.ensure_workers(p):
+                    await self._start_worker_container(p, w)
+                    w.status = "running"
+                    w.error = None
+                    w.updated_at = _now_iso()
+                self._spiegel_werker1(p)
+                p.status = "running"
+                p.last_used_at = _now_iso()
+                p.expires_at = _expiry_from_now(p.ttl_hours)
+                p.updated_at = _now_iso()
+                self.db.commit()
                 provision_in_background(p.id)
         except Exception as exc:  # noqa: BLE001
-            # Mislukt is niet hetzelfde als stuk. Het volume staat nog op de
-            # oude machine -- alleen de containers zijn weg, en die maken we
-            # gewoon opnieuw. Het lab op "error" laten staan zou betekenen dat
-            # een mislukte verhuizing je lab plat legt, terwijl er niets kwijt
-            # is. Dus: terugzetten waar hij stond, en zeggen wat er misging.
-            p.host_id = naam_oud
+            # Mislukt is niet hetzelfde als stuk: het volume is er nog, alleen
+            # de containers niet. Waar het lab hoort te staan hangt af van hoe
+            # ver we waren -- en dat verkeerd invullen is erger dan de fout
+            # zelf, want dan wijst LabX naar een machine zonder jouw werk.
             p.status = "stopped"
             p.error = f"Verplaatsen mislukte: {str(exc)[:400]}"
+            if not verhuisd:
+                p.host_id = naam_oud
             p.updated_at = _now_iso()
             self.db.commit()
+            waar = ("op zijn NIEUWE machine (het volume staat daar al)" if verhuisd
+                    else "nog op zijn oude machine")
+            # Alleen weer aanzetten wat aan STOND. Een lab dat uit was, hoort
+            # uit te blijven -- ook na een mislukking.
             if draaide:
                 try:
-                    await self.start(p.id)
+                    for w in self.ensure_workers(p):
+                        await self._start_worker_container(p, w)
+                        w.status = "running"
+                        w.updated_at = _now_iso()
+                    self._spiegel_werker1(p)
+                    p.status = "running"
+                    self.db.commit()
                 except Exception as exc2:  # noqa: BLE001
-                    log.warningx("Terugstarten na mislukte verhuizing lukte niet",
+                    log.warningx("Containers terugzetten na mislukte verhuizing lukte niet",
                                  lab_id=p.id, error=str(exc2)[:200])
             raise HTTPException(
                 status_code=502,
-                detail=(f"Verplaatsen mislukte, het lab staat nog op zijn oude "
-                        f"machine: {str(exc)[:400]}")) from exc
+                detail=(f"Verplaatsen mislukte. Het lab staat {waar}: "
+                        f"{str(exc)[:400]}")) from exc
         finally:
             try:
                 os.unlink(tar)

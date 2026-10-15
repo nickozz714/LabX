@@ -72,6 +72,13 @@ class NepRuntime:
     async def remove(self, container_id, **kw):
         self.verwijderde_containers.append(container_id)
 
+    async def run_container(self, **kw):
+        self.sporen.append(("run_container", kw.get("name")))
+        return f"nieuw-op-{self.naam}"
+
+    async def ensure_network(self):
+        return None
+
 
 def _host(db, naam="Werkpc", status="gekoppeld"):
     from services.lab.hosts import LabHostService
@@ -254,3 +261,73 @@ def test_een_volle_machine_neemt_er_geen_lab_bij(db):
             p.id, host_id=host.id))
     assert fout.value.status_code == 409
     assert "vol" in str(fout.value.detail)
+
+
+# ── wat alleen de echte proef op een tweede machine liet zien ────────────────
+
+def test_een_draaiend_lab_draait_na_de_verhuizing_weer(db):
+    """Dit ging mis bij de eerste echte verhuizing (iMac -> server).
+
+    `verplaats` haalt de containers weg en zet `container_id` op None. Daarna
+    `start()` aanroepen kan niet: die weigert juist een lab zonder container
+    ("hij moet opnieuw aangemaakt worden"). Het volume was al over, maar het
+    lab bleef uit staan met een melding die nergens naar wees.
+    """
+    hier, daar = NepRuntime("server"), NepRuntime("werkpc")
+    hier.volumes.add("labx_lab_abc")
+    host = _host(db)
+    p = _lab(db, status="running", container_id="c-oud")
+
+    svc = _svc(db, hier, daar)
+    uit = asyncio.run(svc.verplaats(p.id, host_id=host.id))
+
+    assert uit["status"] == "running"
+    gemaakt_daar = [x for x in daar.sporen if x[0] == "run_container"]
+    gemaakt_hier = [x for x in hier.sporen if x[0] == "run_container"]
+    assert gemaakt_daar, "verse container op de NIEUWE machine"
+    assert not gemaakt_hier, "en niet op de oude"
+    db.refresh(p)
+    assert p.container_id == "nieuw-op-werkpc"
+
+
+def test_een_lab_dat_uit_stond_blijft_uit_na_de_verhuizing(db):
+    """Verhuizen is geen reden om hem aan te zetten."""
+    hier, daar = NepRuntime("server"), NepRuntime("werkpc")
+    hier.volumes.add("labx_lab_abc")
+    host = _host(db)
+    p = _lab(db, status="stopped")
+
+    uit = asyncio.run(_svc(db, hier, daar).verplaats(p.id, host_id=host.id))
+    assert uit["status"] == "stopped"
+    assert not [s for s in daar.sporen if s[0] == "run_container"]
+
+
+def test_na_het_punt_van_geen_terugkeer_wijst_het_lab_naar_de_NIEUWE_machine(db):
+    """De gevaarlijkste van de twee.
+
+    Gaat het mis NADAT het volume op de nieuwe machine staat en van de oude
+    weg is, dan is "terugzetten waar hij stond" geen herstel maar een leugen:
+    LabX wijst dan naar een machine waar jouw werk niet meer staat. Precies
+    dat gebeurde bij de echte proef -- het volume stond op de server en de
+    database zei iMac.
+    """
+    from fastapi import HTTPException
+
+    hier, daar = NepRuntime("server"), NepRuntime("werkpc")
+    hier.volumes.add("labx_lab_abc")
+
+    async def _stuk(**kw):
+        raise RuntimeError("daemon weg tijdens het starten")
+
+    daar.run_container = _stuk
+    host = _host(db)
+    p = _lab(db, status="running", container_id="c-oud")
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(_svc(db, hier, daar).verplaats(p.id, host_id=host.id))
+
+    db.refresh(p)
+    assert p.host_id == host.id, "het volume staat daar, dus daar hoort het lab"
+    assert "NIEUWE machine" in str(fout.value.detail)
+    assert "labx_lab_abc" in daar.volumes
+    assert "labx_lab_abc" not in hier.volumes

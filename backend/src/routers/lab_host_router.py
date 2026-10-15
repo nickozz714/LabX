@@ -105,9 +105,17 @@ async def koppelen(host_id: int, body: Dict[str, Any], db: Session = Depends(get
 
 
 @router.post("/{host_id}/weigeren")
-def weigeren(host_id: int, db: Session = Depends(get_db)):
+async def weigeren(host_id: int, db: Session = Depends(get_db)):
+    from services.lab.poort_tunnel import tunnels
+
     svc = LabHostService(db)
-    return svc.to_dict(svc.weigeren(host_id))
+    adres = svc.get_or_404(host_id).docker_host
+    uit = svc.to_dict(svc.weigeren(host_id))
+    # Geen toegang meer betekent ook: geen openstaande tunnel meer. Zou die
+    # blijven staan, dan praat LabX nog met een machine die het niet meer mag.
+    if adres:
+        await tunnels.sluit_machine(adres)
+    return uit
 
 
 @router.patch("/{host_id}")
@@ -117,8 +125,14 @@ def wijzig(host_id: int, body: Dict[str, Any], db: Session = Depends(get_db)):
 
 
 @router.delete("/{host_id}")
-def verwijder(host_id: int, db: Session = Depends(get_db)):
-    LabHostService(db).verwijder(host_id)
+async def verwijder(host_id: int, db: Session = Depends(get_db)):
+    from services.lab.poort_tunnel import tunnels
+
+    svc = LabHostService(db)
+    adres = svc.get_or_404(host_id).docker_host
+    svc.verwijder(host_id)
+    if adres:
+        await tunnels.sluit_machine(adres)
     return {"ok": True}
 
 

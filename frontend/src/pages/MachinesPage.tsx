@@ -453,12 +453,11 @@ function ZoDoeJeDatUitleg() {
       {open && (
         <div className="mt-3 space-y-3 text-sm text-muted-foreground">
           <p>
-            Op de computer die mee moet doen draait Docker, en start je de
-            LabX-agent:
+            Op die computer draait Docker, staat SSH aan, en start je de
+            LabX-agent <strong>in een gewoon terminalvenster</strong>:
           </p>
           <pre className="overflow-x-auto rounded-md bg-secondary/50 p-3 font-mono text-xs">
-{`LABX_URL=https://labx.jouwserver.nl \\
-python3 host-agent/labx_lab_host.py`}
+{`python3 labx_lab_host.py --labx http://jouw-labx:8080`}
           </pre>
           <p>
             Hij meldt zich elke 30 seconden, toont een koppelcode, en houdt de
@@ -467,11 +466,18 @@ python3 host-agent/labx_lab_host.py`}
             starten.
           </p>
           <p>
-            Zorg daarom dat de server met SSH bij die machine kan —{" "}
-            <code className="rounded bg-secondary/50 px-1 font-mono text-xs">
-              ssh-copy-id gebruiker@die-machine
-            </code>{" "}
-            — en gebruik daarna hierboven &quot;Verbinding testen&quot;.
+            <strong className="text-foreground">Op een Mac</strong> moet het een
+            zichtbaar terminalvenster zijn, geen achtergrondproces: macOS vraagt
+            de eerste keer om toegang tot je lokale netwerk, en zonder die vraag
+            — die een losgekoppeld proces nooit te zien krijgt — bereikt hij
+            LabX niet. Dat ziet er bedrieglijk uit als &quot;hij draait&quot;.
+          </p>
+          <p>
+            <strong className="text-foreground">Externe login</strong> staat bij
+            Systeeminstellingen → Algemeen → Delen. Het koppelvenster hierboven
+            geeft de sleutelregel die je één keer op die machine plakt; de agent
+            zorgt zelf dat docker ook in het PATH van een SSH-sessie staat, want
+            daar staat Docker Desktop standaard niet in.
           </p>
         </div>
       )}

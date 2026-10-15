@@ -89,11 +89,81 @@ def machine_id() -> str:
 
 # ── wat deze machine te bieden heeft ────────────────────────────────────────
 
+#: Waar Docker Desktop zijn CLI neerzet. Staat niet in het PATH van een
+#: SSH-sessie, en juist dat PATH is het PATH dat LabX gebruikt.
+_DOCKER_PADEN = (
+    "/usr/local/bin/docker",                                    # macOS + Linux
+    str(Path.home() / ".docker" / "bin" / "docker"),            # nieuwere Docker Desktop
+    "/opt/homebrew/bin/docker",                                 # Apple Silicon + brew
+)
+
+
+def docker_pad() -> Optional[str]:
+    """Het docker-commando, ook als het niet in dit PATH staat."""
+    gevonden = shutil.which("docker")
+    if gevonden:
+        return gevonden
+    for kandidaat in _DOCKER_PADEN:
+        if os.path.isfile(kandidaat) and os.access(kandidaat, os.X_OK):
+            return kandidaat
+    return None
+
+
+def zorg_voor_ssh_pad() -> Optional[str]:
+    """Docker bereikbaar maken voor een SSH-sessie, en melden wat er gebeurde.
+
+    Dit is de val waar de eerste echte lab-host op stuk liep. LabX stuurt
+    containers aan met `ssh ... docker system dial-stdio`, en een SSH-sessie
+    op macOS krijgt een kaal PATH: /usr/bin:/bin:/usr/sbin:/sbin. Docker
+    Desktop staat in /usr/local/bin en zit daar dus NIET in. Het gevolg is
+    `command not found`, en LabX meldt dan iets over docker terwijl het
+    probleem het PATH is -- een melding die je de verkeerde kant op stuurt.
+
+    Daarom regelt de agent dit zelf, op de enige plek die een niet-interactieve
+    zsh leest: ~/.zshenv. Eén blok, herkenbaar, en alleen als het er nog niet
+    staat -- je eigen instellingen blijven.
+    """
+    pad = docker_pad()
+    if not pad:
+        return None
+    map_ = os.path.dirname(pad)
+    if map_ in os.environ.get("PATH", "").split(":"):
+        return None
+    if platform.system() != "Darwin":
+        # Op Linux komt docker uit een pakket en staat hij in het normale PATH;
+        # daar zonder aanleiding in iemands shellbestanden schrijven is erger
+        # dan het probleem.
+        return None
+
+    zshenv = Path.home() / ".zshenv"
+    merk = "# >>> LabX lab-host >>>"
+    huidig = zshenv.read_text(encoding="utf-8") if zshenv.exists() else ""
+    if merk in huidig:
+        return None
+    blok = (f"\n{merk}\n"
+            "# Een SSH-sessie krijgt op macOS een kaal PATH, waar de docker-CLI van\n"
+            "# Docker Desktop niet in staat. LabX stuurt containers aan via\n"
+            '# "ssh ... docker system dial-stdio" en struikelt daar zonder deze regel\n'
+            "# over, met een melding die naar docker wijst in plaats van naar het PATH.\n"
+            f'export PATH="{map_}:$PATH"\n'
+            "# <<< LabX lab-host <<<\n")
+    try:
+        with zshenv.open("a", encoding="utf-8") as f:
+            f.write(blok)
+    except OSError as exc:
+        print(f"[labx] kon {zshenv} niet aanvullen ({exc}); zet zelf {map_} in het "
+              f"PATH van een SSH-sessie, anders kan LabX hier geen containers starten.",
+              file=sys.stderr)
+        return None
+    return str(zshenv)
+
+
 def _docker_versie() -> Optional[str]:
-    if not shutil.which("docker"):
+    pad = docker_pad()
+    if not pad:
         return None
     try:
-        uit = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"],
+        uit = subprocess.run([pad, "version", "--format", "{{.Server.Version}}"],
                              capture_output=True, text=True, timeout=10)
         return uit.stdout.strip() or None
     except Exception:  # noqa: BLE001
@@ -103,11 +173,12 @@ def _docker_versie() -> Optional[str]:
 def _draaiende_labs() -> int:
     """Hoeveel labx-containers hier draaien. Dit is wat "er is werk" betekent
     voor het wakker houden."""
-    if not shutil.which("docker"):
+    pad = docker_pad()
+    if not pad:
         return 0
     try:
         uit = subprocess.run(
-            ["docker", "ps", "--filter", "label=labx.managed", "--format", "{{.ID}}"],
+            [pad, "ps", "--filter", "label=labx.managed", "--format", "{{.ID}}"],
             capture_output=True, text=True, timeout=10)
         return len([r for r in uit.stdout.splitlines() if r.strip()])
     except Exception:  # noqa: BLE001
@@ -275,7 +346,22 @@ def main() -> int:
     print(f"LabX lab-host — {opties.naam}")
     print(f"Meldt zich bij {opties.labx} (elke {HARTSLAG_SECONDEN}s). Stoppen met Ctrl-C.\n")
 
+    if not docker_pad():
+        print("[labx] Let op: ik vind hier geen docker. Zolang die er niet is kan LabX "
+              "op deze machine geen labs draaien. Start Docker Desktop en begin opnieuw.",
+              file=sys.stderr)
+    else:
+        aangevuld = zorg_voor_ssh_pad()
+        if aangevuld:
+            print(f"[labx] {aangevuld} aangevuld: docker staat nu ook in het PATH van een "
+                  f"SSH-sessie. Zonder dat kan LabX hier geen containers starten.")
+
     laatste_status = None
+    #: Hoeveel keer de melding achter elkaar misging. Bestaat omdat een agent
+    #: die blijft proberen en niets meer zegt, er voor jou uitziet als een
+    #: agent die het doet -- precies hoe de eerste macOS-host een half uur
+    #: "draaide" zonder ooit aan te komen.
+    mislukt = 0
     while not gestopt:
         labs = _draaiende_labs()
         # Alleen wakker blijven als er ECHT iets draait. Een pc die de hele
@@ -293,6 +379,18 @@ def main() -> int:
             "docker_host": (f"ssh://{opties.ssh}" if opties.ssh else None),
             "capaciteit": capaciteit(wakker.actief),
         })
+        if antwoord is None:
+            mislukt += 1
+            if mislukt in (1, 5, 20) or mislukt % 60 == 0:
+                print(f"[labx] {mislukt}e poging op rij mislukt. LabX ziet deze machine "
+                      f"dus NIET. Op macOS: geef dit programma toegang tot het lokale "
+                      f"netwerk (Systeeminstellingen → Privacy en beveiliging → Lokaal "
+                      f"netwerk) — zonder die toestemming kan een achtergrondproces geen "
+                      f"adres in je eigen netwerk bereiken.", file=sys.stderr)
+        elif antwoord is not None and mislukt:
+            print(f"[labx] Weer verbinding met LabX na {mislukt} mislukte poging(en).")
+            mislukt = 0
+
         if antwoord and antwoord.get("status") != laatste_status:
             laatste_status = antwoord.get("status")
             if laatste_status == "nieuw" and antwoord.get("koppelcode"):

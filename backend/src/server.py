@@ -343,6 +343,12 @@ async def lifespan(_app: FastAPI):
     log.infox("LabX gestart")
     yield
     await scheduler.stop()
+    # De SSH-tunnels naar lab-hosts netjes dichtdoen. Blijven ze staan, dan
+    # houdt een herstart van de backend ssh-processen over die naar niets meer
+    # wijzen -- en de volgende tunnel pakt een nieuwe poort terwijl de oude
+    # bezet blijft.
+    from services.lab.poort_tunnel import tunnels
+    await tunnels.sluit_alles()
 
 
 app = FastAPI(title="LabX", version="0.1.0", lifespan=lifespan)
