@@ -10,6 +10,7 @@ import { OverviewPage } from "@/pages/OverviewPage";
 import { GuardPage } from "@/pages/GuardPage";
 import { KluisPage } from "@/pages/KluisPage";
 import { LabsPage, LabDetailPage } from "@/pages/LabsPage";
+import { MachinesPage } from "@/pages/MachinesPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SkillsPage } from "@/pages/SkillsPage";
@@ -52,6 +53,9 @@ function AppRoutes() {
         <Route index element={<Navigate to="/overzicht" replace />} />
         <Route path="overzicht" element={<OverviewPage />} />
         <Route path="labs" element={<LabsPage />} />
+        {/* Vast pad vóór /labs/:labId -- de router kiest op specificiteit,
+            maar hier staan betekent dat je het ook zo leest. */}
+        <Route path="labs/machines" element={<MachinesPage />} />
         {/* Een lab open je niet even tussendoor; dat hoort een eigen
             adres te hebben dat je kunt delen. */}
         <Route path="labs/:labId" element={<LabDetailPage />} />

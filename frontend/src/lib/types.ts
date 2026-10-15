@@ -7,6 +7,12 @@ export interface Lab {
    *  een container is geen apparaat en kan die claim niet afgeven. */
   kind?: "container" | "host";
   host_project_dir?: string | null;
+  /** Op welke machine uit je netwerk dit lab draait. null = op deze server,
+   *  zoals elk lab dat er al was. */
+  host_id?: number | null;
+  /** De naam van die machine, meegeleverd zodat een kaart "op Werkpc" kan
+   *  tonen zonder zelf de machinelijst op te halen. */
+  host_naam?: string | null;
   /** Of het agent-token er LIGT; de waarde zelf komt nooit uit de API. */
   heeft_agent_token?: boolean;
   status: "creating" | "running" | "stopped" | "error" | "expired";
@@ -777,4 +783,44 @@ export interface LabRepo {
   gewijzigd?: number;
   bestanden?: string[];
   fout?: string;
+}
+
+
+/**
+ * Een computer in je netwerk die labs draait.
+ *
+ * `status` is het hele beveiligingsmodel in één veld: wie zich meldt komt
+ * binnen als "nieuw" en krijgt niets tot een mens de koppelcode bevestigt die
+ * op het scherm van díé machine staat. Een apparaat kan zichzelf dus niet
+ * toelaten.
+ */
+export interface LabHost {
+  id: number;
+  naam: string;
+  machine_id: string;
+  status: "nieuw" | "gekoppeld" | "geweigerd";
+  /** Hebben we hem recent nog horen melden? Een gekoppelde machine die uit
+   *  staat is offline, niet weg. */
+  online: boolean;
+  docker_host: string | null;
+  agent_url: string | null;
+  cpus: number | null;
+  geheugen_mb: number | null;
+  vrij_mb: number | null;
+  schijf_vrij_gb: number | null;
+  load: string | null;
+  docker_versie: string | null;
+  besturingssysteem: string | null;
+  /** Plafond dat je zelf instelt; leeg = geen eigen grens. */
+  max_labs: number | null;
+  /** Houdt de agent die pc wakker? Een machine die na tien minuten in slaap
+   *  valt is geen lab-host, en dat wil je wéten en niet merken aan een
+   *  nachtrun die halverwege stopt. */
+  blijft_wakker: boolean;
+  heeft_koppelcode: boolean;
+  laatst_gezien: string | null;
+  notitie: string | null;
+  labs: { id: string; name: string }[];
+  created_at: string;
+  updated_at: string;
 }

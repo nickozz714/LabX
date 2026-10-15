@@ -1,5 +1,5 @@
 import { api, getToken } from "@/lib/api";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra , LabRepo} from "@/lib/types";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra, LabHost, LabRepo } from "@/lib/types";
 
 /** Eén regel uit de bestandsbrowser. `bytes` is null voor mappen, en ook voor
  *  een lab-image waarvan de `ls` geen groottes kan geven. */
@@ -62,6 +62,29 @@ export type HostMetrics = {
   waarschuwingen: { ernst: "laag" | "midden" | "hoog"; onderwerp: string; tekst: string }[];
 };
 
+/**
+ * Machines in je netwerk die labs draaien.
+ *
+ * Aanmelden doet de agent zelf, zonder login — die kan er geen hebben. Al het
+ * andere hier verandert iets en zit dus achter de gewone LabX-login.
+ */
+export const labHostsApi = {
+  list: () => api.get<LabHost[]>("/lab-hosts"),
+  get: (id: number) => api.get<LabHost>(`/lab-hosts/${id}`),
+  /** Toelaten. De code staat in het venster van de agent op die computer. */
+  koppelen: (id: number, code: string, dockerHost: string) =>
+    api.post<LabHost>(`/lab-hosts/${id}/koppelen`, { code, docker_host: dockerHost }),
+  weigeren: (id: number) => api.post<LabHost>(`/lab-hosts/${id}/weigeren`),
+  wijzig: (id: number, payload: Partial<Pick<LabHost, "naam" | "max_labs" | "notitie" | "docker_host">>) =>
+    api.patch<LabHost>(`/lab-hosts/${id}`, payload),
+  verwijder: (id: number) => api.delete<{ ok: boolean }>(`/lab-hosts/${id}`),
+  /** Meten in plaats van aannemen: komt LabX er werkelijk bij? Een gekoppelde
+   *  machine waar je niet bij kunt is erger dan een ongekoppelde — je zet er
+   *  labs op en die starten niet. */
+  test: (id: number) => api.post<{ ok: boolean; detail?: string; docker_host?: string; diagnose?: any }>(
+    `/lab-hosts/${id}/test`),
+};
+
 export const labsApi = {
   /** Draait de hostagent, en waar? Het aanmaakscherm vraagt dit vóórdat je een
    *  hostlab maakt dat toch niet kan werken. */
@@ -70,6 +93,11 @@ export const labsApi = {
   list: () => api.get<Lab[]>("/labs"),
   hostMetrics: () => api.get<HostMetrics>("/labs/host-metrics"),
   get: (id: string) => api.get<Lab>(`/labs/${id}`),
+  /** Dit lab naar een andere machine verhuizen; hostId null = terug naar deze
+   *  server. Het volume gaat mee, de containerlaag niet — daarom richt het lab
+   *  zich op de nieuwe machine opnieuw in. */
+  verplaats: (id: string, hostId: number | null) =>
+    api.post<Lab>(`/labs/${id}/verplaatsen`, { host_id: hostId }),
   images: () => api.get<{ presets: ImagePreset[]; local_images: string[]; default_image: string }>("/labs/images"),
   searchImages: (q: string) =>
     api.get<{ ok: boolean; results: any[]; error?: string }>(`/labs/images/search?q=${encodeURIComponent(q)}`),

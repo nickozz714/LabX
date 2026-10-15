@@ -47,6 +47,9 @@ log = get_logger(__name__)
 _LABEL = "labx.managed"
 _LAB_LABEL = "labx.lab"
 _EXPIRES_LABEL = "labx.expires_at"
+#: Het wegwerpcontainertje waarmee een volume in- en uitgepakt wordt. Klein,
+#: overal te krijgen, en het enige dat het hoeft te kunnen is `tar`.
+_HULP_IMAGE = "alpine:3"
 _DEFAULT_EXEC_TIMEOUT_S = 120
 _MAX_OUTPUT_CHARS = 60_000
 
@@ -187,6 +190,52 @@ class DockerRuntime:
 
     async def create_volume(self, name: str) -> None:
         await self._cli_ok("volume", "create", "--label", _LABEL, name)
+
+    async def export_volume(self, volume: str, doel: str, *,
+                            timeout: float = 3600.0) -> None:
+        """Een volume als tar-bestand wegschrijven.
+
+        Via een wegwerpcontainertje, want een volume is op afstand niet anders
+        te bereiken: `docker cp` werkt op containers, niet op volumes. Dit is
+        de enige manier die óók werkt als de daemon op een andere machine
+        staat -- en dat is precies waarvoor het bestaat.
+
+        De tar gaat rechtstreeks naar een BESTAND en niet door het geheugen:
+        een /workspace met een node_modules erin is zo een paar gigabyte, en
+        dat wil je niet in een Python-variabele hebben.
+        """
+        with open(doel, "wb") as f:
+            proc = await asyncio.create_subprocess_exec(
+                self._bin, "run", "--rm", "-v", f"{volume}:/van:ro",
+                _HULP_IMAGE, "tar", "czf", "-", "-C", "/van", ".",
+                stdout=f, stderr=asyncio.subprocess.PIPE,
+                env=_docker_env(self._docker_host))
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Volume {volume} uitpakken mislukte: "
+                f"{(err or b'').decode(errors='replace')[:400]}")
+
+    async def import_volume(self, volume: str, bron: str, *,
+                            timeout: float = 3600.0) -> None:
+        """Een eerder weggeschreven tar terugzetten in een (nieuw) volume."""
+        await self.create_volume(volume)
+        with open(bron, "rb") as f:
+            proc = await asyncio.create_subprocess_exec(
+                self._bin, "run", "--rm", "-i", "-v", f"{volume}:/naar",
+                _HULP_IMAGE, "tar", "xzf", "-", "-C", "/naar",
+                stdin=f, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=_docker_env(self._docker_host))
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Volume {volume} terugzetten mislukte: "
+                f"{(err or b'').decode(errors='replace')[:400]}")
+
+    async def volume_bestaat(self, volume: str) -> bool:
+        code, _, _ = await self._run_cli("volume", "inspect", volume, timeout=20)
+        return code == 0
 
     async def remove_volume(self, name: str) -> None:
         await self._cli_ok("volume", "rm", "-f", name)

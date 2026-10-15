@@ -14,6 +14,8 @@ ND3X-public/src/services/playground/playground_service.py, single-tenant
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -173,6 +175,34 @@ class LabService:
                         f"bij Labs → Machines."))
         return DockerRuntime(docker_host=host.docker_host)
 
+    def _controleer_ruimte_op_host(self, host_id: int) -> None:
+        """Het plafond dat je per machine instelt, ook werkelijk handhaven.
+
+        Zonder dit is `max_labs` een getal in een scherm: je kunt er net zo veel
+        labs op zetten als je wilt, en merkt het pas als die pc eronder
+        bezwijkt -- precies wat we met netwerkmachines wilden voorkomen.
+        """
+        from models.lab_host import LabHost
+
+        host = self.db.get(LabHost, int(host_id))
+        if host is None or not host.max_labs:
+            return
+        nu = self.db.query(Lab).filter(Lab.host_id == host_id).count()
+        if nu >= host.max_labs:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"'{host.naam}' zit vol: {nu} van {host.max_labs} labs. "
+                        f"Verhoog het maximum bij Labs → Machines, of kies een "
+                        f"andere machine."))
+
+    def _host_naam(self, host_id: Optional[int]) -> Optional[str]:
+        if not host_id:
+            return None
+        from models.lab_host import LabHost
+
+        rij = self.db.get(LabHost, int(host_id))
+        return rij.naam if rij else None
+
     def _weiger_bij_host(self, p: Lab, wat: str) -> None:
         """Wat op een host geen betekenis heeft, mag niet stil slagen.
 
@@ -208,15 +238,48 @@ class LabService:
         restarted with it). Fixes drift both ways: a lab the DB thinks is
         running but whose container is gone -> error; a labelled container the
         DB no longer knows about -> removed (orphan cleanup)."""
-        try:
-            managed = await self.runtime.list_managed()
-        except Exception as exc:  # noqa: BLE001 — daemon not reachable yet, skip
-            log.warningx("Reconcile overgeslagen (docker niet bereikbaar)", error=str(exc)[:200])
+        # Elke daemon apart: deze server, plus elke gekoppelde machine uit je
+        # netwerk. Alleen de lokale bevragen zou elk lab op een netwerkmachine
+        # bij iedere herstart op "error" zetten -- zijn container staat immers
+        # niet in DEZE lijst. En de opruiming zou hem als weeskind zien.
+        from models.lab_host import LabHost
+
+        daemons: List[tuple] = [(None, self.runtime)]
+        for h in self.db.query(LabHost).filter(LabHost.status == "gekoppeld").all():
+            if h.docker_host:
+                daemons.append((h.id, DockerRuntime(docker_host=h.docker_host)))
+
+        managed: List[Dict[str, Any]] = []
+        #: container-id -> de runtime waar hij vandaan komt, zodat opruimen
+        #: naar de juiste machine gaat.
+        herkomst: Dict[str, Any] = {}
+        bereikbaar = set()
+        for host_id, rt in daemons:
+            try:
+                rijen = await rt.list_managed()
+            except Exception as exc:  # noqa: BLE001 — daemon niet bereikbaar, overslaan
+                log.warningx("Reconcile overgeslagen voor een machine (docker niet bereikbaar)",
+                             host_id=host_id, error=str(exc)[:200])
+                continue
+            bereikbaar.add(host_id)
+            for m in rijen:
+                m["_host_id"] = host_id
+                herkomst[m["id"]] = rt
+            managed.extend(rijen)
+        if not bereikbaar:
+            log.warningx("Reconcile overgeslagen (geen enkele docker bereikbaar)")
             return 0
         by_container = {m["id"]: m for m in managed}
         known_container_ids = set()
         fixed = 0
         for p in self.db.query(Lab).filter(Lab.status.in_(("running", "creating"))).all():
+            if self.is_host(p):
+                continue   # een hostlab heeft geen container om tegen te spiegelen
+            if (p.host_id or None) not in bereikbaar:
+                # Die machine stond uit toen we keken. Dan weten we NIETS over
+                # zijn containers, en "weet ik niet" op "error" zetten is een
+                # lab kapot melden omdat een pc even uit stond.
+                continue
             known_container_ids.add(p.container_id)
             m = by_container.get(p.container_id) if p.container_id else None
             if not m:
@@ -315,8 +378,9 @@ class LabService:
                              container=m["id"][:12], name=m["name"])
                 continue
             try:
-                await self.runtime.remove(m["id"])
-                log.infox("Orphan lab-container opgeruimd", container=m["id"][:12], name=m["name"])
+                await herkomst[m["id"]].remove(m["id"])
+                log.infox("Orphan lab-container opgeruimd", container=m["id"][:12],
+                          name=m["name"], host_id=m.get("_host_id"))
             except Exception as exc:  # noqa: BLE001 — best-effort
                 log.warningx("Orphan-cleanup mislukt", container=m["id"][:12], error=str(exc)[:200])
         return fixed
@@ -345,7 +409,8 @@ class LabService:
         cmd = ["sh", "-c",
                'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} '
                'clone --depth 1 "$REPO_URL" "$DEST"']
-        await self.runtime.run_ephemeral(image=p.image, volume=p.volume_name, cmd=cmd, env=env)
+        await self.runtime_voor(p).run_ephemeral(
+            image=p.image, volume=p.volume_name, cmd=cmd, env=env)
 
     # ── inrichten: basis + aangevinkte extra's + eigen setup-script ─────────
 
@@ -414,7 +479,11 @@ class LabService:
         return steps
 
     async def _run_provision_step(self, container_id: str, step: Dict[str, Any], *,
-                                  force: bool) -> Dict[str, Any]:
+                                  force: bool, rt=None) -> Dict[str, Any]:
+        # `rt` is de daemon van DIT lab. Zonder die meegift zou het inrichten
+        # van een lab op een netwerkmachine worden uitgevoerd op de server --
+        # tegen een container-id dat daar niet eens bestaat.
+        rt = rt or self.runtime
         key = str(step.get("key"))
         label = str(step.get("label") or key)
         if step.get("status"):  # al beslist (onbekend pakket)
@@ -423,7 +492,7 @@ class LabService:
         check = step.get("check")
         if check and not force:
             try:
-                res = await self.runtime.exec(container_id, ["sh", "-c", check], timeout=60)
+                res = await rt.exec(container_id, ["sh", "-c", check], timeout=60)
                 if res.get("exit_code") == 0:
                     return {"key": key, "label": label, "status": "skipped",
                             "exit_code": 0, "output": "Stond er al."}
@@ -431,7 +500,7 @@ class LabService:
                 log.warningx("Controle van lab-pakket mislukt", pakket=key, error=str(exc)[:200])
         timeout = int(step.get("timeout_s") or 900)
         try:
-            res = await self.runtime.exec(
+            res = await rt.exec(
                 container_id, ["sh", "-c", str(step.get("script") or "")], timeout=timeout)
         except Exception as exc:  # noqa: BLE001
             return {"key": key, "label": label, "status": "error",
@@ -573,7 +642,8 @@ class LabService:
 
             async def _stap(w):
                 async with rem:
-                    return await self._run_provision_step(w.container_id, step, force=force)
+                    return await self._run_provision_step(
+                        w.container_id, step, force=force, rt=self.runtime_voor(p))
 
             resultaten = await asyncio.gather(*[_stap(w) for w in werkers])
             for w, entry in zip(werkers, resultaten):
@@ -702,7 +772,7 @@ class LabService:
         # Poorten alleen op werker 1: twee containers kunnen niet dezelfde
         # hostpoort publiceren, en "de poort van dit lab" hoort bij één plek.
         poorten = (p.ports or []) if w.index <= 1 else []
-        container_id = await self.runtime.run_container(
+        container_id = await self.runtime_voor(p).run_container(
             name=w.network_alias, image=p.image, volume=p.volume_name,
             cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
             allow_network=p.allow_network, ports=poorten,
@@ -739,7 +809,7 @@ class LabService:
         cid = self.container_for(p, worker_id)
         if p.status != "running" or not cid:
             raise HTTPException(status_code=409, detail="Lab draait niet (start hem eerst)")
-        ip = await self.runtime.container_ip(cid)
+        ip = await self.runtime_voor(p).container_ip(cid)
         if not ip:
             raise HTTPException(status_code=502, detail="Kon het IP van de labcontainer niet bepalen")
         return {"lab_id": p.id, "lab_name": p.name, "port": poort,
@@ -1067,7 +1137,7 @@ exec ssh -N \\
         await self._close_lab_mcp_sessions(w.container_id)
         if w.container_id:
             try:
-                await self.runtime.remove(w.container_id, timeout=120)
+                await self.runtime_voor(p).remove(w.container_id, timeout=120)
             except Exception as exc:  # noqa: BLE001
                 log.warningx("Werker opruimen mislukt", lab_id=p.id,
                              werker=w.index, error=str(exc)[:200])
@@ -1123,7 +1193,7 @@ exec ssh -N \\
                 await self._close_lab_mcp_sessions(w.container_id)
                 if w.container_id:
                     try:
-                        await self.runtime.remove(w.container_id, timeout=120)
+                        await self.runtime_voor(p).remove(w.container_id, timeout=120)
                     except Exception as exc:  # noqa: BLE001
                         log.warningx("Werker verwijderen mislukt", lab_id=p.id,
                                      werker=w.index, error=str(exc)[:200])
@@ -1195,6 +1265,7 @@ exec ssh -N \\
         kind: Optional[str] = None,
         host_project_dir: Optional[str] = None,
         host_agent_token: Optional[str] = None,
+        host_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -1213,12 +1284,21 @@ exec ssh -N \\
                 allowed_skills=allowed_skills,
                 security_profile=security_profile, model=model)
 
-        diag = await self.runtime.diagnose()
+        # Op WELKE machine komt dit lab? Zonder host_id: hier. Met: een
+        # gekoppelde machine uit je netwerk -- en dan moet de Docker DAAR
+        # bereikbaar zijn, niet die van de server. Dat eerst vaststellen scheelt
+        # een lab dat in "creating" blijft hangen omdat die pc uit staat.
+        doel_runtime = self._docker_op_host(host_id) if host_id else self.runtime
+        diag = await doel_runtime.diagnose()
         if not diag["cli_present"] or not diag["daemon_up"]:
+            waar = "op die machine " if host_id else ""
             raise HTTPException(
                 status_code=503,
-                detail=f"Docker is niet beschikbaar: {diag.get('hint') or 'onbekende oorzaak'}",
+                detail=(f"Docker is {waar}niet beschikbaar: "
+                        f"{diag.get('hint') or 'onbekende oorzaak'}"),
             )
+        if host_id:
+            self._controleer_ruimte_op_host(host_id)
         # Een expliciet image wint van een preset: het create-scherm biedt
         # "eigen image" naast de lijst, en dan is dát wat de gebruiker bedoelt.
         if environment and not (image or "").strip():
@@ -1259,6 +1339,7 @@ exec ssh -N \\
             # zinnig zijn. Zie services/lab/profielen.py.
             security_profile=_profielsleutel(security_profile),
             model=(model or "").strip() or None,
+            host_id=host_id or None,
             created_at=now, updated_at=now,
         )
         self.db.add(p)
@@ -1267,13 +1348,13 @@ exec ssh -N \\
         try:
             if settings.LAB_PULL_ON_CREATE:
                 try:
-                    await self.runtime.pull(p.image)
+                    await self.runtime_voor(p).pull(p.image)
                 except Exception as exc:  # noqa: BLE001 — offline? local image will do
                     log.warningx("Image-pull overgeslagen", image=p.image, error=str(exc)[:200])
-            await self.runtime.create_volume(p.volume_name)
+            await self.runtime_voor(p).create_volume(p.volume_name)
             for spec in specs:
                 await self._clone_into_volume(p, spec)
-            container_id = await self.runtime.run_container(
+            container_id = await self.runtime_voor(p).run_container(
                 name=p.network_alias, image=p.image, volume=p.volume_name,
                 cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
                 allow_network=p.allow_network, ports=p.ports or [],
@@ -1372,6 +1453,132 @@ exec ssh -N \\
         log.infox("Hostlab aangemaakt", lab_id=p.id, project=map_)
         return self._to_dict(p)
 
+    async def verplaats(self, lab_id: str, *, host_id: Optional[int]) -> Dict[str, Any]:
+        """Een lab naar een andere machine verhuizen.
+
+        Wat er meegaat is /workspace -- je repo's, je uitvoer, je halve werk.
+        Wat er NIET meegaat is de containerlaag: de pakketten die het lab had,
+        zitten in een container die op de oude machine blijft. Op de nieuwe
+        wordt opnieuw ingericht, en dat is ook de enige juiste uitkomst: een
+        image van de ene machine kopiëren zou langer duren dan hem daar
+        gewoon te halen.
+
+        Er wordt NIET verplaatst terwijl er werk draait. Dat zou betekenen dat
+        je een agent halverwege zijn ticket de grond in slaat, en het volume
+        onder zijn handen weghaalt -- daar is geen nette afloop van.
+        """
+        p = self.get(lab_id)
+        self._weiger_bij_host(p, "Verplaatsen")
+        if (p.host_id or None) == (host_id or None):
+            return self._to_dict(p)
+
+        bezet = self.bezetting(p.id)
+        if any(bezet.values()):
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Er draait nog werk in {p.name} "
+                        f"({sum(bezet.values())} sessie(s)). Laat dat eerst aflopen of "
+                        f"breek het af — verplaatsen tijdens een run haalt het volume "
+                        f"onder de handen van de agent weg."))
+
+        doel = self._docker_op_host(host_id) if host_id else self.runtime
+        if host_id:
+            self._controleer_ruimte_op_host(host_id)
+        bron = self.runtime_voor(p)
+        draaide = p.status == "running"
+        naam_oud = p.host_id
+
+        log.infox("Lab verplaatsen", lab_id=p.id, van=naam_oud, naar=host_id)
+        p.status = "verplaatsen"
+        p.updated_at = _now_iso()
+        self.db.commit()
+
+        # Het archief gaat naar /data als dat er is, en niet naar /tmp. Een
+        # /workspace met node_modules erin loopt in de gigabytes, en /tmp zit
+        # in de schrijflaag van de api-CONTAINER -- die vol laten lopen legt
+        # de hele backend plat, niet alleen deze verhuizing. /data is het
+        # volume dat daar wél voor bedoeld is.
+        werkmap = "/data" if os.path.isdir("/data") else tempfile.gettempdir()
+        tar = os.path.join(werkmap, f"labx-verhuis-{p.id[:12]}.tar.gz")
+        try:
+            # 1. Alles stoppen en weghalen op de oude machine. Eerst stoppen,
+            #    want een volume uitpakken terwijl er in geschreven wordt geeft
+            #    een tar van een halve toestand.
+            for w in self.ensure_workers(p):
+                if w.container_id:
+                    try:
+                        await bron.remove(w.container_id, timeout=120)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warningx("Oude container opruimen mislukt",
+                                     lab_id=p.id, error=str(exc)[:200])
+                    w.container_id = None
+                    w.status = "stopped"
+                    w.provision_status = "pending"
+                    w.updated_at = _now_iso()
+            p.container_id = None
+            self.db.commit()
+
+            # 2. Het volume mee. Bestaat het niet (een lab dat nooit draaide),
+            #    dan is er niets te verhuizen en maken we er straks een vers.
+            if await bron.volume_bestaat(p.volume_name):
+                await bron.export_volume(p.volume_name, tar)
+                await doel.import_volume(p.volume_name, tar)
+            else:
+                await doel.create_volume(p.volume_name)
+
+            # 3. Vanaf nu hoort dit lab bij de nieuwe machine.
+            p.host_id = host_id
+            p.provision_status = "pending"
+            p.provision_log = []
+            p.updated_at = _now_iso()
+            self.db.commit()
+            self._host_runtimes.pop(naam_oud, None)
+
+            # 4. Het oude volume opruimen -- pas NU, als het nieuwe er staat.
+            #    Andersom zou een mislukte import je werk kosten.
+            if host_id != naam_oud:
+                try:
+                    await bron.remove_volume(p.volume_name)
+                except Exception as exc:  # noqa: BLE001
+                    log.warningx("Oud volume opruimen mislukt (blijft staan)",
+                                 lab_id=p.id, error=str(exc)[:200])
+
+            p.status = "stopped"
+            self.db.commit()
+            if draaide:
+                await self.start(p.id)
+                provision_in_background(p.id)
+        except Exception as exc:  # noqa: BLE001
+            # Mislukt is niet hetzelfde als stuk. Het volume staat nog op de
+            # oude machine -- alleen de containers zijn weg, en die maken we
+            # gewoon opnieuw. Het lab op "error" laten staan zou betekenen dat
+            # een mislukte verhuizing je lab plat legt, terwijl er niets kwijt
+            # is. Dus: terugzetten waar hij stond, en zeggen wat er misging.
+            p.host_id = naam_oud
+            p.status = "stopped"
+            p.error = f"Verplaatsen mislukte: {str(exc)[:400]}"
+            p.updated_at = _now_iso()
+            self.db.commit()
+            if draaide:
+                try:
+                    await self.start(p.id)
+                except Exception as exc2:  # noqa: BLE001
+                    log.warningx("Terugstarten na mislukte verhuizing lukte niet",
+                                 lab_id=p.id, error=str(exc2)[:200])
+            raise HTTPException(
+                status_code=502,
+                detail=(f"Verplaatsen mislukte, het lab staat nog op zijn oude "
+                        f"machine: {str(exc)[:400]}")) from exc
+        finally:
+            try:
+                os.unlink(tar)
+            except OSError:
+                pass
+
+        self.db.refresh(p)
+        log.infox("Lab verplaatst", lab_id=p.id, naar=host_id, draaide=draaide)
+        return self._to_dict(p)
+
     async def ensure_running(self, lab_id: str) -> Dict[str, Any]:
         """Zorg dat dit lab draait, en start het anders.
 
@@ -1423,7 +1630,7 @@ exec ssh -N \\
         if not p.container_id:
             raise HTTPException(status_code=409, detail="Lab heeft geen container (status error?)")
         try:
-            await self.runtime.start(p.container_id)
+            await self.runtime_voor(p).start(p.container_id)
         except Exception as exc:  # noqa: BLE001
             raise self._container_weg_of_fout(p, exc)
         # De overige werkers erbij: die horen bij hetzelfde lab en moeten dus
@@ -1437,7 +1644,7 @@ exec ssh -N \\
                 continue
             try:
                 if w.container_id:
-                    await self.runtime.start(w.container_id)
+                    await self.runtime_voor(p).start(w.container_id)
                 else:
                     await self._start_worker_container(p, w)
                 w.status = "running"
@@ -1483,14 +1690,14 @@ exec ssh -N \\
         zijn bij de daemon. Lukt dat niet, dan stopt het opbouwen hier met een
         melding waar je iets mee kunt — in plaats van een fout te veroorzaken
         die daarna niemand meer kan plaatsen."""
+        rt = self.runtime_voor(p)
         try:
-            await self.runtime.remove(old_container, timeout=300)
+            await rt.remove(old_container, timeout=300)
         except Exception as exc:  # noqa: BLE001 — kan al bezig zijn; hieronder wachten we het af
             log.warningx("Oude container verwijderen gaf een fout", lab_id=p.id,
                          error=str(exc)[:200])
-        weg = await self.runtime.wait_until_gone(old_container,
-                                                 naam or p.network_alias or "",
-                                                 timeout=300)
+        weg = await rt.wait_until_gone(old_container, naam or p.network_alias or "",
+                                       timeout=300)
         if not weg:
             raise HTTPException(
                 status_code=409,
@@ -1521,7 +1728,7 @@ exec ssh -N \\
         target = (image or p.image or default_image()).strip()[:255]
         if not target:
             raise HTTPException(status_code=400, detail="Geen image opgegeven")
-        diag = await self.runtime.diagnose()
+        diag = await self.runtime_voor(p).diagnose()
         if not diag["cli_present"] or not diag["daemon_up"]:
             raise HTTPException(status_code=503,
                                 detail=f"Docker is niet beschikbaar: {diag.get('hint') or 'onbekende oorzaak'}")
@@ -1536,15 +1743,15 @@ exec ssh -N \\
                 await self._remove_before_rebuild(p, old_container)
             if pull:
                 try:
-                    await self.runtime.pull(target)
+                    await self.runtime_voor(p).pull(target)
                 except Exception as exc:  # noqa: BLE001 — offline? lokaal image doet het ook
                     log.warningx("Image-pull overgeslagen", image=target, error=str(exc)[:200])
             if not p.volume_name:
                 p.volume_name = f"labx_lab_{p.id[:12]}"
             if not p.network_alias:
                 p.network_alias = f"labx-lab-{p.id[:12]}"
-            await self.runtime.create_volume(p.volume_name)  # bestaat al = niets aan de hand
-            container_id = await self.runtime.run_container(
+            await self.runtime_voor(p).create_volume(p.volume_name)  # bestaat al = niets aan de hand
+            container_id = await self.runtime_voor(p).run_container(
                 name=p.network_alias, image=target, volume=p.volume_name,
                 cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
                 allow_network=p.allow_network, ports=p.ports or [],
@@ -1792,7 +1999,7 @@ exec ssh -N \\
             await self._close_lab_mcp_sessions(w.container_id)
             if w.index > 1:
                 try:
-                    await self.runtime.stop(w.container_id)
+                    await self.runtime_voor(p).stop(w.container_id)
                 except Exception as exc:  # noqa: BLE001
                     log.warningx("Werker stoppen mislukt", lab_id=p.id, werker=w.index,
                                  error=str(exc)[:200])
@@ -1800,7 +2007,7 @@ exec ssh -N \\
             w.updated_at = _now_iso()
         self.db.commit()
         if p.container_id and p.status == "running":
-            await self.runtime.stop(p.container_id)
+            await self.runtime_voor(p).stop(p.container_id)
         p.status = "stopped"
         p.updated_at = _now_iso()
         self.db.commit()
@@ -1808,13 +2015,17 @@ exec ssh -N \\
 
     async def delete(self, lab_id: str) -> Dict[str, Any]:
         p = self.get(lab_id)
+        # Opruimen gaat naar de machine waar dit lab écht staat. Op de verkeerde
+        # daemon opruimen laat niet alleen zijn containers achter, het kan er
+        # daar ook eentje raken die toevallig zo heet.
+        rt = self.runtime if self.is_host(p) else self.runtime_voor(p)
         # Eerst de extra werkers; het volume gaat pas mee met werker 1, want
         # dat delen ze allemaal.
         for w in self.ensure_workers(p):
             await self._close_lab_mcp_sessions(w.container_id)
             if w.index > 1 and w.container_id:
                 try:
-                    await self.runtime.remove(w.container_id, timeout=120)
+                    await rt.remove(w.container_id, timeout=120)
                 except Exception as exc:  # noqa: BLE001
                     log.warningx("Werker opruimen mislukt", lab_id=p.id, werker=w.index,
                                  error=str(exc)[:200])
@@ -1825,9 +2036,9 @@ exec ssh -N \\
                 continue
             try:
                 if op == "container":
-                    await self.runtime.remove(ref)
+                    await rt.remove(ref)
                 else:
-                    await self.runtime.remove_volume(ref)
+                    await rt.remove_volume(ref)
             except Exception as exc:  # noqa: BLE001 — best-effort cleanup
                 log.warningx("Lab-cleanup deels mislukt", lab_id=p.id, resource=op, error=str(exc))
         from models.thread import Thread
@@ -1928,7 +2139,7 @@ exec ssh -N \\
 
         geheimen = SecretService(self.db)
         uitvoerbaar, gebruikt, onbekend = await geheimen.bereid_voor(
-            lab_id, command, runtime=self.runtime, container_id=cid)
+            lab_id, command, runtime=self.runtime_voor(p), container_id=cid)
         if onbekend:
             raise HTTPException(
                 status_code=400,
@@ -2116,11 +2327,12 @@ exec ssh -N \\
             # -C naar de ouder en dan de naam: zo zit de map zelf in het archief
             # en niet een pad van vier niveaus diep.
             cmd = ["tar", "-czf", "-", "-C", ouder, naam]
-            return {"stream": self.runtime.stream_out(cid, cmd), "filename": f"{naam}.tar.gz",
+            return {"stream": self.runtime_voor(p).stream_out(cid, cmd),
+                    "filename": f"{naam}.tar.gz",
                     "media_type": "application/gzip"}
 
         self._touch(p)
-        return {"stream": self.runtime.stream_out(cid, ["cat", "--", target]),
+        return {"stream": self.runtime_voor(p).stream_out(cid, ["cat", "--", target]),
                 "filename": naam, "media_type": "application/octet-stream"}
 
     async def write_file(self, lab_id: str, path: str, content: str, *,
@@ -2457,7 +2669,7 @@ exec ssh -N \\
         vol = ('set -e; cd "/workspace/$REPO"; '
                'git config --global --add safe.directory "/workspace/$REPO"; ' + script)
         try:
-            return await self.runtime.run_ephemeral(
+            return await self.runtime_voor(p).run_ephemeral(
                 image=p.image, volume=p.volume_name,
                 cmd=["sh", "-c", vol, "sh", *args], env=env, timeout=timeout) or ""
         except Exception as exc:  # noqa: BLE001
@@ -2554,7 +2766,7 @@ exec ssh -N \\
             'push "${PUSH_URL:-origin}" "HEAD:${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"'
         )
         try:
-            out = await self.runtime.run_ephemeral(
+            out = await self.runtime_voor(p).run_ephemeral(
                 image=p.image, volume=p.volume_name, cmd=["sh", "-c", script], env=env, timeout=300)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"Push mislukt: {str(exc)[:500]}")
@@ -2568,7 +2780,7 @@ exec ssh -N \\
         out = self._to_dict(p)
         if p.status == "running" and p.container_id and (p.ports or []):
             try:
-                out["port_map"] = await self.runtime.port_map(p.container_id)
+                out["port_map"] = await self.runtime_voor(p).port_map(p.container_id)
             except Exception:  # noqa: BLE001
                 out["port_map"] = {}
         return out
@@ -2584,6 +2796,11 @@ exec ssh -N \\
             # alleen voor een container bestaat -- werkers, poorten, TTL,
             # opnieuw opbouwen.
             "kind": p.kind or "container",
+            # Op welke machine dit lab draait. NULL = deze server.
+            "host_id": getattr(p, "host_id", None),
+            # De naam erbij, zodat een kaart "draait op Werkpc" kan zeggen
+            # zonder dat elk scherm de machinelijst moet ophalen.
+            "host_naam": self._host_naam(getattr(p, "host_id", None)),
             "host_project_dir": p.host_project_dir,
             # Of het token er LIGT; de waarde zelf komt er nooit uit.
             "heeft_agent_token": bool(p.host_agent_token_encrypted),

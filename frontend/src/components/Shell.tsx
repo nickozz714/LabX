@@ -48,6 +48,7 @@ const NAV = [
  *  bereik je vanaf het Overzicht; zonder deze regel zou de balk daar "Overzicht"
  *  blijven zeggen en dat is precies de verwarring die een kop moet wegnemen. */
 const EXTRA_PAGINAS = [
+  { to: "/labs/machines", label: "Machines", onder: "Computers die labs draaien" },
   { to: "/orchestrator", label: "Orchestrator", onder: "Praten met je labs" },
   { to: "/workflows/", label: "Workflow", onder: "De tekenaar" },
 ];

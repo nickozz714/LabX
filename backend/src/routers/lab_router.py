@@ -304,7 +304,21 @@ async def create_lab(payload: Dict[str, Any], db: Session = Depends(get_db)):
         kind=payload.get("kind"),
         host_project_dir=payload.get("host_project_dir"),
         host_agent_token=payload.get("host_agent_token"),
+        # Op welke machine uit je netwerk. Leeg = op deze server, zoals altijd.
+        host_id=(int(payload["host_id"]) if payload.get("host_id") else None),
     )
+
+
+@router.post("/{lab_id}/verplaatsen")
+async def verplaats_lab(lab_id: str, payload: Dict[str, Any], db: Session = Depends(get_db)):
+    """Dit lab naar een andere machine verhuizen.
+
+    `host_id` leeg of weg = terug naar deze server. Het volume gaat mee; de
+    containerlaag niet, dus op de nieuwe machine wordt opnieuw ingericht.
+    """
+    host_id = payload.get("host_id")
+    return await _service(db).verplaats(
+        lab_id, host_id=(int(host_id) if host_id else None))
 
 
 @router.get("/host-agent/status")

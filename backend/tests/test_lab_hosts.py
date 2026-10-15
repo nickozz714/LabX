@@ -213,3 +213,76 @@ def test_het_image_heeft_een_ssh_client():
     netwerk, en de melding wijst naar docker in plaats van naar ssh."""
     dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
     assert "openssh-client" in dockerfile
+
+
+# ── alles wat met een lab gebeurt, gebeurt op ZIJN machine ───────────────────
+
+def test_een_lab_op_een_netwerkmachine_overleeft_een_herstart(db, monkeypatch):
+    """Reconcile keek alleen naar de Docker van deze server. Een lab op een
+    netwerkmachine stond daar niet in de lijst, en werd dus bij élke herstart
+    van LabX op "error" gezet met "Container niet meer gevonden"."""
+    import asyncio
+
+    from services.lab.lab_service import LabService
+
+    svc = _svc(db)
+    uit = _meld(db)
+    host = svc.lijst()[0]
+    svc.koppelen(host.id, code=uit["koppelcode"], docker_host="ssh://nick@werkpc")
+    p = _lab(db, host_id=host.id)
+    p.container_id = "c-op-de-werkpc"
+    db.commit()
+
+    class Daemon:
+        def __init__(self, rijen):
+            self.rijen = rijen
+
+        async def list_managed(self):
+            return list(self.rijen)
+
+        async def remove(self, cid, **kw):
+            raise AssertionError(f"niets opruimen: {cid}")
+
+    lab_svc = LabService(db, runtime=Daemon([]))          # deze server: leeg
+    monkeypatch.setattr(
+        "services.lab.lab_service.DockerRuntime",
+        lambda **kw: Daemon([{"id": "c-op-de-werkpc", "name": "labx-lab-abc",
+                              "state": "running"}]))
+
+    asyncio.run(lab_svc.reconcile_on_start())
+    db.refresh(p)
+    assert p.status == "running"
+    assert not p.error
+
+
+def test_een_machine_die_uit_staat_meldt_geen_labs_kapot(db, monkeypatch):
+    """"Ik kon er niet bij" is iets anders dan "de container is weg". Dat
+    verschil niet maken betekent dat een pc die een nacht uit staat al je labs
+    erop op error zet."""
+    import asyncio
+
+    from services.lab.lab_service import LabService
+
+    svc = _svc(db)
+    uit = _meld(db)
+    host = svc.lijst()[0]
+    svc.koppelen(host.id, code=uit["koppelcode"], docker_host="ssh://nick@werkpc")
+    p = _lab(db, host_id=host.id)
+    p.container_id = "c-op-de-werkpc"
+    db.commit()
+
+    class Leeg:
+        async def list_managed(self):
+            return []
+
+        async def remove(self, cid, **kw):
+            return None
+
+    class Weg:
+        async def list_managed(self):
+            raise RuntimeError("ssh: connect to host werkpc port 22: Host is down")
+
+    monkeypatch.setattr("services.lab.lab_service.DockerRuntime", lambda **kw: Weg())
+    asyncio.run(LabService(db, runtime=Leeg()).reconcile_on_start())
+    db.refresh(p)
+    assert p.status == "running", "onbereikbaar is geen bewijs dat de container weg is"

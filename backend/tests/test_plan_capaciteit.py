@@ -195,7 +195,7 @@ def test_het_inrichten_gaat_per_werker_tegelijk(db, monkeypatch):
 
     tegelijk = {"nu": 0, "max": 0}
 
-    async def _stap(self, container_id, step, *, force=False):
+    async def _stap(self, container_id, step, *, force=False, rt=None):
         tegelijk["nu"] += 1
         tegelijk["max"] = max(tegelijk["max"], tegelijk["nu"])
         await asyncio.sleep(0.01)

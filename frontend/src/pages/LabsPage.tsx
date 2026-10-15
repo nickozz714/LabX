@@ -8,11 +8,11 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { dockerStatus, downloadLabFile, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra , LabRepo} from "@/lib/types";
+import { dockerStatus, downloadLabFile, labHostsApi, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra, LabHost, LabRepo } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { Download, Loader2, RefreshCw, Pencil, Trash2 , ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
+import { Download, Loader2, Monitor, RefreshCw, Pencil, Trash2 , ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
@@ -56,7 +56,14 @@ export function LabsPage() {
     <div className="pagina veilig-onder p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">Labs</h1>
-        <Button onClick={() => setCreateOpen(true)}>+ Nieuw lab</Button>
+        <div className="flex gap-2">
+          {/* Machines staat hier en niet in het hoofdmenu: je komt er pas als
+              deze server vol raakt, en dan is dit de plek waar je zit. */}
+          <Button variant="ghost" onClick={() => navigate("/labs/machines")}>
+            <Monitor className="mr-1.5 h-4 w-4" />Machines
+          </Button>
+          <Button onClick={() => setCreateOpen(true)}>+ Nieuw lab</Button>
+        </div>
       </div>
 
       {docker && !docker.daemon_up && (
@@ -97,6 +104,10 @@ export function LabsPage() {
                   <Badge tone="violet">{lab.security_profile}</Badge>
                 )}
                 {lab.model && <Badge tone="neutral">{modelLabel(lab.model)}</Badge>}
+                {/* Waar het draait is geen detail zodra je meer dan één
+                    machine hebt: het verklaart snelheid, en het verklaart
+                    waarom een lab niet start als die pc uit staat. */}
+                {lab.host_naam && <Badge tone="neutral">op {lab.host_naam}</Badge>}
                 {lab.llm_guard && <Badge tone="violet">llm-guard</Badge>}
                 {/* Het lab draait al terwijl de pakketten nog binnenkomen —
                     zonder dit zou je op "running" afgaan en je afvragen waarom
@@ -158,6 +169,9 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   // Waar het lab draait. "container" is de normale vorm; "host" draait op deze
   // machine, binnen één map, via de agent.
   const [soort, setSoort] = useState<"container" | "host">("container");
+  // Op welke machine uit je netwerk. Leeg = op deze server, zoals altijd.
+  const [machine, setMachine] = useState<string>("");
+  const [machines, setMachines] = useState<LabHost[]>([]);
   const [projectMap, setProjectMap] = useState("");
   const [agentToken, setAgentToken] = useState("");
   const [agent, setAgent] = useState<{ bereikbaar: boolean; adres: string; hint: string | null } | null>(null);
@@ -171,6 +185,12 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
   }, [soort, agent]);
 
   useEffect(() => {
+    // Gekoppelde machines uit je netwerk. Faalt dit (geen enkele, of de
+    // lijst is niet op te halen), dan verdwijnt alleen de keuzelijst en maak
+    // je het lab gewoon hier — zoals het altijd ging.
+    labHostsApi.list()
+      .then((l) => setMachines(l.filter((h) => h.status === "gekoppeld")))
+      .catch(() => setMachines([]));
     labsApi.images().then((r) => setPresets(r.presets));
     labsApi.extras().then((rows) => {
       const available = rows.filter((e) => e.is_enabled);
@@ -232,6 +252,7 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
         min_workers: minWerkers, max_workers: Math.max(minWerkers, maxWerkers),
         security_profile: profiel,
         model: model || undefined,
+        host_id: machine ? Number(machine) : undefined,
       });
       onCreated();
     } catch (err) {
@@ -267,6 +288,27 @@ function CreateLabModal({ onClose, onCreated }: { onClose: () => void; onCreated
               : "Voor een klant die eist dat je aanmeldt vanaf een apparaat dat zij kennen. Commando's draaien als jij, met je eigen az-sessie — maar alleen binnen de projectmap."}
           </p>
         </div>
+
+        {/* Alleen tonen zodra er werkelijk iets te kiezen valt. Met één
+            server is dit een keuzelijst met één optie. */}
+        {soort === "container" && machines.length > 0 && (
+          <div>
+            <Label>Op welke machine</Label>
+            <Select value={machine} onChange={(e) => setMachine(e.target.value)}>
+              <option value="">Deze server</option>
+              {machines.map((h) => (
+                <option key={h.id} value={h.id} disabled={!h.online}>
+                  {h.naam}{h.online ? "" : " (offline)"}
+                  {h.max_labs ? ` — ${h.labs.length}/${h.max_labs} labs` : ""}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Een lab op een andere computer belast deze server niet. Staat die
+              pc uit, dan start het lab niet — vandaar &quot;offline&quot;.
+            </p>
+          </div>
+        )}
 
         {soort === "host" ? (
           <>
@@ -585,6 +627,110 @@ export function LabDetailPage() {
  * denk? Dat laatste is bij een klant met een IP- of apparaateis geen detail,
  * en het is precies het soort ding dat stil verschuift.
  */
+/**
+ * Op welke machine dit lab draait, en hoe je dat verandert.
+ *
+ * Alleen zichtbaar zodra er werkelijk iets te kiezen valt: met één server is
+ * dit een regel die niets toevoegt. Verhuizen tilt het VOLUME naar de andere
+ * daemon — je werk gaat dus mee — maar niet de containerlaag, en daarom richt
+ * het lab zich daarna opnieuw in.
+ */
+function MachinePaneel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
+  const [hosts, setHosts] = useState<LabHost[]>([]);
+  const [open, setOpen] = useState(false);
+  const [doel, setDoel] = useState<string>("");
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+  const melding = useMelding();
+
+  useEffect(() => {
+    labHostsApi.list().then((l) => setHosts(l.filter((h) => h.status === "gekoppeld")))
+      .catch(() => setHosts([]));
+  }, []);
+
+  if (hosts.length === 0 && !lab.host_id) return null;
+
+  const huidig = lab.host_naam || "deze server";
+  const bezet = (lab.workers || []).some((w: any) => w.status === "running");
+
+  async function verplaats() {
+    setBezig(true);
+    setFout(null);
+    try {
+      await labsApi.verplaats(lab.id, doel === "" ? null : Number(doel));
+      setOpen(false);
+      onChanged();
+      melding.ok(`${lab.name} verplaatst`,
+                 "Het lab richt zich op de nieuwe machine opnieuw in.");
+    } catch (err) {
+      setFout(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs">
+        <Monitor className="h-3.5 w-3.5 text-muted-foreground" />
+        <span>Draait op <strong>{huidig}</strong></span>
+        <Button variant="ghost" className="px-2 py-0.5 text-xs"
+                onClick={() => { setDoel(lab.host_id ? String(lab.host_id) : ""); setOpen(true); }}>
+          Verplaatsen…
+        </Button>
+      </div>
+
+      {open && (
+        <Modal open onClose={() => setOpen(false)} title={`${lab.name} verplaatsen`}>
+          <div className="space-y-4">
+            <div>
+              <Label>Naar welke machine</Label>
+              <Select value={doel} onChange={(e) => setDoel(e.target.value)}>
+                <option value="">Deze server</option>
+                {hosts.map((h) => (
+                  <option key={h.id} value={h.id} disabled={!h.online}>
+                    {h.naam}{h.online ? "" : " (offline)"}
+                    {h.max_labs ? ` — ${h.labs.length}/${h.max_labs} labs` : ""}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="space-y-2 rounded-md bg-secondary/40 p-3 text-xs text-muted-foreground">
+              <p>
+                <strong className="text-foreground">Je werk gaat mee.</strong> De hele
+                <code className="mx-1 font-mono">/workspace</code> wordt overgezet: repo&apos;s,
+                uitvoer, alles wat er staat. Bij veel bestanden duurt dat even.
+              </p>
+              <p>
+                <strong className="text-foreground">De pakketten niet.</strong> Die zitten in
+                de container en die blijft achter, dus het lab richt zich op de nieuwe machine
+                opnieuw in.
+              </p>
+              {bezet && (
+                <p className="text-warning">
+                  Er lijkt nog werk te draaien. Verplaatsen wordt dan geweigerd — laat dat
+                  eerst aflopen.
+                </p>
+              )}
+            </div>
+
+            {fout && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{fout}</div>}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button>
+              <Button onClick={verplaats} busy={bezig}
+                      disabled={(doel === "" ? null : Number(doel)) === (lab.host_id ?? null)}>
+                Verplaatsen
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function HostPaneel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
   const [agent, setAgent] = useState<{ bereikbaar: boolean; adres: string; hint: string | null } | null>(null);
   const [ip, setIp] = useState<string | null>(null);
@@ -760,6 +906,7 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
         </Button>
       </div>
 
+      {!isHost && <MachinePaneel lab={lab} onChanged={onChanged} />}
       {isHost && <HostPaneel lab={lab} onChanged={onChanged} />}
       {isHost && (
         <div className="mb-3 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs">
