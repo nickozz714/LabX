@@ -243,6 +243,17 @@ class LabHostService:
         }
 
 
+#: Lopende achtergrondtaken, zodat ze blijven LEVEN.
+#:
+#: Dit is geen boekhouding maar een noodzaak: asyncio houdt alleen een ZWAKKE
+#: verwijzing naar een taak, dus een `create_task` waarvan niemand het
+#: resultaat vasthoudt mag halverwege door de garbage collector worden
+#: opgeruimd. Precies dat gebeurde hier -- de taak startte, en er kwam nooit
+#: een succes- of foutregel: hij verdween gewoon. Een fout die zich voordoet
+#: als "er gebeurt niets".
+_LOPEND: set = set()
+
+
 def _reconcile_in_achtergrond(host_id: int) -> None:
     """De labs van een teruggekeerde machine nakijken, buiten het verzoek om.
 
@@ -268,7 +279,9 @@ def _reconcile_in_achtergrond(host_id: int) -> None:
             db.close()
 
     try:
-        asyncio.get_running_loop().create_task(_werk())
+        taak = asyncio.get_running_loop().create_task(_werk())
     except RuntimeError:
         # Geen lopende lus (een test, een los script): dan gewoon niet.
-        pass
+        return
+    _LOPEND.add(taak)
+    taak.add_done_callback(_LOPEND.discard)

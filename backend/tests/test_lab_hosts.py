@@ -623,3 +623,37 @@ def test_terugkomen_na_offline_zet_het_nakijken_in_gang(db, monkeypatch):
     gezien.clear()
     _meld(db)
     assert gezien == []
+
+
+def test_de_achtergrondtaak_blijft_leven_tot_hij_klaar_is():
+    """Dit deed zich voor als "er gebeurt niets".
+
+    asyncio houdt alleen een ZWAKKE verwijzing naar een taak. Een
+    `create_task` waarvan niemand het resultaat vasthoudt, mag halverwege
+    worden opgeruimd -- en dat gebeurde: de taak startte, en er kwam nooit een
+    succes- én nooit een foutregel. Hij verdween gewoon.
+    """
+    import asyncio
+
+    from services.lab import hosts as hosts_mod
+
+    gedaan = []
+
+    async def main():
+        async def _traag():
+            await asyncio.sleep(0.05)
+            gedaan.append(True)
+
+        # Dezelfde opzet als in de echte code: taak starten, verwijzing
+        # bewaren, en de enige sterke verwijzing weggooien.
+        taak = asyncio.get_running_loop().create_task(_traag())
+        hosts_mod._LOPEND.add(taak)
+        taak.add_done_callback(hosts_mod._LOPEND.discard)
+        del taak
+        import gc
+        gc.collect()
+        await asyncio.sleep(0.2)
+
+    asyncio.run(main())
+    assert gedaan == [True], "de taak mag niet verdwijnen voordat hij klaar is"
+    assert not hosts_mod._LOPEND, "en daarna moet hij zich wel opruimen"

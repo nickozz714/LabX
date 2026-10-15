@@ -149,52 +149,6 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
             return {"result": f"{updated.key} bijgewerkt ({', '.join(payload)}); "
                               f"kolom is nu '{updated.status}'."}
 
-        if tool_name == "lab__secret_list":
-            from services.lab.secrets import SecretService
-            from services.secrets.vault import VaultService
-
-            svc_s = SecretService(db)
-            rijen = [{**svc_s.to_dict(r), "herkomst": "dit lab"}
-                     for r in svc_s.lijst(str(lab_id))]
-            # En de kluis die niet aan één lab hangt: dezelfde namen, dezelfde
-            # schrijfwijze, en bruikbaar op méér plekken dan een commando.
-            kluis = VaultService(db)
-            bestaand = {r["name"] for r in rijen}
-            for r in kluis.beschikbaar(str(lab_id) if lab_id else None):
-                if r.name in bestaand:
-                    continue        # het lab overschrijft de kluis
-                rijen.append({**kluis.to_dict(r), "herkomst": "kluis"})
-            if not rijen:
-                return {"result": ("Er zijn nog geen geheimen. Zet er een met "
-                                   "`lab__secret_put` (voor dit lab) of laat er een "
-                                   "aanmaken bij Instellingen > Geheimen, en gebruik hem "
-                                   "daarna als {{secret:naam}}.")}
-            return {"result": {
-                "geheimen": rijen,
-                "hoe": ("Schrijf {{secret:naam}} waar de waarde zou staan — in een "
-                        "commando én in het argument van elke andere tool. LabX vult hem "
-                        "vlak voor de aanroep in; jij krijgt de waarde nooit te zien, en "
-                        "hij belandt ook niet in het audit-spoor."),
-            }}
-
-        if tool_name == "lab__secret_put":
-            from services.lab.secrets import SecretService
-            try:
-                rij = SecretService(db).zet(
-                    str(lab_id), naam=str(args.get("name") or "").strip(),
-                    waarde=(str(args.get("value") or "").strip() or None),
-                    commando=(str(args.get("command") or "").strip() or None),
-                    omschrijving=(str(args.get("description") or "").strip() or None),
-                    ttl_minuten=(int(args.get("ttl_minutes")) if args.get("ttl_minutes") else None))
-            except ValueError as exc:
-                return {"error": str(exc)}
-            return {"result": (
-                f"Geheim '{rij.name}' opgeslagen. Gebruik hem als {{{{secret:{rij.name}}}}} "
-                f"in je commando's; de waarde komt daarbij nooit in de tekst van het "
-                f"commando terecht."
-                + (f" Hij wordt elke {rij.ttl_minutes} minuten vers gemaakt."
-                   if rij.kind == "commando" else ""))}
-
         if tool_name == "board__claim":
             from services.boards.plan_service import PlanService
             rauw = args.get("resources")
@@ -296,6 +250,73 @@ def _board_tool(db: Session, tool_name: str, lab_id: Optional[str],
         return {"error": str(exc.detail)}
     return {"error": f"Onbekende board-tool: {tool_name}"}
 
+
+
+
+def _secret_tool(db: Session, tool_name: str, lab_id: Optional[str],
+                 args: Dict[str, Any]) -> Dict[str, Any]:
+    """De lab__secret_*-builtins.
+
+    Deze stonden in `_board_tool`, en daar kwamen ze nooit aan: de verdeler
+    stuurt alleen `board__*` daarheen. `lab__secret_list` viel dus door naar
+    het eind en kreeg een 400 met "tool_id of tool_name is verplicht" -- een
+    melding over iets dat wél was meegegeven, bij een tool die gewoon bestaat.
+
+    Ze horen hier ook niet thuis om een tweede reden: geheimen hebben niets
+    met een bord te maken. In `_board_tool` wordt eerst een bord opgezocht en
+    een run zonder bord afgewezen -- dan had je je geheimen alsnog niet kunnen
+    zien in elk lab zonder bord.
+    """
+    try:
+        if tool_name == "lab__secret_list":
+            from services.lab.secrets import SecretService
+            from services.secrets.vault import VaultService
+
+            svc_s = SecretService(db)
+            rijen = [{**svc_s.to_dict(r), "herkomst": "dit lab"}
+                     for r in svc_s.lijst(str(lab_id))]
+            # En de kluis die niet aan één lab hangt: dezelfde namen, dezelfde
+            # schrijfwijze, en bruikbaar op méér plekken dan een commando.
+            kluis = VaultService(db)
+            bestaand = {r["name"] for r in rijen}
+            for r in kluis.beschikbaar(str(lab_id) if lab_id else None):
+                if r.name in bestaand:
+                    continue        # het lab overschrijft de kluis
+                rijen.append({**kluis.to_dict(r), "herkomst": "kluis"})
+            if not rijen:
+                return {"result": ("Er zijn nog geen geheimen. Zet er een met "
+                                   "`lab__secret_put` (voor dit lab) of laat er een "
+                                   "aanmaken bij Instellingen > Geheimen, en gebruik hem "
+                                   "daarna als {{secret:naam}}.")}
+            return {"result": {
+                "geheimen": rijen,
+                "hoe": ("Schrijf {{secret:naam}} waar de waarde zou staan — in een "
+                        "commando én in het argument van elke andere tool. LabX vult hem "
+                        "vlak voor de aanroep in; jij krijgt de waarde nooit te zien, en "
+                        "hij belandt ook niet in het audit-spoor."),
+            }}
+
+        if tool_name == "lab__secret_put":
+            from services.lab.secrets import SecretService
+            try:
+                rij = SecretService(db).zet(
+                    str(lab_id), naam=str(args.get("name") or "").strip(),
+                    waarde=(str(args.get("value") or "").strip() or None),
+                    commando=(str(args.get("command") or "").strip() or None),
+                    omschrijving=(str(args.get("description") or "").strip() or None),
+                    ttl_minuten=(int(args.get("ttl_minutes")) if args.get("ttl_minutes") else None))
+            except ValueError as exc:
+                return {"error": str(exc)}
+            return {"result": (
+                f"Geheim '{rij.name}' opgeslagen. Gebruik hem als {{{{secret:{rij.name}}}}} "
+                f"in je commando's; de waarde komt daarbij nooit in de tekst van het "
+                f"commando terecht."
+                + (f" Hij wordt elke {rij.ttl_minutes} minuten vers gemaakt."
+                   if rij.kind == "commando" else ""))}
+
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"error": f"Onbekende geheimen-tool: {tool_name}"}
 
 def _root_error(exc: BaseException) -> BaseException:
     """The mcp SDK's client context managers wrap a tool failure in (nested)
@@ -590,11 +611,18 @@ async def execute(payload: Dict[str, Any], x_labx_internal_token: Optional[str] 
             return await _task_start_background(db, payload, lab_id, args)
         if payload.get("tool_name") == "task__check_background":
             return _task_check_background(db, payload)
+        if str(payload.get("tool_name") or "").startswith("lab__secret_"):
+            return _secret_tool(db, str(payload["tool_name"]), lab_id, args)
+
         if str(payload.get("tool_name") or "").startswith("board__"):
             return _board_tool(db, str(payload["tool_name"]), lab_id, args, worker_id)
         tool_id = payload.get("tool_id")
         if tool_id is None:
-            raise HTTPException(status_code=400, detail="tool_id of tool_name is verplicht")
+            naam = str(payload.get("tool_name") or "")
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Onbekende tool: {naam}" if naam
+                        else "tool_id of tool_name is verplicht"))
         try:
             result = await svc.execute_tool(int(tool_id), args, lab_id=lab_id,
                                             worker_id=worker_id,
