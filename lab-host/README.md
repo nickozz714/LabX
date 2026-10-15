@@ -34,18 +34,26 @@ curl -fsSL http://jouw-labx:8081/api/lab-hosts/agent -o labx_lab_host.py
 python3 labx_lab_host.py --labx http://jouw-labx:8081
 ```
 
-### Start het de eerste keer in een ZICHTBAAR venster
+Hij draait daarna als **achtergronddienst** en start bij het inloggen opnieuw.
+Een lab-host die je alleen draait zolang er een terminalvenster openstaat, is
+geen lab-host.
 
-Niet als achtergrondtaak, en dat is geen stijlkwestie. macOS vraagt de eerste
-keer toestemming om het lokale netwerk op te mogen, en die vraag komt alleen
-in beeld bij een proces dat een vensters heeft. Een losgekoppeld proces krijgt
-hem nooit te zien en wordt stil geweigerd — dan draait de agent wel, maar komt
-hij nergens aan. Precies dat kostte bij de eerste lab-host een half uur
-zoeken.
+### Als hij LabX niet bereikt (macOS)
 
-De agent zegt het nu zelf als het misgaat; staat er `Lokaal netwerk`, dan zet
-je het vinkje bij **Systeeminstellingen → Privacy en beveiliging → Lokaal
-netwerk**.
+Het installatiescript controleert na het starten óf de agent werkelijk
+aankomt, en zegt het als dat niet zo is. Krijg je die melding, dan is het
+bijna altijd dit: macOS laat een achtergronddienst niet zomaar op het lokale
+netwerk, en de vraag om toestemming komt alleen in beeld bij een programma met
+een venster. Een dienst krijgt hem nooit te zien en wordt stil geweigerd.
+
+Hij staat na die eerste poging wél in de lijst:
+
+1. **Systeeminstellingen → Privacy en beveiliging → Lokaal netwerk**
+2. Vinkje aan bij **Python** (of `python3`)
+3. `launchctl kickstart -k gui/$(id -u)/nl.labx.labhost`
+
+Meekijken met wat hij doet kan altijd: `--voorgrond` draait hem in je venster
+in plaats van als dienst.
 
 ---
 
@@ -110,31 +118,16 @@ dienstje dat op je netwerk staat te luisteren.
 
 ---
 
-## Automatisch starten
+## Beheren
 
-### macOS (launchd)
+| | macOS (launchd) | Linux (systemd) |
+|---|---|---|
+| **Logboek** | `~/labx-lab-host/agent.log` | `journalctl --user -u labx-labhost -f` |
+| **Herstarten** | `launchctl kickstart -k gui/$(id -u)/nl.labx.labhost` | `systemctl --user restart labx-labhost` |
+| **Stoppen** | `launchctl bootout gui/$(id -u)/nl.labx.labhost` | `systemctl --user stop labx-labhost` |
 
-`install.sh --autostart` zet een LaunchAgent neer die hem bij inloggen start
-en opnieuw opstart als hij omvalt.
-
-> **Let op:** een LaunchAgent is een achtergrondproces, en dat krijgt de vraag
-> om lokaal-netwerktoegang niet in beeld. Start hem dus **eerst één keer met
-> de hand** in een terminalvenster en geef toestemming; daarna werkt de
-> LaunchAgent wél.
-
-Weghalen:
-
-```bash
-launchctl bootout gui/$(id -u)/nl.labx.labhost
-rm ~/Library/LaunchAgents/nl.labx.labhost.plist
-```
-
-### Linux (systemd)
-
-```bash
-systemd-run --user --unit=labx-labhost --collect \
-  python3 ~/labx-lab-host/labx_lab_host.py --labx http://jouw-labx:8081
-```
+Stoppen laat draaiende labs gewoon staan; LabX ziet die machine daarna als
+offline.
 
 ---
 

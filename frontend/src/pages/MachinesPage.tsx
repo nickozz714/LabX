@@ -557,8 +557,9 @@ function ZoDoeJeDatUitleg() {
           <p>
             Zet op die computer eerst <strong>Docker</strong> aan en{" "}
             <strong>externe login</strong> (macOS: Systeeminstellingen →
-            Algemeen → Delen → Externe login). Open daarna een{" "}
-            <strong>gewoon terminalvenster</strong> en plak deze twee regels:
+            Algemeen → Delen → Externe login). Plak daarna deze regel in een
+            terminal op die machine; hij installeert de agent als
+            achtergronddienst en controleert of die LabX bereikt:
           </p>
           <div className="rounded-md bg-secondary/50 p-3">
             <div className="flex items-start justify-between gap-2">
@@ -601,11 +602,12 @@ function ZoDoeJeDatUitleg() {
             </a>.
           </p>
           <p>
-            <strong className="text-foreground">Op een Mac</strong> moet het een
-            zichtbaar terminalvenster zijn, geen achtergrondproces: macOS vraagt
-            de eerste keer om toegang tot je lokale netwerk, en zonder die vraag
-            — die een losgekoppeld proces nooit te zien krijgt — bereikt hij
-            LabX niet. Dat ziet er bedrieglijk uit als &quot;hij draait&quot;.
+            <strong className="text-foreground">Op een Mac</strong> kan die
+            dienst de eerste keer door macOS van het lokale netwerk geweerd
+            worden: de vraag om toestemming komt alleen in beeld bij een
+            programma met een venster. Het script merkt dat en zegt welk vinkje
+            je waar moet zetten — zonder die controle ziet zo&apos;n geweigerde
+            dienst er bedrieglijk uit als &quot;hij draait&quot;.
           </p>
           <p>
             Hij toont dan een <strong>koppelcode</strong>. Druk hierboven bij die
