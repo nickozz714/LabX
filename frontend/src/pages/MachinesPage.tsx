@@ -191,6 +191,7 @@ function HostKaart({ host, onKoppel, onWijzig }: {
   const [testen, setTesten] = useState(false);
   const [uitslag, setUitslag] = useState<{ ok: boolean; tekst: string } | null>(null);
   const [max, setMax] = useState<string>(host.max_labs ? String(host.max_labs) : "");
+  const [adres, setAdres] = useState<string>(host.docker_host || "");
   const melding = useMelding();
   const bevestig = useBevestiging();
 
@@ -217,6 +218,15 @@ function HostKaart({ host, onKoppel, onWijzig }: {
     if (n !== null && !Number.isFinite(n)) return;
     await labHostsApi.wijzig(host.id, { max_labs: n });
     melding.ok("Opgeslagen.");
+    onWijzig();
+  }
+
+  async function bewaarAdres() {
+    const a = adres.trim();
+    if (!a || a === host.docker_host) return;
+    await labHostsApi.wijzig(host.id, { docker_host: a });
+    melding.ok("Adres gewijzigd.", "Test de verbinding om te zien of het klopt.");
+    setUitslag(null);
     onWijzig();
   }
 
@@ -304,10 +314,29 @@ function HostKaart({ host, onKoppel, onWijzig }: {
         <>
           <div className="mb-3 space-y-2">
             <div>
+              {/* Te wijzigen, want een adres kan gewoon verkeerd zijn -- en
+                  dan wil je dat kunnen rechtzetten zonder de machine te
+                  ontkoppelen en opnieuw te beginnen. */}
               <Label>Docker-adres</Label>
-              <div className="truncate rounded-md bg-secondary/50 px-2 py-1 font-mono text-xs">
-                {host.docker_host || "—"}
+              <div className="flex gap-2">
+                <Input value={adres} onChange={(e) => setAdres(e.target.value)}
+                       onBlur={bewaarAdres}
+                       placeholder="ssh://nick@werkpc.local"
+                       className="font-mono text-xs" />
+                <Button variant="ghost" onClick={bewaarAdres}
+                        disabled={!adres.trim() || adres.trim() === host.docker_host}>
+                  Opslaan
+                </Button>
               </div>
+              {/* Een docker-bridge-adres wijst naar een container op de
+                  server zelf; dat is nooit een machine in je netwerk. */}
+              {/^ssh:\/\/[^@]*@?(172\.(1[6-9]|2\d|3[01])\.|10\.88\.)/.test(adres) && (
+                <p className="mt-1 text-xs text-warning">
+                  Dit lijkt het adres van een container, niet van een computer
+                  in je netwerk. Draait de agent daar, dan staat het goede
+                  adres in zijn venster.
+                </p>
+              )}
             </div>
             <div>
               <Label>Maximaal aantal labs (leeg = geen grens)</Label>

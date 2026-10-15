@@ -163,8 +163,13 @@ def zorg_voor_ssh_pad() -> Optional[str]:
     if not pad:
         return None
     map_ = os.path.dirname(pad)
-    if map_ in os.environ.get("PATH", "").split(":"):
-        return None
+    # NIET overslaan omdat docker al in ONS PATH staat. Dat was de fout: deze
+    # agent draait in een gewone terminal, waar /usr/local/bin er gewoon in
+    # zit, en dan leek er niets te doen. Maar het PATH dat telt is dat van een
+    # NIET-interactieve SSH-sessie, en dat is altijd de kale versie. Het
+    # gevolg was dat de reparatie juist overgeslagen werd op precies de
+    # machines die hem nodig hadden -- "docker: command not found" bij het
+    # testen van de verbinding, terwijl docker er gewoon draaide.
     if platform.system() != "Darwin":
         # Op Linux komt docker uit een pakket en staat hij in het normale PATH;
         # daar zonder aanleiding in iemands shellbestanden schrijven is erger

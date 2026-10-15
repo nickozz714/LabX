@@ -432,3 +432,69 @@ def test_de_agent_meet_zijn_eigen_adres_richting_labx():
     ip = labx_lab_host.eigen_ip("http://192.168.2.15:8080")
     assert ip and ip.count(".") == 3, ip
     assert labx_lab_host.eigen_ip("niet-eens-een-url") is None
+
+
+def test_de_pad_reparatie_wordt_niet_overgeslagen_als_docker_al_in_ons_pad_staat(tmp_path, monkeypatch):
+    """De fout die de MacBook een avond kostte.
+
+    De agent draait in een gewone terminal, waar /usr/local/bin gewoon in het
+    PATH zit. De controle "staat docker al in het PATH?" was dan waar, dus
+    sloeg hij de reparatie over -- op precies de machines die hem nodig
+    hadden. Het PATH dat telt is namelijk dat van een NIET-interactieve
+    SSH-sessie, en dat is altijd kaal. Resultaat: "docker: command not found"
+    bij het testen van de verbinding, terwijl docker er gewoon draaide.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lab-host"))
+    import labx_lab_host
+
+    monkeypatch.setattr(labx_lab_host.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(labx_lab_host, "docker_pad", lambda: "/usr/local/bin/docker")
+    # Precies de situatie die het oversloeg: docker staat al in ONS pad.
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+    monkeypatch.setattr(labx_lab_host.Path, "home", staticmethod(lambda: tmp_path))
+
+    uit = labx_lab_host.zorg_voor_ssh_pad()
+    inhoud = (tmp_path / ".zshenv").read_text()
+    assert uit, "er had iets geschreven moeten worden"
+    assert "/usr/local/bin" in inhoud
+    assert "LabX lab-host" in inhoud
+
+
+def test_de_pad_reparatie_schrijft_niet_twee_keer(tmp_path, monkeypatch):
+    """Een agent die elke start een blok aanplakt, laat na een maand een
+    .zshenv achter die niemand meer wil openen."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lab-host"))
+    import labx_lab_host
+
+    monkeypatch.setattr(labx_lab_host.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(labx_lab_host, "docker_pad", lambda: "/usr/local/bin/docker")
+    monkeypatch.setattr(labx_lab_host.Path, "home", staticmethod(lambda: tmp_path))
+
+    labx_lab_host.zorg_voor_ssh_pad()
+    labx_lab_host.zorg_voor_ssh_pad()
+    assert (tmp_path / ".zshenv").read_text().count("LabX lab-host") == 2  # begin + eind van één blok
+
+
+def test_de_pad_reparatie_laat_bestaande_inhoud_staan(tmp_path, monkeypatch):
+    """Het is iemands eigen bestand; er staat vaker wel dan niet al iets in."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lab-host"))
+    import labx_lab_host
+
+    (tmp_path / ".zshenv").write_text('. "$HOME/.cargo/env"\n')
+    monkeypatch.setattr(labx_lab_host.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(labx_lab_host, "docker_pad", lambda: "/usr/local/bin/docker")
+    monkeypatch.setattr(labx_lab_host.Path, "home", staticmethod(lambda: tmp_path))
+
+    labx_lab_host.zorg_voor_ssh_pad()
+    inhoud = (tmp_path / ".zshenv").read_text()
+    assert ".cargo/env" in inhoud
+    assert "/usr/local/bin" in inhoud
