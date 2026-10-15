@@ -31,6 +31,12 @@ from services.lab.docker_runtime import DockerRuntime
 log = get_logger(__name__)
 
 
+#: De noVNC-poort IN het lab. Staat hier en niet alleen in de router, omdat
+#: het runtime-gedrag ervan afhangt: op een netwerkmachine moet hij worden
+#: gepubliceerd, anders is er niets om een tunnel heen te leggen.
+BROWSER_POORT = 6080
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -202,6 +208,25 @@ class LabService:
 
         rij = self.db.get(LabHost, int(host_id))
         return rij.naam if rij else None
+
+    def _te_publiceren(self, p: Lab) -> List[int]:
+        """Welke poorten van werker 1 op de daemon-host gepubliceerd worden.
+
+        Voor een lab hier is dat alleen wat de gebruiker koos: de backend zit
+        met het lab op één bridge en bereikt het op zijn containernaam.
+
+        Voor een lab op een NETWERKMACHINE bestaat die weg niet -- die bridge
+        zit op die pc. Alles wat wij moeten kunnen bereiken, moet daar dus
+        gepubliceerd zijn zodat er een SSH-tunnel overheen kan. De browser van
+        het lab hoort daarbij, want het beeldscherm loopt door de backend.
+
+        Altijd op 127.0.0.1 van die machine (zie DockerRuntime.run_container):
+        er komt geen poort op je LAN te staan.
+        """
+        poorten = [int(x) for x in (p.ports or [])]
+        if getattr(p, "host_id", None) and BROWSER_POORT not in poorten:
+            poorten.append(BROWSER_POORT)
+        return poorten
 
     def _weiger_bij_host(self, p: Lab, wat: str) -> None:
         """Wat op een host geen betekenis heeft, mag niet stil slagen.
@@ -771,7 +796,7 @@ class LabService:
         lab maakt en geen losse labs."""
         # Poorten alleen op werker 1: twee containers kunnen niet dezelfde
         # hostpoort publiceren, en "de poort van dit lab" hoort bij één plek.
-        poorten = (p.ports or []) if w.index <= 1 else []
+        poorten = self._te_publiceren(p) if w.index <= 1 else []
         container_id = await self.runtime_voor(p).run_container(
             name=w.network_alias, image=p.image, volume=p.volume_name,
             cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
@@ -791,6 +816,71 @@ class LabService:
     # dat is de hele reden dat de fab-CLI hierop gepatcht wordt.
     AUTH_PORT = 8400
 
+    async def poort_adres(self, p: Lab, poort: int, *,
+                          worker_id: Optional[int] = None) -> str:
+        """`host:poort` waarop de BACKEND deze poort van het lab bereikt.
+
+        Twee werelden, één antwoord:
+
+        - lab hier: de containernaam op de gedeelde bridge. Niets gepubliceerd,
+          dus de enige weg naar binnen loopt door LabX -- en dus langs de login.
+        - lab op een netwerkmachine: die bridge zit op die pc en de naam
+          resolvet hier niet. Dan leggen we een SSH-tunnel naar de
+          GEPUBLICEERDE poort op de loopback van die machine. Dezelfde
+          SSH-sleutel die de containers al aanstuurt, en nog steeds geen poort
+          op je LAN.
+
+        De tunnel blijft staan en wordt hergebruikt: het noVNC-scherm doet
+        tientallen verzoeken plus een websocket, en per verzoek een SSH opzetten
+        zou het beeld laten haperen.
+        """
+        if self.is_host(p):
+            # Een hostlab heeft geen container en geen bridge; wat daar
+            # luistert, luistert op de machine zelf.
+            return f"127.0.0.1:{int(poort)}"
+
+        host_id = getattr(p, "host_id", None)
+        if not host_id:
+            alias = p.network_alias or f"labx-lab-{p.id[:12]}"
+            if worker_id:
+                w = self._worker(p, worker_id)
+                alias = (w.network_alias if w else None) or alias
+            return f"{alias}:{int(poort)}"
+
+        from models.lab_host import LabHost
+        from services.lab.poort_tunnel import tunnels
+
+        host = self.db.get(LabHost, int(host_id))
+        if host is None or not host.docker_host:
+            raise HTTPException(
+                status_code=409,
+                detail="De machine van dit lab is niet meer gekoppeld.")
+
+        cid = self.container_for(p, worker_id)
+        if not cid:
+            raise HTTPException(status_code=409, detail="Lab draait niet (start hem eerst)")
+        kaart = await self.runtime_voor(p).port_map(cid)
+        verre = kaart.get(int(poort))
+        if not verre:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Poort {poort} is niet gepubliceerd op '{host.naam}'. Een lab op "
+                        f"een andere machine is alleen bereikbaar via een gepubliceerde "
+                        f"poort — zet {poort} bij de poorten van dit lab en bouw het "
+                        f"opnieuw op."))
+        try:
+            lokaal = await tunnels.lokale_poort(host.docker_host, verre)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502,
+                detail=f"Geen tunnel naar '{host.naam}': {str(exc)[:300]}") from exc
+        return f"127.0.0.1:{lokaal}"
+
+    def _worker(self, p: Lab, worker_id: Optional[int]):
+        if not worker_id:
+            return None
+        return next((w for w in self.ensure_workers(p) if w.id == int(worker_id)), None)
+
     async def tunnel_info(self, lab_id: str, *, port: Optional[int] = None,
                           worker_id: Optional[int] = None) -> Dict[str, Any]:
         """Alles wat je nodig hebt om `localhost:<poort>` op JOUW machine in dit
@@ -802,41 +892,86 @@ class LabService:
         labcontainer. Iets moet die twee verbinden, en dat iets moet op jouw
         machine draaien; LabX kan het voorbereiden maar niet zelf starten.
 
-        Geen gepubliceerde poort nodig: de server bereikt de container
-        rechtstreeks op zijn IP in het labnetwerk."""
+        Voor een lab op DEZE server is er geen gepubliceerde poort nodig: de
+        server bereikt de container rechtstreeks op zijn IP in het labnetwerk,
+        dus de tunnel gaat naar de server.
+
+        Voor een lab op een NETWERKMACHINE klopt dat niet meer. Dat labnetwerk
+        zit op die pc, en de server kan er net zomin bij als jij. De tunnel
+        gaat dan rechtstreeks naar die machine, naar de poort die daar op de
+        loopback gepubliceerd staat -- en dus moet die poort wél bij de poorten
+        van het lab staan."""
         p = self.get(lab_id)
         poort = int(port or self.AUTH_PORT)
         cid = self.container_for(p, worker_id)
         if p.status != "running" or not cid:
             raise HTTPException(status_code=409, detail="Lab draait niet (start hem eerst)")
+
+        host_id = getattr(p, "host_id", None)
+        if host_id:
+            from models.lab_host import LabHost
+            from services.lab.poort_tunnel import ssh_doel
+
+            host = self.db.get(LabHost, int(host_id))
+            if host is None or not host.docker_host:
+                raise HTTPException(status_code=409,
+                                    detail="De machine van dit lab is niet meer gekoppeld.")
+            kaart = await self.runtime_voor(p).port_map(cid)
+            verre = kaart.get(poort)
+            if not verre:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Poort {poort} is niet gepubliceerd op '{host.naam}'. Een lab "
+                            f"op een andere machine is alleen zo te bereiken — zet {poort} "
+                            f"bij de poorten van dit lab en bouw het opnieuw op."))
+            return {"lab_id": p.id, "lab_name": p.name, "port": poort,
+                    # Naar DIE machine toe, en daar naar de loopback.
+                    "doel_host": "127.0.0.1", "doel_poort": verre,
+                    "machine": host.naam,
+                    "ssh_voorstel": ssh_doel(host.docker_host),
+                    "container": cid[:12], "network": None}
+
         ip = await self.runtime_voor(p).container_ip(cid)
         if not ip:
             raise HTTPException(status_code=502, detail="Kon het IP van de labcontainer niet bepalen")
         return {"lab_id": p.id, "lab_name": p.name, "port": poort,
+                "doel_host": ip, "doel_poort": poort,
+                "machine": None, "ssh_voorstel": None,
+                # Blijft staan voor wie het oude veld leest.
                 "container_ip": ip, "container": cid[:12],
                 "network": settings.LAB_NETWORK}
 
     @staticmethod
-    def tunnel_script(*, lab_name: str, ssh_target: str, ip: str, port: int) -> str:
+    def tunnel_script(*, lab_name: str, ssh_target: str, ip: str, port: int,
+                      doel_poort: Optional[int] = None,
+                      machine: Optional[str] = None) -> str:
         """Een klein script dat de tunnel opzet en openhoudt. Bewust `ssh` en
         geen eigen programmaatje: dat zit al op elke Mac en Linux-machine, het
-        heeft geen installatie nodig, en het is te lezen wat het doet."""
+        heeft geen installatie nodig, en het is te lezen wat het doet.
+
+        `ssh_target` is de machine waar de tunnel heen gaat: de server voor een
+        gewoon lab, of de netwerkmachine zelf als het lab daar draait -- want
+        het labnetwerk van die pc is vanaf de server net zo onbereikbaar als
+        vanaf jouw laptop."""
+        ver = int(doel_poort or port)
+        waarheen = (f"de labcontainer op {machine}" if machine
+                    else "de labcontainer op de server")
         return f"""#!/bin/sh
 # LabX — tunnel naar lab '{lab_name}'
 #
-# Zet localhost:{port} op DEZE machine door naar de labcontainer op de server.
+# Zet localhost:{port} op DEZE machine door naar {waarheen}.
 # Nodig voor een interactieve Microsoft-login vanuit het lab: die stuurt je
 # browser naar http://localhost:{port}, en dat is de localhost van de machine
 # waar je klikt.
 #
 # Laat dit venster openstaan zolang je inlogt. Stoppen: Ctrl-C.
 set -e
-echo "Tunnel: localhost:{port} -> {ip}:{port} (via {ssh_target})"
+echo "Tunnel: localhost:{port} -> {ip}:{ver} (via {ssh_target})"
 echo "Laat dit venster open tijdens het inloggen. Stoppen met Ctrl-C."
 exec ssh -N \\
     -o ServerAliveInterval=30 \\
     -o ExitOnForwardFailure=yes \\
-    -L {port}:{ip}:{port} \\
+    -L {port}:{ip}:{ver} \\
     {ssh_target}
 """
 
@@ -1357,7 +1492,7 @@ exec ssh -N \\
             container_id = await self.runtime_voor(p).run_container(
                 name=p.network_alias, image=p.image, volume=p.volume_name,
                 cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
-                allow_network=p.allow_network, ports=p.ports or [],
+                allow_network=p.allow_network, ports=self._te_publiceren(p),
                 expires_at=p.expires_at,
             )
             p.container_id = container_id
@@ -1754,7 +1889,7 @@ exec ssh -N \\
             container_id = await self.runtime_voor(p).run_container(
                 name=p.network_alias, image=target, volume=p.volume_name,
                 cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
-                allow_network=p.allow_network, ports=p.ports or [],
+                allow_network=p.allow_network, ports=self._te_publiceren(p),
                 expires_at=p.expires_at,
             )
         except HTTPException as exc:

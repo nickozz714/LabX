@@ -10,6 +10,10 @@ networks:
 volumes:
   labx_data:
   labx_claude_home:
+  # De SSH-identiteit waarmee LabX lab-hosts in je netwerk aanstuurt.
+  # MOET een volume zijn: in de image zou elke herbouw een nieuwe
+  # sleutel geven en waren al je gekoppelde machines ineens onbekend.
+  labx_ssh:
 
 services:
   api:
@@ -46,6 +50,7 @@ services:
       # longer knows — every existing chat then fails immediately with
       # "No conversation found with session ID: ..." on its next turn.
       - labx_claude_home:/root/.claude
+      - labx_ssh:/root/.ssh
     environment:
       LABX_HOME: /data
       LABX_ADMIN_USERNAME: ${LABX_ADMIN_USERNAME:-admin}

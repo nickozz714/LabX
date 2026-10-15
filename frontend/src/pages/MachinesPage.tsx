@@ -21,7 +21,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Activity, Cpu, HardDrive, Loader2, Moon, Monitor, RefreshCw, Trash2, Wifi, WifiOff,
+  Activity, Check, Copy, Cpu, HardDrive, Loader2, Moon, Monitor, RefreshCw, Trash2,
+  Wifi, WifiOff,
 } from "lucide-react";
 import { labHostsApi } from "@/lib/labs";
 import type { LabHost } from "@/lib/types";
@@ -43,6 +44,28 @@ function geleden(iso: string | null): string {
   if (s < 3600) return `${Math.round(s / 60)} min geleden`;
   if (s < 86400) return `${Math.round(s / 3600)} uur geleden`;
   return `${Math.round(s / 86400)} dagen geleden`;
+}
+
+/** Kopiëren naar het klembord, met een bevestiging die je ziet. Zonder die
+ *  terugkoppeling weet je niet of je klik is aangekomen, en plak je een oude
+ *  sleutel in een terminal. */
+function KopieerKnop({ tekst, label = "Kopiëren" }: { tekst: string; label?: string }) {
+  const [gekopieerd, setGekopieerd] = useState(false);
+  return (
+    <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={async () => {
+      try {
+        await navigator.clipboard.writeText(tekst);
+        setGekopieerd(true);
+        setTimeout(() => setGekopieerd(false), 2000);
+      } catch {
+        // Zonder klembordrechten (http op een IP-adres, bijvoorbeeld) is de
+        // tekst nog steeds te selecteren; stil falen is dan het minst erg.
+      }
+    }}>
+      {gekopieerd ? <Check className="mr-1 h-3.5 w-3.5" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+      {gekopieerd ? "Gekopieerd" : label}
+    </Button>
+  );
 }
 
 export function MachinesPage() {
@@ -335,12 +358,17 @@ function KoppelVenster({ host, onClose, onGekoppeld }: {
   host: LabHost; onClose: () => void; onGekoppeld: () => void;
 }) {
   const [code, setCode] = useState("");
+  const [sleutel, setSleutel] = useState<{ publieke_sleutel: string; commando: string } | null>(null);
   // Een redelijke gok die je meestal alleen hoeft te bevestigen; de agent
   // kent zijn eigen gebruikersnaam niet met zekerheid, dus intypen mag.
   const [adres, setAdres] = useState(
     host.docker_host || `ssh://gebruiker@${(host.agent_url || "").replace(/^https?:\/\//, "").split(":")[0]}`);
   const [bezig, setBezig] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
+
+  useEffect(() => {
+    labHostsApi.sleutel().then(setSleutel).catch(() => setSleutel(null));
+  }, []);
 
   async function koppel() {
     setBezig(true);
@@ -376,11 +404,27 @@ function KoppelVenster({ host, onClose, onGekoppeld }: {
           <Input value={adres} onChange={(e) => setAdres(e.target.value)}
                  placeholder="ssh://nick@werkpc.local" className="font-mono text-sm" />
           <p className="mt-1 text-xs text-muted-foreground">
-            Hierlangs stuurt LabX de containers aan. Het gaat over SSH, dus er
-            hoeft geen poort open te staan — maar de SSH-sleutel van de server
-            moet wel op die machine bekend zijn.
+            Hierlangs stuurt LabX de containers aan, over SSH. Er hoeft dus geen
+            poort open te staan.
           </p>
         </div>
+
+        {sleutel && (
+          <div className="rounded-md border border-border bg-secondary/40 p-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <Label>Eenmalig op die computer</Label>
+              <KopieerKnop tekst={sleutel.commando} label="Regel kopiëren" />
+            </div>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Zet Remote Login aan (macOS: Systeeminstellingen → Algemeen → Delen),
+              zorg dat Docker er draait, en plak deze regel één keer in een
+              terminal op die machine:
+            </p>
+            <pre className="max-h-24 overflow-auto rounded bg-background p-2 font-mono text-[10px] leading-relaxed">
+              {sleutel.commando}
+            </pre>
+          </div>
+        )}
 
         {fout && (
           <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{fout}</div>

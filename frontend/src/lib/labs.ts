@@ -70,6 +70,10 @@ export type HostMetrics = {
  */
 export const labHostsApi = {
   list: () => api.get<LabHost[]>("/lab-hosts"),
+  /** De publieke SSH-sleutel van deze LabX, plus een kant-en-klare regel om
+   *  op de andere machine te plakken. Dat is het enige dat je daar fysiek
+   *  moet doen. */
+  sleutel: () => api.get<{ publieke_sleutel: string; commando: string }>("/lab-hosts/sleutel"),
   get: (id: number) => api.get<LabHost>(`/lab-hosts/${id}`),
   /** Toelaten. De code staat in het venster van de agent op die computer. */
   koppelen: (id: number, code: string, dockerHost: string) =>
@@ -81,8 +85,12 @@ export const labHostsApi = {
   /** Meten in plaats van aannemen: komt LabX er werkelijk bij? Een gekoppelde
    *  machine waar je niet bij kunt is erger dan een ongekoppelde — je zet er
    *  labs op en die starten niet. */
-  test: (id: number) => api.post<{ ok: boolean; detail?: string; docker_host?: string; diagnose?: any }>(
-    `/lab-hosts/${id}/test`),
+  test: (id: number) => api.post<{
+    ok: boolean; detail?: string | null; docker_host?: string;
+    /** Apart van `ok`: inloggen lukt wél maar Docker draait niet is een ander
+     *  probleem dan er niet in komen, en heeft een andere oplossing. */
+    ssh_ok?: boolean; ssh_melding?: string; diagnose?: any;
+  }>(`/lab-hosts/${id}/test`),
 };
 
 export const labsApi = {

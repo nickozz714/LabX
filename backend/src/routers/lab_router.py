@@ -448,8 +448,14 @@ async def lab_tunnel_script(lab_id: str, ssh_target: str = Query(...),
     svc = _service(db)
     info = await svc.tunnel_info(lab_id, port=port)
     return {"filename": f"labx-tunnel-{info['lab_name'].lower().replace(' ', '-')}-{info['port']}.sh",
+            # Waar de tunnel heen moet, staat in de info: voor een lab op een
+            # netwerkmachine is dat die machine zelf en niet de server.
+            "machine": info.get("machine"),
+            "ssh_voorstel": info.get("ssh_voorstel"),
             "script": svc.tunnel_script(lab_name=info["lab_name"], ssh_target=doel,
-                                        ip=info["container_ip"], port=info["port"])}
+                                        ip=info["doel_host"], port=info["port"],
+                                        doel_poort=info["doel_poort"],
+                                        machine=info.get("machine"))}
 
 
 @router.post("/{lab_id}/workers")
@@ -740,11 +746,17 @@ def _browser_auth(token: str, cookie: Optional[str]) -> None:
         raise HTTPException(status_code=401, detail="Ongeldig token")
 
 
-def _browser_target(db: Session, lab_id: str) -> str:
-    """De basis-URL van de noVNC-server IN het lab. Via de container-DNS-naam op
-    het gedeelde bridge-netwerk — de labpoort wordt bewust niet op de host
-    gepubliceerd, zodat de enige weg naar die browser via LabX loopt (en dus
-    achter een login)."""
+async def _browser_target(db: Session, lab_id: str) -> str:
+    """De basis-URL van de noVNC-server IN het lab.
+
+    Voor een lab hier: de container-DNS-naam op het gedeelde bridge-netwerk.
+    De labpoort wordt bewust niet op de host gepubliceerd, zodat de enige weg
+    naar die browser via LabX loopt (en dus achter een login).
+
+    Voor een lab op een netwerkmachine bestaat dat netwerk hier niet, en loopt
+    het via een SSH-tunnel naar de gepubliceerde poort op de loopback van die
+    machine. Zie LabService.poort_adres — het blijft achter dezelfde login, en
+    er komt nog steeds geen poort op je LAN."""
     from models.lab import Lab
     p = db.get(Lab, lab_id)
     if p is None:
@@ -755,7 +767,8 @@ def _browser_target(db: Session, lab_id: str) -> str:
         raise HTTPException(
             status_code=409,
             detail="Dit lab heeft het pakket 'Zelf inloggen in de browser van het lab' niet aan staan.")
-    return f"http://{p.network_alias}:{BROWSER_PORT}"
+    adres = await _service(db).poort_adres(p, BROWSER_PORT)
+    return f"http://{adres}"
 
 
 @browser_router.get("/{lab_id}/browser")
@@ -765,7 +778,7 @@ async def browser_entry(lab_id: str, token: str = Query(default=""),
     naar de noVNC-pagina die meteen verbinding maakt."""
     from fastapi.responses import RedirectResponse
     _browser_auth(token, None)
-    _browser_target(db, lab_id)
+    await _browser_target(db, lab_id)
     base = f"/api/labs/{lab_id}/browser"
     target = (f"{base}/vnc.html?path={base.lstrip('/')}/websockify"
               "&autoconnect=true&resize=scale&reconnect=true")
@@ -783,7 +796,7 @@ async def browser_asset(lab_id: str, path: str, request: Request,
     from fastapi.responses import Response as FastResponse
     _browser_auth(request.query_params.get("token", ""),
                   request.cookies.get(_BROWSER_COOKIE))
-    base = _browser_target(db, lab_id)
+    base = await _browser_target(db, lab_id)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(f"{base}/{path}", params=dict(request.query_params))
@@ -810,7 +823,7 @@ async def browser_socket(websocket: WebSocket, lab_id: str, token: str = Query(d
     from models.lab import Lab
     db = SessionLocal()
     try:
-        target = _browser_target(db, lab_id).replace("http://", "ws://") + "/websockify"
+        target = (await _browser_target(db, lab_id)).replace("http://", "ws://") + "/websockify"
         lab = db.get(Lab, lab_id)
         container_id = lab.container_id if lab else None
     except HTTPException:

@@ -36,6 +36,10 @@ networks:
 volumes:
   labx_data:
   labx_claude_home:
+  # De SSH-identiteit waarmee LabX lab-hosts in je netwerk aanstuurt.
+  # MOET een volume zijn: in de image zou elke herbouw een nieuwe
+  # sleutel geven en waren al je gekoppelde machines ineens onbekend.
+  labx_ssh:
   # Apart van labx_data: modelgewichten zijn een paar GB en horen niet in het
   # volume waar de database staat die je wilt kunnen back-uppen.
   labx_ollama:
@@ -56,6 +60,7 @@ services:
       # CLI-sessiestatus (~/.claude/projects/*.jsonl). Zonder dit volume wist
       # elke herstart de sessies terwijl de database er nog naar verwijst.
       - labx_claude_home:/root/.claude
+      - labx_ssh:/root/.ssh
     environment:
       LABX_HOME: /data
       LABX_ADMIN_USERNAME: ${LABX_ADMIN_USERNAME:-admin}
