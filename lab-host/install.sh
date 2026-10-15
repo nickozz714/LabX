@@ -65,13 +65,30 @@ else
     exit 1
 fi
 
-if [ "$(uname -s)" = "Darwin" ]; then
-    if systemsetup -getremotelogin 2>/dev/null | grep -qi "on"; then
-        echo "  ✓ externe login staat aan"
-    else
-        echo "  ! externe login lijkt UIT te staan. LabX stuurt containers aan"
-        echo "    over SSH, dus zonder dat kan deze machine geen labs draaien."
+# Luistert er SSH? Dat is de enige vraag die telt, en de enige die eerlijk te
+# beantwoorden is. `systemsetup -getremotelogin` lijkt het juiste gereedschap,
+# maar vereist Volledige Schijftoegang en geeft zonder dat niets terug -- dan
+# waarschuwt hij dus dat externe login uit staat terwijl je er op dat moment
+# via SSH op zit. Een melding die je naar een instelling stuurt die al goed
+# staat, is erger dan geen melding.
+if python3 -c "
+import socket, sys
+s = socket.socket(); s.settimeout(2)
+try:
+    s.connect(('127.0.0.1', 22))
+except Exception:
+    sys.exit(1)
+finally:
+    s.close()
+" 2>/dev/null; then
+    echo "  ✓ SSH luistert op poort 22"
+else
+    echo "  ! er luistert niets op poort 22. LabX stuurt containers aan over"
+    echo "    SSH, dus zonder dat kan deze machine geen labs draaien."
+    if [ "$(uname -s)" = "Darwin" ]; then
         echo "    Systeeminstellingen -> Algemeen -> Delen -> Externe login."
+    else
+        echo "    Zet de ssh-server aan (bijv. systemctl enable --now ssh)."
     fi
 fi
 
