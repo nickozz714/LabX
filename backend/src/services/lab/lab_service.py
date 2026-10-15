@@ -404,9 +404,24 @@ class LabService:
             known_container_ids.add(p.container_id)
             m = by_container.get(p.container_id) if p.container_id else None
             if not m:
-                p.status = "error"
-                p.error = "Container niet meer gevonden na herstart van LabX"
+                # Container weg = STOPPED, niet error.
+                #
+                # Dit stond op "error", en dat is een storing verzinnen: er is
+                # niets stuk. Het volume staat er nog (dat is het werk), het
+                # image ligt vast, en starten maakt gewoon een verse container
+                # aan. Een lab op error zetten omdat de machine opnieuw is
+                # opgestart, levert alleen een scherm vol rood op waar niemand
+                # iets mee kan -- en vroeger kon je er ook niets mee, want
+                # starten weigerde juist een lab zonder container.
+                p.status = "stopped"
+                p.container_id = None
+                p.error = None
                 p.updated_at = _now_iso()
+                for w in self.ensure_workers(p):
+                    w.container_id = None
+                    w.status = "stopped"
+                    w.provision_status = "pending"
+                    w.updated_at = _now_iso()
                 fixed += 1
                 continue
             live_status = "running" if m["state"] == "running" else "stopped"

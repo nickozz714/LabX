@@ -693,3 +693,36 @@ def test_het_nakijken_komt_ook_op_gang_zonder_lopende_event_lus(db, monkeypatch)
 
     _meld(db)     # de terugkeer
     assert gedaan.wait(timeout=5), "het nakijken is nooit op gang gekomen"
+
+
+def test_na_een_herstart_van_labx_is_een_verdwenen_container_stopped(db, monkeypatch):
+    """Spiegelbeeld van reconcile_host, en lang de andere kant op geregeld.
+
+    De reconcile bij het OPSTARTEN zette een lab met een verdwenen container
+    op "error". Dat is een storing verzinnen: het volume staat er nog, het
+    image ligt vast, en starten maakt een verse container aan. Erger: zolang
+    starten zo'n lab weigerde, had je een rood scherm waar niets mee kon.
+    """
+    import asyncio
+
+    from services.lab.lab_service import LabService
+
+    p = _lab(db, id="lab-weg")
+    p.status = "running"
+    p.container_id = "c-weg-na-herstart"
+    db.commit()
+
+    class Leeg:
+        async def list_managed(self):
+            return []
+
+        async def remove(self, cid, **kw):
+            return None
+
+    monkeypatch.setattr("services.lab.lab_service.DockerRuntime", lambda **kw: Leeg())
+    asyncio.run(LabService(db, runtime=Leeg()).reconcile_on_start())
+
+    db.refresh(p)
+    assert p.status == "stopped", "geen 'error': er is niets stuk"
+    assert p.container_id is None, "zodat starten een verse container maakt"
+    assert not p.error
