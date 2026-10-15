@@ -27,6 +27,7 @@ import {
 import { labHostsApi } from "@/lib/labs";
 import type { LabHost } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal } from "@/components/ui";
+import { KeyRound } from "lucide-react";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
@@ -145,7 +146,8 @@ export function MachinesPage() {
         </>
       )}
 
-      <div className="mt-6">
+      <div className="mt-6 space-y-3">
+        <SleutelVanLabX />
         <ZoDoeJeDatUitleg />
       </div>
 
@@ -438,6 +440,62 @@ function KoppelVenster({ host, onClose, onGekoppeld }: {
         </div>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * De publieke sleutel van deze LabX, altijd vindbaar.
+ *
+ * Hij stond alleen in het koppelvenster, en dat venster is weg zodra een
+ * machine gekoppeld is. Dan kun je hem nergens meer terugvinden -- terwijl je
+ * hem juist dán nodig hebt: een machine die opnieuw is geïnstalleerd, een
+ * authorized_keys die is opgeschoond, of gewoon een tweede computer.
+ *
+ * Een publieke sleutel is niet geheim; dat is het hele idee ervan. Open tonen
+ * kost niets en scheelt een zoektocht.
+ */
+function SleutelVanLabX() {
+  const [sleutel, setSleutel] = useState<{ publieke_sleutel: string; commando: string } | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    labHostsApi.sleutel().then(setSleutel).catch(() => setSleutel(null));
+  }, []);
+
+  if (!sleutel) return null;
+
+  return (
+    <Card className="p-4">
+      <button className="flex w-full items-center justify-between text-left text-sm font-semibold"
+              onClick={() => setOpen((v) => !v)}>
+        <span className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-muted-foreground" />
+          De sleutel van deze LabX
+        </span>
+        <span className="text-xs font-normal text-muted-foreground">
+          {open ? "verbergen" : "tonen"}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+          <p>
+            Hiermee logt LabX in op een lab-host. Zet deze regel één keer in
+            een terminal op die computer; dan mag LabX er containers starten.
+            Verder heeft die machine niets van LabX nodig.
+          </p>
+          <div className="flex items-start justify-between gap-2 rounded-md bg-secondary/50 p-3">
+            <pre className="overflow-x-auto font-mono text-[10px] leading-relaxed">
+              {sleutel.commando}
+            </pre>
+            <KopieerKnop tekst={sleutel.commando} label="Regel kopiëren" />
+          </div>
+          <p className="text-xs">
+            Alleen de publieke helft — die is niet geheim. De private helft
+            blijft in LabX en komt er nooit uit.
+          </p>
+        </div>
+      )}
+    </Card>
   );
 }
 

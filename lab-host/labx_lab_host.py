@@ -53,6 +53,7 @@ import os
 import platform
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -68,6 +69,41 @@ AGENT_POORT = 8098
 #: Blijft gelijk tussen herstarts, zodat LabX deze machine herkent als hij een
 #: ander IP krijgt. Een laptop op wifi is anders elke dag een nieuwe host.
 ID_BESTAND = Path.home() / ".labx-lab-host-id"
+
+
+def eigen_ip(labx: str) -> Optional[str]:
+    """Het IP waarop LabX deze machine kan terugvinden.
+
+    Niet "mijn IP-adres" in het algemeen -- een laptop heeft er makkelijk drie
+    (wifi, ethernet, een VPN) en de vraag is welke LabX moet gebruiken. Dat
+    beantwoordt het besturingssysteem zelf: open een socket richting LabX en
+    kijk welk adres hij aan onze kant koos. Dat is per definitie het adres
+    waarover het verkeer loopt.
+
+    Waarom dit nodig is: LabX kon ook kijken van welk adres het verzoek kwam,
+    maar achter een reverse proxy ziet hij dan de proxy. Dat ging mis bij de
+    eerste koppeling op de server -- hij stelde `ssh://nick@172.29.0.4` voor,
+    het IP van de nginx-container, en inloggen daarop geeft "connection
+    refused" op een adres dat je nergens kunt thuisbrengen.
+    """
+    from urllib.parse import urlparse
+
+    u = urlparse(labx)
+    host = u.hostname
+    if not host:
+        return None
+    poort = u.port or (443 if u.scheme == "https" else 80)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # UDP "verbinden" stuurt niets; het kiest alleen een route en daarmee
+        # een bronadres. Geen verkeer, geen wachttijd, werkt ook als LabX even
+        # niet luistert.
+        s.connect((host, poort))
+        return str(s.getsockname()[0])
+    except OSError:
+        return None
+    finally:
+        s.close()
 
 
 def machine_id() -> str:
@@ -376,6 +412,9 @@ def main() -> int:
             "machine_id": mid,
             "naam": opties.naam,
             "agent_poort": AGENT_POORT,
+            # Zie eigen_ip(): LabX kan het zelf niet betrouwbaar zien zodra er
+            # een reverse proxy tussen zit.
+            "agent_ip": eigen_ip(opties.labx),
             "docker_host": (f"ssh://{opties.ssh}" if opties.ssh else None),
             "capaciteit": capaciteit(wakker.actief),
         })

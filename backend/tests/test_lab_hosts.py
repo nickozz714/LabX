@@ -338,3 +338,97 @@ def test_de_open_router_staat_voor_de_beveiligde():
     open_op = bron.index("lab_host_router.open_router")
     beveiligd_op = bron.index("lab_host_router.router, prefix")
     assert open_op < beveiligd_op, "de open router moet eerst ge-include worden"
+
+
+# ── welk ADRES heeft die machine? ────────────────────────────────────────────
+
+
+def _nep_verzoek(headers=None, peer="172.29.0.4"):
+    """Een verzoek zoals het binnenkomt, zonder HTTP eromheen.
+
+    Bewust geen TestClient: die draait het verzoek in een andere thread, en
+    een in-geheugen SQLite geeft daar een LEGE database -- dan test je de
+    opzet van je test in plaats van je code.
+    """
+    from starlette.datastructures import Headers
+
+    class Client:
+        host = peer
+
+    class Verzoek:
+        def __init__(self):
+            self.headers = Headers(headers or {})
+            self.client = Client()
+
+    return Verzoek()
+
+
+def test_achter_een_proxy_wordt_niet_het_adres_van_de_proxy_voorgesteld(db):
+    """Dit ging echt mis bij de eerste koppeling op de server.
+
+    De agent meldt zich via nginx, dus het adres van de VERBINDING is de
+    nginx-container. LabX stelde daardoor `ssh://nick@172.29.0.4` voor, en
+    inloggen daarop geeft "connection refused" op een adres dat je nergens
+    kunt thuisbrengen -- terwijl de melding naar je sleutel en naar Remote
+    Login wijst, die allebei in orde zijn.
+
+    Wat de agent zelf gemeten heeft, wint daarom.
+    """
+    from routers.lab_host_router import aanmelden
+
+    aanmelden({"machine_id": "m1", "naam": "Werkpc", "agent_poort": 8098,
+               "agent_ip": "192.168.2.68"},
+              _nep_verzoek(), db)
+
+    host = [h for h in _svc(db).lijst() if h.machine_id == "m1"][0]
+    assert "192.168.2.68" in (host.agent_url or "")
+    assert "172.29" not in (host.agent_url or ""), "het adres van de proxy, niet van de machine"
+
+
+def test_zonder_eigen_opgave_telt_de_forwarded_kop(db):
+    """Een oudere agent meet zijn eigen IP nog niet. Dan is de kop van onze
+    eigen proxy nog altijd beter dan het adres van die proxy zelf."""
+    from routers.lab_host_router import aanmelden
+
+    aanmelden({"machine_id": "m2", "naam": "Oude agent", "agent_poort": 8098},
+              _nep_verzoek({"x-forwarded-for": "192.168.2.70, 172.29.0.4"}), db)
+
+    host = [h for h in _svc(db).lijst() if h.machine_id == "m2"][0]
+    assert "192.168.2.70" in (host.agent_url or "")
+
+
+def test_zonder_proxy_blijft_het_adres_van_de_verbinding_gelden(db):
+    """Draait LabX zonder proxy ervoor, dan was er nooit iets mis en moet dat
+    zo blijven."""
+    from routers.lab_host_router import aanmelden
+
+    aanmelden({"machine_id": "m3", "naam": "Direct", "agent_poort": 8098},
+              _nep_verzoek(peer="192.168.2.90"), db)
+
+    host = [h for h in _svc(db).lijst() if h.machine_id == "m3"][0]
+    assert "192.168.2.90" in (host.agent_url or "")
+
+
+def test_de_proxy_geeft_de_keten_door():
+    """De backend kan X-Forwarded-For alleen lezen als nginx hem zet."""
+    from pathlib import Path
+
+    conf = (Path(__file__).resolve().parents[2] / "frontend" / "nginx.conf").read_text()
+    assert "X-Forwarded-For" in conf
+
+
+def test_de_agent_meet_zijn_eigen_adres_richting_labx():
+    """Een laptop heeft makkelijk drie adressen (wifi, ethernet, VPN). De
+    vraag is niet "wat is mijn IP" maar "over welk adres loopt het verkeer
+    naar LabX" -- en dat beantwoordt het besturingssysteem zelf."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lab-host"))
+    import labx_lab_host
+
+    # Een route naar buiten bestaat altijd; welk adres eruit komt doet er niet
+    # toe, als het maar een adres van DEZE machine is en geen lege waarde.
+    ip = labx_lab_host.eigen_ip("http://192.168.2.15:8080")
+    assert ip and ip.count(".") == 3, ip
+    assert labx_lab_host.eigen_ip("niet-eens-een-url") is None

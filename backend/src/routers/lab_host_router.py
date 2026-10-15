@@ -40,10 +40,29 @@ def aanmelden(body: Dict[str, Any], request: Request, db: Session = Depends(get_
     weet niet of LabX hem al kent, en hoeft dat ook niet te weten.
     """
     svc = LabHostService(db)
-    # Het adres waarop wij hem zien is betrouwbaarder dan wat hij zelf zegt;
-    # achter NAT klopt zijn eigen idee van zijn IP vaak niet.
-    gezien_vanaf = request.client.host if request.client else ""
     poort = int(body.get("agent_poort") or 8098)
+
+    # WELK ADRES heeft deze machine?
+    #
+    # Hier stond eerst "het adres waarop wij hem zien is betrouwbaarder dan
+    # wat hij zelf zegt". Dat klopt niet zodra er een reverse proxy tussen
+    # zit: dan zien we de PROXY. Op de server stelde LabX daardoor
+    # `ssh://nick@172.29.0.4` voor -- het IP van de nginx-container -- en
+    # inloggen daarop geeft "connection refused" op een adres dat nergens
+    # thuishoort.
+    #
+    # De agent weet het wel: hij opent een socket richting LabX en leest af
+    # welk bronadres het besturingssysteem koos. Dat is per definitie het
+    # adres waarover het verkeer loopt. Daarom wint zijn opgave, en zijn de
+    # twee andere bronnen terugval:
+    #   1. wat de agent zelf meet,
+    #   2. X-Forwarded-For / X-Real-IP van onze eigen proxy,
+    #   3. het adres van de verbinding.
+    kop = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    gezien_vanaf = (str(body.get("agent_ip") or "").strip()
+                    or kop
+                    or (request.headers.get("x-real-ip") or "").strip()
+                    or (request.client.host if request.client else ""))
     agent_url = str(body.get("agent_url") or "").strip() or (
         f"http://{gezien_vanaf}:{poort}" if gezien_vanaf else "")
     return svc.aanmelden(
