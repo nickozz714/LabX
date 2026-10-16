@@ -304,6 +304,18 @@ class WakkerHouder:
     de GUI-schil te zitten met `SetThreadExecutionState`, en een los
     Python-proces is daar het verkeerde gereedschap voor. Liever eerlijk
     melden dat het niet kan dan doen alsof.
+
+    HET SLOT HANGT AAN ONZE EIGEN PID, en dat is de hele truc. Eerder liep
+    `caffeinate` als los kind: ging de agent netjes uit, dan ruimden we hem
+    op, maar werd de agent HARD afgebroken (`pkill`, `launchctl bootout`, een
+    crash) dan bleef dat kind draaien -- en hield de machine wakker tot
+    iemand het toevallig zag. Op de eerste lab-host stond er zo eentje
+    negentien uur lang een slapende iMac wakker te houden, zonder dat er nog
+    één lab draaide.
+
+    Daarom `caffeinate -w <onze pid>`: caffeinate wacht op ons en stopt
+    vanzelf zodra wij weg zijn, hoe we ook weggaan. Op Linux hetzelfde idee
+    met een lus die kijkt of wij er nog zijn.
     """
 
     def __init__(self) -> None:
@@ -324,13 +336,19 @@ class WakkerHouder:
     def aan(self) -> None:
         if self.actief or not self.ondersteund:
             return
+        mijn_pid = os.getpid()
         if sys.platform == "darwin":
             # -i: geen idle-sleep. -m: schijf niet laten slapen. Niet -d: het
             # scherm mag gewoon uit, dat scheelt stroom en doet er niet toe.
-            cmd = ["caffeinate", "-i", "-m"]
+            # -w: stop zodra WIJ weg zijn -- zie de uitleg bij deze klasse.
+            cmd = ["caffeinate", "-i", "-m", "-w", str(mijn_pid)]
         else:
+            # systemd-inhibit houdt het slot zolang zijn commando draait; dat
+            # commando kijkt dus of wij er nog zijn in plaats van eeuwig te
+            # slapen.
             cmd = ["systemd-inhibit", "--what=idle:sleep",
-                   "--why=LabX draait hier labs", "--mode=block", "sleep", "infinity"]
+                   "--why=LabX draait hier labs", "--mode=block",
+                   "sh", "-c", f"while kill -0 {mijn_pid} 2>/dev/null; do sleep 5; done"]
         try:
             self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                           stderr=subprocess.DEVNULL)

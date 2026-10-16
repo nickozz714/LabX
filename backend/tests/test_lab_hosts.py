@@ -760,3 +760,61 @@ def test_een_lab_dat_ooit_op_error_stond_wordt_opnieuw_bekeken(db, monkeypatch):
     db.refresh(p)
     assert p.status == "running"
     assert not p.error, "een foutmelding van vorige week is ruis, geen informatie"
+
+
+# ── wakker houden ────────────────────────────────────────────────────────────
+
+
+def _wakker_commando(monkeypatch, platform_naam):
+    """Het commando dat de agent zou starten, zonder het echt te starten."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lab-host"))
+    import labx_lab_host
+
+    gestart = {}
+
+    class NepProc:
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(labx_lab_host.sys, "platform", platform_naam)
+    monkeypatch.setattr(labx_lab_host.shutil, "which", lambda naam: "/usr/bin/" + naam)
+    monkeypatch.setattr(subprocess, "Popen",
+                        lambda cmd, **kw: (gestart.update(cmd=cmd), NepProc())[1])
+
+    w = labx_lab_host.WakkerHouder()
+    assert w.ondersteund
+    w.aan()
+    return gestart["cmd"]
+
+
+def test_het_wakker_houden_hangt_aan_de_pid_van_de_agent_macos(monkeypatch):
+    """Dit hield een iMac negentien uur wakker zonder dat er een lab draaide.
+
+    `caffeinate` liep als los kind. Ging de agent netjes uit, dan ruimden we
+    hem op -- maar bij een harde afbreking (`pkill`, `launchctl bootout`, een
+    crash) bleef dat kind draaien en hield de machine wakker tot iemand het
+    toevallig zag.
+
+    Het slot hoort dus aan ONS te hangen: caffeinate wacht op onze pid en
+    stopt vanzelf, hoe we ook weggaan.
+    """
+    import os
+
+    cmd = _wakker_commando(monkeypatch, "darwin")
+    assert "-w" in cmd, "zonder -w overleeft caffeinate de agent"
+    assert str(os.getpid()) in cmd
+
+
+def test_het_wakker_houden_hangt_aan_de_pid_van_de_agent_linux(monkeypatch):
+    """Zelfde val: `systemd-inhibit ... sleep infinity` blijft hangen als de
+    agent eronder wegvalt. Het commando kijkt nu of wij er nog zijn."""
+    import os
+
+    cmd = _wakker_commando(monkeypatch, "linux")
+    samen = " ".join(cmd)
+    assert str(os.getpid()) in samen
+    assert "sleep infinity" not in samen, "dat slot wacht op niemand"
