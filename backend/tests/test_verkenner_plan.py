@@ -433,3 +433,99 @@ def test_op_een_andere_machine_blijft_het_adres_weg(db):
     omgeving = ClusterService._adres_omgeving(c, {8000: 18004})
     assert "LABX_LAB_URL" not in omgeving
     assert omgeving["LABX_POORT"] == "8000"
+
+
+# ── antwoorden op de vragen van het model ────────────────────────────────────
+
+def test_een_antwoord_levert_een_nieuw_plan_naast_het_oude(db):
+    """Een vraag die je niet kunt beantwoorden is erger dan geen vraag.
+
+    En een antwoord dat alleen opgeslagen wordt, is een antwoord dat nergens
+    heen gaat: de vragen gaan juist over dingen die het startscript
+    veranderen. Dus leidt antwoorden tot opnieuw verkennen — met het oude
+    plan ernaast, want het verschil is het interessante deel.
+    """
+    svc, rij = _plan(db)
+    nieuw = asyncio.run(svc.beantwoord(rij.id, antwoorden={"Welk ASGI-object?": "server:app"}))
+
+    assert nieuw.id != rij.id
+    assert nieuw.vorig_plan_id == rij.id
+    assert nieuw.antwoorden == {"Welk ASGI-object?": "server:app"}
+    assert svc.plan_of_404(rij.id).status == "voorstel", "het oude plan blijft staan"
+
+
+def test_eerdere_antwoorden_gaan_mee(db):
+    """Anders typ je bij elke ronde alles opnieuw."""
+    svc, rij = _plan(db)
+    tweede = asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "een"}))
+    derde = asyncio.run(svc.beantwoord(tweede.id, antwoorden={"B": "twee"}))
+    assert derde.antwoorden == {"A": "een", "B": "twee"}
+
+
+def test_een_later_antwoord_overschrijft_een_eerder(db):
+    svc, rij = _plan(db)
+    tweede = asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "een"}))
+    derde = asyncio.run(svc.beantwoord(tweede.id, antwoorden={"A": "toch anders"}))
+    assert derde.antwoorden == {"A": "toch anders"}
+
+
+def test_antwoorden_komen_bij_het_model_terecht(db):
+    """Zonder dit is de hele ronde een dure manier om niets te veranderen."""
+    from services.lab import verkenner
+
+    gezien = {}
+
+    class Vangende(verkenner.Verkenner):
+        async def verken(self, **kw):
+            gezien.update(kw)
+            return dict(UITSLAG)
+
+    svc = _svc(db)
+    verkenner.Verkenner = Vangende
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    asyncio.run(svc.beantwoord(rij.id, antwoorden={"Welk ASGI-object?": "server:app"}))
+    assert gezien.get("antwoorden") == {"Welk ASGI-object?": "server:app"}
+
+
+def test_een_leeg_antwoord_doet_niets(db):
+    """Opnieuw verkennen kost een modelaanroep; dat doe je niet voor niets."""
+    from fastapi import HTTPException
+
+    svc, rij = _plan(db)
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "   "}))
+    assert fout.value.status_code == 400
+
+
+def test_een_plan_onthoudt_met_welk_geheim_het_gekloond_is(db):
+    """Een plan kan ZONDER cluster bestaan -- dat is zelfs de normale
+    volgorde. Dan is er bij een antwoordronde niets om op terug te vallen, en
+    strandde opnieuw verkennen op een privérepo zonder token."""
+    svc = _svc(db)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"], token_geheim="sp-pat"))
+    assert rij.cluster_id is None
+    assert rij.token_geheim == "sp-pat", "de NAAM, nooit de waarde"
+
+    from services.lab import verkenner
+
+    gezien = {}
+
+    class Vangende(verkenner.Verkenner):
+        async def verken(self, **kw):
+            gezien.update(kw)
+            return dict(UITSLAG)
+
+    verkenner.Verkenner = Vangende
+    asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "een"}))
+    assert gezien.get("token_geheim") == "sp-pat"
+
+
+def test_zonder_token_noemt_de_foutmelding_de_waarschijnlijke_oorzaak():
+    """"docker run faalde (128)" is waar en nutteloos. Git zegt bij een
+    privérepo zonder token dat hij "not found" is -- want zonder token BESTAAT
+    hij niet voor je, en dat is precies de uitleg die je dan nodig hebt."""
+    from services.lab.verkenner import _lijkt_prive
+
+    assert _lijkt_prive("remote: Repository not found.")
+    assert _lijkt_prive("fatal: Authentication failed for 'https://github.com/...'")
+    assert not _lijkt_prive("fatal: could not create work tree dir: disk full")

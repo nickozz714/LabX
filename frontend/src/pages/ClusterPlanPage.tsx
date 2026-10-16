@@ -24,10 +24,10 @@
  *   opschreef.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle, ArrowRight, Box, Check, FileText, HelpCircle, KeyRound,
-  Layers, Loader2, Network, Package, Settings2, Sparkles, Terminal,
+  Layers, Loader2, Network, Package, Search, Settings2, Sparkles, Terminal,
 } from "lucide-react";
 import { clusterApi, SOORT_UITLEG } from "@/lib/clusters";
 import type { ClusterPlan, Vondst, VondstKeuze } from "@/lib/clusters";
@@ -35,7 +35,7 @@ import { labHostsApi } from "@/lib/labs";
 import { secretApi } from "@/lib/secrets";
 import type { SecretDto } from "@/lib/secrets";
 import type { LabHost } from "@/lib/types";
-import { Badge, Button, Card, Input, Label, Select } from "@/components/ui";
+import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { ApiError } from "@/lib/api";
 
@@ -181,6 +181,8 @@ export function ClusterPlanPage() {
   const [tokenGeheim, setTokenGeheim] = useState<string>("");
   const [envProfiel, setEnvProfiel] = useState<string>("");
   const [hosts, setHosts] = useState<LabHost[]>([]);
+  const [antwoorden, setAntwoorden] = useState<Record<string, string>>({});
+  const [beantwoordt, setBeantwoordt] = useState(false);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
   const laad = useCallback(async () => {
@@ -237,6 +239,22 @@ export function ClusterPlanPage() {
       if (nieuw.has(k)) nieuw.delete(k); else nieuw.add(k);
       return nieuw;
     });
+  }
+
+  /** Antwoorden en opnieuw laten verkennen. Dit plan blijft staan; je komt
+   *  op het nieuwe uit, zodat je kunt zien wat je antwoord veranderde. */
+  async function beantwoord() {
+    if (!plan) return;
+    setBeantwoordt(true);
+    try {
+      const nieuw = await clusterApi.beantwoorden(plan.id, antwoorden);
+      setAntwoorden({});
+      navigate(`/clusters/plannen/${nieuw.id}`);
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Opnieuw verkennen mislukte");
+    } finally {
+      setBeantwoordt(false);
+    }
   }
 
   async function goedkeuren() {
@@ -298,6 +316,14 @@ export function ClusterPlanPage() {
           {plan.commit && <> · <span className="font-mono">{plan.commit.slice(0, 8)}</span></>}
           {plan.bestanden_gelezen != null && <> · {plan.bestanden_gelezen} bestanden gelezen</>}
         </p>
+        {plan.vorig_plan_id && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Gemaakt na jouw antwoorden op{" "}
+            <Link to={`/clusters/plannen/${plan.vorig_plan_id}`} className="underline">
+              het vorige plan
+            </Link>.
+          </p>
+        )}
       </div>
 
       {plan.url_omgezet && plan.url_melding && (
@@ -418,23 +444,61 @@ export function ClusterPlanPage() {
       {/* ── wat het model niet wist ─────────────────────────────────────── */}
       {!!plan.vragen.length && (
         <Card className="p-4">
-          <div className="mb-2 flex items-start gap-2">
+          <div className="mb-3 flex items-start gap-2">
             <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             <div>
               <h2 className="text-sm font-semibold">Niet uit de repo op te maken</h2>
               <p className="text-xs text-muted-foreground">
-                Liever een vraag dan een gok. Dit zijn de dingen die je zelf moet beslissen.
+                Liever een vraag dan een gok. Antwoord je, dan wordt er opnieuw verkend
+                met jouw antwoord erbij — het startscript verandert mee.
               </p>
             </div>
           </div>
-          <ul className="space-y-2 text-sm">
+          <ul className="space-y-3">
             {plan.vragen.map((v, i) => (
-              <li key={i} className="flex gap-2">
-                <span className="text-muted-foreground">·</span>
-                <span className="leading-relaxed">{v}</span>
+              <li key={i}>
+                <p className="text-sm leading-relaxed">{v}</p>
+                <TextArea
+                  className="mt-1"
+                  rows={2}
+                  value={antwoorden[v] || ""}
+                  disabled={beantwoordt}
+                  placeholder="Je antwoord — laat leeg om deze over te slaan"
+                  onChange={(e) => setAntwoorden((o) => ({ ...o, [v]: e.target.value }))}
+                />
               </li>
             ))}
           </ul>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={beantwoord}
+              disabled={beantwoordt || !Object.values(antwoorden).some((a) => a.trim())}
+            >
+              {beantwoordt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {beantwoordt ? "Opnieuw aan het lezen…" : "Opnieuw verkennen met deze antwoorden"}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Kost een nieuwe verkenning van ongeveer een minuut. Dit plan blijft staan.
+            </span>
+          </div>
+        </Card>
+      )}
+
+      {Object.keys(plan.antwoorden).length > 0 && (
+        <Card className="p-4">
+          <h2 className="mb-2 text-sm font-semibold">Jouw antwoorden</h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Hiermee is dit plan gemaakt. Ze gaan mee naar elke volgende ronde.
+          </p>
+          <dl className="space-y-2 text-sm">
+            {Object.entries(plan.antwoorden).map(([vraag, antwoord]) => (
+              <div key={vraag}>
+                <dt className="text-xs text-muted-foreground">{vraag}</dt>
+                <dd className="leading-relaxed">{antwoord}</dd>
+              </div>
+            ))}
+          </dl>
         </Card>
       )}
 

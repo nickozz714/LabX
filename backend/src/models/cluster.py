@@ -158,6 +158,18 @@ class ClusterPlan(Base):
     #: verschil tussen "voorgesteld" en "overgenomen" is precies wat je later
     #: wilt kunnen teruglezen.
     keuzes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: De naam van het geheim waarmee gekloond is -- nooit de waarde. Staat
+    #: hier omdat een plan ook ZONDER cluster kan bestaan (dat is zelfs de
+    #: normale volgorde), en dan is er later niets meer om op terug te vallen:
+    #: opnieuw verkennen strandde dan op een privérepo zonder token.
+    token_geheim: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: Wat JIJ geantwoord hebt op de vragen van de vorige verkenning:
+    #: {vraag: antwoord}. Ze gaan mee naar het model en worden doorgegeven aan
+    #: elk volgend plan, zodat je niet twee keer hetzelfde hoeft te typen.
+    antwoorden: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Het plan waar dit uit voortkwam. Een antwoord VERVANGT een plan niet --
+    #: het levert er een naast op, zodat je ziet wat je antwoord veranderde.
+    vorig_plan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     model_gebruikt: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
     fout: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -735,7 +735,9 @@ class ClusterService:
     async def verken(self, *, repo_url: str, branch: str = "main",
                      token_geheim: Optional[str] = None,
                      host_id: Optional[int] = None,
-                     cluster_id: Optional[int] = None) -> ClusterPlan:
+                     cluster_id: Optional[int] = None,
+                     antwoorden: Optional[Dict[str, str]] = None,
+                     vorig_plan_id: Optional[int] = None) -> ClusterPlan:
         """Een repo verkennen en het voorstel bewaren.
 
         Het plan wordt BEWAARD en niet meteen toegepast. Dat is de prijs van
@@ -753,7 +755,8 @@ class ClusterService:
 
         uitslag = await Verkenner(self.db).verken(
             repo_url=repo_url, branch=branch,
-            token_geheim=token_geheim, host_id=host_id)
+            token_geheim=token_geheim, host_id=host_id,
+            antwoorden=antwoorden)
 
         rij = ClusterPlan(
             cluster_id=cluster_id,
@@ -763,6 +766,9 @@ class ClusterService:
             status="voorstel",
             plan=uitslag,
             keuzes={},
+            token_geheim=token_geheim,
+            antwoorden=dict(antwoorden or {}),
+            vorig_plan_id=vorig_plan_id,
             model_gebruikt=1 if (uitslag.get("model") or {}).get("gebruikt") else 0,
             fout=(uitslag.get("model") or {}).get("fout"),
             created_at=_nu(), updated_at=_nu())
@@ -773,6 +779,40 @@ class ClusterService:
                   commit=(rij.commit or "")[:8], vondsten=len(uitslag.get("vondsten") or []),
                   model=bool(rij.model_gebruikt))
         return rij
+
+    async def beantwoord(self, plan_id: int, *,
+                         antwoorden: Dict[str, str]) -> ClusterPlan:
+        """Antwoorden geven en opnieuw verkennen.
+
+        Een antwoord VERVANGT dit plan niet; het levert er een naast op. Dat
+        is niet uit voorzichtigheid maar omdat het verschil het interessante
+        deel is: je wilt zien wat jouw antwoord aan het startscript veranderde.
+
+        Opnieuw verkennen kost een modelaanroep. Dat is de prijs van een
+        antwoord dat ook echt dóórwerkt -- de vragen gaan nu juist over dingen
+        die het script veranderen, dus ze alleen opslaan zou een antwoord zijn
+        dat nergens heen gaat.
+
+        Eerdere antwoorden gaan mee, zodat je niet twee keer hetzelfde typt.
+        """
+        oud = self.plan_of_404(plan_id)
+        schoon = {str(v).strip(): str(a).strip()
+                  for v, a in (antwoorden or {}).items() if str(a).strip()}
+        if not schoon:
+            raise HTTPException(
+                status_code=400,
+                detail="Geef minstens één antwoord; anders verandert er niets aan het plan.")
+
+        samen = {**(oud.antwoorden or {}), **schoon}
+        # Het token van het PLAN eerst: een plan kan zonder cluster bestaan,
+        # en dan is er verder niets om op terug te vallen.
+        token = oud.token_geheim
+        if not token and oud.cluster_id:
+            token = self.get_or_404(oud.cluster_id).repo_token_geheim
+        return await self.verken(
+            repo_url=oud.repo_url, branch=oud.branch,
+            cluster_id=oud.cluster_id, token_geheim=token,
+            antwoorden=samen, vorig_plan_id=oud.id)
 
     def plan_of_404(self, plan_id: int) -> ClusterPlan:
         rij = self.db.get(ClusterPlan, plan_id)
@@ -963,6 +1003,9 @@ class ClusterService:
             "samenvatting": plan.get("samenvatting"),
             "startscript": plan.get("startscript"),
             "vragen": plan.get("vragen") or [],
+            "token_geheim": rij.token_geheim,
+            "antwoorden": rij.antwoorden or {},
+            "vorig_plan_id": rij.vorig_plan_id,
             "vondsten": plan.get("vondsten") or [],
             "url_omgezet": plan.get("url_omgezet"),
             "url_melding": plan.get("url_melding"),

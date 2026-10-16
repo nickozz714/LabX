@@ -84,8 +84,13 @@ export type ClusterPlan = {
   fout: string | null;
   samenvatting: string | null;
   startscript: string | null;
-  /** Wat het model niet uit de repo kon opmaken. Beter een vraag dan een gok. */
+  /** Wat het model niet uit de repo kon opmaken. Beter een vraag dan een gok —
+   *  en je kunt erop antwoorden, wat een nieuw plan oplevert. */
   vragen: string[];
+  /** Wat jij op eerdere vragen geantwoord hebt: {vraag: antwoord}. */
+  antwoorden: Record<string, string>;
+  /** Het plan waar dit uit voortkwam, als het een antwoordronde was. */
+  vorig_plan_id: number | null;
   vondsten: Vondst[];
   /** Was de repo-URL een SSH-adres? Dan is hij omgezet, en dat hoor je te zien. */
   url_omgezet: boolean | null;
@@ -177,6 +182,11 @@ export const clusterApi = {
     cluster_id?: number | null;
   }) => api.post<ClusterPlan>("/clusters/verkennen", body),
   plan: (planId: number) => api.get<ClusterPlan>(`/clusters/plannen/${planId}`),
+  /** Antwoorden en opnieuw verkennen. Levert een NIEUW plan op naast het
+   *  oude: de vragen gaan over dingen die het startscript veranderen, dus een
+   *  antwoord dat alleen opgeslagen wordt gaat nergens heen. */
+  beantwoorden: (planId: number, antwoorden: Record<string, string>) =>
+    api.post<ClusterPlan>(`/clusters/plannen/${planId}/beantwoorden`, { antwoorden }),
   plannen: (clusterId: number) => api.get<ClusterPlan[]>(`/clusters/${clusterId}/plannen`),
   /** `gekozen` weglaten betekent: neem over wat gestaafd is. */
   goedkeuren: (planId: number, body: {

@@ -31,6 +31,14 @@ _ADDITIVE_COLUMNS = {
         # hebben dit niet en vallen terug op de oude standaard.
         ("lab_poorten", "TEXT"),
     ],
+    "cluster_plannen": [
+        # Antwoorden op de vragen van de verkenner, en het plan waar dit uit
+        # voortkwam. Erbij gekomen nadat bleek dat een plan wel vragen stelde
+        # maar niemand ze kon beantwoorden.
+        ("antwoorden", "TEXT"),
+        ("token_geheim", "VARCHAR(120)"),
+        ("vorig_plan_id", "INTEGER"),
+    ],
     "cluster_diensten": [
         # Waar een dienst van buiten te bereiken is: {containerpoort:
         # machinepoort}. Erbij gekomen nadat bleek dat de containerpoort zelf

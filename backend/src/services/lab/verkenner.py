@@ -74,7 +74,8 @@ class Verkenner:
 
     async def verken(self, *, repo_url: str, branch: str = "main",
                      token_geheim: Optional[str] = None,
-                     host_id: Optional[int] = None) -> Dict[str, Any]:
+                     host_id: Optional[int] = None,
+                     antwoorden: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Een repo verkennen en een plan teruggeven.
 
         Laat niets achter: het volume waarin gekloond is gaat weg, ook als er
@@ -103,7 +104,7 @@ class Verkenner:
             modeluitslag = await self._vraag_model(
                 runtime, volume, image, map_=kop["map"],
                 beeld=beeld_ruw, inhoud=inhoud, vondsten=vondsten,
-                repo_url=repo_url, branch=branch)
+                repo_url=repo_url, branch=branch, antwoorden=antwoorden)
             inhoud.update(modeluitslag.pop("_nagelezen", {}))
             vondsten = self._voeg_samen(vondsten, modeluitslag, inhoud)
 
@@ -174,8 +175,12 @@ class Verkenner:
             'if [ -n "$GIT_AUTH" ]; then '
             '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
             'fi; '
-            'git clone --depth 1 --branch "$TAK" "$REPO_URL" "$DEST" >/dev/null 2>&1 '
-            '  || git clone --depth 1 "$REPO_URL" "$DEST" >/dev/null 2>&1; '
+            # --quiet in plaats van stderr dichtgooien: dat haalt de
+            # voortgangsbalk weg maar laat de FOUT staan. Met 2>/dev/null
+            # bleef er van een mislukte kloon niets over dan "docker run
+            # faalde (128)", en daar kan niemand iets mee.
+            'git clone --quiet --depth 1 --branch "$TAK" "$REPO_URL" "$DEST" '
+            '  || git clone --quiet --depth 1 "$REPO_URL" "$DEST"; '
             'cd "$DEST"; '
             'echo "COMMIT=$(git rev-parse HEAD)"; '
             'echo "BRANCH=$(git rev-parse --abbrev-ref HEAD)"'
@@ -185,9 +190,15 @@ class Verkenner:
                 image=image, volume=volume, cmd=["sh", "-c", script],
                 env=env, timeout=KLOON_TIJD)
         except Exception as exc:  # noqa: BLE001
+            from services.lab.clusters import _laatste_zinnige_regel
+
+            reden = _laatste_zinnige_regel(str(exc))
+            if not token and _lijkt_prive(reden):
+                reden += (" — er is geen toegangstoken meegegeven; een privérepo "
+                          "kloont dan niet. Zet er een in de kluis en kies hem erbij.")
             raise HTTPException(
                 status_code=502,
-                detail=f"Verkennen mislukte bij het klonen: {str(exc)[:400]}") from exc
+                detail=f"Verkennen mislukte bij het klonen: {reden[:500]}") from exc
 
         velden = dict(
             regel.split("=", 1) for regel in uit.splitlines() if "=" in regel
@@ -248,7 +259,8 @@ class Verkenner:
     async def _vraag_model(self, runtime, volume: str, image: str, *, map_: str,
                            beeld: Dict[str, Any], inhoud: det.RepoBeeld,
                            vondsten: List[det.Vondst], repo_url: str,
-                           branch: str) -> Dict[str, Any]:
+                           branch: str,
+                           antwoorden: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Het model leest de repo en stelt het cluster voor.
 
         Valt dit om — geen sleutel, geen netwerk, een tijdslimiet — dan is dat
@@ -257,7 +269,7 @@ class Verkenner:
         niet meegekeken heeft.
         """
         prompt = _prompt(repo_url=repo_url, branch=branch, beeld=beeld,
-                         inhoud=inhoud, vondsten=vondsten)
+                         inhoud=inhoud, vondsten=vondsten, antwoorden=antwoorden)
         try:
             ruw = await self._claude(prompt)
         except Exception as exc:  # noqa: BLE001
@@ -413,6 +425,18 @@ def _slug(ruw: Any, *, max_lengte: int = 40) -> str:
     kort = schoon[:max_lengte]
     grens = kort.rfind("-")
     return (kort[:grens] if grens > max_lengte // 3 else kort).strip("-")
+
+
+#: Hoe git zegt dat hij er niet bij mag. Hij zegt het nooit met zoveel
+#: woorden -- "not found" is wat je krijgt als het token ontbreekt, want
+#: zonder token BESTAAT een privérepo niet voor je.
+_PRIVE = ("authentication", "not found", "could not read", "permission denied",
+          "repository not found", "terminal prompts disabled")
+
+
+def _lijkt_prive(reden: str) -> bool:
+    laag = reden.lower()
+    return any(t in laag for t in _PRIVE)
 
 
 def _repomap(repo_url: str) -> str:
@@ -603,13 +627,17 @@ voorgrond, zodat de container blijft leven, en op 0.0.0.0 -- een lab dat
 alleen op localhost luistert is van buiten onbereikbaar terwijl het er wel
 uitziet alsof het draait.
 
-Weet je iets niet, zet het dan in "vragen" in plaats van te gokken.
+Weet je iets niet, zet het dan in "vragen" in plaats van te gokken. Stel een
+vraag alleen als het ANTWOORD het plan of het startscript verandert -- de
+gebruiker kan erop antwoorden, en dan verken je opnieuw met zijn antwoord
+erbij. Een vraag die nergens toe leidt kost hem alleen tijd.
 Wil je een bestand zien dat wel in de boom staat maar niet in de inhoud, zet
 het pad dan in "lees_ook"."""
 
 
 def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
-            inhoud: det.RepoBeeld, vondsten: List[det.Vondst]) -> str:
+            inhoud: det.RepoBeeld, vondsten: List[det.Vondst],
+            antwoorden: Optional[Dict[str, str]] = None) -> str:
     """Het beeld als tekst, met wat de detectoren al gevonden hebben erbij.
 
     De detectorvondsten gaan MEE naar het model, als vertrekpunt en niet als
@@ -617,6 +645,13 @@ def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
     geeft hem meteen de vorm waarin hij zelf moet antwoorden.
     """
     delen = [SYSTEEM, "", f"Repository: {repo_url}", f"Branch: {branch}", ""]
+
+    if antwoorden:
+        delen += ["AL BEANTWOORD DOOR DE GEBRUIKER — stel deze vragen NIET opnieuw,",
+                  "en verwerk de antwoorden in het plan en het startscript:"]
+        for vraag, antwoord in list(antwoorden.items())[:12]:
+            delen += [f"- VRAAG: {str(vraag)[:500]}", f"  ANTWOORD: {str(antwoord)[:1500]}"]
+        delen.append("")
 
     boom = beeld.get("boom") or []
     delen += [f"BESTANDEN ({len(boom)}{'+' if beeld.get('boom_afgekapt') else ''}):",

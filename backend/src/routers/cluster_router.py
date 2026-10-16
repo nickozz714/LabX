@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from authentication import require_user
@@ -141,6 +141,20 @@ async def verkennen(body: Dict[str, Any], db: Session = Depends(get_db)):
         host_id=(int(body["host_id"]) if body.get("host_id") else None),
         cluster_id=(int(body["cluster_id"]) if body.get("cluster_id") else None))
     return svc.plan_dict(rij)
+
+
+@router.post("/plannen/{plan_id}/beantwoorden")
+async def beantwoorden(plan_id: int, body: Dict[str, Any], db: Session = Depends(get_db)):
+    """Antwoorden op de vragen van een plan, en opnieuw verkennen.
+
+    Levert een NIEUW plan op naast het oude. De vragen gaan over dingen die
+    het startscript veranderen, dus een antwoord dat alleen opgeslagen wordt
+    is een antwoord dat nergens heen gaat.
+    """
+    antwoorden = body.get("antwoorden")
+    if not isinstance(antwoorden, dict):
+        raise HTTPException(status_code=400, detail="Verwacht een object met antwoorden.")
+    return _svc(db).plan_dict(await _svc(db).beantwoord(plan_id, antwoorden=antwoorden))
 
 
 @router.get("/plannen/{plan_id}")
