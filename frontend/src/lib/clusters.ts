@@ -67,6 +67,13 @@ export type Vondst = {
   bron: string;
   bevestigd: boolean;
   toelichting: string;
+  /** Wat JIJ hierover zei bij een eerdere ronde. */
+  opmerking: string;
+  /** Door jou uitgevinkt bij een eerdere ronde. De vondst blijft bestaan —
+   *  het bewijs is nog net zo waar — maar hij staat niet meer vooraf aan.
+   *  Dat is het verschil tussen "ik heb het niet gevonden" en "jij wilde het
+   *  niet", en die twee horen niet hetzelfde te zien. */
+  door_gebruiker_uit: boolean;
 };
 
 export type VondstKeuze = { soort: string; sleutel: string };
@@ -89,6 +96,10 @@ export type ClusterPlan = {
   vragen: string[];
   /** Wat jij op eerdere vragen geantwoord hebt: {vraag: antwoord}. */
   antwoorden: Record<string, string>;
+  /** Wat je van afzonderlijke onderdelen vond: {"dienst::mailpit": "..."}. */
+  opmerkingen: Record<string, string>;
+  /** Wat je van het plan als geheel vond. */
+  opmerking: string | null;
   /** Het plan waar dit uit voortkwam, als het een antwoordronde was. */
   vorig_plan_id: number | null;
   vondsten: Vondst[];
@@ -182,11 +193,18 @@ export const clusterApi = {
     cluster_id?: number | null;
   }) => api.post<ClusterPlan>("/clusters/verkennen", body),
   plan: (planId: number) => api.get<ClusterPlan>(`/clusters/plannen/${planId}`),
-  /** Antwoorden en opnieuw verkennen. Levert een NIEUW plan op naast het
-   *  oude: de vragen gaan over dingen die het startscript veranderen, dus een
-   *  antwoord dat alleen opgeslagen wordt gaat nergens heen. */
-  beantwoorden: (planId: number, antwoorden: Record<string, string>) =>
-    api.post<ClusterPlan>(`/clusters/plannen/${planId}/beantwoorden`, { antwoorden }),
+  /** Terugkoppeling geven en opnieuw verkennen. Levert een NIEUW plan op
+   *  naast het oude, zodat je ziet wat je opmerking veranderde.
+   *
+   *  Alle vier optioneel, maar er moet er minstens één zijn: antwoorden op de
+   *  vragen, een opmerking per onderdeel, iets over het plan als geheel, en
+   *  wat je aangevinkt had — want een vinkje uitzetten is ook terugkoppeling. */
+  opnieuw: (planId: number, body: {
+    antwoorden?: Record<string, string>;
+    opmerkingen?: Record<string, string>;
+    opmerking?: string;
+    keuze?: VondstKeuze[];
+  }) => api.post<ClusterPlan>(`/clusters/plannen/${planId}/opnieuw`, body),
   plannen: (clusterId: number) => api.get<ClusterPlan[]>(`/clusters/${clusterId}/plannen`),
   /** `gekozen` weglaten betekent: neem over wat gestaafd is. */
   goedkeuren: (planId: number, body: {

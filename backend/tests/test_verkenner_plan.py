@@ -446,7 +446,7 @@ def test_een_antwoord_levert_een_nieuw_plan_naast_het_oude(db):
     plan ernaast, want het verschil is het interessante deel.
     """
     svc, rij = _plan(db)
-    nieuw = asyncio.run(svc.beantwoord(rij.id, antwoorden={"Welk ASGI-object?": "server:app"}))
+    nieuw = asyncio.run(svc.opnieuw(rij.id, antwoorden={"Welk ASGI-object?": "server:app"}))
 
     assert nieuw.id != rij.id
     assert nieuw.vorig_plan_id == rij.id
@@ -457,15 +457,15 @@ def test_een_antwoord_levert_een_nieuw_plan_naast_het_oude(db):
 def test_eerdere_antwoorden_gaan_mee(db):
     """Anders typ je bij elke ronde alles opnieuw."""
     svc, rij = _plan(db)
-    tweede = asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "een"}))
-    derde = asyncio.run(svc.beantwoord(tweede.id, antwoorden={"B": "twee"}))
+    tweede = asyncio.run(svc.opnieuw(rij.id, antwoorden={"A": "een"}))
+    derde = asyncio.run(svc.opnieuw(tweede.id, antwoorden={"B": "twee"}))
     assert derde.antwoorden == {"A": "een", "B": "twee"}
 
 
 def test_een_later_antwoord_overschrijft_een_eerder(db):
     svc, rij = _plan(db)
-    tweede = asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "een"}))
-    derde = asyncio.run(svc.beantwoord(tweede.id, antwoorden={"A": "toch anders"}))
+    tweede = asyncio.run(svc.opnieuw(rij.id, antwoorden={"A": "een"}))
+    derde = asyncio.run(svc.opnieuw(tweede.id, antwoorden={"A": "toch anders"}))
     assert derde.antwoorden == {"A": "toch anders"}
 
 
@@ -483,7 +483,7 @@ def test_antwoorden_komen_bij_het_model_terecht(db):
     svc = _svc(db)
     verkenner.Verkenner = Vangende
     rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
-    asyncio.run(svc.beantwoord(rij.id, antwoorden={"Welk ASGI-object?": "server:app"}))
+    asyncio.run(svc.opnieuw(rij.id, antwoorden={"Welk ASGI-object?": "server:app"}))
     assert gezien.get("antwoorden") == {"Welk ASGI-object?": "server:app"}
 
 
@@ -493,7 +493,7 @@ def test_een_leeg_antwoord_doet_niets(db):
 
     svc, rij = _plan(db)
     with pytest.raises(HTTPException) as fout:
-        asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "   "}))
+        asyncio.run(svc.opnieuw(rij.id, antwoorden={"A": "   "}))
     assert fout.value.status_code == 400
 
 
@@ -516,7 +516,7 @@ def test_een_plan_onthoudt_met_welk_geheim_het_gekloond_is(db):
             return dict(UITSLAG)
 
     verkenner.Verkenner = Vangende
-    asyncio.run(svc.beantwoord(rij.id, antwoorden={"A": "een"}))
+    asyncio.run(svc.opnieuw(rij.id, antwoorden={"A": "een"}))
     assert gezien.get("token_geheim") == "sp-pat"
 
 
@@ -529,3 +529,160 @@ def test_zonder_token_noemt_de_foutmelding_de_waarschijnlijke_oorzaak():
     assert _lijkt_prive("remote: Repository not found.")
     assert _lijkt_prive("fatal: Authentication failed for 'https://github.com/...'")
     assert not _lijkt_prive("fatal: could not create work tree dir: disk full")
+
+
+# ── terugkoppeling hoort niet af te hangen van wat het model vroeg ───────────
+
+def test_een_opmerking_bij_een_onderdeel_is_genoeg(db):
+    """Antwoorden kon al, maar alleen op vragen die het model toevallig
+    stelde. Een plan zonder vragen liet je met niets -- terwijl je er wel
+    iets van kunt vinden."""
+    svc, rij = _plan(db)
+    nieuw = asyncio.run(svc.opnieuw(rij.id, opmerkingen={"dienst::cosmos": "deze hoort er niet bij"}))
+    assert nieuw.vorig_plan_id == rij.id
+    assert nieuw.opmerkingen == {"dienst::cosmos": "deze hoort er niet bij"}
+
+
+def test_een_opmerking_over_het_geheel_is_ook_genoeg(db):
+    svc, rij = _plan(db)
+    nieuw = asyncio.run(svc.opnieuw(rij.id, opmerking="het lab-image klopt niet, dit is een node-project"))
+    assert "node-project" in (nieuw.opmerking or "")
+
+
+def test_zonder_enige_terugkoppeling_gebeurt_er_niets(db):
+    """Opnieuw verkennen kost een modelaanroep en levert zonder iets te zeggen
+    hetzelfde plan op."""
+    from fastapi import HTTPException
+
+    svc, rij = _plan(db)
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.opnieuw(rij.id))
+    assert fout.value.status_code == 400
+
+
+def test_de_terugkoppeling_komt_bij_het_model_terecht(db):
+    """Zonder dit is de hele ronde een dure manier om niets te veranderen."""
+    from services.lab import verkenner
+
+    gezien = {}
+
+    class Vangende(verkenner.Verkenner):
+        async def verken(self, **kw):
+            gezien.update(kw)
+            return dict(UITSLAG)
+
+    svc = _svc(db)
+    verkenner.Verkenner = Vangende
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    asyncio.run(svc.opnieuw(rij.id, opmerking="klopt niet",
+                            opmerkingen={"dienst::cosmos": "weg hiermee"},
+                            keuze=[{"soort": "lab_image", "sleutel": "node"}]))
+    assert gezien["opmerking"] == "klopt niet"
+    assert gezien["opmerkingen"] == {"dienst::cosmos": "weg hiermee"}
+    assert gezien["keuze"] == [{"soort": "lab_image", "sleutel": "node"}]
+
+
+def test_wat_je_uitvinkte_gaat_mee_als_signaal(db):
+    """Een vinkje uitzetten is ook terugkoppeling, en het model hoort dat te
+    weten -- anders stelt het bij elke ronde dezelfde dienst weer voor."""
+    from services.lab import verkenner
+
+    gezien = {}
+
+    class Vangende(verkenner.Verkenner):
+        async def verken(self, **kw):
+            gezien.update(kw)
+            return dict(UITSLAG)
+
+    svc = _svc(db)
+    verkenner.Verkenner = Vangende
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    asyncio.run(svc.opnieuw(rij.id, opmerking="iets"))
+    keuze = {(k["soort"], k["sleutel"]) for k in gezien["keuze"]}
+    assert ("dienst", "cosmos") in keuze
+    assert ("dienst", "rabbitmq") not in keuze, "onbevestigd stond uit, en dat telt mee"
+
+
+# ── jouw oordeel gaat boven dat van een detector ─────────────────────────────
+
+def test_wat_je_uitvinkte_komt_terug_maar_staat_uit(db):
+    """De samenvoegregel laat de detector winnen van het model, en dat klopt:
+    die heeft een vindplaats. Maar het liet ook de GEBRUIKER verliezen --
+    zeg je "mailpit hoort er niet bij", dan vond de detector hem de volgende
+    ronde gewoon weer, want in de repo is niets veranderd.
+
+    De vondst verdwijnt niet: het bewijs is nog net zo waar. Hij staat alleen
+    niet meer vooraf aan.
+    """
+    from services.lab.verkenner import _pas_terugkoppeling_toe
+    from services.lab.verkenner_detectoren import Vondst
+
+    vondsten = [Vondst(soort="dienst", sleutel="mailpit", zekerheid="midden",
+                       bron="detector:omgeving", bevestigd=True)]
+    _pas_terugkoppeling_toe(vondsten, {"dienst::mailpit": "niet nodig in een lab"},
+                            [{"soort": "dienst", "sleutel": "mailpit"}])
+
+    assert vondsten[0].door_gebruiker_uit is True
+    assert vondsten[0].bevestigd is True, "het bewijs blijft waar"
+    assert vondsten[0].opmerking == "niet nodig in een lab"
+
+
+def test_een_uitgezet_onderdeel_staat_niet_vooraf_aan(db):
+    from services.lab.clusters import ClusterService
+
+    plan = {"vondsten": [
+        {"soort": "dienst", "sleutel": "mysql", "bevestigd": True},
+        {"soort": "dienst", "sleutel": "mailpit", "bevestigd": True, "door_gebruiker_uit": True},
+    ]}
+    keuze = {(k["soort"], k["sleutel"]) for k in ClusterService.standaardkeuze(plan)}
+    assert ("dienst", "mysql") in keuze
+    assert ("dienst", "mailpit") not in keuze
+
+
+def test_alleen_wat_je_echt_afwees_telt_als_uitgezet(db):
+    """Een onderdeel dat je aan laat staan is niet afgewezen, en een dat deze
+    ronde nieuw opduikt heb je nooit gezien."""
+    from services.lab import verkenner
+
+    gezien = {}
+
+    class Vangende(verkenner.Verkenner):
+        async def verken(self, **kw):
+            gezien.update(kw)
+            return dict(UITSLAG)
+
+    svc = _svc(db)
+    verkenner.Verkenner = Vangende
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    # cosmos aanlaten, het geheim en het profiel uitzetten
+    asyncio.run(svc.opnieuw(rij.id, opmerking="iets",
+                            keuze=[{"soort": "dienst", "sleutel": "cosmos"},
+                                   {"soort": "lab_image", "sleutel": "node"}]))
+
+    uit = {(k["soort"], k["sleutel"]) for k in gezien["uitgezet"]}
+    assert ("extern", "langfuse") in uit, "die stond aan en je zette hem uit"
+    assert ("dienst", "cosmos") not in uit
+
+
+def test_een_keuze_maken_is_geen_afwijzing(db):
+    """Bij het lab-image kan er maar EEN aan staan. De andere drie "door jou
+    afgewezen" noemen maakt dat label betekenisloos, en dan leest niemand het
+    nog waar het wel toe doet."""
+    from services.lab import verkenner
+
+    gezien = {}
+
+    class Vangende(verkenner.Verkenner):
+        async def verken(self, **kw):
+            gezien.update(kw)
+            return dict(VEEL_IMAGES)
+
+    svc = _svc(db, VEEL_IMAGES)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    verkenner.Verkenner = Vangende
+    asyncio.run(svc.opnieuw(rij.id, opmerking="iets",
+                            keuze=[{"soort": "lab_image", "sleutel": "python"}]))
+
+    soorten = {k["soort"] for k in gezien["uitgezet"]}
+    assert "lab_image" not in soorten
+    assert "applicatie" not in soorten

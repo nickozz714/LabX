@@ -72,6 +72,14 @@ class Vondst:
     #: aanvinken.
     bevestigd: bool = True
     toelichting: str = ""
+    #: Wat JIJ hierover gezegd hebt bij een eerdere ronde. Blijft staan bij
+    #: het onderdeel, zodat je terugziet waarom het er zo bij staat.
+    opmerking: str = ""
+    #: Door jou uitgevinkt bij een eerdere ronde. De vondst blijft bestaan --
+    #: het bewijs is nog net zo waar -- maar hij staat niet meer vooraf aan.
+    #: Dit is het verschil tussen "ik heb het niet gevonden" en "jij wilde het
+    #: niet".
+    door_gebruiker_uit: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -83,6 +91,8 @@ class Vondst:
             "bron": self.bron,
             "bevestigd": self.bevestigd,
             "toelichting": self.toelichting,
+            "opmerking": self.opmerking,
+            "door_gebruiker_uit": self.door_gebruiker_uit,
         }
 
 

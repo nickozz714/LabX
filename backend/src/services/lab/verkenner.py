@@ -75,7 +75,11 @@ class Verkenner:
     async def verken(self, *, repo_url: str, branch: str = "main",
                      token_geheim: Optional[str] = None,
                      host_id: Optional[int] = None,
-                     antwoorden: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                     antwoorden: Optional[Dict[str, str]] = None,
+                     opmerkingen: Optional[Dict[str, str]] = None,
+                     opmerking: Optional[str] = None,
+                     keuze: Optional[List[Dict[str, str]]] = None,
+                     uitgezet: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """Een repo verkennen en een plan teruggeven.
 
         Laat niets achter: het volume waarin gekloond is gaat weg, ook als er
@@ -104,9 +108,22 @@ class Verkenner:
             modeluitslag = await self._vraag_model(
                 runtime, volume, image, map_=kop["map"],
                 beeld=beeld_ruw, inhoud=inhoud, vondsten=vondsten,
-                repo_url=repo_url, branch=branch, antwoorden=antwoorden)
+                repo_url=repo_url, branch=branch, antwoorden=antwoorden,
+                opmerkingen=opmerkingen, opmerking=opmerking, keuze=keuze)
             inhoud.update(modeluitslag.pop("_nagelezen", {}))
             vondsten = self._voeg_samen(vondsten, modeluitslag, inhoud)
+            # JOUW oordeel gaat boven dat van een detector.
+            #
+            # De samenvoegregel laat de detector winnen van het model, en dat
+            # klopt -- die heeft een vindplaats. Maar het liet ook jou
+            # verliezen: zeg je "mailpit hoort er niet bij", dan vond de
+            # detector hem de volgende ronde gewoon weer, want in de repo is
+            # er niets veranderd. Daarom wordt de terugkoppeling NA het
+            # samenvoegen toegepast.
+            #
+            # De vondst verdwijnt niet: het bewijs is nog net zo waar. Hij
+            # staat alleen niet meer vooraf aan, met jouw woorden erbij.
+            _pas_terugkoppeling_toe(vondsten, opmerkingen, uitgezet)
 
             return {
                 "repo_url": repo_url,
@@ -260,7 +277,10 @@ class Verkenner:
                            beeld: Dict[str, Any], inhoud: det.RepoBeeld,
                            vondsten: List[det.Vondst], repo_url: str,
                            branch: str,
-                           antwoorden: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                           antwoorden: Optional[Dict[str, str]] = None,
+                           opmerkingen: Optional[Dict[str, str]] = None,
+                           opmerking: Optional[str] = None,
+                           keuze: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """Het model leest de repo en stelt het cluster voor.
 
         Valt dit om — geen sleutel, geen netwerk, een tijdslimiet — dan is dat
@@ -269,7 +289,8 @@ class Verkenner:
         niet meegekeken heeft.
         """
         prompt = _prompt(repo_url=repo_url, branch=branch, beeld=beeld,
-                         inhoud=inhoud, vondsten=vondsten, antwoorden=antwoorden)
+                         inhoud=inhoud, vondsten=vondsten, antwoorden=antwoorden,
+                         opmerkingen=opmerkingen, opmerking=opmerking, keuze=keuze)
         try:
             ruw = await self._claude(prompt)
         except Exception as exc:  # noqa: BLE001
@@ -404,6 +425,30 @@ def _splits_plaatshouders(omgeving: Dict[str, Any]) -> tuple[Dict[str, str], Dic
         else:
             echt[str(sleutel)] = tekst
     return echt, uit_kluis
+
+
+def _pas_terugkoppeling_toe(vondsten: List[det.Vondst],
+                            opmerkingen: Optional[Dict[str, str]],
+                            uitgezet: Optional[List[Dict[str, str]]]) -> None:
+    """Wat jij van het vorige plan vond, over het nieuwe heen leggen.
+
+    Twee dingen, en ze zijn niet hetzelfde:
+
+    - Een OPMERKING blijft bij het onderdeel staan, zodat je volgende ronde
+      terugziet waarom het er zo bij staat.
+    - Een UITGEVINKT onderdeel komt terug -- het bewijs is nog net zo waar --
+      maar het staat niet meer vooraf aan. Dat is het verschil tussen "ik heb
+      het niet gevonden" en "jij wilde het niet", en die twee horen niet
+      hetzelfde te zien.
+    """
+    opmerkingen = opmerkingen or {}
+    uit = {(k.get("soort"), k.get("sleutel")) for k in (uitgezet or [])}
+    for v in vondsten:
+        tekst = opmerkingen.get(f"{v.soort}::{v.sleutel}")
+        if tekst:
+            v.opmerking = str(tekst)[:600]
+        if (v.soort, v.sleutel) in uit:
+            v.door_gebruiker_uit = True
 
 
 def _slug(ruw: Any, *, max_lengte: int = 40) -> str:
@@ -637,7 +682,10 @@ het pad dan in "lees_ook"."""
 
 def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
             inhoud: det.RepoBeeld, vondsten: List[det.Vondst],
-            antwoorden: Optional[Dict[str, str]] = None) -> str:
+            antwoorden: Optional[Dict[str, str]] = None,
+            opmerkingen: Optional[Dict[str, str]] = None,
+            opmerking: Optional[str] = None,
+            keuze: Optional[List[Dict[str, str]]] = None) -> str:
     """Het beeld als tekst, met wat de detectoren al gevonden hebben erbij.
 
     De detectorvondsten gaan MEE naar het model, als vertrekpunt en niet als
@@ -645,6 +693,20 @@ def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
     geeft hem meteen de vorm waarin hij zelf moet antwoorden.
     """
     delen = [SYSTEEM, "", f"Repository: {repo_url}", f"Branch: {branch}", ""]
+
+    if opmerking or opmerkingen or keuze:
+        delen += ["WAT DE GEBRUIKER VAN HET VORIGE PLAN VOND — dit weegt zwaarder dan",
+                  "wat jij of de detectoren ervan vonden. Neem het over:"]
+        if opmerking:
+            delen.append(f"- OVER HET PLAN: {str(opmerking)[:2000]}")
+        for kern, tekst in list((opmerkingen or {}).items())[:20]:
+            delen.append(f"- OVER {kern}: {str(tekst)[:800]}")
+        if keuze:
+            aan = ", ".join(f"{k.get('soort')}/{k.get('sleutel')}" for k in keuze[:30])
+            delen += [f"- HIJ KOOS: {aan or 'niets'}",
+                      "  Wat hij UITvinkte hoort niet in het nieuwe plan terug, tenzij",
+                      "  zijn opmerking iets anders zegt."]
+        delen.append("")
 
     if antwoorden:
         delen += ["AL BEANTWOORD DOOR DE GEBRUIKER — stel deze vragen NIET opnieuw,",

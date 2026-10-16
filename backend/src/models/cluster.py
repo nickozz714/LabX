@@ -167,6 +167,14 @@ class ClusterPlan(Base):
     #: {vraag: antwoord}. Ze gaan mee naar het model en worden doorgegeven aan
     #: elk volgend plan, zodat je niet twee keer hetzelfde hoeft te typen.
     antwoorden: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Wat je van afzonderlijke ONDERDELEN vond: {"dienst::mailpit": "deze
+    #: hoort er niet bij"}. Antwoorden kon al, maar alleen op vragen die het
+    #: model toevallig stelde -- en een plan zonder vragen liet je dus met
+    #: niets. Terugkoppeling hoort niet af te hangen van wat het model wilde
+    #: weten.
+    opmerkingen: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Wat je van het plan als geheel vond.
+    opmerking: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Het plan waar dit uit voortkwam. Een antwoord VERVANGT een plan niet --
     #: het levert er een naast op, zodat je ziet wat je antwoord veranderde.
     vorig_plan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

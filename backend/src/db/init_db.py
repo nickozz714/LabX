@@ -37,6 +37,11 @@ _ADDITIVE_COLUMNS = {
         # maar niemand ze kon beantwoorden.
         ("antwoorden", "TEXT"),
         ("token_geheim", "VARCHAR(120)"),
+        # Terugkoppeling op het plan en op losse onderdelen. Erbij gekomen
+        # nadat bleek dat antwoorden alleen kon op vragen die het model
+        # toevallig stelde.
+        ("opmerkingen", "TEXT"),
+        ("opmerking", "TEXT"),
         ("vorig_plan_id", "INTEGER"),
     ],
     "cluster_diensten": [

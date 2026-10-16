@@ -27,7 +27,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle, ArrowRight, Box, Check, FileText, HelpCircle, KeyRound,
-  Layers, Loader2, Network, Package, Search, Settings2, Sparkles, Terminal,
+  Layers, Loader2, MessageSquare, Network, Package, Search, Settings2, Sparkles,
+  Terminal,
 } from "lucide-react";
 import { clusterApi, SOORT_UITLEG } from "@/lib/clusters";
 import type { ClusterPlan, Vondst, VondstKeuze } from "@/lib/clusters";
@@ -182,6 +183,8 @@ export function ClusterPlanPage() {
   const [envProfiel, setEnvProfiel] = useState<string>("");
   const [hosts, setHosts] = useState<LabHost[]>([]);
   const [antwoorden, setAntwoorden] = useState<Record<string, string>>({});
+  const [opmerkingen, setOpmerkingen] = useState<Record<string, string>>({});
+  const [opmerking, setOpmerking] = useState("");
   const [beantwoordt, setBeantwoordt] = useState(false);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
@@ -241,14 +244,25 @@ export function ClusterPlanPage() {
     });
   }
 
-  /** Antwoorden en opnieuw laten verkennen. Dit plan blijft staan; je komt
-   *  op het nieuwe uit, zodat je kunt zien wat je antwoord veranderde. */
-  async function beantwoord() {
+  /** Alles wat je van dit plan vindt, in één ronde terug naar de verkenner:
+   *  antwoorden op zijn vragen, opmerkingen bij losse onderdelen, iets over
+   *  het geheel, en wat je aan- en uitgevinkt had. Dit plan blijft staan; je
+   *  komt op het nieuwe uit, zodat je ziet wat je opmerking veranderde. */
+  async function opnieuwVerkennen() {
     if (!plan) return;
     setBeantwoordt(true);
     try {
-      const nieuw = await clusterApi.beantwoorden(plan.id, antwoorden);
+      const nieuw = await clusterApi.opnieuw(plan.id, {
+        antwoorden,
+        opmerkingen,
+        opmerking: opmerking.trim() || undefined,
+        keuze: plan.vondsten
+          .filter((v) => aan.has(sleutelVan(v)))
+          .map((v) => ({ soort: v.soort, sleutel: v.sleutel })),
+      });
       setAntwoorden({});
+      setOpmerkingen({});
+      setOpmerking("");
       navigate(`/clusters/plannen/${nieuw.id}`);
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Opnieuw verkennen mislukte");
@@ -256,6 +270,11 @@ export function ClusterPlanPage() {
       setBeantwoordt(false);
     }
   }
+
+  const ietsGezegd = Boolean(
+    opmerking.trim()
+    || Object.values(opmerkingen).some((o) => o.trim())
+    || Object.values(antwoorden).some((a) => a.trim()));
 
   async function goedkeuren() {
     if (!plan) return;
@@ -389,6 +408,7 @@ export function ClusterPlanPage() {
                           <span className="font-medium">{v.sleutel}</span>
                           <Badge tone={zekerheidsTint(v.zekerheid)}>{v.zekerheid}</Badge>
                           {!v.bevestigd && <Badge tone="red">niet teruggevonden</Badge>}
+                          {v.door_gebruiker_uit && <Badge tone="yellow">door jou afgewezen</Badge>}
                           <span className="text-xs text-muted-foreground">{bronTekst(v.bron)}</span>
                         </div>
                         <Inhoud v={v} />
@@ -397,9 +417,26 @@ export function ClusterPlanPage() {
                             {v.toelichting}
                           </p>
                         )}
+                        {v.opmerking && (
+                          <p className="mt-1 text-xs leading-relaxed text-amber-400">
+                            Jij zei: {v.opmerking}
+                          </p>
+                        )}
                         <Vindplaats bewijs={v.bewijs} />
                       </div>
                     </label>
+                    {!alGoedgekeurd && (
+                      /* Terugkoppeling hoort niet af te hangen van wat het
+                         model toevallig vroeg: bij elk onderdeel kun je zeggen
+                         wat er niet klopt. */
+                      <Input
+                        className="mt-2 text-xs"
+                        value={opmerkingen[k] || ""}
+                        disabled={beantwoordt}
+                        placeholder="Klopt dit niet? Zeg het hier."
+                        onChange={(e) => setOpmerkingen((o) => ({ ...o, [k]: e.target.value }))}
+                      />
+                    )}
                   </li>
                 );
               })}
@@ -469,19 +506,6 @@ export function ClusterPlanPage() {
               </li>
             ))}
           </ul>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <Button
-              variant="secondary"
-              onClick={beantwoord}
-              disabled={beantwoordt || !Object.values(antwoorden).some((a) => a.trim())}
-            >
-              {beantwoordt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              {beantwoordt ? "Opnieuw aan het lezen…" : "Opnieuw verkennen met deze antwoorden"}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Kost een nieuwe verkenning van ongeveer een minuut. Dit plan blijft staan.
-            </span>
-          </div>
         </Card>
       )}
 
@@ -496,6 +520,62 @@ export function ClusterPlanPage() {
               <div key={vraag}>
                 <dt className="text-xs text-muted-foreground">{vraag}</dt>
                 <dd className="leading-relaxed">{antwoord}</dd>
+              </div>
+            ))}
+          </dl>
+        </Card>
+      )}
+
+      {/* ── terugkoppeling ──────────────────────────────────────────────── */}
+      {!alGoedgekeurd && (
+        /* Altijd zichtbaar, ook als het model niets vroeg. Een plan zonder
+           vragen liet je eerst met niets, terwijl je er wel iets van kunt
+           vinden. */
+        <Card className="p-4">
+          <div className="mb-2 flex items-start gap-2">
+            <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <div>
+              <h2 className="text-sm font-semibold">Klopt er iets niet?</h2>
+              <p className="text-xs text-muted-foreground">
+                Zeg wat er anders moet — over het geheel, bij een onderdeel hierboven, of
+                als antwoord op een vraag. De verkenner leest de repo opnieuw met jouw
+                opmerkingen erbij. Wat je uitvinkte telt mee als signaal.
+              </p>
+            </div>
+          </div>
+          <TextArea
+            rows={3}
+            value={opmerking}
+            disabled={beantwoordt}
+            placeholder="Bijvoorbeeld: dit is geen python-project maar een node-project, en de emulator hoort er niet bij."
+            onChange={(e) => setOpmerking(e.target.value)}
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button variant="secondary" onClick={opnieuwVerkennen} disabled={beantwoordt || !ietsGezegd}>
+              {beantwoordt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {beantwoordt ? "Opnieuw aan het lezen…" : "Opnieuw verkennen met mijn opmerkingen"}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Kost ongeveer een minuut. Dit plan blijft staan, zodat je het verschil ziet.
+            </span>
+          </div>
+        </Card>
+      )}
+
+      {(plan.opmerking || Object.keys(plan.opmerkingen).length > 0) && (
+        <Card className="p-4">
+          <h2 className="mb-2 text-sm font-semibold">Jouw opmerkingen</h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Hiermee is dit plan gemaakt. Ze gaan mee naar elke volgende ronde.
+          </p>
+          {plan.opmerking && <p className="mb-2 text-sm leading-relaxed">{plan.opmerking}</p>}
+          <dl className="space-y-1 text-sm">
+            {Object.entries(plan.opmerkingen).map(([kern, tekst]) => (
+              <div key={kern} className="flex gap-2">
+                <dt className="shrink-0 font-mono text-xs text-muted-foreground">
+                  {kern.replace("::", " / ")}
+                </dt>
+                <dd className="leading-relaxed">{tekst}</dd>
               </div>
             ))}
           </dl>

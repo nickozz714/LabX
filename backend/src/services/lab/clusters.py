@@ -69,6 +69,16 @@ def _veilige_naam(naam: str) -> str:
     return kaal or "cluster"
 
 
+#: Soorten waarvan een leeg vinkje GEEN afwijzing is.
+#:
+#: - `applicatie` is een vaststelling; daar staat sowieso geen vinkje bij.
+#: - `lab_image` is een of-of: er kan er maar een aan staan, dus de andere
+#:   drie zijn niet afgewezen -- je hebt er een gekozen. Ze alsnog "door jou
+#:   afgewezen" noemen maakt dat label betekenisloos, en dan leest niemand
+#:   het nog waar het wel toe doet.
+_GEEN_AFWIJZING = ("applicatie", "lab_image")
+
+
 def _naam_uit_url(repo_url: str) -> str:
     """De repo-naam als clusternaam, zodat je er geen hoeft te verzinnen."""
     naam = (repo_url or "").rstrip("/").split("/")[-1].removesuffix(".git")
@@ -737,6 +747,10 @@ class ClusterService:
                      host_id: Optional[int] = None,
                      cluster_id: Optional[int] = None,
                      antwoorden: Optional[Dict[str, str]] = None,
+                     opmerkingen: Optional[Dict[str, str]] = None,
+                     opmerking: Optional[str] = None,
+                     keuze: Optional[List[Dict[str, str]]] = None,
+                     uitgezet: Optional[List[Dict[str, str]]] = None,
                      vorig_plan_id: Optional[int] = None) -> ClusterPlan:
         """Een repo verkennen en het voorstel bewaren.
 
@@ -756,7 +770,8 @@ class ClusterService:
         uitslag = await Verkenner(self.db).verken(
             repo_url=repo_url, branch=branch,
             token_geheim=token_geheim, host_id=host_id,
-            antwoorden=antwoorden)
+            antwoorden=antwoorden, opmerkingen=opmerkingen,
+            opmerking=opmerking, keuze=keuze, uitgezet=uitgezet)
 
         rij = ClusterPlan(
             cluster_id=cluster_id,
@@ -768,6 +783,8 @@ class ClusterService:
             keuzes={},
             token_geheim=token_geheim,
             antwoorden=dict(antwoorden or {}),
+            opmerkingen=dict(opmerkingen or {}),
+            opmerking=(opmerking or None),
             vorig_plan_id=vorig_plan_id,
             model_gebruikt=1 if (uitslag.get("model") or {}).get("gebruikt") else 0,
             fout=(uitslag.get("model") or {}).get("fout"),
@@ -780,39 +797,69 @@ class ClusterService:
                   model=bool(rij.model_gebruikt))
         return rij
 
-    async def beantwoord(self, plan_id: int, *,
-                         antwoorden: Dict[str, str]) -> ClusterPlan:
-        """Antwoorden geven en opnieuw verkennen.
+    async def opnieuw(self, plan_id: int, *,
+                      antwoorden: Optional[Dict[str, str]] = None,
+                      opmerkingen: Optional[Dict[str, str]] = None,
+                      opmerking: Optional[str] = None,
+                      keuze: Optional[List[Dict[str, str]]] = None) -> ClusterPlan:
+        """Terugkoppeling geven en opnieuw verkennen.
 
-        Een antwoord VERVANGT dit plan niet; het levert er een naast op. Dat
-        is niet uit voorzichtigheid maar omdat het verschil het interessante
-        deel is: je wilt zien wat jouw antwoord aan het startscript veranderde.
+        Dit was eerst alleen `antwoorden`, en dat was de verkeerde helft: je
+        kon alleen iets zeggen over vragen die het model toevallig stelde. Een
+        plan zonder vragen liet je met niets, terwijl je er wel iets van kunt
+        vinden -- over een dienst die er niet in hoort, over een lab-image dat
+        niet klopt, over het geheel.
 
-        Opnieuw verkennen kost een modelaanroep. Dat is de prijs van een
-        antwoord dat ook echt dóórwerkt -- de vragen gaan nu juist over dingen
-        die het script veranderen, dus ze alleen opslaan zou een antwoord zijn
-        dat nergens heen gaat.
+        Vier soorten terugkoppeling, alle vier optioneel:
 
-        Eerdere antwoorden gaan mee, zodat je niet twee keer hetzelfde typt.
+        - `antwoorden`   op de vragen die het model stelde
+        - `opmerkingen`  per onderdeel ("dienst::mailpit": "hoort er niet bij")
+        - `opmerking`    over het plan als geheel
+        - `keuze`        wat je aan- en uitgevinkt had; wat uit staat hoort
+                         niet terug te komen
+
+        Het levert een NIEUW plan op naast het oude. Niet uit voorzichtigheid:
+        het verschil tussen de twee is juist wat je wilt zien.
         """
         oud = self.plan_of_404(plan_id)
-        schoon = {str(v).strip(): str(a).strip()
-                  for v, a in (antwoorden or {}).items() if str(a).strip()}
-        if not schoon:
+
+        schone_antwoorden = {str(v).strip(): str(a).strip()
+                             for v, a in (antwoorden or {}).items() if str(a).strip()}
+        schone_opmerkingen = {str(k).strip(): str(w).strip()
+                              for k, w in (opmerkingen or {}).items() if str(w).strip()}
+        schone_opmerking = (opmerking or "").strip()
+
+        if not (schone_antwoorden or schone_opmerkingen or schone_opmerking):
             raise HTTPException(
                 status_code=400,
-                detail="Geef minstens één antwoord; anders verandert er niets aan het plan.")
+                detail=("Geef iets mee: een antwoord, een opmerking bij een onderdeel, "
+                        "of iets over het plan als geheel. Opnieuw verkennen zonder "
+                        "terugkoppeling levert hetzelfde plan op."))
 
-        samen = {**(oud.antwoorden or {}), **schoon}
         # Het token van het PLAN eerst: een plan kan zonder cluster bestaan,
         # en dan is er verder niets om op terug te vallen.
         token = oud.token_geheim
         if not token and oud.cluster_id:
             token = self.get_or_404(oud.cluster_id).repo_token_geheim
+
+        gekozen = keuze if keuze is not None else self.standaardkeuze(oud.plan or {})
+        # Wat je bij het VORIGE plan hebt uitgezet. Precies dat, en niet
+        # "alles wat niet gekozen is": een onderdeel dat deze ronde nieuw
+        # opduikt heb jij nooit afgewezen.
+        aan = {(k.get("soort"), k.get("sleutel")) for k in gekozen}
+        uitgezet = [{"soort": v["soort"], "sleutel": v["sleutel"]}
+                    for v in (oud.plan or {}).get("vondsten") or []
+                    if v.get("soort") not in _GEEN_AFWIJZING
+                    and (v["soort"], v["sleutel"]) not in aan]
+
         return await self.verken(
             repo_url=oud.repo_url, branch=oud.branch,
             cluster_id=oud.cluster_id, token_geheim=token,
-            antwoorden=samen, vorig_plan_id=oud.id)
+            antwoorden={**(oud.antwoorden or {}), **schone_antwoorden},
+            opmerkingen={**(oud.opmerkingen or {}), **schone_opmerkingen},
+            opmerking=schone_opmerking or oud.opmerking,
+            keuze=gekozen, uitgezet=uitgezet,
+            vorig_plan_id=oud.id)
 
     def plan_of_404(self, plan_id: int) -> ClusterPlan:
         rij = self.db.get(ClusterPlan, plan_id)
@@ -838,6 +885,10 @@ class ClusterService:
         uit: List[Dict[str, str]] = []
         image_gekozen = False
         for v in plan.get("vondsten") or []:
+            if v.get("door_gebruiker_uit"):
+                # Je hebt hem eerder uitgezet. Hij staat er nog, met zijn
+                # bewijs, maar hij gaat niet vanzelf weer aan.
+                continue
             if not v.get("bevestigd"):
                 continue
             if v.get("soort") == "applicatie":
@@ -1005,6 +1056,8 @@ class ClusterService:
             "vragen": plan.get("vragen") or [],
             "token_geheim": rij.token_geheim,
             "antwoorden": rij.antwoorden or {},
+            "opmerkingen": rij.opmerkingen or {},
+            "opmerking": rij.opmerking,
             "vorig_plan_id": rij.vorig_plan_id,
             "vondsten": plan.get("vondsten") or [],
             "url_omgezet": plan.get("url_omgezet"),

@@ -143,18 +143,26 @@ async def verkennen(body: Dict[str, Any], db: Session = Depends(get_db)):
     return svc.plan_dict(rij)
 
 
-@router.post("/plannen/{plan_id}/beantwoorden")
-async def beantwoorden(plan_id: int, body: Dict[str, Any], db: Session = Depends(get_db)):
-    """Antwoorden op de vragen van een plan, en opnieuw verkennen.
+@router.post("/plannen/{plan_id}/opnieuw")
+async def opnieuw(plan_id: int, body: Dict[str, Any], db: Session = Depends(get_db)):
+    """Terugkoppeling geven en opnieuw verkennen.
 
-    Levert een NIEUW plan op naast het oude. De vragen gaan over dingen die
-    het startscript veranderen, dus een antwoord dat alleen opgeslagen wordt
-    is een antwoord dat nergens heen gaat.
+    Levert een NIEUW plan op naast het oude. Alle vier de soorten
+    terugkoppeling zijn optioneel, maar er moet er minstens een zijn --
+    opnieuw verkennen zonder iets te zeggen levert hetzelfde plan op en kost
+    wel een modelaanroep.
     """
-    antwoorden = body.get("antwoorden")
-    if not isinstance(antwoorden, dict):
-        raise HTTPException(status_code=400, detail="Verwacht een object met antwoorden.")
-    return _svc(db).plan_dict(await _svc(db).beantwoord(plan_id, antwoorden=antwoorden))
+    def _kaart(sleutel: str) -> Dict[str, str]:
+        waarde = body.get(sleutel)
+        return {str(k): str(v) for k, v in waarde.items()} if isinstance(waarde, dict) else {}
+
+    keuze = body.get("keuze")
+    return _svc(db).plan_dict(await _svc(db).opnieuw(
+        plan_id,
+        antwoorden=_kaart("antwoorden"),
+        opmerkingen=_kaart("opmerkingen"),
+        opmerking=(str(body["opmerking"]) if body.get("opmerking") else None),
+        keuze=(list(keuze) if isinstance(keuze, list) else None)))
 
 
 @router.get("/plannen/{plan_id}")
