@@ -5,14 +5,71 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { settingsApi } from "@/lib/settings";
-import { labsApi } from "@/lib/labs";
+import { labHostsApi, labsApi } from "@/lib/labs";
 import { useAuth } from "@/contexts/AuthContext";
 import { api, ApiError } from "@/lib/api";
-import type { AppSettingsDto, GuardModelStatus, LabExtra } from "@/lib/types";
+import type { AppSettingsDto, GuardModelStatus, LabExtra, ModelRunner } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Select, TextArea, Toggle } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { NotificationsCard } from "@/components/NotificationsCard";
 import { ClaimResourcesCard } from "@/components/ClaimResourcesCard";
+
+/**
+ * De runners op machines uit je netwerk, naast de status hierboven.
+ *
+ * Die ene "Live status" gaat over de URL in dit scherm — de terugval op de
+ * server. Draaien er modelcontainers op andere machines, dan gaat het meeste
+ * werk juist daarheen, en dan is één regel een half antwoord.
+ */
+function ModelpoolStatus() {
+  const [runners, setRunners] = useState<ModelRunner[]>([]);
+
+  useEffect(() => {
+    const haal = () => labHostsApi.modelpool()
+      .then((r) => setRunners(r.runners))
+      .catch(() => setRunners([]));
+    haal();
+    const t = setInterval(haal, 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (runners.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-border p-3 text-xs">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="font-medium">Ook actief in je netwerk:</span>
+        <span className="text-muted-foreground">
+          {runners.filter((r) => r.status === "klaar").length} van {runners.length} klaar
+        </span>
+        <Link to="/labs/machines" className="ml-auto underline underline-offset-2">
+          Beheren
+        </Link>
+      </div>
+      <div className="space-y-1">
+        {runners.map((r) => (
+          <div key={r.id} className="flex flex-wrap items-center gap-2">
+            <Badge tone={r.status === "klaar" ? "green"
+                         : r.status === "fout" ? "red" : "yellow"}>
+              {r.status}
+            </Badge>
+            <span>{r.machine}</span>
+            <span className="text-muted-foreground">{r.naam}</span>
+            {r.onderweg > 0 && (
+              <span className="text-muted-foreground">· {r.onderweg} bezig</span>
+            )}
+            {r.fout && <span className="text-muted-foreground">· {r.fout}</span>}
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-muted-foreground">
+        Een guard-vraag gaat naar de machine met het minste werk onderweg. Is er
+        nergens ruimte, dan gebruikt hij het model hierboven — de controle valt
+        dus nooit weg omdat de pool bezet is.
+      </p>
+    </div>
+  );
+}
 
 export function SettingsPage() {
   const melding = useMelding();
@@ -508,6 +565,11 @@ export function SettingsPage() {
             )}
           </div>
         )}
+
+        {/* En waar het model NOG MEER draait. Eén statusregel suggereerde dat
+            er één plek is, en dat klopt niet meer zodra je machines uit je
+            netwerk meelaat draaien: dan staat hierboven alleen de terugval. */}
+        <ModelpoolStatus />
       </Card>
       </div>)}
 
