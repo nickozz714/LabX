@@ -64,6 +64,12 @@ class Cluster(Base):
     #: vaste dienst vindt zonder dat iemand dat per lab overtypt.
     omgeving: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
+    #: Welke geheimen er in de kluis moeten staan voordat een branch-lab kan
+    #: draaien: {naam-in-de-kluis: waarvoor}. Komt uit de tweede lijst van de
+    #: verkenner -- diensten waar geen emulator van bestaat. Hier staat de
+    #: NAAM, nooit de waarde.
+    benodigde_geheimen: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
     notitie: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -105,6 +111,50 @@ class ClusterDienst(Base):
     omgeving: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     container_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="gestopt")
+    fout: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+#: `voorstel`     — verkend, wacht op jou
+#: `goedgekeurd`  — omgezet in een cluster; vanaf nu bevroren
+#: `verworpen`    — je wilde het niet; blijft staan om te kunnen vergelijken
+PLAN_STATUSSEN = ("voorstel", "goedgekeurd", "verworpen")
+
+
+class ClusterPlan(Base):
+    """Wat de verkenner van een repo maakte, en wat jij daarvan overnam.
+
+    **Waarom dit bewaard wordt en niet alleen toegepast.** Het model is
+    leidend in de verkenning, en dat betekent dat twee verkenningen van
+    dezelfde repo kunnen verschillen. Die prijs wordt hier afgekocht: een
+    goedgekeurd plan is de configuratie van het cluster en wordt niet meer
+    stilletjes overschreven. Opnieuw verkennen is iets dat JIJ doet, en het
+    resultaat komt terug als een VERSCHIL met dit plan — niet als vervanging.
+
+    `cluster_id` mag leeg zijn: je kunt een repo verkennen vóórdat er een
+    cluster bestaat. Dat is zelfs de normale volgorde, want het plan is juist
+    wat bepaalt hoe het cluster eruit gaat zien.
+    """
+
+    __tablename__ = "cluster_plannen"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    branch: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: De commit waarop verkend is. Hieraan hangt de hele uitkomst: hetzelfde
+    #: plan opnieuw openen draait niets opnieuw.
+    commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="voorstel")
+    #: De hele uitkomst van de verkenning: vondsten met bewijs, startscript,
+    #: samenvatting, openstaande vragen.
+    plan: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Wat jij aangevinkt hebt bij het goedkeuren. Apart van `plan`, want het
+    #: verschil tussen "voorgesteld" en "overgenomen" is precies wat je later
+    #: wilt kunnen teruglezen.
+    keuzes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    model_gebruikt: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
     fout: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)

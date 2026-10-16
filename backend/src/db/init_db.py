@@ -21,6 +21,13 @@ log = get_logger(__name__)
 # a table already existed in the wild. Remove an entry once comfortable that
 # no deployed database predates it.
 _ADDITIVE_COLUMNS = {
+    "clusters": [
+        # Welke geheimen dit cluster nodig heeft voordat een branch-lab kan
+        # draaien -- de tweede lijst van de verkenner. Dat rijtje is geen
+        # restpost: het is precies waar een branch-lab veertig minuten later
+        # op omvalt als niemand het vooraf opschreef.
+        ("benodigde_geheimen", "TEXT"),
+    ],
     "cluster_diensten": [
         # Waar een dienst van buiten te bereiken is: {containerpoort:
         # machinepoort}. Erbij gekomen nadat bleek dat de containerpoort zelf

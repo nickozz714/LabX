@@ -122,3 +122,54 @@ async def stop_dienst(dienst_id: int, db: Session = Depends(get_db)):
 async def verwijder_dienst(dienst_id: int, db: Session = Depends(get_db)):
     await _svc(db).verwijder_dienst(dienst_id)
     return {"ok": True}
+
+
+# ── verkennen en goedkeuren ──────────────────────────────────────────────────
+#
+# `/verkennen` maakt NIETS aan. Het kloont ondiep in een wegwerpcontainer,
+# leest, en levert een voorstel. Pas `/goedkeuren` zet dat om in een cluster.
+# Die scheiding is de hele kern: er draait geen container waar niemand op
+# geklikt heeft.
+
+
+@router.post("/verkennen")
+async def verkennen(body: Dict[str, Any], db: Session = Depends(get_db)):
+    svc = _svc(db)
+    rij = await svc.verken(
+        repo_url=str(body.get("repo_url") or ""),
+        branch=str(body.get("branch") or "main"),
+        token_geheim=(str(body["token_geheim"]) if body.get("token_geheim") else None),
+        host_id=(int(body["host_id"]) if body.get("host_id") else None),
+        cluster_id=(int(body["cluster_id"]) if body.get("cluster_id") else None))
+    return svc.plan_dict(rij)
+
+
+@router.get("/plannen/{plan_id}")
+def lees_plan(plan_id: int, db: Session = Depends(get_db)):
+    svc = _svc(db)
+    return svc.plan_dict(svc.plan_of_404(plan_id))
+
+
+@router.get("/{cluster_id}/plannen")
+def plannen_van_cluster(cluster_id: int, db: Session = Depends(get_db)):
+    svc = _svc(db)
+    svc.get_or_404(cluster_id)
+    return [svc.plan_dict(p) for p in svc.plannen(cluster_id)]
+
+
+@router.post("/plannen/{plan_id}/goedkeuren")
+def goedkeuren(plan_id: int, body: Dict[str, Any], db: Session = Depends(get_db)):
+    """Het plan omzetten in een cluster.
+
+    `gekozen` weglaten betekent: neem over wat gestaafd is. Een vondst die de
+    detectoren niet konden terugvinden gaat dan NIET mee -- die moet je
+    expliciet aanvinken.
+    """
+    gekozen = body.get("gekozen")
+    return _svc(db).keur_goed(
+        plan_id,
+        naam=(str(body["naam"]) if body.get("naam") else None),
+        host_id=(int(body["host_id"]) if body.get("host_id") else None),
+        gekozen=(list(gekozen) if isinstance(gekozen, list) else None),
+        token_geheim=(str(body["token_geheim"]) if body.get("token_geheim") else None),
+        env_profiel=(str(body["env_profiel"]) if body.get("env_profiel") else None))

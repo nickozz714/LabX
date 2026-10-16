@@ -32,7 +32,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from component_logging import get_logger
-from models.cluster import Cluster, ClusterDienst
+from models.cluster import Cluster, ClusterDienst, ClusterPlan
 
 log = get_logger(__name__)
 
@@ -67,6 +67,27 @@ def _veilige_naam(naam: str) -> str:
     """Een naam die docker accepteert als netwerk- en containernaam."""
     kaal = re.sub(r"[^a-zA-Z0-9_.-]+", "-", (naam or "").strip().lower()).strip("-")
     return kaal or "cluster"
+
+
+def _naam_uit_url(repo_url: str) -> str:
+    """De repo-naam als clusternaam, zodat je er geen hoeft te verzinnen."""
+    naam = (repo_url or "").rstrip("/").split("/")[-1].removesuffix(".git")
+    return naam.strip() or "cluster"
+
+
+def _voorvoegsel(clusternaam: str) -> str:
+    """Een kort voorvoegsel voor de diensten van dit cluster: `ih-cosmos`.
+
+    De naam van een dienst is ook zijn DNS-naam op het clusternetwerk. Zonder
+    voorvoegsel heet de emulator van elk cluster `cosmos`, en dan is het de
+    volgorde van aanmaken die bepaalt welke je krijgt zodra er een tweede
+    cluster op dezelfde machine staat.
+    """
+    delen = [d for d in re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", clusternaam or "") if d]
+    letters = "".join(d[0] for d in delen).lower()
+    if len(letters) >= 2:
+        return letters[:4]
+    return (re.sub(r"[^a-z0-9]", "", (clusternaam or "").lower())[:3]) or "c"
 
 
 class ClusterService:
@@ -604,6 +625,225 @@ class ClusterService:
             "diensten": [self.dienst_dict(d) for d in self.diensten(c.id)],
             "labs": labs,
             "created_at": c.created_at, "updated_at": c.updated_at,
+        }
+
+
+    # ── verkennen en goedkeuren ──────────────────────────────────────────────
+    #
+    # De omkering van het hele hoofdstuk: hiervóór typte je een cluster in,
+    # vanaf hier stelt LabX er een voor. Het plan is wat daartussen staat --
+    # een voorstel met bewijs, dat jij per onderdeel aan of uit zet.
+
+    async def verken(self, *, repo_url: str, branch: str = "main",
+                     token_geheim: Optional[str] = None,
+                     host_id: Optional[int] = None,
+                     cluster_id: Optional[int] = None) -> ClusterPlan:
+        """Een repo verkennen en het voorstel bewaren.
+
+        Het plan wordt BEWAARD en niet meteen toegepast. Dat is de prijs van
+        een model dat leidend is: twee verkenningen van dezelfde repo kunnen
+        verschillen, en dan wil je ze naast elkaar kunnen leggen in plaats van
+        dat de tweede de eerste stilletjes overschrijft.
+        """
+        from services.lab.verkenner import Verkenner
+
+        if cluster_id:
+            c = self.get_or_404(cluster_id)
+            repo_url = repo_url or c.repo_url or ""
+            token_geheim = token_geheim or c.repo_token_geheim
+            host_id = host_id if host_id is not None else c.host_id
+
+        uitslag = await Verkenner(self.db).verken(
+            repo_url=repo_url, branch=branch,
+            token_geheim=token_geheim, host_id=host_id)
+
+        rij = ClusterPlan(
+            cluster_id=cluster_id,
+            repo_url=uitslag["repo_url"],
+            branch=uitslag["branch"],
+            commit=uitslag.get("commit"),
+            status="voorstel",
+            plan=uitslag,
+            keuzes={},
+            model_gebruikt=1 if (uitslag.get("model") or {}).get("gebruikt") else 0,
+            fout=(uitslag.get("model") or {}).get("fout"),
+            created_at=_nu(), updated_at=_nu())
+        self.db.add(rij)
+        self.db.commit()
+        self.db.refresh(rij)
+        log.infox("Repo verkend", repo=rij.repo_url, branch=rij.branch,
+                  commit=(rij.commit or "")[:8], vondsten=len(uitslag.get("vondsten") or []),
+                  model=bool(rij.model_gebruikt))
+        return rij
+
+    def plan_of_404(self, plan_id: int) -> ClusterPlan:
+        rij = self.db.get(ClusterPlan, plan_id)
+        if rij is None:
+            raise HTTPException(status_code=404, detail="Plan niet gevonden")
+        return rij
+
+    def plannen(self, cluster_id: Optional[int] = None) -> List[ClusterPlan]:
+        vraag = self.db.query(ClusterPlan)
+        if cluster_id is not None:
+            vraag = vraag.filter(ClusterPlan.cluster_id == cluster_id)
+        return vraag.order_by(ClusterPlan.id.desc()).all()
+
+    @staticmethod
+    def standaardkeuze(plan: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Wat er vooraf aangevinkt staat: alles wat gestaafd is.
+
+        Een vondst die de detectoren niet konden terugvinden in de repo blijft
+        zichtbaar, maar staat UIT. Je kunt hem aanzetten; hij gaat niet
+        vanzelf mee. Dat is het verschil tussen "model leidend" en "model
+        beslist".
+        """
+        return [{"soort": v["soort"], "sleutel": v["sleutel"]}
+                for v in (plan.get("vondsten") or []) if v.get("bevestigd")]
+
+    def keur_goed(self, plan_id: int, *, naam: Optional[str] = None,
+                  host_id: Optional[int] = None,
+                  gekozen: Optional[List[Dict[str, str]]] = None,
+                  token_geheim: Optional[str] = None,
+                  env_profiel: Optional[str] = None) -> Dict[str, Any]:
+        """Het plan omzetten in een cluster.
+
+        Vanaf hier is het plan BEVROREN: het is de configuratie van dit
+        cluster. Opnieuw verkennen levert een nieuw plan op naast dit, zodat
+        het verschil zichtbaar is in plaats van verwarrend.
+        """
+        rij = self.plan_of_404(plan_id)
+        if rij.status == "goedgekeurd":
+            raise HTTPException(
+                status_code=409,
+                detail=("Dit plan is al goedgekeurd. Verken opnieuw als er iets "
+                        "veranderd is; dan zie je het verschil."))
+        plan = dict(rij.plan or {})
+        keuze = gekozen if gekozen is not None else self.standaardkeuze(plan)
+        wil = {(k.get("soort"), k.get("sleutel")) for k in keuze}
+
+        if rij.cluster_id:
+            c = self.get_or_404(rij.cluster_id)
+        else:
+            c = self.maak(naam=(naam or _naam_uit_url(rij.repo_url)),
+                          host_id=host_id)
+
+        c.repo_url = rij.repo_url
+        if token_geheim:
+            c.repo_token_geheim = token_geheim
+
+        omgeving = dict(c.omgeving or {})
+        geheimen = dict(c.benodigde_geheimen or {})
+        toegevoegd: List[str] = []
+
+        for v in plan.get("vondsten") or []:
+            if (v.get("soort"), v.get("sleutel")) not in wil:
+                continue
+            soort, sleutel, waarde = v["soort"], v["sleutel"], (v.get("waarde") or {})
+
+            if soort == "dienst":
+                image = str(waarde.get("image") or "")
+                if not image:
+                    continue
+                dienstnaam = _veilige_naam(f"{_voorvoegsel(c.naam)}-{sleutel}")
+                bestaat = (self.db.query(ClusterDienst)
+                           .filter(ClusterDienst.cluster_id == c.id,
+                                   ClusterDienst.naam == dienstnaam).first())
+                if bestaat is None:
+                    self.voeg_dienst_toe(
+                        c.id, naam=dienstnaam, image=image,
+                        poorten=[int(p) for p in (waarde.get("poorten") or [])],
+                        omgeving={str(k): str(w) for k, w in (waarde.get("omgeving") or {}).items()})
+                    toegevoegd.append(dienstnaam)
+                # Wat een branch-lab moet weten om deze dienst te vinden. De
+                # naam in de lab-omgeving moet de ECHTE dienstnaam zijn, niet
+                # die uit de catalogus -- anders wijst COSMOS_ENDPOINT naar
+                # een host die op dit netwerk niet bestaat.
+                for k, w in (waarde.get("lab_omgeving") or {}).items():
+                    omgeving[str(k)] = str(w).replace(f"//{sleutel}:", f"//{dienstnaam}:") \
+                                             .replace(f"@{sleutel}:", f"@{dienstnaam}:")
+                    if str(w) == sleutel:
+                        omgeving[str(k)] = dienstnaam
+
+            elif soort == "lab_image":
+                c.lab_image = str(waarde.get("image") or "")[:255] or c.lab_image
+
+            elif soort == "startscript":
+                c.start_script = plan.get("startscript") or c.start_script
+
+            elif soort == "omgeving" and sleutel == "env_profiel":
+                c.env_profiel = (env_profiel or str(waarde.get("standaard") or ""))[:64] or None
+
+            elif soort in ("extern", "geheim"):
+                geheimen[sleutel] = (v.get("toelichting") or "")[:300]
+
+        # Het startscript hoort bij het cluster, ook als er geen aparte
+        # vondst voor aangevinkt stond -- het model schrijft het op uit alles
+        # bij elkaar en niet uit een enkele vindplaats.
+        if not c.start_script and plan.get("startscript"):
+            c.start_script = plan["startscript"]
+        if env_profiel:
+            c.env_profiel = env_profiel[:64]
+
+        c.omgeving = omgeving
+        c.benodigde_geheimen = geheimen
+        c.updated_at = _nu()
+
+        rij.cluster_id = c.id
+        rij.status = "goedgekeurd"
+        rij.keuzes = {"gekozen": keuze}
+        rij.updated_at = _nu()
+        self.db.commit()
+        self.db.refresh(c)
+
+        ontbreekt = self._ontbrekende_geheimen(geheimen)
+        log.infox("Plan goedgekeurd", cluster=c.naam, diensten=len(toegevoegd),
+                  geheimen_open=len(ontbreekt))
+        return {
+            "cluster": self.to_dict(c),
+            "diensten_toegevoegd": toegevoegd,
+            "geheimen_ontbreken": ontbreekt,
+        }
+
+    def _ontbrekende_geheimen(self, benodigd: Dict[str, Any]) -> List[str]:
+        """Welke van de benodigde geheimen nog niet in de kluis staan.
+
+        Dit is de vraag die je vóór het eerste branch-lab beantwoord wilt
+        hebben, niet veertig minuten later halverwege een bouw.
+        """
+        if not benodigd:
+            return []
+        try:
+            from services.secrets.vault import VaultService
+
+            aanwezig = {r.name for r in VaultService(self.db).lijst()}
+        except Exception as exc:  # noqa: BLE001 — geen kluis? dan niets beweren
+            log.infox("Kluis niet te lezen bij goedkeuren", error=str(exc)[:200])
+            return []
+        return sorted(n for n in benodigd if n not in aanwezig)
+
+    @staticmethod
+    def plan_dict(rij: ClusterPlan) -> Dict[str, Any]:
+        plan = dict(rij.plan or {})
+        return {
+            "id": rij.id,
+            "cluster_id": rij.cluster_id,
+            "repo_url": rij.repo_url,
+            "branch": rij.branch,
+            "commit": rij.commit,
+            "status": rij.status,
+            "model_gebruikt": bool(rij.model_gebruikt),
+            "fout": rij.fout,
+            "samenvatting": plan.get("samenvatting"),
+            "startscript": plan.get("startscript"),
+            "vragen": plan.get("vragen") or [],
+            "vondsten": plan.get("vondsten") or [],
+            "url_omgezet": plan.get("url_omgezet"),
+            "url_melding": plan.get("url_melding"),
+            "boom_afgekapt": plan.get("boom_afgekapt"),
+            "bestanden_gelezen": plan.get("bestanden_gelezen"),
+            "standaardkeuze": ClusterService.standaardkeuze(plan),
+            "keuzes": (rij.keuzes or {}).get("gekozen") or [],
+            "created_at": rij.created_at,
         }
 
     @staticmethod
