@@ -27,7 +27,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle, ArrowRight, Box, Check, FileText, HelpCircle, KeyRound,
-  Layers, Loader2, Package, Settings2, Sparkles, Terminal,
+  Layers, Loader2, Network, Package, Settings2, Sparkles, Terminal,
 } from "lucide-react";
 import { clusterApi, SOORT_UITLEG } from "@/lib/clusters";
 import type { ClusterPlan, Vondst, VondstKeuze } from "@/lib/clusters";
@@ -43,6 +43,7 @@ const SOORT_ICOON: Record<Vondst["soort"], typeof Box> = {
   dienst: Box,
   applicatie: Layers,
   lab_image: Package,
+  lab_poorten: Network,
   startscript: Terminal,
   omgeving: Settings2,
   extern: KeyRound,
@@ -50,7 +51,8 @@ const SOORT_ICOON: Record<Vondst["soort"], typeof Box> = {
 };
 
 const VOLGORDE: Vondst["soort"][] = [
-  "dienst", "applicatie", "lab_image", "startscript", "omgeving", "extern", "geheim",
+  "dienst", "applicatie", "lab_image", "lab_poorten", "startscript", "omgeving",
+  "extern", "geheim",
 ];
 
 /** Een vaststelling, geen voorstel: wat uit de repo gebouwd wordt, wordt
@@ -139,6 +141,11 @@ function Inhoud({ v }: { v: Vondst }) {
   if (v.soort === "extern" && w.sleutels?.length) {
     return (
       <div className="mt-1 font-mono text-xs text-muted-foreground">{w.sleutels.join(", ")}</div>
+    );
+  }
+  if (v.soort === "lab_poorten" && w.poorten?.length) {
+    return (
+      <div className="mt-1 font-mono text-xs text-muted-foreground">{w.poorten.join(", ")}</div>
     );
   }
   if (v.soort === "omgeving" && w.keuzes?.length) {

@@ -41,7 +41,8 @@ export type Vondst = {
    *  `applicatie` is een VASTSTELLING en geen voorstel: er valt niets aan te
    *  kiezen, en er hoort dus ook geen vinkje bij. `lab_image` is het
    *  omgekeerde: een KEUZE waarvan er precies een waar kan zijn. */
-  soort: "dienst" | "applicatie" | "lab_image" | "startscript" | "omgeving" | "extern" | "geheim";
+  soort: "dienst" | "applicatie" | "lab_image" | "lab_poorten" | "startscript"
+       | "omgeving" | "extern" | "geheim";
   sleutel: string;
   waarde: {
     image?: string;
@@ -125,6 +126,8 @@ export type Cluster = {
   env_profiel: string | null;
   omgeving: Record<string, string>;
   benodigde_geheimen: Record<string, string>;
+  /** Waarop de applicatie IN een branch-lab luistert; LabX publiceert die. */
+  lab_poorten: number[];
   /** Welke daarvan nog niet in de kluis staan. */
   geheimen_ontbreken: string[];
   notitie: string | null;
@@ -210,6 +213,11 @@ export const SOORT_UITLEG: Record<Vondst["soort"], { titel: string; onder: strin
   lab_image: {
     titel: "Waarin een branch-lab draait",
     onder: "Kies er \u00e9\u00e9n: het image met de taal en pakketbeheerder die dit project nodig heeft.",
+  },
+  lab_poorten: {
+    titel: "Waarop de applicatie luistert",
+    onder: "LabX publiceert deze poorten naar buiten. Staat hier het verkeerde nummer, "
+      + "dan is het lab onbereikbaar terwijl het wel draait.",
   },
   startscript: {
     titel: "Bouwen en starten",

@@ -499,6 +499,65 @@ def detecteer_dockerfile(beeld: RepoBeeld) -> List[Vondst]:
     return vondsten
 
 
+def detecteer_poorten(beeld: RepoBeeld) -> List[Vondst]:
+    """Waarop luistert de applicatie?
+
+    LabX publiceerde standaard 3000 en 7071. Luistert de applicatie op 8000,
+    dan gebeurt er niets -- geen foutmelding, geen aanwijzing, een lab dat
+    draait en onbereikbaar is. Dat is geen vraag voor de gebruiker: het staat
+    in de repo.
+
+    `EXPOSE` is het sterkste bewijs dat er is. Het is een standaarddirectief,
+    het staat er met een regelnummer, en wie het opschrijft bedoelt precies
+    dit. Een compose-service die uit deze repo gebouwd wordt telt net zo goed.
+
+    De WORTEL wint van een onderliggende map: een `frontend/Dockerfile` met
+    `EXPOSE 80` is de losse webserver van de SPA, en in een branch-lab wordt
+    die SPA meestal door de applicatie zelf geserveerd.
+    """
+    kandidaten: List[tuple[int, str, Bewijs]] = []
+
+    for pad in sorted(_paden(beeld, r"(^|/)Dockerfile(\.[\w-]+)?$"),
+                      key=lambda p: (p.count("/"), p)):
+        tekst = beeld[pad]
+        for nr, regel in enumerate(tekst.splitlines(), start=1):
+            treffer = re.match(r"^\s*EXPOSE\s+(.+)$", regel, re.IGNORECASE)
+            if not treffer:
+                continue
+            for stuk in treffer.group(1).split():
+                nummer = stuk.split("/")[0]
+                if nummer.isdigit():
+                    kandidaten.append((int(nummer), pad,
+                                       Bewijs(bestand=pad, regel=nr,
+                                              fragment=regel.strip()[:200])))
+
+    for vondst in detecteer_compose(beeld):
+        if vondst.soort != "applicatie":
+            continue
+        for poort in vondst.waarde.get("poorten") or []:
+            kandidaten.append((int(poort), vondst.bewijs[0].bestand, vondst.bewijs[0]))
+
+    if not kandidaten:
+        return []
+
+    poorten: List[int] = []
+    bewijzen: List[Bewijs] = []
+    for nummer, _pad, bewijs in kandidaten:
+        if nummer not in poorten:
+            poorten.append(nummer)
+            bewijzen.append(bewijs)
+
+    return [Vondst(
+        soort="lab_poorten", sleutel="poorten",
+        waarde={"poorten": poorten[:6]},
+        bewijs=bewijzen[:6],
+        zekerheid="hoog", bron="detector:dockerfile",
+        toelichting=("Hierop luistert de applicatie. LabX publiceert deze poorten "
+                     "naar buiten; staat hier het verkeerde nummer, dan is het lab "
+                     "onbereikbaar terwijl het wel draait."),
+    )]
+
+
 # ── alles bij elkaar ─────────────────────────────────────────────────────────
 
 def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
@@ -507,6 +566,7 @@ def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
     for detector in (
         detecteer_compose,
         detecteer_dockerfile,
+        detecteer_poorten,
         detecteer_omgevingsbestanden,
         detecteer_env_profielen,
         detecteer_manifesten,

@@ -328,6 +328,12 @@ export function ClusterDetailPage() {
             <dt className="w-32 shrink-0 text-muted-foreground">Env-profiel</dt>
             <dd>{c.env_profiel || "—"}</dd>
           </div>
+          <div className="flex gap-2">
+            <dt className="w-32 shrink-0 text-muted-foreground">Luistert op</dt>
+            <dd className="font-mono text-xs">
+              {c.lab_poorten?.length ? c.lab_poorten.join(", ") : "3000, 7071 (standaard)"}
+            </dd>
+          </div>
           {Object.keys(c.omgeving).length > 0 && (
             <div className="flex gap-2">
               <dt className="w-32 shrink-0 text-muted-foreground">Omgeving</dt>

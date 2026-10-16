@@ -617,6 +617,7 @@ class ClusterService:
         if c.env_profiel:
             omgeving.setdefault("LABX_ENV_PROFIEL", c.env_profiel)
         omgeving.setdefault("LABX_BRANCH", p.branch or "")
+        omgeving.update(self._adres_omgeving(c, kaart))
 
         for w in lab_svc.ensure_workers(p):
             if w.container_id:
@@ -647,10 +648,39 @@ class ClusterService:
         self.db.refresh(p)
         return lab_svc._to_dict(p)
 
+    @staticmethod
+    def _adres_omgeving(c: Cluster, kaart: Dict[int, int]) -> Dict[str, str]:
+        """Waar dit lab zichzelf kan vinden.
+
+        Zonder dit moest het startscript raden waarop het hoorde te luisteren,
+        en moest de gebruiker vragen beantwoorden over PUBLIC_BASE_URL en
+        CORS_ORIGINS die LabX zelf weet. Dat zijn geen beslissingen; het zijn
+        gevolgen van hoe het lab gepubliceerd wordt.
+
+        `LABX_LAB_URL` blijft weg als het cluster op een ANDERE machine
+        draait: die poort staat daar op de loopback en wordt hierheen
+        getunneld op een nummer dat pas bij het openen vastligt. Een adres dat
+        er wel staat maar niet klopt is erger dan een dat ontbreekt.
+        """
+        if not kaart:
+            return {}
+        container_poort, machine_poort = sorted(kaart.items())[0]
+        uit = {"LABX_POORT": str(container_poort), "LABX_LAB_POORT": str(machine_poort)}
+        if not c.host_id:
+            uit["LABX_LAB_URL"] = f"http://localhost:{machine_poort}"
+        return uit
+
     def _lab_poorten(self, p: Any, c: Cluster) -> Dict[int, int]:
         """Welke poorten van dit branch-lab naar buiten gaan, en op welk
         nummer. Hetzelfde bereik als de diensten: één machine, één reeks."""
-        gewenst = [int(x) for x in (p.ports or [])] or [3000, 7071]
+        # Eerst wat dit LAB zelf opgaf, dan wat het CLUSTER weet, en pas
+        # daarna de oude standaard. Die standaard is een gok, en een gok
+        # maakt een lab onbereikbaar terwijl het wel draait: publiceer 3000
+        # terwijl de applicatie op 8000 luistert en er gebeurt niets, zonder
+        # een enkele foutmelding.
+        gewenst = ([int(x) for x in (p.ports or [])]
+                   or [int(x) for x in (c.lab_poorten or [])]
+                   or [3000, 7071])
         huidig = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
         bezet = self._bezette_poorten(behalve_lab=p.id)
         volgende = self.POORT_BASIS
@@ -687,6 +717,7 @@ class ClusterService:
             # vóór het eerste branch-lab beantwoord hebben, niet veertig
             # minuten later halverwege een bouw.
             "benodigde_geheimen": c.benodigde_geheimen or {},
+            "lab_poorten": c.lab_poorten or [],
             "geheimen_ontbreken": self._ontbrekende_geheimen(c.benodigde_geheimen or {}),
             "notitie": c.notitie,
             "diensten": [self.dienst_dict(d) for d in self.diensten(c.id)],
@@ -857,6 +888,11 @@ class ClusterService:
                 if image and not image_gezet:
                     c.lab_image = image
                     image_gezet = True
+
+            elif soort == "lab_poorten":
+                poorten = [int(x) for x in (waarde.get("poorten") or []) if str(x).isdigit()]
+                if poorten:
+                    c.lab_poorten = poorten[:6]
 
             elif soort == "startscript":
                 c.start_script = plan.get("startscript") or c.start_script

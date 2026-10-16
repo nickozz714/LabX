@@ -387,3 +387,49 @@ def test_plaatshouders_komen_op_de_lijst_voor_de_kluis(db):
     assert "DB_PASS" not in c.omgeving, "een plaatshouder hoort nooit een waarde te worden"
     assert "DB_PASS" in c.benodigde_geheimen
     assert "DB_PASS" in uit["geheimen_ontbreken"]
+
+
+# ── bereikbaarheid is geen vraag voor de gebruiker ───────────────────────────
+
+def test_de_poort_van_de_applicatie_komt_bij_het_cluster_terecht(db):
+    """LabX publiceerde standaard 3000 en 7071. Luistert de applicatie op
+    8000, dan gebeurt er niets -- zonder een enkele foutmelding. Welke poort
+    dat is, staat in de repo en is dus geen vraag voor de gebruiker."""
+    uitslag = {
+        **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
+        "vondsten": [{
+            "soort": "lab_poorten", "sleutel": "poorten", "bevestigd": False,
+            "zekerheid": "laag", "bron": "model", "toelichting": "", "bewijs": [],
+            "waarde": {"poorten": [8000]},
+        }],
+    }
+    svc = _svc(db, uitslag)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek",
+                        gekozen=[{"soort": "lab_poorten", "sleutel": "poorten"}])
+    assert svc.get_or_404(uit["cluster"]["id"]).lab_poorten == [8000]
+
+
+def test_een_lab_krijgt_zijn_eigen_adres_mee(db):
+    """Vragen over PUBLIC_BASE_URL en CORS_ORIGINS zijn geen beslissingen maar
+    gevolgen van hoe het lab gepubliceerd wordt. LabX weet ze, dus geeft hij ze."""
+    from services.lab.clusters import ClusterService
+
+    c = ClusterService(db).maak(naam="Hive")
+    omgeving = ClusterService._adres_omgeving(c, {8000: 18004})
+    assert omgeving["LABX_POORT"] == "8000"
+    assert omgeving["LABX_LAB_POORT"] == "18004"
+    assert omgeving["LABX_LAB_URL"] == "http://localhost:18004"
+
+
+def test_op_een_andere_machine_blijft_het_adres_weg(db):
+    """Die poort staat daar op de loopback en wordt hierheen getunneld op een
+    nummer dat pas bij het openen vastligt. Een adres dat er wel staat maar
+    niet klopt is erger dan een dat ontbreekt."""
+    from services.lab.clusters import ClusterService
+
+    c = ClusterService(db).maak(naam="Hive")
+    c.host_id = 7
+    omgeving = ClusterService._adres_omgeving(c, {8000: 18004})
+    assert "LABX_LAB_URL" not in omgeving
+    assert omgeving["LABX_POORT"] == "8000"

@@ -322,8 +322,8 @@ class Verkenner:
                 continue
             op_sleutel[kern] = det.staaf(mv, inhoud)
 
-        volgorde = {"dienst": 0, "applicatie": 1, "lab_image": 2, "startscript": 3,
-                    "omgeving": 4, "extern": 5, "geheim": 6}
+        volgorde = {"dienst": 0, "applicatie": 1, "lab_image": 2, "lab_poorten": 3,
+                    "startscript": 4, "omgeving": 5, "extern": 6, "geheim": 7}
         return sorted(op_sleutel.values(),
                       key=lambda v: (volgorde.get(v.soort, 9),
                                      _image_voorkeur(v),
@@ -463,6 +463,19 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
             toelichting=str(li.get("waarom") or "")[:400],
         ))
 
+    poorten = [int(x) for x in (uitslag.get("lab_poorten") or []) if str(x).isdigit()]
+    if poorten:
+        uit.append(det.Vondst(
+            soort="lab_poorten", sleutel="poorten",
+            waarde={"poorten": poorten[:6]},
+            bewijs=_model_bewijs(uitslag.get("lab_poorten_bewijs")),
+            zekerheid="laag", bron="model", bevestigd=False,
+            toelichting=(
+                "Hierop luistert de applicatie. LabX publiceert deze poorten naar "
+                "buiten; staat hier het verkeerde nummer, dan is het lab onbereikbaar "
+                "terwijl het wel draait."),
+        ))
+
     profiel = uitslag.get("env_profiel")
     if isinstance(profiel, dict) and profiel.get("keuzes"):
         uit.append(det.Vondst(
@@ -535,6 +548,30 @@ Harde regels:
 4. Omgevingsbestanden zijn geredigeerd: waarden van geheimen zijn weggelaten.
    Dat is geen fout en geen aanwijzing dat de sleutel ongebruikt is.
 
+WAT LABX ZELF REGELT — vraag hier niet naar, ga ervan uit:
+
+- LabX publiceert de poort van het branch-lab naar buiten. De applicatie moet
+  daarom binnen de container op 0.0.0.0 luisteren, nooit op 127.0.0.1 of
+  localhost. Doet de repo dat niet uit zichzelf, dan DWINGT het startscript
+  het af (`--host 0.0.0.0`, `HOST=0.0.0.0`, uvicorn rechtstreeks starten).
+  Dit is geen vraag voor de gebruiker; het volgt uit hoe containers werken.
+- Elk branch-lab krijgt deze variabelen van LabX. Gebruik ze in plaats van
+  iets te verzinnen of te vragen:
+    LABX_POORT        de poort waarop de applicatie IN de container hoort te
+                      luisteren
+    LABX_LAB_POORT    het poortnummer op de machine waarop hij van buiten
+                      bereikbaar is
+    LABX_LAB_URL      het volledige adres van dit lab van buitenaf; kan
+                      ontbreken als het cluster op een andere machine draait
+    LABX_BRANCH       de branch die dit lab draait
+    LABX_ENV_PROFIEL  het gekozen omgevingsprofiel, als het cluster er een heeft
+  Hangt een variabele af van het adres van het lab (PUBLIC_BASE_URL,
+  FRONTEND_BASE_URL, CORS_ORIGINS en dergelijke), zet hem dan in
+  `lab_omgeving` af van $LABX_LAB_URL in plaats van ernaar te vragen.
+- Zeg in `lab_poorten` op welke poort(en) de applicatie luistert. LabX
+  publiceert die; raad je verkeerd, dan is het lab onbereikbaar terwijl het
+  wel draait.
+
 Antwoord met UITSLUITEND JSON, zonder uitleg eromheen:
 
 {
@@ -552,6 +589,7 @@ Antwoord met UITSLUITEND JSON, zonder uitleg eromheen:
   ],
   "lab_image": {"image": "node:22-bookworm", "installeer": "corepack enable && yarn install --immutable",
                 "waarom": "één zin", "bewijs": [{"bestand": "package.json", "regel": 3}]},
+  "lab_poorten": [8000],
   "startscript": "#!/bin/sh\\nset -e\\n... bouwen en starten, in de juiste volgorde",
   "env_profiel": {"keuzes": ["debug"], "standaard": "debug", "waarom": "..."},
   "vragen": ["hooguit drie dingen die je niet uit de repo kon opmaken"],
@@ -561,7 +599,9 @@ Antwoord met UITSLUITEND JSON, zonder uitleg eromheen:
 Het startscript draait IN het branch-lab, in de werkkopie, als root, met
 alleen wat het lab-image biedt. Schrijf het zoals iemand het met de hand zou
 doen: eerst afhankelijkheden, dan bouwen, dan starten. Laat het draaien op de
-voorgrond, zodat de container blijft leven.
+voorgrond, zodat de container blijft leven, en op 0.0.0.0 -- een lab dat
+alleen op localhost luistert is van buiten onbereikbaar terwijl het er wel
+uitziet alsof het draait.
 
 Weet je iets niet, zet het dan in "vragen" in plaats van te gokken.
 Wil je een bestand zien dat wel in de boom staat maar niet in de inhoud, zet

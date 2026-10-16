@@ -27,6 +27,9 @@ _ADDITIVE_COLUMNS = {
         # restpost: het is precies waar een branch-lab veertig minuten later
         # op omvalt als niemand het vooraf opschreef.
         ("benodigde_geheimen", "TEXT"),
+        # Waarop de applicatie in een branch-lab luistert. Bestaande clusters
+        # hebben dit niet en vallen terug op de oude standaard.
+        ("lab_poorten", "TEXT"),
     ],
     "cluster_diensten": [
         # Waar een dienst van buiten te bereiken is: {containerpoort:

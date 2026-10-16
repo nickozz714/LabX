@@ -292,3 +292,43 @@ def test_het_model_vult_aan_waar_de_detector_niets_weet():
     assert van_detector.waarde["lab_omgeving"] == {"OLLAMA_HOST": "ollama:11434"}
     assert van_detector.waarde["poorten"] == [11434], "wat de detector AFLAS blijft staan"
     assert van_detector.waarde["image"] == "ollama/ollama"
+
+
+# ── waarop luistert de applicatie ────────────────────────────────────────────
+
+def test_expose_is_het_bewijs_voor_de_poort():
+    """LabX publiceerde standaard 3000 en 7071. Luistert de applicatie op
+    8000, dan gebeurt er niets: geen foutmelding, geen aanwijzing, een lab dat
+    draait en onbereikbaar is."""
+    from services.lab.verkenner_detectoren import detecteer_poorten
+
+    beeld = {"Dockerfile": "FROM python:3.11-slim\nWORKDIR /app\nEXPOSE 8000\nCMD [\"./start.sh\"]\n"}
+    vondst = detecteer_poorten(beeld)[0]
+    assert vondst.waarde["poorten"] == [8000]
+    assert vondst.zekerheid == "hoog"
+    assert vondst.bewijs[0].regel == 3, "met regelnummer, want anders is het een bewering"
+
+
+def test_de_wortel_wint_van_een_onderliggende_map():
+    """`frontend/Dockerfile` met EXPOSE 80 is de losse webserver van de SPA.
+    In een branch-lab serveert de applicatie die meestal zelf."""
+    from services.lab.verkenner_detectoren import detecteer_poorten
+
+    beeld = {
+        "frontend/Dockerfile": "FROM nginx\nEXPOSE 80\n",
+        "Dockerfile": "FROM python:3.11\nEXPOSE 8000\n",
+    }
+    assert detecteer_poorten(beeld).pop().waarde["poorten"][0] == 8000
+
+
+def test_een_poort_met_protocol_wordt_gelezen():
+    from services.lab.verkenner_detectoren import detecteer_poorten
+
+    beeld = {"Dockerfile": "FROM x\nEXPOSE 8080/tcp 9000\n"}
+    assert detecteer_poorten(beeld).pop().waarde["poorten"] == [8080, 9000]
+
+
+def test_zonder_expose_wordt_er_niets_beweerd():
+    from services.lab.verkenner_detectoren import detecteer_poorten
+
+    assert detecteer_poorten({"Dockerfile": "FROM python:3.11\nCMD [\"x\"]\n"}) == []

@@ -69,6 +69,10 @@ class Cluster(Base):
     #: verkenner -- diensten waar geen emulator van bestaat. Hier staat de
     #: NAAM, nooit de waarde.
     benodigde_geheimen: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Op welke poorten de applicatie IN een branch-lab luistert. LabX
+    #: publiceert deze naar buiten. Leeg = de oude standaard (3000, 7071), en
+    #: dat is precies de gok die een lab onbereikbaar maakt terwijl het draait.
+    lab_poorten: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
     notitie: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
