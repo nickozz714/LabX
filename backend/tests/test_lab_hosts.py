@@ -863,3 +863,44 @@ def test_een_lege_foutmelding_zegt_tenminste_de_soort(db):
     bron = (Path(__file__).resolve().parents[1] / "src" / "services" / "lab"
             / "modelpool.py").read_text(encoding="utf-8")
     assert "zonder toelichting" in bron
+
+
+# ── wat het bijwerken van de iMac liet zien ──────────────────────────────────
+
+def _installer() -> str:
+    from pathlib import Path
+
+    return (Path(__file__).resolve().parents[2] / "lab-host"
+            / "install.sh").read_text(encoding="utf-8")
+
+
+def test_de_installer_controleert_de_daemon_en_niet_alleen_het_programma():
+    """`docker --version` antwoordt vrolijk terwijl de daemon uit staat.
+
+    Dat gebeurde op de iMac: het script meldde "Docker version 27.3.1", de
+    machine werd gekoppeld, en pas veel later bleek dat er niets kon starten
+    omdat Docker Desktop niet draaide. `docker info` praat met de daemon zelf,
+    en dat is de vraag die telt.
+    """
+    bron = _installer()
+    assert "info >/dev/null" in bron, "de daemon hoort bevraagd te worden"
+    assert "de daemon antwoordt niet" in bron
+
+
+def test_de_installer_wacht_tot_de_oude_dienst_echt_weg_is():
+    """`bootout` keert meteen terug terwijl launchd nog bezig is. Een
+    bootstrap daar bovenop geeft "Bootstrap failed: 5: Input/output error" --
+    precies wat er bij het bijwerken van de iMac gebeurde."""
+    bron = _installer()
+    kop = bron.index("launchctl bootout")
+    staart = bron.index("launchctl bootstrap", kop)
+    tussen = bron[kop:staart]
+    assert "launchctl print" in tussen and "sleep 1" in tussen, (
+        "tussen uitladen en laden hoort gewacht te worden tot hij weg is")
+
+
+def test_een_mislukte_bootstrap_wordt_gemeld():
+    """Anders zegt het script "draait, en start voortaan bij het inloggen"
+    terwijl er niets geladen is."""
+    bron = _installer()
+    assert "de dienst laden lukte niet" in bron

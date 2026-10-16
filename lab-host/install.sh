@@ -65,12 +65,28 @@ echo "  ✓ $(python3 --version 2>&1)"
 # Docker hoeft niet in het PATH van DIT venster te staan; de agent zoekt hem
 # zelf op de plekken waar Docker Desktop hem neerzet. Maar helemaal geen
 # docker betekent: hier valt niets te hosten.
-if command -v docker >/dev/null 2>&1; then
-    echo "  ✓ $(docker --version 2>&1 | head -1)"
-elif [ -x /usr/local/bin/docker ] || [ -x "$HOME/.docker/bin/docker" ]; then
-    echo "  ✓ docker gevonden (staat niet in je PATH; de agent regelt dat)"
+DOCKER=""
+for kandidaat in docker /usr/local/bin/docker "$HOME/.docker/bin/docker" /opt/homebrew/bin/docker; do
+    if command -v "$kandidaat" >/dev/null 2>&1 || [ -x "$kandidaat" ]; then
+        DOCKER="$kandidaat"
+        break
+    fi
+done
+if [ -z "$DOCKER" ]; then
+    echo "  ✗ geen docker. Installeer Docker Desktop en probeer opnieuw." >&2
+    exit 1
+fi
+
+# Dat het PROGRAMMA er is zegt niets. Hier stond eerst `docker --version`, en
+# die antwoordt vrolijk terwijl de daemon uit staat -- dan meldt het script
+# "Docker draait hier", koppelt de machine, en gaat er pas uren later iets
+# mis. `docker info` praat met de daemon zelf, en dat is de vraag die telt.
+if "$DOCKER" info >/dev/null 2>&1; then
+    echo "  ✓ $("$DOCKER" --version 2>&1 | head -1)"
 else
-    echo "  ✗ geen docker. Start Docker Desktop en probeer opnieuw." >&2
+    echo "  ✗ docker is geïnstalleerd maar de daemon antwoordt niet." >&2
+    echo "    Start Docker Desktop (of de docker-dienst) en probeer opnieuw." >&2
+    echo "    Zonder draaiende daemon kan LabX hier niets starten." >&2
     exit 1
 fi
 
@@ -144,8 +160,23 @@ if [ "$(uname -s)" = "Darwin" ]; then
         echo "  <key>StandardErrorPath</key><string>$LOG</string>"
         echo '</dict></plist>'
     } > "$PLIST"
+    # Eerst uitladen, en WACHTEN tot hij echt weg is. `bootout` keert meteen
+    # terug terwijl launchd nog bezig is; een bootstrap daar bovenop geeft
+    # "Bootstrap failed: 5: Input/output error" -- precies wat er bij het
+    # bijwerken van de iMac gebeurde.
     launchctl bootout "gui/$(id -u)/nl.labx.labhost" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$PLIST"
+    i=0
+    while [ "$i" -lt 20 ]; do
+        launchctl print "gui/$(id -u)/nl.labx.labhost" >/dev/null 2>&1 || break
+        sleep 1
+        i=$((i + 1))
+    done
+    if ! launchctl bootstrap "gui/$(id -u)" "$PLIST"; then
+        echo "  ✗ de dienst laden lukte niet." >&2
+        echo "    Probeer: launchctl bootout gui/$(id -u)/nl.labx.labhost" >&2
+        echo "    en draai dit script daarna opnieuw." >&2
+        exit 1
+    fi
     HERSTART="launchctl kickstart -k gui/$(id -u)/nl.labx.labhost"
     echo "  ✓ draait, en start voortaan bij het inloggen"
 else
