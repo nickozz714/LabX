@@ -157,7 +157,7 @@ def test_zonder_runners_geeft_de_pool_gewoon_niets(db):
 def test_een_volle_pool_laat_de_guard_terugvallen(db, monkeypatch):
     """Liever de server even laten wachten dan in de rij gaan staan achter
     een andere guard-controle."""
-    from services.lab.modelpool import ModelPool, MAX_GELIJKTIJDIG
+    from services.lab.modelpool import ModelPool, MAX_GELIJKTIJDIG_PER_MACHINE
 
     d = NepDocker()
     _host(db, runners=1)
@@ -170,12 +170,12 @@ def test_een_volle_pool_laat_de_guard_terugvallen(db, monkeypatch):
         return 50001
 
     monkeypatch.setattr("services.lab.poort_tunnel.tunnels.lokale_poort", _tunnel)
-    for _ in range(MAX_GELIJKTIJDIG):
+    for _ in range(MAX_GELIJKTIJDIG_PER_MACHINE):
         ModelPool.bezet(r.id)
     try:
         assert asyncio.run(ModelPool(db).kies()) is None
     finally:
-        for _ in range(MAX_GELIJKTIJDIG):
+        for _ in range(MAX_GELIJKTIJDIG_PER_MACHINE):
             ModelPool.vrij(r.id)
 
 
@@ -232,3 +232,85 @@ def test_kiezen_noteert_wanneer_er_werk_heen_ging(db, monkeypatch):
     ModelPool.vrij(rid)
     db.refresh(r)
     assert r.laatst_gebruikt
+
+
+# ── wat de meting op een echte MacBook liet zien ─────────────────────────────
+
+def test_meer_containers_op_een_machine_is_geen_extra_capaciteit(db, monkeypatch):
+    """Vier runners op één machine mogen niet acht vragen tegelijk aannemen.
+
+    Gemeten op een MacBook: één runner met het model geladen stond op 1,44 GB,
+    de drie ongebruikte op 17 MB. Ze delen bovendien dezelfde kernen, dus vier
+    vragen tegelijk maken elke vraag trager zonder dat er meer af komt. De
+    winst komt van een extra MACHINE, en de pool hoort dat ook zo te
+    behandelen.
+    """
+    from services.lab.modelpool import ModelPool, MAX_GELIJKTIJDIG_PER_MACHINE
+
+    d = NepDocker()
+    _host(db, runners=4)
+    asyncio.run(_pool(db, d).verzoen())
+    for r in ModelPool(db).runners():
+        r.status = "klaar"
+    db.commit()
+
+    async def _tunnel(docker_host, verre):
+        return 50000 + verre
+
+    monkeypatch.setattr("services.lab.poort_tunnel.tunnels.lokale_poort", _tunnel)
+
+    gekozen = []
+    for _ in range(MAX_GELIJKTIJDIG_PER_MACHINE):
+        keus = asyncio.run(ModelPool(db).kies())
+        assert keus, "binnen de grens hoort er gewoon een runner te zijn"
+        gekozen.append(keus[0])
+        ModelPool.bezet(keus[0])
+    try:
+        assert asyncio.run(ModelPool(db).kies()) is None, (
+            "vier containers op één machine zijn geen vier machines")
+    finally:
+        for rid in gekozen:
+            ModelPool.vrij(rid)
+
+
+def test_het_werk_spreidt_over_machines_en_niet_over_containers(db, monkeypatch):
+    """Met twee machines hoort de tweede vraag naar de ANDERE machine te gaan,
+    ook als er op de eerste nog een container 'vrij' staat."""
+    from services.lab.modelpool import ModelPool
+
+    d = NepDocker()
+    a = _host(db, naam="Werkpc", runners=2)
+    b = _host(db, naam="iMac", runners=2)
+    asyncio.run(_pool(db, d).verzoen())
+    for r in ModelPool(db).runners():
+        r.status = "klaar"
+    db.commit()
+
+    async def _tunnel(docker_host, verre):
+        return 50000 + verre
+
+    monkeypatch.setattr("services.lab.poort_tunnel.tunnels.lokale_poort", _tunnel)
+
+    eerste = asyncio.run(ModelPool(db).kies())
+    ModelPool.bezet(eerste[0])
+    tweede = asyncio.run(ModelPool(db).kies())
+    try:
+        host_van = {r.id: r.host_id for r in ModelPool(db).runners()}
+        assert host_van[eerste[0]] != host_van[tweede[0]], (
+            "de tweede vraag hoort naar de andere machine")
+    finally:
+        ModelPool.vrij(eerste[0])
+
+
+def test_meer_dan_vier_vragen_wordt_niet_stil_afgekapt(db):
+    """Je vroeg er vijf en kreeg er vier, zonder dat ergens stond dat dat
+    gebeurde."""
+    from fastapi import HTTPException
+
+    from services.lab.hosts import LabHostService
+
+    h = _host(db, runners=0)
+    with pytest.raises(HTTPException) as fout:
+        LabHostService(db).wijzig(h.id, ollama_runners=5)
+    assert "Maximaal 4" in str(fout.value.detail)
+    assert "extra MACHINE" in str(fout.value.detail)

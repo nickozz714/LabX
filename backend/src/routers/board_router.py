@@ -181,7 +181,51 @@ def overview(runs: int = Query(default=30, le=200), db: Session = Depends(get_db
             "plan_id": extra.get("plan_id"), "plan_name": extra.get("plan_name"),
         }
 
-    lopend = [_regel(r, t) for r, t in _runs("running", limiet=50)]
+    # EN de runs die aan geen enkel ticket hangen: een chat die jij zelf
+    # begint. Die vielen hier helemaal uit, want alles werd aan een ticket
+    # gekoppeld -- met als gevolg dat het overzicht "er draait niets" zei
+    # terwijl er twee gesprekken aan het werk waren en de machine bezet
+    # hielden. Een lopende chat is net zo goed werk dat draait.
+    from models.thread import Thread
+
+    ticket_threads = {t for (t,) in db.query(Ticket.agent_thread_id)
+                      .filter(Ticket.agent_thread_id.isnot(None)).all()}
+
+    def _losse_runs(*statussen: str, limiet: int) -> List[Any]:
+        q = db.query(BackgroundRun)
+        if statussen:
+            q = q.filter(BackgroundRun.status.in_(statussen))
+        rijen = q.order_by(BackgroundRun.created_at.desc()).limit(limiet * 3).all()
+        return [r for r in rijen if r.thread_id not in ticket_threads][:limiet]
+
+    threads = {t.id: t for t in db.query(Thread).all()}
+
+    def _chatregel(run) -> Dict[str, Any]:
+        thread = threads.get(run.thread_id)
+        lab = labs.get(thread.lab_id) if thread and thread.lab_id else None
+        return {
+            "run_id": run.id, "status": run.status,
+            "board_id": None, "board_name": None,
+            # Geen ticket, dus ook geen ticketsleutel. De titel van het
+            # gesprek is wat je hier herkent.
+            "ticket_key": None,
+            "ticket_title": (thread.title if thread and thread.title else "Chat"),
+            "thread_id": run.thread_id,
+            "lab_name": lab.name if lab else None,
+            "lab_status": lab.status if lab else None,
+            "started_at": run.started_at or run.created_at,
+            "finished_at": run.finished_at,
+            "error": (run.error or None),
+            "resume_at": getattr(run, "resume_at", None),
+            "steps": len(run.steps or []),
+            "plan_id": None, "plan_name": None,
+            # Waaraan het scherm ziet dat dit geen ticketwerk is.
+            "soort": "chat",
+        }
+
+    lopend = ([_regel(r, t) for r, t in _runs("running", limiet=50)]
+              + [_chatregel(r) for r in _losse_runs("running", limiet=50)])
+    lopend.sort(key=lambda x: x["started_at"] or "", reverse=True)
     verloop = [_regel(r, t) for r, t in _runs(limiet=runs)]
 
     borden = []

@@ -44,10 +44,20 @@ OLLAMA_IMAGE = "ollama/ollama:latest"
 #: Poortbereik op de loopback van de doelmachine. Hoog en ongebruikelijk,
 #: zodat we niets overnemen wat daar al luistert.
 _POORT_BASIS = 21434
-#: Hoeveel verzoeken één runner tegelijk krijgt voordat we liever een andere
-#: nemen. Ollama zet ze anders in een rij, en dan wacht een guard-controle op
-#: een andere guard-controle.
-MAX_GELIJKTIJDIG = 2
+#: Hoeveel guard-vragen er tegelijk naar ÉÉN MACHINE mogen, ongeacht hoeveel
+#: runners daar staan.
+#:
+#: Per runner tellen was fout, en meetbaar fout. Een model is CPU-werk: vier
+#: runners op één machine delen dezelfde kernen, dus vier vragen tegelijk
+#: maken elke vraag ongeveer vier keer trager zonder dat er meer af komt. En
+#: elke runner die werk krijgt laadt zijn EIGEN kopie van het model in het
+#: geheugen -- op een MacBook gemeten: 1,44 GB voor één, terwijl de drie
+#: ongebruikte runners op 17 MB stonden. Vier actief is dus bijna 6 GB.
+#:
+#: Meer containers op één machine is daarom geen extra capaciteit. Extra
+#: capaciteit komt van extra MACHINES, en dit getal zorgt dat de pool dat ook
+#: zo behandelt.
+MAX_GELIJKTIJDIG_PER_MACHINE = 2
 
 #: Verzoeken die NU onderweg zijn, per runner-id. In het geheugen en niet in
 #: de database: dit is een momentopname die alleen voor dit proces geldt, en
@@ -200,7 +210,8 @@ class ModelPool:
                 # Ophalen, en NIET wachten tot het klaar is: dit duurt minuten
                 # en de scheduler heeft meer te doen. De volgende ronde ziet
                 # hem vanzelf in /api/tags verschijnen.
-                _start_pull(f"http://127.0.0.1:{lokaal}", model, r.naam)
+                _start_pull(f"http://127.0.0.1:{lokaal}", model, r.naam,
+                            host_id=r.host_id)
                 r.status = "startend"
                 r.fout = f"Model {model} wordt opgehaald"
                 bezig += 1
@@ -238,12 +249,24 @@ class ModelPool:
         if not kandidaten:
             return None
 
-        kandidaten.sort(key=lambda r: _ONDERWEG.get(r.id, 0))
-        gekozen = kandidaten[0]
-        if _ONDERWEG.get(gekozen.id, 0) >= MAX_GELIJKTIJDIG:
-            # Allemaal vol. Dan niet in de rij gaan staan: de guard valt terug
-            # op de server-url, en die mag best even wachten.
+        # Per MACHINE tellen, niet per runner: de runners op één machine delen
+        # dezelfde kernen, dus acht "vrije plekken" op vier containers is een
+        # belofte die de machine niet kan waarmaken.
+        per_machine: Dict[int, int] = {}
+        for r in kandidaten:
+            per_machine[r.host_id] = per_machine.get(r.host_id, 0) + _ONDERWEG.get(r.id, 0)
+
+        ruimte = [r for r in kandidaten
+                  if per_machine.get(r.host_id, 0) < MAX_GELIJKTIJDIG_PER_MACHINE]
+        if not ruimte:
+            # Alles vol. Dan niet in de rij gaan staan: de guard valt terug op
+            # de server-url, en die mag best even wachten.
             return None
+        # De minst belaste MACHINE eerst, en daarbinnen de minst belaste
+        # runner. Zo spreidt het werk over machines en niet over containers
+        # die toch dezelfde processor delen.
+        ruimte.sort(key=lambda r: (per_machine.get(r.host_id, 0), _ONDERWEG.get(r.id, 0)))
+        gekozen = ruimte[0]
 
         try:
             lokaal = await tunnels.lokale_poort(
@@ -296,13 +319,17 @@ class ModelPool:
         } for r in self.runners()]
 
 
-#: Welke pulls er lopen, zodat we er niet elke ronde een nieuwe starten.
-_PULLS: Dict[str, Any] = {}
+#: Welke pulls er lopen. Gesleuteld op MACHINE en niet op runner: de runners
+#: op één machine delen één volume, dus vier processen die tegelijk in
+#: dezelfde modelopslag schrijven is vragen om een halve download. Eén haalt
+#: hem op, de rest ziet hem vanzelf verschijnen.
+_PULLS: Dict[Any, Any] = {}
 
 
-def _start_pull(url: str, model: str, naam: str) -> None:
-    """Het model op deze runner laten ophalen, op de achtergrond."""
-    if _PULLS.get(naam) and not _PULLS[naam].done():
+def _start_pull(url: str, model: str, naam: str, host_id: Any = None) -> None:
+    """Het model op deze machine laten ophalen, op de achtergrond."""
+    sleutel = host_id if host_id is not None else naam
+    if _PULLS.get(sleutel) and not _PULLS[sleutel].done():
         return
 
     async def _werk() -> None:
@@ -320,6 +347,6 @@ def _start_pull(url: str, model: str, naam: str) -> None:
             log.warningx("Model ophalen mislukt", runner=naam, error=str(exc)[:200])
 
     try:
-        _PULLS[naam] = asyncio.get_running_loop().create_task(_werk())
+        _PULLS[sleutel] = asyncio.get_running_loop().create_task(_werk())
     except RuntimeError:
         pass

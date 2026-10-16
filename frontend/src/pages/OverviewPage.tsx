@@ -150,9 +150,16 @@ export function OverviewPage() {
         <Badge tone={ITEM_TOON[run.status] || "neutral"}>
           {run.status === "limited" ? "gepauzeerd" : run.status}
         </Badge>
-        <Link to={`/boards/${run.board_id}`} className="font-mono text-xs hover:underline">
-          {run.ticket_key}
-        </Link>
+        {run.ticket_key && run.board_id != null ? (
+          <Link to={`/boards/${run.board_id}`} className="font-mono text-xs hover:underline">
+            {run.ticket_key}
+          </Link>
+        ) : (
+          /* Een losse chat hangt aan geen ticket. Hem daarom weglaten was de
+             reden dat het overzicht "er draait niets" zei terwijl er twee
+             gesprekken aan het werk waren. */
+          <Badge tone="neutral">chat</Badge>
+        )}
         <span className="max-w-[22rem] truncate">{run.ticket_title}</span>
         <span className="text-xs text-muted-foreground">
           {run.board_name}

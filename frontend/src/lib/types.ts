@@ -635,10 +635,16 @@ export interface BoardOverviewDto {
 export interface OverviewRunDto {
   run_id: string;
   status: string;
-  board_id: number;
+  /** null voor een losse chat: die hangt aan geen enkel bord. */
+  board_id: number | null;
   board_name: string | null;
-  ticket_key: string;
+  /** null voor een losse chat; dan staat de titel van het gesprek in
+   *  `ticket_title`. */
+  ticket_key: string | null;
   ticket_title: string;
+  /** "chat" als deze run niet bij een ticket hoort. Een lopende chat is net
+   *  zo goed werk dat draait en een werker bezet houdt. */
+  soort?: "chat";
   /** De chatsessie van deze run — hier kun je in doorpraten. */
   thread_id: string | null;
   lab_name: string | null;

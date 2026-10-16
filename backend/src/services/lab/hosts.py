@@ -171,10 +171,18 @@ class LabHostService:
         if velden.get("naam"):
             rij.naam = str(velden["naam"])[:255]
         if "ollama_runners" in velden:
-            waarde = velden["ollama_runners"]
-            # Een plafond van vier: daarboven is het geen spreiding meer maar
-            # een machine die alleen nog modellen draait.
-            rij.ollama_runners = max(0, min(int(waarde or 0), 4))
+            gevraagd = max(0, int(velden["ollama_runners"] or 0))
+            # Stil afkappen was fout: je vraagt er vijf, krijgt er vier, en
+            # nergens staat dat. Zeggen wat er mis is kost één regel.
+            if gevraagd > 4:
+                raise HTTPException(
+                    status_code=400,
+                    detail=("Maximaal 4 modelcontainers per machine — en meer dan 1 "
+                            "levert meestal niets op: ze delen dezelfde kernen en "
+                            "elke container die werk krijgt laadt zijn eigen kopie "
+                            "van het model (gemeten: 1,4 GB). Extra capaciteit komt "
+                            "van een extra MACHINE, niet van een extra container."))
+            rij.ollama_runners = gevraagd
         if "max_labs" in velden:
             waarde = velden["max_labs"]
             rij.max_labs = max(1, int(waarde)) if waarde else None
