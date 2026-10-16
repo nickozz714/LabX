@@ -327,3 +327,63 @@ def test_de_omgeving_van_een_branch_lab_wijst_naar_de_echte_dienstnaam(db):
     uit = svc.keur_goed(rij.id, naam="IntelligentHive")
     c = svc.get_or_404(uit["cluster"]["id"])
     assert c.omgeving["COSMOS_ENDPOINT"] == "https://ih-cosmos:8081"
+
+
+# ── wat het model niet wist is geen waarde ───────────────────────────────────
+
+def test_een_plaatshouder_wordt_een_geheim_en_geen_omgevingsvariabele():
+    """Bij de eerste verkenning van een vreemde repo kwam dit terug:
+
+        DB_PASS=<zelfde waarde als MYSQL_PASSWORD>
+        JWT_SECRET=<geheim, verplicht: de app start niet zonder>
+
+    Allebei terecht -- die waarden staan niet in de repo. Maar als
+    omgevingsvariabele is het rampzalig: goedgekeurd zoals het is krijgt een
+    branch-lab die zin letterlijk als JWT-sleutel, en dan draait hij, met een
+    sleutel die iedereen kan raden.
+    """
+    from services.lab.verkenner import _model_vondsten
+
+    vondsten = _model_vondsten({"vaste_diensten": [{
+        "naam": "mysql", "image": "mysql:8", "poorten": [3306],
+        "lab_omgeving": {
+            "DB_HOST": "mysql",
+            "DB_PORT": "3306",
+            "DB_PASS": "<zelfde waarde als MYSQL_PASSWORD>",
+            "JWT_SECRET": "<geheim, verplicht: de app start niet zonder>",
+        },
+    }]})
+    waarde = vondsten[0].waarde
+    assert waarde["lab_omgeving"] == {"DB_HOST": "mysql", "DB_PORT": "3306"}
+    assert set(waarde["omgeving_uit_kluis"]) == {"DB_PASS", "JWT_SECRET"}
+    assert "zelfde waarde als MYSQL_PASSWORD" in waarde["omgeving_uit_kluis"]["DB_PASS"]
+
+
+def test_een_lege_waarde_telt_ook_als_onbekend():
+    from services.lab.verkenner import _splits_plaatshouders
+
+    echt, uit_kluis = _splits_plaatshouders({"A": "", "B": "${DB_PASS}", "C": "echt"})
+    assert echt == {"C": "echt"}
+    assert set(uit_kluis) == {"A", "B"}
+
+
+def test_plaatshouders_komen_op_de_lijst_voor_de_kluis(db):
+    uitslag = {
+        **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
+        "vondsten": [{
+            "soort": "dienst", "sleutel": "mysql", "bevestigd": True, "zekerheid": "hoog",
+            "bron": "detector:compose", "toelichting": "", "bewijs": [{"bestand": "docker/docker-compose.yml"}],
+            "waarde": {"image": "mysql:8", "poorten": [3306],
+                       "lab_omgeving": {"DB_HOST": "mysql"},
+                       "omgeving_uit_kluis": {"DB_PASS": "zelfde waarde als MYSQL_PASSWORD"}},
+        }],
+    }
+    svc = _svc(db, uitslag)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+
+    assert c.omgeving == {"DB_HOST": "sp-mysql"}, "de echte waarde volgt de dienstnaam"
+    assert "DB_PASS" not in c.omgeving, "een plaatshouder hoort nooit een waarde te worden"
+    assert "DB_PASS" in c.benodigde_geheimen
+    assert "DB_PASS" in uit["geheimen_ontbreken"]

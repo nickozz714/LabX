@@ -344,7 +344,7 @@ _IMAGE_VOORKEUR = ("detector:manifest", "detector:dockerfile", "model")
 #: Velden die het model mag aanvullen op een detectorvondst, zolang de
 #: detector ze LEEG liet. Nooit overschrijven: de detector las ze af, het
 #: model leidde ze af.
-_AAN_TE_VULLEN = ("lab_omgeving", "poorten", "omgeving")
+_AAN_TE_VULLEN = ("lab_omgeving", "omgeving_uit_kluis", "poorten", "omgeving")
 
 
 def _vul_aan(bestaand: det.Vondst, van_model: det.Vondst) -> None:
@@ -360,6 +360,38 @@ def _image_voorkeur(v: det.Vondst) -> int:
         if v.bron == bron:
             return nummer
     return len(_IMAGE_VOORKEUR)
+
+
+#: Wat een model schrijft waar het een waarde niet WEET. Het bedoelt het
+#: goed -- het wil niet gokken -- maar als omgevingsvariabele is het gif.
+_PLAATSHOUDER = re.compile(r"^\s*(<.*>|\$\{.*\}|)\s*$", re.DOTALL)
+
+
+def _splits_plaatshouders(omgeving: Dict[str, Any]) -> tuple[Dict[str, str], Dict[str, str]]:
+    """Echte waarden scheiden van wat het model niet wist.
+
+    Bij de eerste verkenning van een vreemde repo kwam dit terug:
+
+        DB_PASS=<zelfde waarde als MYSQL_PASSWORD>
+        JWT_SECRET=<geheim, verplicht: de app start niet zonder>
+
+    Allebei terecht: die waarden STAAN niet in de repo. Maar als
+    omgevingsvariabele is het rampzalig, want goedgekeurd zoals het is krijgt
+    een branch-lab die zin letterlijk als JWT-sleutel -- en dan draait hij,
+    met een sleutel die iedereen kan raden.
+
+    Een plaatshouder is dus geen waarde maar een VRAAG, en die hoort op de
+    tweede lijst: dit moet uit de kluis komen.
+    """
+    echt: Dict[str, str] = {}
+    uit_kluis: Dict[str, str] = {}
+    for sleutel, waarde in (omgeving or {}).items():
+        tekst = str(waarde)
+        if _PLAATSHOUDER.match(tekst):
+            uit_kluis[str(sleutel)] = tekst.strip().strip("<>${}").strip() or "geen waarde gevonden in de repo"
+        else:
+            echt[str(sleutel)] = tekst
+    return echt, uit_kluis
 
 
 def _slug(ruw: Any, *, max_lengte: int = 40) -> str:
@@ -396,12 +428,14 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
         naam = _slug(d.get("naam")) if isinstance(d, dict) else ""
         if not naam:
             continue
+        lab_omgeving, uit_kluis = _splits_plaatshouders(d.get("lab_omgeving") or {})
         uit.append(det.Vondst(
             soort="dienst", sleutel=naam,
             waarde={"image": str(d.get("image") or ""),
                     "poorten": [int(p) for p in (d.get("poorten") or []) if str(p).isdigit()],
                     "omgeving": {str(k): str(v) for k, v in (d.get("omgeving") or {}).items()},
-                    "lab_omgeving": {str(k): str(v) for k, v in (d.get("lab_omgeving") or {}).items()}},
+                    "lab_omgeving": lab_omgeving,
+                    "omgeving_uit_kluis": uit_kluis},
             bewijs=_model_bewijs(d.get("bewijs")),
             zekerheid="laag", bron="model", bevestigd=False,
             toelichting=_met_volledige_naam(d, str(d.get("waarom") or ""))[:400],

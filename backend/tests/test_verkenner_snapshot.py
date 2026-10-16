@@ -129,3 +129,23 @@ def test_de_boom_heeft_een_plafond_en_zegt_dat():
             (wortel / f"b{i}.txt").write_text("x")
         beeld = _draai(SCRIPT, str(wortel))
     assert len(beeld["boom"]) == MAX_BOOM and beeld["boom_afgekapt"] is True
+
+
+def test_een_kort_getal_is_een_instelling_en_geen_geheim():
+    """`ACCESS_TOKEN_MIN=15` sneuvelde op het woord TOKEN in zijn naam.
+
+    Veilig was dat wel, maar het model ziet dan een lege waarde waar een
+    looptijd hoort te staan — en dat is informatie die het nodig heeft om een
+    startscript te schrijven dat klopt.
+    """
+    schoon = _redactie()
+    uit = schoon("ACCESS_TOKEN_MIN=15\nREFRESH_TOKEN_DAYS=30\nAPI_TOKEN=abc123xyz\n")
+    assert "ACCESS_TOKEN_MIN=15" in uit
+    assert "REFRESH_TOKEN_DAYS=30" in uit
+    assert "abc123xyz" not in uit, "een echte sleutel gaat er nog steeds af"
+
+
+def test_een_lang_getal_blijft_verdacht():
+    """Zes cijfers is een looptijd; twintig cijfers is iets anders."""
+    uit = _redactie()("SECRET_KEY=12345678901234567890\n")
+    assert uit.strip() == "SECRET_KEY="

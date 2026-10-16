@@ -104,7 +104,13 @@ def schoon_env(tekst):
         if naam.lower().startswith("export "):
             naam = naam[7:].strip()
         schoon = waarde.strip().strip('"').strip("'")
-        if _GEHEIM.search(naam) and not any(m in schoon for m in PUBLIEKE_MARKERS):
+        if (_GEHEIM.search(naam)
+                and not any(m in schoon for m in PUBLIEKE_MARKERS)
+                # Een kort getal is geen geheim maar een instelling.
+                # `ACCESS_TOKEN_MIN=15` en `REFRESH_TOKEN_DAYS=30` sneuvelden
+                # op het woord TOKEN in hun naam, en dan ziet het model een
+                # lege waarde waar een looptijd hoorde te staan.
+                and not _re.fullmatch(r"\d{1,6}", schoon)):
             uit.append(sleutel + "=")
             continue
         schoon = _re.sub(r"://[^/@\s]+@", "://", schoon)[:80]

@@ -109,11 +109,30 @@ function Inhoud({ v }: { v: Vondst }) {
     );
   }
   if (v.soort === "dienst" || v.soort === "lab_image") {
+    const uitKluis = Object.keys(w.omgeving_uit_kluis || {});
     if (!w.image) return null;
     return (
       <div className="mt-1 text-xs text-muted-foreground">
-        <span className="font-mono">{w.image}</span>
-        {!!w.poorten?.length && <span className="ml-2">poorten {w.poorten.join(", ")}</span>}
+        <div>
+          <span className="font-mono">{w.image}</span>
+          {!!w.poorten?.length && <span className="ml-2">poorten {w.poorten.join(", ")}</span>}
+        </div>
+        {!!Object.keys(w.lab_omgeving || {}).length && (
+          <div className="mt-1 font-mono">
+            {Object.entries(w.lab_omgeving || {}).map(([k, val]) => (
+              <div key={k} className="truncate">{k}={val}</div>
+            ))}
+          </div>
+        )}
+        {uitKluis.length > 0 && (
+          /* Variabelen waarvan het model de waarde niet wist. Die mogen geen
+             omgevingswaarde worden -- dan draait een lab met een sleutel die
+             iedereen kan raden -- dus ze gaan naar de kluislijst. */
+          <div className="mt-1 flex items-start gap-1.5 text-amber-400">
+            <KeyRound className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>moet uit de kluis komen: <span className="font-mono">{uitKluis.join(", ")}</span></span>
+          </div>
+        )}
       </div>
     );
   }

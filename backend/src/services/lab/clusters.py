@@ -845,6 +845,12 @@ class ClusterService:
                 # bestaat, en dat merk je pas als een lab al draait.
                 for k, w in (waarde.get("lab_omgeving") or {}).items():
                     omgeving[str(k)] = _hernoem_host(str(w), sleutel, dienstnaam)
+                # Wat het model niet WIST staat niet in de omgeving maar op
+                # de lijst "moet uit de kluis komen". Een plaatshouder als
+                # waarde geeft een lab dat draait met een sleutel die
+                # iedereen kan raden -- erger dan een lab dat niet start.
+                for k, uitleg in (waarde.get("omgeving_uit_kluis") or {}).items():
+                    geheimen[str(k)] = str(uitleg)[:300]
 
             elif soort == "lab_image":
                 image = str(waarde.get("image") or "")[:255]

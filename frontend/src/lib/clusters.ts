@@ -48,6 +48,10 @@ export type Vondst = {
     poorten?: number[];
     omgeving?: Record<string, string>;
     lab_omgeving?: Record<string, string>;
+    /** Variabelen waarvan het model de waarde NIET wist. Die horen niet in de
+     *  omgeving van een lab terecht te komen — anders draait het met een
+     *  sleutel die iedereen kan raden. Ze gaan naar de kluislijst. */
+    omgeving_uit_kluis?: Record<string, string>;
     sleutels?: string[];
     keuzes?: string[];
     standaard?: string;
