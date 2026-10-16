@@ -80,13 +80,21 @@ dat, dan verandert het op één plek.
 
 ### Afbreken
 
-Een branch-lab is wegwerpbaar — dat is het punt. Maar niet onbewaakt:
+Een branch-lab is wegwerpbaar — dat is het punt, en dat blijft het ook:
 
-> LabX weigert een branch-lab te verwijderen zolang er **niet-gecommitte
-> wijzigingen** in staan, tenzij je uitdrukkelijk zegt dat je ze weggooit.
+> **Verwijderen kan altijd.** Staat er niet-gecommit werk in, dan zegt LabX
+> dat erbij — met wat er openstaat — maar het houdt je niet tegen.
 
-Dezelfde regel als bij het verplaatsen van een lab tijdens werk. Een lab dat je
-weggooit mag je werk niet meenemen zonder dat je het weet.
+Een waarschuwing en een blokkade zijn niet hetzelfde. Een blokkade zegt dat
+LabX beter weet dan jij of dat werk ertoe doet, en dat weet hij niet: negen
+van de tien keer is het een half experiment dat juist weg mag. Wat LabX wél
+kan, is zorgen dat je het niet per ongeluk doet — dus laat hij zien wát er
+openstaat op het moment dat je het weggooit.
+
+Dat is iets anders dan bij het verplaatsen van een lab met lopend werk. Daar
+wordt wel geweigerd, en om een andere reden: daar breek je een agent
+halverwege af en haal je het volume onder zijn handen weg. Hier gooi je
+bewust iets weg dat bedoeld was om weg te gooien.
 
 ---
 
@@ -152,7 +160,7 @@ Elke stap staat op zichzelf en is bruikbaar voordat de volgende er is.
    netwerk, op een machine naar keuze. Nog geen branches.
 2. **Branch-labs.** Een lab met een branch, afgetakt van een basis die jij
    kiest, met het cluster-startscript en een eigen poort.
-3. **Opruimen met een vangnet.** Weigeren bij niet-gecommit werk.
+3. **Opruimen.** Verwijderen kan altijd; niet-gecommit werk wordt getoond.
 4. **Tickets ↔ branches.** Het veld op het ticket, en "Agent starten" dat het
    juiste lab pakt of maakt.
 5. **Workflows op clusterniveau.**
