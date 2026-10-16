@@ -295,6 +295,22 @@ zette het in `vragen` in plaats van ze te gokken. Dat is het gedrag waar deze
 opzet op rekent, en het is de reden dat de uitkomst per commit bewaard wordt:
 dit is geen aanroep die je per ongeluk vijf keer doet.
 
+### Keuze, vaststelling, en lijstje
+
+Niet elk onderdeel van een plan is hetzelfde soort ding, en dat zichtbaar
+maken scheelt de helft van de verwarring in het goedkeurscherm.
+
+- Een **vaststelling** heeft geen vinkje. Wat uit de repo gebouwd wordt,
+  wordt gebouwd — daar valt niets aan te kiezen. Het staat er omdat je het
+  moet weten, niet omdat je erover moet beslissen.
+- Een **keuze** laat er precies één toe. Het lab-image is er zo een: een repo
+  levert er zo vijf kandidaten voor op (een Dockerfile, een manifest, een
+  compose-service, een voorstel van het model), en vijf aanvinken levert er
+  alsnog één op — waarbij de volgorde van een lus bepaalt welke. Dat is geen
+  keuze maar een loterij.
+- Een **lijstje** is de rest: vaste diensten, geheimen, instellingen. Daar
+  mag je aan- en uitvinken wat je wilt.
+
 ### Opnieuw verkennen
 
 Het plan hoort bij het cluster en is goedgekeurd vanaf één basisbranch. Maar
