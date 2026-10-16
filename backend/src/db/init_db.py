@@ -21,6 +21,12 @@ log = get_logger(__name__)
 # a table already existed in the wild. Remove an entry once comfortable that
 # no deployed database predates it.
 _ADDITIVE_COLUMNS = {
+    "lab_hosts": [
+        # Hoeveel modelcontainers hier mogen draaien. 0 voor wat er al staat:
+        # een bestaande machine doet alleen labs tot jij er iets anders van
+        # vindt.
+        ("ollama_runners", "INTEGER NOT NULL DEFAULT 0"),
+    ],
     "ticket_comments": [
         # Interne opmerkingen gaan nooit naar de bron; bestaande rijen waren
         # allemaal extern, dus 0 is de juiste standaard voor wat er al staat.
@@ -278,6 +284,7 @@ def init_db() -> None:
         lab,
         lab_extra,
         lab_host,
+        model_runner,
         secret,
         lab_secret,
         lab_worker,

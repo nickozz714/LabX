@@ -94,6 +94,26 @@ def _url() -> str:
     return f"http://{host}:11434"
 
 
+async def _uit_de_pool(db: Any) -> tuple:
+    """(runner_id, url) uit de modelpool, of (None, None).
+
+    (None, None) is een normaal antwoord: geen runners, allemaal bezet, of de
+    machine is er even niet. Dan gebruikt de guard de url uit de instellingen
+    -- precies zoals het altijd werkte. De pool is een uitbreiding, geen
+    vervanging, en mag nooit een reden zijn dat de controle niet draait.
+    """
+    if db is None:
+        return (None, None)
+    try:
+        from services.lab.modelpool import ModelPool
+
+        keus = await ModelPool(db).kies()
+        return keus if keus else (None, None)
+    except Exception as exc:  # noqa: BLE001
+        log.warningx("Modelpool overgeslagen", error=str(exc)[:200])
+        return (None, None)
+
+
 def _globally_disabled() -> bool:
     return (os.getenv("DATA_GUARD_LLM_DISABLED") or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -273,7 +293,14 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
     if len(text.strip()) < min_chars and not _lijkt_op_aggregaat(text):
         return None
     model = _model()
-    url = _url()
+    # Eerst de pool: draait er een modelcontainer op een machine in je
+    # netwerk, dan gaat deze vraag daarheen in plaats van naar de server die
+    # ook alle labs draait. Levert de pool niets op (geen runners, allemaal
+    # bezet, machine weg), dan gewoon de url uit de instellingen -- precies
+    # zoals het altijd werkte.
+    runner_id, url = await _uit_de_pool(db)
+    if url is None:
+        url = _url()
     if not _is_local(url):
         log.warningx("data-guard LLM overgeslagen: niet-lokale URL (lek-risico)", url=url)
         return None
@@ -316,9 +343,19 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
     }
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(f"{url}/api/chat", json=payload)
-            resp.raise_for_status()
+        from services.lab.modelpool import ModelPool
+
+        if runner_id is not None:
+            ModelPool.bezet(runner_id)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(f"{url}/api/chat", json=payload)
+                resp.raise_for_status()
+        finally:
+            # Altijd vrijgeven, ook bij een time-out. Blijft de teller staan,
+            # dan lijkt die runner voorgoed vol en krijgt hij nooit meer werk.
+            if runner_id is not None:
+                ModelPool.vrij(runner_id)
             content = (resp.json().get("message") or {}).get("content") or "{}"
             data = json.loads(content)
         confidential = bool(data.get("confidential"))

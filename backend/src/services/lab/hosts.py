@@ -170,6 +170,11 @@ class LabHostService:
         rij = self.get_or_404(host_id)
         if velden.get("naam"):
             rij.naam = str(velden["naam"])[:255]
+        if "ollama_runners" in velden:
+            waarde = velden["ollama_runners"]
+            # Een plafond van vier: daarboven is het geen spreiding meer maar
+            # een machine die alleen nog modellen draait.
+            rij.ollama_runners = max(0, min(int(waarde or 0), 4))
         if "max_labs" in velden:
             waarde = velden["max_labs"]
             rij.max_labs = max(1, int(waarde)) if waarde else None
@@ -232,6 +237,7 @@ class LabHostService:
             "docker_versie": rij.docker_versie,
             "besturingssysteem": rij.besturingssysteem,
             "max_labs": rij.max_labs, "blijft_wakker": bool(rij.blijft_wakker),
+            "ollama_runners": int(rij.ollama_runners or 0),
             # De code alleen zolang er gekoppeld moet worden, en dan nog
             # verkort: het scherm hoeft alleen te bevestigen dat je naar de
             # juiste machine kijkt.

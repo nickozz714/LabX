@@ -64,6 +64,29 @@ async def _lab_reaper_tick() -> None:
         db.close()
 
 
+async def _modelpool_tick() -> None:
+    """De modelcontainers op je netwerkmachines op orde houden.
+
+    Twee dingen in één ronde: starten/stoppen wat er volgens jouw instelling
+    zou moeten draaien, en per runner kijken of hij antwoordt en het model
+    kent. Het ophalen van een model duurt minuten en loopt daarom op de
+    achtergrond door -- de volgende ronde ziet het resultaat.
+    """
+    db = SessionLocal()
+    try:
+        from services.lab.modelpool import ModelPool
+
+        pool = ModelPool(db)
+        await pool.verzoen()
+        await pool.controleer()
+    except Exception as exc:  # noqa: BLE001 — nooit de scheduler laten vallen
+        from component_logging import get_logger
+
+        get_logger(__name__).warningx("Modelpool-ronde mislukt", error=str(exc)[:200])
+    finally:
+        db.close()
+
+
 async def _warm_mcp_gateway() -> None:
     """Importeer de gateway in een apart proces zodat de bestandscache warm is
     tegen de tijd dat een echte run hem start. Faalt dit, dan is er niets aan de
@@ -290,6 +313,13 @@ async def lifespan(_app: FastAPI):
     )
     scheduler.register(
         name="dode_runs", interval_seconds=120, fn=_dode_runs_tick, run_immediately=False,
+    )
+    # Elke twee minuten: vaak genoeg om een machine die terugkomt snel weer
+    # mee te laten doen, zeldzaam genoeg om geen SSH-verkeer te veroorzaken
+    # waar niemand om vroeg. Doet niets zolang je nergens runners instelt.
+    scheduler.register(
+        name="modelpool", interval_seconds=120, fn=_modelpool_tick,
+        run_immediately=False,
     )
     from services.scheduling.cron import tick as _cron_tick
     scheduler.register(name="schedule_cron", interval_seconds=30, fn=_cron_tick, run_immediately=True)

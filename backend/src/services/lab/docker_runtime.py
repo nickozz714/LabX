@@ -46,6 +46,10 @@ log = get_logger(__name__)
 
 _LABEL = "labx.managed"
 _LAB_LABEL = "labx.lab"
+#: Modelcontainers (Ollama) van de pool. Een EIGEN label, zodat de
+#: lab-opruiming ze met rust laat: die ruimt alles op wat labx.managed
+#: draagt en geen lab-rij meer heeft, en een runner is geen lab.
+_MODEL_LABEL = "labx.model=1"
 _EXPIRES_LABEL = "labx.expires_at"
 #: Het wegwerpcontainertje waarmee een volume in- en uitgepakt wordt. Klein,
 #: overal te krijgen, en het enige dat het hoeft te kunnen is `tar`.
@@ -309,6 +313,47 @@ class DockerRuntime:
             return None
         ips = [x for x in out.split() if x]
         return ips[0] if ips else None
+
+    async def run_model_container(self, *, naam: str, image: str, volume: str,
+                                  verre_poort: int, mem_limit_mb: int = 4096) -> str:
+        """Een modelcontainer (Ollama) starten op deze daemon.
+
+        Apart van `run_container`, want dit is geen lab: geen /workspace, geen
+        TTL, geen labels waar de lab-opruiming op let. Wel dezelfde regel over
+        poorten -- hij publiceert op 127.0.0.1 van ZIJN machine, zodat er
+        niets op je LAN komt te staan; LabX legt er een SSH-tunnel naartoe.
+
+        `--restart unless-stopped`: een modelcontainer hoort een herstart van
+        die machine te overleven. Een lab niet (dat is wegwerpbaar), maar dit
+        is gereedschap.
+        """
+        await self._cli_ok("volume", "create", volume, timeout=30)
+        args = [
+            "run", "-d",
+            "--name", naam,
+            "--label", _MODEL_LABEL,
+            "--restart", "unless-stopped",
+            "--memory", f"{int(mem_limit_mb)}m",
+            "-p", f"127.0.0.1:{int(verre_poort)}:11434",
+            "-v", f"{volume}:/root/.ollama",
+            image,
+        ]
+        return await self._cli_ok(*args, timeout=300)
+
+    async def list_model_containers(self) -> List[Dict[str, str]]:
+        """Wat er op deze daemon aan modelcontainers staat, draaiend of niet."""
+        code, out, _ = await self._run_cli(
+            "ps", "-a", "--filter", f"label={_MODEL_LABEL}",
+            "--format", "{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Ports}}", timeout=30)
+        if code != 0:
+            return []
+        rijen = []
+        for regel in out.splitlines():
+            deel = regel.split("\t")
+            if len(deel) >= 3:
+                rijen.append({"id": deel[0], "name": deel[1], "state": deel[2],
+                              "ports": deel[3] if len(deel) > 3 else ""})
+        return rijen
 
     async def architectuur(self) -> Optional[str]:
         """Waar deze daemon op draait: `x86_64`, `aarch64`, ...

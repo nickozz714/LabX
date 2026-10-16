@@ -76,6 +76,15 @@ class LabHost(Base):
     #: niet merken aan een nachtrun die halverwege stopt.
     blijft_wakker: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    #: Hoeveel modelcontainers (Ollama) hier mogen draaien voor de
+    #: data-guard. 0 = geen; deze machine doet alleen labs.
+    #:
+    #: Waarom dit per machine instelbaar is en geen automatisme: een model
+    #: vreet geheugen en CPU, en jij weet wat een machine er nog bij kan
+    #: hebben. LabX kan dat raden, maar raden op iemands werkcomputer is
+    #: precies wat je niet wilt.
+    ollama_runners: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     #: De koppelcode die de agent op het scherm van die pc toont. Verdwijnt
     #: zodra er gekoppeld is -- een code die blijft staan is een wachtwoord
     #: dat niemand meer vervangt.

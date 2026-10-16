@@ -25,9 +25,9 @@ import {
   Wifi, WifiOff,
 } from "lucide-react";
 import { labHostsApi } from "@/lib/labs";
-import type { LabHost } from "@/lib/types";
+import type { LabHost, ModelRunner } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal } from "@/components/ui";
-import { KeyRound } from "lucide-react";
+import { Brain, KeyRound } from "lucide-react";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
@@ -147,6 +147,7 @@ export function MachinesPage() {
       )}
 
       <div className="mt-6 space-y-3">
+        <Modelpool />
         <SleutelVanLabX />
         <ZoDoeJeDatUitleg />
       </div>
@@ -192,6 +193,7 @@ function HostKaart({ host, onKoppel, onWijzig }: {
   const [uitslag, setUitslag] = useState<{ ok: boolean; tekst: string } | null>(null);
   const [max, setMax] = useState<string>(host.max_labs ? String(host.max_labs) : "");
   const [adres, setAdres] = useState<string>(host.docker_host || "");
+  const [runners, setRunners] = useState<string>(String(host.ollama_runners ?? 0));
   const melding = useMelding();
   const bevestig = useBevestiging();
 
@@ -218,6 +220,17 @@ function HostKaart({ host, onKoppel, onWijzig }: {
     if (n !== null && !Number.isFinite(n)) return;
     await labHostsApi.wijzig(host.id, { max_labs: n });
     melding.ok("Opgeslagen.");
+    onWijzig();
+  }
+
+  async function bewaarRunners() {
+    const n = Math.max(0, Math.min(4, Number(runners) || 0));
+    if (n === (host.ollama_runners ?? 0)) return;
+    await labHostsApi.wijzig(host.id, { ollama_runners: n });
+    melding.ok(n === 0 ? "Geen modelcontainers meer hier."
+                       : `${n} modelcontainer(s) op ${host.naam}.`,
+               n > 0 ? "Het model wordt opgehaald; dat duurt de eerste keer even."
+                     : undefined);
     onWijzig();
   }
 
@@ -338,6 +351,28 @@ function HostKaart({ host, onKoppel, onWijzig }: {
                 </p>
               )}
             </div>
+            <div>
+              {/* Het guardmodel hoeft niet op de server te draaien. Hier
+                  zeg jij wat deze machine erbij kan hebben -- LabX raadt dat
+                  niet, want raden op iemands werkcomputer is precies wat je
+                  niet wilt. */}
+              <Label>Modelcontainers voor de data-guard</Label>
+              <div className="flex gap-2">
+                <Input value={runners} onChange={(e) => setRunners(e.target.value)}
+                       onBlur={bewaarRunners} inputMode="numeric"
+                       className="max-w-20" />
+                <Button variant="ghost" onClick={bewaarRunners}
+                        disabled={Number(runners) === (host.ollama_runners ?? 0)}>
+                  Opslaan
+                </Button>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                0 = deze machine doet alleen labs. Elke container haalt het
+                model één keer op (een paar honderd MB tot enkele GB) en
+                bewaart het.
+              </p>
+            </div>
+
             <div>
               <Label>Maximaal aantal labs (leeg = geen grens)</Label>
               <div className="flex gap-2">
@@ -483,6 +518,65 @@ function KoppelVenster({ host, onClose, onGekoppeld }: {
  * Een publieke sleutel is niet geheim; dat is het hele idee ervan. Open tonen
  * kost niets en scheelt een zoektocht.
  */
+/**
+ * Waar het guardmodel draait, en hoe druk het daar is.
+ *
+ * De data-guard vraagt een klein lokaal model om een tweede mening. Draaide
+ * dat alleen op de server, dan ging een drukke guard-ronde ten koste van het
+ * werk zelf. Hier zie je waar het nu gebeurt.
+ */
+function Modelpool() {
+  const [runners, setRunners] = useState<ModelRunner[] | null>(null);
+
+  useEffect(() => {
+    const haal = () => labHostsApi.modelpool()
+      .then((r) => setRunners(r.runners))
+      .catch(() => setRunners([]));
+    haal();
+    const t = setInterval(haal, 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (!runners || runners.length === 0) return null;
+  const klaar = runners.filter((r) => r.status === "klaar").length;
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Brain className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-semibold">Guardmodel</span>
+        <span className="text-xs text-muted-foreground">
+          {klaar} van {runners.length} klaar
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {runners.map((r) => (
+          <div key={r.id} className="rounded-md border border-border p-2 text-xs">
+            <div className="mb-1 flex items-center gap-2">
+              <span className="truncate font-medium">{r.machine}</span>
+              <Badge tone={r.status === "klaar" ? "green"
+                           : r.status === "fout" ? "red" : "yellow"}>
+                {r.status}
+              </Badge>
+              {r.onderweg > 0 && (
+                <span className="ml-auto text-muted-foreground">
+                  {r.onderweg} bezig
+                </span>
+              )}
+            </div>
+            {r.fout && <div className="text-muted-foreground">{r.fout}</div>}
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Een vraag gaat naar de runner met het minste werk onderweg. Is er geen
+        vrij, dan gebruikt de guard het model op de server — de controle valt
+        dus nooit weg omdat de pool bezet is.
+      </p>
+    </Card>
+  );
+}
+
 function SleutelVanLabX() {
   const [sleutel, setSleutel] = useState<{ publieke_sleutel: string; commando: string } | null>(null);
   const [open, setOpen] = useState(false);

@@ -1,5 +1,5 @@
 import { api, getToken } from "@/lib/api";
-import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra, LabHost, LabRepo } from "@/lib/types";
+import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra, LabHost, LabRepo, ModelRunner } from "@/lib/types";
 
 /** Eén regel uit de bestandsbrowser. `bytes` is null voor mappen, en ook voor
  *  een lab-image waarvan de `ls` geen groottes kan geven. */
@@ -79,7 +79,9 @@ export const labHostsApi = {
   koppelen: (id: number, code: string, dockerHost: string) =>
     api.post<LabHost>(`/lab-hosts/${id}/koppelen`, { code, docker_host: dockerHost }),
   weigeren: (id: number) => api.post<LabHost>(`/lab-hosts/${id}/weigeren`),
-  wijzig: (id: number, payload: Partial<Pick<LabHost, "naam" | "max_labs" | "notitie" | "docker_host">>) =>
+  /** Welke modelcontainers draaien er, waar, en hoe druk zijn ze? */
+  modelpool: () => api.get<{ runners: ModelRunner[] }>("/lab-hosts/modelpool"),
+  wijzig: (id: number, payload: Partial<Pick<LabHost, "naam" | "max_labs" | "notitie" | "docker_host" | "ollama_runners">>) =>
     api.patch<LabHost>(`/lab-hosts/${id}`, payload),
   verwijder: (id: number) => api.delete<{ ok: boolean }>(`/lab-hosts/${id}`),
   /** Meten in plaats van aannemen: komt LabX er werkelijk bij? Een gekoppelde

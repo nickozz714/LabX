@@ -813,6 +813,9 @@ export interface LabHost {
   besturingssysteem: string | null;
   /** Plafond dat je zelf instelt; leeg = geen eigen grens. */
   max_labs: number | null;
+  /** Hoeveel modelcontainers (Ollama) hier mogen draaien voor de data-guard.
+   *  0 = deze machine doet alleen labs. */
+  ollama_runners?: number;
   /** Houdt de agent die pc wakker? Een machine die na tien minuten in slaap
    *  valt is geen lab-host, en dat wil je wéten en niet merken aan een
    *  nachtrun die halverwege stopt. */
@@ -823,4 +826,17 @@ export interface LabHost {
   labs: { id: string; name: string }[];
   created_at: string;
   updated_at: string;
+}
+
+
+/** Eén draaiende modelcontainer in de pool. */
+export interface ModelRunner {
+  id: number;
+  naam: string;
+  machine: string;
+  status: "startend" | "klaar" | "fout" | "gestopt";
+  fout: string | null;
+  /** Verzoeken die nu onderweg zijn naar deze runner. */
+  onderweg: number;
+  laatst_gebruikt: string | null;
 }

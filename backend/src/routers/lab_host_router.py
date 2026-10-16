@@ -130,6 +130,14 @@ def lijst(db: Session = Depends(get_db)):
     return [svc.to_dict(h) for h in svc.lijst()]
 
 
+@router.get("/modelpool")
+def modelpool(db: Session = Depends(get_db)):
+    """Welke modelcontainers draaien er, waar, en hoe druk zijn ze?"""
+    from services.lab.modelpool import ModelPool
+
+    return {"runners": ModelPool(db).overzicht()}
+
+
 @router.get("/{host_id}")
 def lees(host_id: int, db: Session = Depends(get_db)):
     svc = LabHostService(db)
