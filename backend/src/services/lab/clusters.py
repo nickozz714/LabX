@@ -241,6 +241,13 @@ class ClusterService:
         except Exception as exc:  # noqa: BLE001
             klachten.append(f"netwerk {rij.netwerk}: {str(exc)[:160]}")
 
+        from models.cluster_secret import ClusterSecret
+
+        # De kluis van dit cluster gaat mee. Achterblijvende geheimen van een
+        # cluster dat niet meer bestaat zijn onvindbaar en onverwijderbaar --
+        # en ze staan er nog wel.
+        (self.db.query(ClusterSecret)
+         .filter(ClusterSecret.cluster_id == cluster_id).delete())
         self.db.delete(rij)
         self.db.commit()
         if klachten:
@@ -628,6 +635,14 @@ class ClusterService:
             omgeving.setdefault("LABX_ENV_PROFIEL", c.env_profiel)
         omgeving.setdefault("LABX_BRANCH", p.branch or "")
         omgeving.update(self._adres_omgeving(c, kaart))
+        # De geheimen die deze applicatie nodig heeft, uit de kluis van DIT
+        # cluster (en anders de gedeelde). Alleen wat gevonden wordt: een
+        # ontbrekend geheim levert geen LEGE variabele op, want een applicatie
+        # die JWT_SECRET="" krijgt start vaak gewoon -- met een sleutel die
+        # iedereen kan raden.
+        from services.lab.cluster_kluis import ClusterKluis
+
+        omgeving.update(ClusterKluis(self.db).los_op(c.id, c.benodigde_geheimen or {}))
 
         for w in lab_svc.ensure_workers(p):
             if w.container_id:
@@ -728,7 +743,7 @@ class ClusterService:
             # minuten later halverwege een bouw.
             "benodigde_geheimen": c.benodigde_geheimen or {},
             "lab_poorten": c.lab_poorten or [],
-            "geheimen_ontbreken": self._ontbrekende_geheimen(c.benodigde_geheimen or {}),
+            "geheimen_ontbreken": self._ontbrekende_geheimen(c.benodigde_geheimen or {}, c.id),
             "notitie": c.notitie,
             "diensten": [self.dienst_dict(d) for d in self.diensten(c.id)],
             "labs": labs,
@@ -1013,7 +1028,7 @@ class ClusterService:
         self.db.commit()
         self.db.refresh(c)
 
-        ontbreekt = self._ontbrekende_geheimen(geheimen)
+        ontbreekt = self._ontbrekende_geheimen(geheimen, c.id)
         log.infox("Plan goedgekeurd", cluster=c.naam, diensten=len(toegevoegd),
                   geheimen_open=len(ontbreekt))
         return {
@@ -1022,22 +1037,29 @@ class ClusterService:
             "geheimen_ontbreken": ontbreekt,
         }
 
-    def _ontbrekende_geheimen(self, benodigd: Dict[str, Any]) -> List[str]:
-        """Welke van de benodigde geheimen nog niet in de kluis staan.
+    def _ontbrekende_geheimen(self, benodigd: Dict[str, Any],
+                              cluster_id: Optional[int] = None) -> List[str]:
+        """Welke van de benodigde geheimen nergens te vinden zijn.
 
-        Dit is de vraag die je vóór het eerste branch-lab beantwoord wilt
-        hebben, niet veertig minuten later halverwege een bouw.
+        Eerst de kluis van dit cluster, dan de gedeelde. Dit is de vraag die
+        je vóór het eerste branch-lab beantwoord wilt hebben, niet veertig
+        minuten later halverwege een bouw.
         """
         if not benodigd:
             return []
         try:
+            from services.lab.cluster_kluis import ClusterKluis
+
+            kluis = ClusterKluis(self.db)
+            if cluster_id:
+                return sorted(n for n in benodigd if not kluis.bestaat(cluster_id, n))
             from services.secrets.vault import VaultService
 
             aanwezig = {r.name for r in VaultService(self.db).lijst()}
+            return sorted(n for n in benodigd if n not in aanwezig)
         except Exception as exc:  # noqa: BLE001 — geen kluis? dan niets beweren
-            log.infox("Kluis niet te lezen bij goedkeuren", error=str(exc)[:200])
+            log.infox("Kluis niet te lezen", error=str(exc)[:200])
             return []
-        return sorted(n for n in benodigd if n not in aanwezig)
 
     @staticmethod
     def plan_dict(rij: ClusterPlan) -> Dict[str, Any]:

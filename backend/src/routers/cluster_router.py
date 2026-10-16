@@ -123,6 +123,60 @@ async def verwijder_dienst(dienst_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ── de kluis van een cluster ─────────────────────────────────────────────────
+#
+# Apart van de gedeelde kluis, want een cluster verwijst naar geheimen met de
+# naam van een OMGEVINGSVARIABELE -- JWT_SECRET, DB_PASS -- en die namen zijn
+# juist niet uniek. In de gedeelde kluis vechten twee clusters dan om
+# hetzelfde geheim, en wie het laatst opslaat wint, zonder dat iemand het
+# merkt: de waarde is nergens te zien.
+
+
+@router.get("/{cluster_id}/geheimen")
+def geheimen(cluster_id: int, db: Session = Depends(get_db)):
+    """Wat er in de kluis van dit cluster staat, en wat er nog ontbreekt.
+
+    Nooit waarden -- alleen namen, lengtes en waar ze vandaan komen.
+    """
+    from services.lab.cluster_kluis import ClusterKluis
+
+    svc = _svc(db)
+    c = svc.get_or_404(cluster_id)
+    kluis = ClusterKluis(db)
+    eigen = {r.naam for r in kluis.lijst(cluster_id)}
+    nodig = c.benodigde_geheimen or {}
+    return {
+        "eigen": [kluis.to_dict(r) for r in kluis.lijst(cluster_id)],
+        "benodigd": [
+            {"naam": n, "waarvoor": w,
+             "in_eigen_kluis": n in eigen,
+             "gevonden": kluis.bestaat(cluster_id, n)}
+            for n, w in sorted(nodig.items())
+        ],
+    }
+
+
+@router.put("/{cluster_id}/geheimen/{naam}")
+def geheim_zetten(cluster_id: int, naam: str, body: Dict[str, Any],
+                  db: Session = Depends(get_db)):
+    from services.lab.cluster_kluis import ClusterKluis
+
+    _svc(db).get_or_404(cluster_id)
+    rij = ClusterKluis(db).zet(
+        cluster_id, naam=naam,
+        waarde=(str(body["waarde"]) if body.get("waarde") else None),
+        omschrijving=(str(body["omschrijving"]) if body.get("omschrijving") is not None else None))
+    return ClusterKluis(db).to_dict(rij)
+
+
+@router.delete("/{cluster_id}/geheimen/{naam}")
+def geheim_weg(cluster_id: int, naam: str, db: Session = Depends(get_db)):
+    from services.lab.cluster_kluis import ClusterKluis
+
+    _svc(db).get_or_404(cluster_id)
+    return {"ok": ClusterKluis(db).verwijder(cluster_id, naam)}
+
+
 # ── verkennen en goedkeuren ──────────────────────────────────────────────────
 #
 # `/verkennen` maakt NIETS aan. Het kloont ondiep in een wegwerpcontainer,

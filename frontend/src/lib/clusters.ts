@@ -153,6 +153,27 @@ export type Cluster = {
   updated_at: string;
 };
 
+/** Eén geheim in de kluis van een cluster. Nooit de waarde — wel hoe lang
+ *  hij is, want dat is genoeg om te zien of je de juiste hebt geplakt. */
+export type ClusterGeheim = {
+  naam: string;
+  omschrijving: string | null;
+  lengte: number;
+  leesbaar: boolean;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+};
+
+/** Wat de applicatie nodig heeft, en of het er is. `in_eigen_kluis` is het
+ *  verschil tussen "staat in dit cluster" en "komt uit de gedeelde kluis". */
+export type BenodigdGeheim = {
+  naam: string;
+  waarvoor: string;
+  in_eigen_kluis: boolean;
+  gevonden: boolean;
+};
+
 export type Toegang = {
   gecontroleerd: boolean;
   ok?: boolean;
@@ -182,6 +203,20 @@ export const clusterApi = {
    *  een mislukte kloon geeft een kale git-fout waar drie heel verschillende
    *  oorzaken achter kunnen zitten. */
   toegang: (id: number) => api.post<Toegang>(`/clusters/${id}/toegang`),
+
+  // ── de kluis van dit cluster ───────────────────────────────────────────
+  //
+  // Apart van de gedeelde kluis, want een cluster verwijst naar geheimen met
+  // de naam van een OMGEVINGSVARIABELE — JWT_SECRET, DB_PASS — en die namen
+  // zijn juist niet uniek. In één gedeelde kluis vechten twee clusters dan om
+  // hetzelfde geheim, en wie het laatst opslaat wint zonder dat iemand het
+  // merkt: de waarde is nergens te zien.
+  geheimen: (id: number) =>
+    api.get<{ eigen: ClusterGeheim[]; benodigd: BenodigdGeheim[] }>(`/clusters/${id}/geheimen`),
+  geheimZetten: (id: number, naam: string, body: { waarde?: string; omschrijving?: string }) =>
+    api.put<ClusterGeheim>(`/clusters/${id}/geheimen/${encodeURIComponent(naam)}`, body),
+  geheimWeg: (id: number, naam: string) =>
+    api.delete<{ ok: boolean }>(`/clusters/${id}/geheimen/${encodeURIComponent(naam)}`),
 
   // ── verkennen ──────────────────────────────────────────────────────────
   /** Maakt NIETS aan. Kloont ondiep, leest, en levert een voorstel. */

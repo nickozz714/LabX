@@ -20,11 +20,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Box, GitBranch, KeyRound, Loader2, Play, Plus, RefreshCw, Search,
-  Server, Square, Terminal, Trash2, TriangleAlert,
+  ArrowLeft, Box, Check, GitBranch, KeyRound, Loader2, Play, Plus, RefreshCw,
+  Search, Server, Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
 import { clusterApi } from "@/lib/clusters";
-import type { Cluster, ClusterDienst, ClusterPlan, Toegang } from "@/lib/clusters";
+import type {
+  BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, Toegang,
+} from "@/lib/clusters";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
@@ -92,6 +94,170 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
         </div>
       </div>
     </li>
+  );
+}
+
+/** De kluis van dit cluster.
+ *
+ * Staat bovenaan en niet onderin bij de instellingen, om dezelfde reden als
+ * de lijst erboven: een branch-lab bouwt eerst twintig minuten en valt dan
+ * pas om op een ontbrekende sleutel. Dat kost je een ochtend; dit kaartje
+ * kost een minuut.
+ *
+ * De namen staan er al in — ze komen uit het plan, van de verkenner. Je hoeft
+ * dus niet te raden hoe iets heet, alleen de waarde te plakken.
+ */
+function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Record<string, string> }) {
+  const melding = useMelding();
+  const bevestig = useBevestiging();
+  const [eigen, setEigen] = useState<ClusterGeheim[]>([]);
+  const [nodig, setNodig] = useState<BenodigdGeheim[]>([]);
+  const [waarden, setWaarden] = useState<Record<string, string>>({});
+  const [bezigMet, setBezigMet] = useState<string | null>(null);
+  const [extraNaam, setExtraNaam] = useState("");
+
+  const laad = useCallback(async () => {
+    try {
+      const uit = await clusterApi.geheimen(clusterId);
+      setEigen(uit.eigen);
+      setNodig(uit.benodigd);
+    } catch {
+      /* de clusterpagina werkt ook zonder dit kaartje */
+    }
+  }, [clusterId]);
+
+  useEffect(() => { void laad(); }, [laad]);
+
+  async function bewaar(naam: string) {
+    const waarde = (waarden[naam] || "").trim();
+    if (!waarde) return;
+    setBezigMet(naam);
+    try {
+      await clusterApi.geheimZetten(clusterId, naam, {
+        waarde,
+        omschrijving: benodigd[naam] || undefined,
+      });
+      setWaarden((o) => ({ ...o, [naam]: "" }));
+      melding.ok(`${naam} opgeslagen in de kluis van dit cluster`);
+      void laad();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Opslaan mislukte");
+    } finally {
+      setBezigMet(null);
+    }
+  }
+
+  async function weg(naam: string) {
+    const ja = await bevestig.vraag({
+      titel: `'${naam}' uit de kluis van dit cluster halen?`,
+      tekst: "Branch-labs krijgen hem daarna niet meer mee. Bestaat er een gedeeld "
+        + "geheim met dezelfde naam, dan geldt dat weer.",
+      variant: "danger",
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
+    try {
+      await clusterApi.geheimWeg(clusterId, naam);
+      void laad();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Verwijderen mislukte");
+    }
+  }
+
+  const eigenNamen = new Set(eigen.map((g) => g.naam));
+  const los = eigen.filter((g) => !(g.naam in benodigd));
+  const regels = [
+    ...nodig.map((n) => ({ naam: n.naam, waarvoor: n.waarvoor, gevonden: n.gevonden,
+                           eigen: n.in_eigen_kluis, verplicht: true })),
+    ...los.map((g) => ({ naam: g.naam, waarvoor: g.omschrijving || "", gevonden: true,
+                         eigen: true, verplicht: false })),
+  ];
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h2 className="text-sm font-semibold">Kluis van dit cluster</h2>
+          <p className="text-xs text-muted-foreground">
+            Elk branch-lab krijgt deze waarden mee als omgevingsvariabele. Ze staan los
+            van de gedeelde kluis, zodat <span className="font-mono">JWT_SECRET</span> hier
+            iets anders kan zijn dan in een ander cluster. Wordt een naam hier niet
+            gevonden, dan telt de gedeelde kluis nog steeds.
+          </p>
+        </div>
+      </div>
+
+      {regels.length === 0 ? (
+        <EmptyState>
+          Nog niets nodig. Zodra een verkenning zegt dat deze applicatie geheimen nodig
+          heeft, staan de namen hier klaar.
+        </EmptyState>
+      ) : (
+        <ul className="space-y-3">
+          {regels.map((r) => (
+            <li key={r.naam} className="rounded-lg border border-border p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-sm">{r.naam}</span>
+                {r.eigen
+                  ? <Badge tone="green">in deze kluis</Badge>
+                  : r.gevonden
+                    ? <Badge tone="neutral">uit de gedeelde kluis</Badge>
+                    : <Badge tone="red">ontbreekt</Badge>}
+                {!r.verplicht && <span className="text-xs text-muted-foreground">extra</span>}
+              </div>
+              {r.waarvoor && (
+                <p className="mt-0.5 text-xs text-muted-foreground">{r.waarvoor}</p>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Input
+                  type="password"
+                  className="min-w-0 flex-1"
+                  value={waarden[r.naam] || ""}
+                  disabled={bezigMet === r.naam}
+                  placeholder={r.eigen ? "Nieuwe waarde (leeg = laat staan)" : "Waarde plakken"}
+                  onChange={(e) => setWaarden((o) => ({ ...o, [r.naam]: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === "Enter") void bewaar(r.naam); }}
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => bewaar(r.naam)}
+                  disabled={bezigMet === r.naam || !(waarden[r.naam] || "").trim()}
+                >
+                  {bezigMet === r.naam ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Opslaan
+                </Button>
+                {eigenNamen.has(r.naam) && (
+                  <Button variant="ghost" onClick={() => weg(r.naam)} aria-label="Verwijderen">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Input
+          className="min-w-0 flex-1"
+          value={extraNaam}
+          placeholder="Nog een geheim toevoegen — naam van de omgevingsvariabele"
+          onChange={(e) => setExtraNaam(e.target.value)}
+        />
+        <Button
+          variant="secondary"
+          disabled={!extraNaam.trim() || eigenNamen.has(extraNaam.trim())}
+          onClick={() => {
+            setNodig((o) => [...o, { naam: extraNaam.trim(), waarvoor: "",
+                                     in_eigen_kluis: false, gevonden: false }]);
+            setExtraNaam("");
+          }}
+        >
+          <Plus className="h-4 w-4" /> Toevoegen
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -216,34 +382,8 @@ export function ClusterDetailPage() {
         </Card>
       )}
 
-      {/* ── wat er nog moet gebeuren ─────────────────────────────────────── */}
-      {c.geheimen_ontbreken.length > 0 && (
-        <Card className="border-amber-500/40 bg-amber-500/5 p-4">
-          <div className="flex items-start gap-2">
-            <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-            <div>
-              <h2 className="text-sm font-semibold">Deze geheimen staan nog niet in de kluis</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Een branch-lab bouwt eerst en valt dan pas om op een ontbrekende sleutel. Dat
-                kost je veertig minuten; dit lijstje kost een minuut.
-              </p>
-              <ul className="mt-2 space-y-1 text-sm">
-                {c.geheimen_ontbreken.map((n) => (
-                  <li key={n} className="flex items-center gap-2">
-                    <span className="font-mono">{n}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {c.benodigde_geheimen[n] || ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <Link to="/kluis/geheimen" className="mt-2 inline-block text-xs underline">
-                Naar de kluis
-              </Link>
-            </div>
-          </div>
-        </Card>
-      )}
+      {/* ── de kluis ────────────────────────────────────────────────────── */}
+      <KluisKaart clusterId={c.id} benodigd={c.benodigde_geheimen || {}} />
 
       {/* ── de vaste laag ────────────────────────────────────────────────── */}
       <Card className="p-4">

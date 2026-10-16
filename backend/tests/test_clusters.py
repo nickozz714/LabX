@@ -23,7 +23,8 @@ def db(monkeypatch):
     from db.database import Base
     from models import (  # noqa: F401
         audit, azure_profile, background_run, board, claim_resource, cluster,
-        guard_audit, guard_rule, lab, lab_extra, lab_host, lab_secret, lab_worker,
+        cluster_secret, guard_audit, guard_rule, lab, lab_extra, lab_host,
+        lab_secret, lab_worker,
         mcp_server, message, model_runner, notification, plan, schedule, secret,
         skill, skill_tool, thread, time_entry, tool, voice, workflow,
     )

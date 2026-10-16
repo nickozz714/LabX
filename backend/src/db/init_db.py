@@ -318,6 +318,7 @@ def init_db() -> None:
         lab,
         lab_extra,
         cluster,
+        cluster_secret,
         lab_host,
         model_runner,
         secret,
