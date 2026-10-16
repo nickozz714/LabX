@@ -254,6 +254,13 @@ class ModelPool:
             gekozen.updated_at = _nu()
             self.db.commit()
             return None
+        # Hier bijwerken en niet na afloop: "laatst gebruikt" moet zeggen
+        # wanneer er voor het laatst werk heen ging. Pas bij een geslaagd
+        # antwoord tellen zou een runner die steeds in een time-out loopt er
+        # ongebruikt uit laten zien, terwijl hij juist te veel krijgt.
+        gekozen.laatst_gebruikt = _nu()
+        gekozen.updated_at = _nu()
+        self.db.commit()
         return gekozen.id, f"http://127.0.0.1:{lokaal}"
 
     @staticmethod

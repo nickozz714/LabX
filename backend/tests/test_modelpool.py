@@ -208,3 +208,27 @@ def test_de_teller_loopt_terug_ook_als_het_misgaat(db):
     ModelPool.vrij(99)          # twee keer vrijgeven mag niet negatief worden
     from services.lab.modelpool import _ONDERWEG
     assert _ONDERWEG.get(99, 0) == 0
+
+
+def test_kiezen_noteert_wanneer_er_werk_heen_ging(db, monkeypatch):
+    """Bij het KIEZEN en niet pas bij een geslaagd antwoord: een runner die
+    steeds in een time-out loopt zou er anders ongebruikt uitzien, terwijl hij
+    juist te veel krijgt."""
+    from services.lab.modelpool import ModelPool
+
+    d = NepDocker()
+    _host(db, runners=1)
+    asyncio.run(_pool(db, d).verzoen())
+    r = ModelPool(db).runners()[0]
+    r.status = "klaar"
+    db.commit()
+    assert r.laatst_gebruikt is None
+
+    async def _tunnel(docker_host, verre):
+        return 50002
+
+    monkeypatch.setattr("services.lab.poort_tunnel.tunnels.lokale_poort", _tunnel)
+    rid, _ = asyncio.run(ModelPool(db).kies())
+    ModelPool.vrij(rid)
+    db.refresh(r)
+    assert r.laatst_gebruikt
