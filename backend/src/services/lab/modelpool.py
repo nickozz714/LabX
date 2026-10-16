@@ -194,7 +194,12 @@ class ModelPool:
                 async with httpx.AsyncClient(timeout=10) as c:
                     tags = (await c.get(f"http://127.0.0.1:{lokaal}/api/tags")).json()
             except Exception as exc:  # noqa: BLE001
-                r.status, r.fout = "startend", f"Nog niet bereikbaar: {str(exc)[:200]}"
+                # `str()` van een uitzondering is soms LEEG -- TimeoutError is
+                # hét geval. Dan stond er "Nog niet bereikbaar: " en moest je
+                # zelf maar raden. De soort erbij is het minste wat er altijd
+                # staat.
+                reden = str(exc)[:200] or f"{type(exc).__name__} zonder toelichting"
+                r.status, r.fout = "startend", f"Nog niet bereikbaar: {reden}"
                 r.updated_at = _nu()
                 bezig += 1
                 continue

@@ -818,3 +818,48 @@ def test_het_wakker_houden_hangt_aan_de_pid_van_de_agent_linux(monkeypatch):
     samen = " ".join(cmd)
     assert str(os.getpid()) in samen
     assert "sleep infinity" not in samen, "dat slot wacht op niemand"
+
+
+def test_een_machine_met_modelrunners_blijft_ook_wakker(monkeypatch):
+    """Dit kwam meteen boven na het uitrollen: een iMac met drie
+    modelrunners en geen enkel lab viel in slaap, waarna LabX die runners als
+    "nog niet bereikbaar" zag staan.
+
+    Het wakker houden keek alleen naar labs. Een machine die modellen draait
+    is net zo goed aan het werk.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lab-host"))
+    import labx_lab_host
+
+    gevraagd = []
+
+    def _nep(cmd, **kw):
+        gevraagd.append(cmd)
+
+        class Uit:
+            # Eén container, welk label er ook gevraagd wordt.
+            stdout = "abc123\n"
+        return Uit()
+
+    monkeypatch.setattr(labx_lab_host, "docker_pad", lambda: "/usr/local/bin/docker")
+    monkeypatch.setattr(subprocess, "run", _nep)
+
+    aantal = labx_lab_host._draaiende_labs()
+    labels = " ".join(" ".join(c) for c in gevraagd)
+    assert "labx.managed" in labels, "labs tellen nog steeds mee"
+    assert "labx.model" in labels, "en modelcontainers ook"
+    assert aantal == 2, "allebei geteld"
+
+
+def test_een_lege_foutmelding_zegt_tenminste_de_soort(db):
+    """`str(TimeoutError())` is leeg. Dan stond er letterlijk "Nog niet
+    bereikbaar: " en moest je zelf maar raden."""
+    from pathlib import Path
+
+    bron = (Path(__file__).resolve().parents[1] / "src" / "services" / "lab"
+            / "modelpool.py").read_text(encoding="utf-8")
+    assert "zonder toelichting" in bron

@@ -212,18 +212,28 @@ def _docker_versie() -> Optional[str]:
 
 
 def _draaiende_labs() -> int:
-    """Hoeveel labx-containers hier draaien. Dit is wat "er is werk" betekent
-    voor het wakker houden."""
+    """Hoeveel LabX-containers hier draaien — labs én modelcontainers.
+
+    Dit is wat "er is werk" betekent voor het wakker houden, en de
+    modelcontainers hoorden daar vanaf het begin bij. Dat ze er niet in zaten
+    kwam meteen boven: een iMac met drie modelrunners en geen enkel lab viel
+    in slaap, waarna LabX die runners als "nog niet bereikbaar" zag staan.
+    Een machine die modellen draait is net zo goed aan het werk als een
+    machine die labs draait.
+    """
     pad = docker_pad()
     if not pad:
         return 0
-    try:
-        uit = subprocess.run(
-            [pad, "ps", "--filter", "label=labx.managed", "--format", "{{.ID}}"],
-            capture_output=True, text=True, timeout=10)
-        return len([r for r in uit.stdout.splitlines() if r.strip()])
-    except Exception:  # noqa: BLE001
-        return 0
+    aantal = 0
+    for label in ("labx.managed", "labx.model"):
+        try:
+            uit = subprocess.run(
+                [pad, "ps", "--filter", f"label={label}", "--format", "{{.ID}}"],
+                capture_output=True, text=True, timeout=10)
+            aantal += len([r for r in uit.stdout.splitlines() if r.strip()])
+        except Exception:  # noqa: BLE001
+            pass
+    return aantal
 
 
 def _geheugen_mb() -> tuple[Optional[int], Optional[int]]:
