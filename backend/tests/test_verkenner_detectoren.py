@@ -171,7 +171,7 @@ COMPOSE = {
 
 def test_compose_scheidt_de_app_van_haar_afhankelijkheden():
     vondsten = detecteer_compose(COMPOSE)
-    assert _van(vondsten, "lab_image", "api") is not None, "build: = de applicatie zelf"
+    assert _van(vondsten, "applicatie", "api") is not None, "build: = de applicatie zelf"
     dienst = _van(vondsten, "dienst", "redis")
     assert dienst is not None and dienst.zekerheid == "hoog"
     assert _van(vondsten, "dienst", "api") is None, "de app hoort niet in de vaste laag"
@@ -255,7 +255,7 @@ def test_dezelfde_dienst_in_twee_composes_wordt_een_vondst():
     """
     vondsten = detecteer_compose(TWEE_COMPOSES)
     api = [v for v in vondsten if v.sleutel == "api"]
-    assert len(api) == 1 and api[0].soort == "lab_image"
+    assert len(api) == 1 and api[0].soort == "applicatie"
     assert {b.bestand for b in api[0].bewijs} == set(TWEE_COMPOSES), "beide vindplaatsen blijven"
     assert "uitgerolde versie" in api[0].toelichting
 
@@ -268,3 +268,27 @@ def test_diensten_uit_beide_composes_blijven_bestaan():
 def test_dienst_zonder_image_en_zonder_build_valt_af():
     beeld = {"compose.yml": "services:\n  leeg:\n    restart: always\n"}
     assert detecteer_compose(beeld) == []
+
+
+# ── aanvullen: wat de detector afleest en wat het model afleidt ──────────────
+
+def test_het_model_vult_aan_waar_de_detector_niets_weet():
+    """Een compose zegt DAT `ollama` draait; niet onder welke naam de
+    applicatie hem zoekt. Dat leest het model uit de code. Zonder aanvullen
+    krijgt een branch-lab een lege omgeving en zoekt hij een dienst die er
+    wel is -- op een adres dat hij niet kent."""
+    from services.lab.verkenner import _vul_aan
+
+    van_detector = Vondst(soort="dienst", sleutel="ollama",
+                          waarde={"image": "ollama/ollama", "poorten": [11434],
+                                  "lab_omgeving": {}},
+                          bron="detector:compose", zekerheid="hoog")
+    van_model = Vondst(soort="dienst", sleutel="ollama",
+                       waarde={"image": "ollama/ollama:latest", "poorten": [1],
+                               "lab_omgeving": {"OLLAMA_HOST": "ollama:11434"}},
+                       bron="model", zekerheid="laag")
+    _vul_aan(van_detector, van_model)
+
+    assert van_detector.waarde["lab_omgeving"] == {"OLLAMA_HOST": "ollama:11434"}
+    assert van_detector.waarde["poorten"] == [11434], "wat de detector AFLAS blijft staan"
+    assert van_detector.waarde["image"] == "ollama/ollama"

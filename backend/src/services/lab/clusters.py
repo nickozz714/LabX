@@ -75,6 +75,26 @@ def _naam_uit_url(repo_url: str) -> str:
     return naam.strip() or "cluster"
 
 
+def _hernoem_host(waarde: str, oud: str, nieuw: str) -> str:
+    """De dienstnaam vervangen waar hij als HOSTNAAM staat.
+
+    Een lab-omgeving komt in drie vormen binnen en alle drie moeten mee:
+
+        COSMOS_ENDPOINT=https://cosmos:8081      na een //
+        AMQP_URL=amqp://gast:gast@rabbitmq:5672  na een @
+        OLLAMA_HOST=ollama:11434                 kaal, aan het begin
+
+    Die laatste was de eerste die misging. Alleen op `//` en `@` letten lijkt
+    genoeg tot er een dienst langskomt die zonder schema wordt opgegeven, en
+    dan wijst de variabele stilletjes naar een host die op dit netwerk niet
+    bestaat.
+
+    Alleen op een echte grens, zodat `ollama-proxy` niet half hernoemd wordt.
+    """
+    patroon = rf"(^|//|@){re.escape(oud)}(?=[:/]|$)"
+    return re.sub(patroon, lambda m: m.group(1) + nieuw, waarde)
+
+
 def _voorvoegsel(clusternaam: str) -> str:
     """Een kort voorvoegsel voor de diensten van dit cluster: `ih-cosmos`.
 
@@ -621,6 +641,12 @@ class ClusterService:
             "repo_url": c.repo_url, "repo_token_geheim": c.repo_token_geheim,
             "lab_image": c.lab_image, "start_script": c.start_script,
             "env_profiel": c.env_profiel, "omgeving": c.omgeving or {},
+            # Wat er in de kluis moet staan voordat een branch-lab kan
+            # draaien, en wat daarvan nog ontbreekt. Die tweede vraag wil je
+            # vóór het eerste branch-lab beantwoord hebben, niet veertig
+            # minuten later halverwege een bouw.
+            "benodigde_geheimen": c.benodigde_geheimen or {},
+            "geheimen_ontbreken": self._ontbrekende_geheimen(c.benodigde_geheimen or {}),
             "notitie": c.notitie,
             "diensten": [self.dienst_dict(d) for d in self.diensten(c.id)],
             "labs": labs,
@@ -697,8 +723,24 @@ class ClusterService:
         vanzelf mee. Dat is het verschil tussen "model leidend" en "model
         beslist".
         """
-        return [{"soort": v["soort"], "sleutel": v["sleutel"]}
-                for v in (plan.get("vondsten") or []) if v.get("bevestigd")]
+        uit: List[Dict[str, str]] = []
+        image_gekozen = False
+        for v in plan.get("vondsten") or []:
+            if not v.get("bevestigd"):
+                continue
+            if v.get("soort") == "applicatie":
+                # Een vaststelling, geen voorstel: hier valt niets te kiezen.
+                continue
+            if v.get("soort") == "lab_image":
+                # Een keuze, geen lijstje. De vondsten staan al op voorkeur
+                # gesorteerd, dus de eerste is de beste -- vijf aangevinkte
+                # images leveren er alsnog maar een op, en dan bepaalt de
+                # volgorde van een lus wat je krijgt.
+                if image_gekozen:
+                    continue
+                image_gekozen = True
+            uit.append({"soort": v["soort"], "sleutel": v["sleutel"]})
+        return uit
 
     def keur_goed(self, plan_id: int, *, naam: Optional[str] = None,
                   host_id: Optional[int] = None,
@@ -734,6 +776,7 @@ class ClusterService:
         omgeving = dict(c.omgeving or {})
         geheimen = dict(c.benodigde_geheimen or {})
         toegevoegd: List[str] = []
+        image_gezet = False
 
         for v in plan.get("vondsten") or []:
             if (v.get("soort"), v.get("sleutel")) not in wil:
@@ -756,16 +799,17 @@ class ClusterService:
                     toegevoegd.append(dienstnaam)
                 # Wat een branch-lab moet weten om deze dienst te vinden. De
                 # naam in de lab-omgeving moet de ECHTE dienstnaam zijn, niet
-                # die uit de catalogus -- anders wijst COSMOS_ENDPOINT naar
-                # een host die op dit netwerk niet bestaat.
+                # die uit de catalogus of uit het model -- anders wijst
+                # COSMOS_ENDPOINT naar een host die op dit netwerk niet
+                # bestaat, en dat merk je pas als een lab al draait.
                 for k, w in (waarde.get("lab_omgeving") or {}).items():
-                    omgeving[str(k)] = str(w).replace(f"//{sleutel}:", f"//{dienstnaam}:") \
-                                             .replace(f"@{sleutel}:", f"@{dienstnaam}:")
-                    if str(w) == sleutel:
-                        omgeving[str(k)] = dienstnaam
+                    omgeving[str(k)] = _hernoem_host(str(w), sleutel, dienstnaam)
 
             elif soort == "lab_image":
-                c.lab_image = str(waarde.get("image") or "")[:255] or c.lab_image
+                image = str(waarde.get("image") or "")[:255]
+                if image and not image_gezet:
+                    c.lab_image = image
+                    image_gezet = True
 
             elif soort == "startscript":
                 c.start_script = plan.get("startscript") or c.start_script

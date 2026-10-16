@@ -303,6 +303,12 @@ class Verkenner:
         een echte vindplaats. Wat het model erover te zeggen heeft komt erbij
         als toelichting, want dat is vaak het stuk dat uitlegt waarom het er
         toe doet.
+
+        En het vult aan waar de detector niets weet. Een compose-bestand zegt
+        dát `ollama` draait; het zegt niet onder welke naam de applicatie hem
+        zoekt. Dat laatste leest het model uit de code. Namen de detector
+        gewoon over, dan kreeg een branch-lab een lege omgeving en zocht hij
+        een dienst die er wel is — op een adres dat hij niet kent.
         """
         op_sleutel = {(v.soort, v.sleutel): v for v in vondsten}
 
@@ -312,18 +318,49 @@ class Verkenner:
             if bestaand is not None:
                 if mv.toelichting:
                     bestaand.toelichting = mv.toelichting
+                _vul_aan(bestaand, mv)
                 continue
             op_sleutel[kern] = det.staaf(mv, inhoud)
 
-        volgorde = {"dienst": 0, "lab_image": 1, "startscript": 2,
-                    "omgeving": 3, "extern": 4, "geheim": 5}
+        volgorde = {"dienst": 0, "applicatie": 1, "lab_image": 2, "startscript": 3,
+                    "omgeving": 4, "extern": 5, "geheim": 6}
         return sorted(op_sleutel.values(),
                       key=lambda v: (volgorde.get(v.soort, 9),
+                                     _image_voorkeur(v),
                                      0 if v.bevestigd else 1,
                                      v.sleutel))
 
 
 # ── hulpjes ──────────────────────────────────────────────────────────────────
+
+#: Binnen `lab_image` kan er maar EEN waar zijn: het is een keuze, geen
+#: lijstje. Deze volgorde bepaalt welke vooraan staat en dus vooraf gekozen
+#: is. Een manifest wint, omdat daar de taal en de pakketbeheerder staan die
+#: een lab nodig heeft om te BOUWEN -- een Dockerfile uit de repo bouwt vaak
+#: een productie-image zonder dat gereedschap erin.
+_IMAGE_VOORKEUR = ("detector:manifest", "detector:dockerfile", "model")
+
+
+#: Velden die het model mag aanvullen op een detectorvondst, zolang de
+#: detector ze LEEG liet. Nooit overschrijven: de detector las ze af, het
+#: model leidde ze af.
+_AAN_TE_VULLEN = ("lab_omgeving", "poorten", "omgeving")
+
+
+def _vul_aan(bestaand: det.Vondst, van_model: det.Vondst) -> None:
+    for veld in _AAN_TE_VULLEN:
+        if not bestaand.waarde.get(veld) and van_model.waarde.get(veld):
+            bestaand.waarde[veld] = van_model.waarde[veld]
+
+
+def _image_voorkeur(v: det.Vondst) -> int:
+    if v.soort != "lab_image":
+        return 0
+    for nummer, bron in enumerate(_IMAGE_VOORKEUR):
+        if v.bron == bron:
+            return nummer
+    return len(_IMAGE_VOORKEUR)
+
 
 def _slug(ruw: Any, *, max_lengte: int = 40) -> str:
     """Een naam van het model tot een bruikbare sleutel.

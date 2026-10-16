@@ -242,3 +242,88 @@ def test_de_zin_van_het_model_blijft_leesbaar_in_de_toelichting():
     vondsten = _model_vondsten({"extern": [
         {"naam": "llm-providers (OpenAI/Anthropic)", "waarom": "Betaalde API's."}]})
     assert "llm-providers (OpenAI/Anthropic)" in vondsten[0].toelichting
+
+
+# ── het lab-image is een keuze, geen lijstje ─────────────────────────────────
+
+#: Zoals een echte verkenning van ND3X het opleverde: vijf kandidaten voor
+#: het lab-image, waarvan er twee helemaal geen image zijn maar de applicatie
+#: die uit de repo gebouwd wordt.
+VEEL_IMAGES = {
+    **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
+    "vondsten": [
+        {"soort": "lab_image", "sleutel": "python", "bevestigd": True, "zekerheid": "hoog",
+         "bron": "detector:manifest", "toelichting": "", "bewijs": [{"bestand": "requirements.txt"}],
+         "waarde": {"image": "python:3.12-slim"}},
+        {"soort": "lab_image", "sleutel": "Dockerfile", "bevestigd": True, "zekerheid": "hoog",
+         "bron": "detector:dockerfile", "toelichting": "", "bewijs": [{"bestand": "Dockerfile", "regel": 1}],
+         "waarde": {"image": "python:3.12-bookworm"}},
+        {"soort": "applicatie", "sleutel": "api", "bevestigd": True, "zekerheid": "hoog",
+         "bron": "detector:compose", "toelichting": "", "bewijs": [{"bestand": "docker-compose.yml", "regel": 23}],
+         "waarde": {"build": "./backend", "image": None}},
+        {"soort": "applicatie", "sleutel": "web", "bevestigd": True, "zekerheid": "hoog",
+         "bron": "detector:compose", "toelichting": "", "bewijs": [{"bestand": "docker-compose.yml", "regel": 12}],
+         "waarde": {"build": "./frontend", "image": None}},
+    ],
+}
+
+
+def test_er_staat_hoogstens_een_lab_image_vooraf_aan(db):
+    """Vijf aangevinkte images leveren er alsnog maar een op, en dan bepaalt de
+    volgorde van een lus welke je krijgt. Dat is geen keuze maar een loterij."""
+    svc = _svc(db, VEEL_IMAGES)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    images = [k for k in svc.standaardkeuze(rij.plan) if k["soort"] == "lab_image"]
+    assert len(images) == 1
+
+
+def test_een_vaststelling_is_geen_keuze(db):
+    """Wat uit de repo gebouwd wordt, is wat een branch-lab draait. Daar valt
+    niets aan te kiezen, dus het hoort niet in het vinkjeslijstje."""
+    svc = _svc(db, VEEL_IMAGES)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    assert not [k for k in svc.standaardkeuze(rij.plan) if k["soort"] == "applicatie"]
+
+
+def test_een_applicatie_zonder_image_overschrijft_het_lab_image_niet(db):
+    """`api` heeft build: en geen image:. Die als lab_image overnemen maakt het
+    veld leeg, en dan start een branch-lab op het standaard-image."""
+    svc = _svc(db, VEEL_IMAGES)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    alles = [{"soort": v["soort"], "sleutel": v["sleutel"]} for v in rij.plan["vondsten"]]
+    uit = svc.keur_goed(rij.id, naam="ND3X", gekozen=alles)
+    c = svc.get_or_404(uit["cluster"]["id"])
+    assert c.lab_image == "python:3.12-slim", "de eerste echte image wint, lege tellen niet"
+
+
+# ── de dienstnaam op het netwerk ─────────────────────────────────────────────
+
+def test_de_hostnaam_wordt_in_elke_vorm_vervangen():
+    """De dienst heet op het netwerk `nx-ollama`, niet `ollama`.
+
+    De omgeving komt in drie vormen binnen en alle drie moeten mee. De kale
+    vorm (`ollama:11434`, zonder schema) was de eerste die misging: dan wijst
+    de variabele naar een host die op dit netwerk niet bestaat, en dat merk je
+    pas als een lab al draait.
+    """
+    from services.lab.clusters import _hernoem_host
+
+    assert _hernoem_host("https://cosmos:8081", "cosmos", "ih-cosmos") == "https://ih-cosmos:8081"
+    assert _hernoem_host("amqp://gast:gast@rabbitmq:5672/", "rabbitmq", "ih-rabbitmq") \
+        == "amqp://gast:gast@ih-rabbitmq:5672/"
+    assert _hernoem_host("ollama:11434", "ollama", "nx-ollama") == "nx-ollama:11434"
+    assert _hernoem_host("ollama", "ollama", "nx-ollama") == "nx-ollama"
+
+
+def test_een_halve_naam_wordt_niet_hernoemd():
+    """`ollama-proxy` is een andere host dan `ollama`."""
+    from services.lab.clusters import _hernoem_host
+
+    assert _hernoem_host("http://ollama-proxy:80", "ollama", "nx-ollama") == "http://ollama-proxy:80"
+
+
+def test_de_omgeving_van_een_branch_lab_wijst_naar_de_echte_dienstnaam(db):
+    svc, rij = _plan(db)
+    uit = svc.keur_goed(rij.id, naam="IntelligentHive")
+    c = svc.get_or_404(uit["cluster"]["id"])
+    assert c.omgeving["COSMOS_ENDPOINT"] == "https://ih-cosmos:8081"

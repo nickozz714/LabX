@@ -56,7 +56,11 @@ class Bewijs:
 
 @dataclass
 class Vondst:
-    #: dienst | extern | geheim | lab_image | startscript | omgeving
+    #: dienst | applicatie | extern | geheim | lab_image | startscript | omgeving
+    #:
+    #: `applicatie` is een VASTSTELLING en geen voorstel: dit wordt uit de
+    #: repo gebouwd, dus dit is wat een branch-lab draait. Er valt niets aan
+    #: te kiezen, en daarom staat er ook geen vinkje bij.
     soort: str
     sleutel: str
     waarde: Dict[str, Any] = field(default_factory=dict)
@@ -170,15 +174,15 @@ def detecteer_compose(beeld: RepoBeeld) -> List[Vondst]:
                 vondst = gebouwd.get(naam)
                 if vondst is None:
                     gebouwd[naam] = Vondst(
-                        soort="lab_image",
+                        soort="applicatie",
                         sleutel=naam,
                         waarde={"build": spec.get("build"), "image": spec.get("image")},
                         bewijs=[bewijs],
                         zekerheid="hoog",
                         bron="detector:compose",
                         toelichting=(
-                            f"'{naam}' wordt uit deze repo gebouwd en hoort dus in een "
-                            "branch-lab, niet in de vaste laag."
+                            f"'{naam}' wordt uit deze repo gebouwd. Dit is dus wat een "
+                            "branch-lab gaat draaien, en niet iets voor de vaste laag."
                         ),
                     )
                 else:
