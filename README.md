@@ -112,8 +112,11 @@ en er is geen `VIRTUAL_HOST`-label, dus een reverse proxy/tunnel heeft er geen r
 naartoe. Bereikbaar vanaf het LAN en via VPN, nergens anders.
 
 ```bash
-docker compose --env-file .env -f deploy/docker-compose.server.yml pull
-docker compose --env-file .env -f deploy/docker-compose.server.yml up -d
+# Gebruik dit en niet pull+up met de hand: het script haalt eerst de images op
+# (dat stoort niemand) en wacht dán tot er geen agent-run meer loopt. Een
+# herstart midden in een run kost die gebruiker zijn antwoord — dat is precies
+# hoe op 16-10-2026 een chat sneuvelde met "Backend herstart tijdens de run".
+./deploy/uitrollen.sh
 ```
 
 `--env-file .env` is niet optioneel: compose zoekt `.env` naast het compose-bestand, niet
