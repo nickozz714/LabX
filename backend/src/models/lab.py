@@ -42,6 +42,15 @@ class Lab(Base):
     # Container ports published on localhost (for APIs/MCP servers isolated in
     # the lab): [8000, ...].
     ports: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    #: Bij welk development cluster dit lab hoort, en welke git-branch het
+    #: draait. NULL/NULL = een gewoon lab, en dat blijft verreweg het meeste.
+    #:
+    #: Een branch-lab is met opzet GEEN apart soort lab: alles wat labs al
+    #: kunnen -- werkers, data-guard, geheimen, verplaatsen naar een andere
+    #: machine -- geldt hier ook, en blijft op één plek geregeld.
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Data-egress-guard: container output heading to the LLM is screened
     # (services/lab/data_guard.py). Default ON.
     data_guard: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

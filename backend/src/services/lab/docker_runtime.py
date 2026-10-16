@@ -50,6 +50,10 @@ _LAB_LABEL = "labx.lab"
 #: lab-opruiming ze met rust laat: die ruimt alles op wat labx.managed
 #: draagt en geen lab-rij meer heeft, en een runner is geen lab.
 _MODEL_LABEL = "labx.model=1"
+#: Vaste diensten van een cluster. Weer een eigen label, en om dezelfde
+#: reden: wat bij een cluster hoort mag niet opgeruimd worden door iets
+#: dat over labs gaat.
+_DIENST_LABEL = "labx.dienst=1"
 _EXPIRES_LABEL = "labx.expires_at"
 #: Het wegwerpcontainertje waarmee een volume in- en uitgepakt wordt. Klein,
 #: overal te krijgen, en het enige dat het hoeft te kunnen is `tar`.
@@ -313,6 +317,72 @@ class DockerRuntime:
             return None
         ips = [x for x in out.split() if x]
         return ips[0] if ips else None
+
+    async def ensure_network_named(self, naam: str) -> None:
+        """Een netwerk met een EIGEN naam, voor een cluster.
+
+        `ensure_network` gaat over het gedeelde labnetwerk; een cluster heeft
+        zijn eigen, zodat zijn vaste diensten en branch-labs elkaar op naam
+        vinden zonder dat elk ander lab daarbij kan.
+        """
+        code, _, _ = await self._run_cli("network", "inspect", naam, timeout=10)
+        if code != 0:
+            await self._cli_ok("network", "create", "--label", _LABEL, naam,
+                               timeout=20)
+
+    async def run_dienst_container(self, *, naam: str, image: str, netwerk: str,
+                                   volume: str,
+                                   poorten: Optional[Dict[int, int]] = None,
+                                   omgeving: Optional[Dict[str, str]] = None,
+                                   timeout: float = 600.0) -> str:
+        """Een vaste dienst van een cluster starten (de Cosmos-emulator, ...).
+
+        Geen lab-labels: de lab-opruiming mag hier niet aankomen. Wel
+        `--restart unless-stopped`, want een vaste dienst hoort een herstart
+        van die machine te overleven -- dat is het verschil met een lab, dat
+        juist wegwerpbaar is.
+
+        Poorten gaan naar 127.0.0.1 van de machine zelf. Binnen het cluster is
+        dat niet nodig: daar praat alles op containernaam.
+        """
+        await self._cli_ok("volume", "create", volume, timeout=30)
+        # Een naamgenoot opruimen, ook als WIJ zijn id niet kennen.
+        #
+        # Dat gebeurt makkelijker dan het lijkt: een `docker run` die de
+        # container aanmaakt en daarna struikelt (op een poort, op het
+        # netwerk) laat de naam bezet achter terwijl de rij in de database
+        # nooit een container_id kreeg. De volgende poging strandt dan op
+        # "The container name is already in use" -- een fout over onze eigen
+        # rommel, waar de gebruiker niets aan kan doen.
+        await self._run_cli("rm", "-f", naam, timeout=120)
+        # EERST ophalen, apart. Doet `docker run` dat zelf, dan loopt de
+        # voortgang van een image van anderhalve gigabyte door de uitvoer van
+        # het starten heen -- en belandt die bij een time-out als
+        # "foutmelding" in het scherm. Dat zag er zo uit:
+        #
+        #   fout: Unable to find image ... locally
+        #         65899dddd4f4: Pulling fs layer
+        #         ede28f09bd35: Pulling fs layer
+        #
+        # Niets daarvan is een fout, en niets ervan zegt wat er mis ging.
+        await self._cli_ok("pull", image, timeout=max(timeout, 1800.0))
+        args = [
+            "run", "-d",
+            "--name", naam,
+            "--label", _DIENST_LABEL,
+            "--restart", "unless-stopped",
+            "--network", netwerk,
+            "--network-alias", naam,
+            "-v", f"{volume}:/data",
+        ]
+        # {containerpoort: machinepoort}. Niet hetzelfde nummer aan beide
+        # kanten: 8081 is op een gemiddelde machine allang bezet.
+        for container_poort, machine_poort in (poorten or {}).items():
+            args += ["-p", f"127.0.0.1:{int(machine_poort)}:{int(container_poort)}"]
+        for k, v in (omgeving or {}).items():
+            args += ["-e", f"{k}={v}"]
+        args += [image]
+        return await self._cli_ok(*args, timeout=timeout)
 
     async def run_model_container(self, *, naam: str, image: str, volume: str,
                                   verre_poort: int, mem_limit_mb: int = 4096) -> str:

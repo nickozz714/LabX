@@ -21,6 +21,12 @@ log = get_logger(__name__)
 # a table already existed in the wild. Remove an entry once comfortable that
 # no deployed database predates it.
 _ADDITIVE_COLUMNS = {
+    "cluster_diensten": [
+        # Waar een dienst van buiten te bereiken is: {containerpoort:
+        # machinepoort}. Erbij gekomen nadat bleek dat de containerpoort zelf
+        # publiceren botst met wat er al op de machine luistert.
+        ("poort_map", "TEXT"),
+    ],
     "lab_hosts": [
         # Hoeveel modelcontainers hier mogen draaien. 0 voor wat er al staat:
         # een bestaande machine doet alleen labs tot jij er iets anders van
@@ -111,6 +117,10 @@ _ADDITIVE_COLUMNS = {
         ("wait_reason", "TEXT"),
     ],
     "labs": [
+        # Bij welk cluster en welke branch dit lab hoort. NULL voor alles
+        # wat er al staat: een bestaand lab is een gewoon lab.
+        ("cluster_id", "INTEGER"),
+        ("branch", "VARCHAR(255)"),
         ("chat_deelt_werker", "BOOLEAN NOT NULL DEFAULT 1"),
         ("azure_profile_id", "INTEGER"),
         ("extras", "TEXT"),
@@ -283,6 +293,7 @@ def init_db() -> None:
         guard_rule,
         lab,
         lab_extra,
+        cluster,
         lab_host,
         model_runner,
         secret,

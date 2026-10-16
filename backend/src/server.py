@@ -399,6 +399,7 @@ from routers import (
     time_router,
     voice_router,
     lab_host_router,
+    cluster_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -427,6 +428,7 @@ app.include_router(azure_profile_router.router, prefix="/api")
 # agent-script gaf daardoor 401 op de ene plek waar nog niemand kan inloggen.
 app.include_router(lab_host_router.open_router, prefix="/api")
 app.include_router(lab_host_router.router, prefix="/api")
+app.include_router(cluster_router.router, prefix="/api")
 app.include_router(board_router.router, prefix="/api")
 app.include_router(notify_router.router, prefix="/api")
 app.include_router(guard_router.router, prefix="/api")
