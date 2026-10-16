@@ -134,8 +134,20 @@ def detecteer_compose(beeld: RepoBeeld) -> List[Vondst]:
         log.warning("PyYAML ontbreekt; compose-detectie overgeslagen")
         return []
 
-    vondsten: List[Vondst] = []
-    for pad in _paden(beeld, COMPOSE_PATROON):
+    # Over de bestanden heen samenvoegen op NAAM. Een repo heeft vaak meer
+    # dan een compose: een voor ontwikkelen, een voor uitrollen. Daarin staat
+    # dezelfde dienst twee keer met een andere rol -- in LabX zelf heeft `api`
+    # in de wortel een `build:` en in `deploy/` een `image:`. Los geteld
+    # levert dat een applicatie die OOK een vaste dienst is, en dan draait
+    # elke branch tegen de code van wie het cluster aanmaakte.
+    #
+    # `build:` wint, waar het ook staat: bouwt de repo deze dienst uit zijn
+    # eigen bron, dan is het de applicatie en hoort hij in een branch-lab.
+    ondiep_eerst = sorted(_paden(beeld, COMPOSE_PATROON), key=lambda p: (p.count("/"), p))
+    gebouwd: Dict[str, Vondst] = {}
+    diensten: Dict[str, Vondst] = {}
+
+    for pad in ondiep_eerst:
         tekst = beeld[pad]
         try:
             doc = yaml.safe_load(tekst) or {}
@@ -144,46 +156,64 @@ def detecteer_compose(beeld: RepoBeeld) -> List[Vondst]:
             continue
         if not isinstance(doc, dict):
             continue
-        diensten = doc.get("services")
-        if not isinstance(diensten, dict):
+        spec_per_naam = doc.get("services")
+        if not isinstance(spec_per_naam, dict):
             continue
 
-        for naam, spec in diensten.items():
+        for naam, spec in spec_per_naam.items():
             if not isinstance(spec, dict):
                 continue
-            bewijs = [_bewijs_op(beeld, pad, rf"^\s*{re.escape(str(naam))}\s*:")]
+            naam = str(naam)
+            bewijs = _bewijs_op(beeld, pad, rf"^\s*{re.escape(naam)}\s*:")
+
             if spec.get("build") is not None:
-                vondsten.append(Vondst(
-                    soort="lab_image",
-                    sleutel=str(naam),
-                    waarde={"build": spec.get("build"), "image": spec.get("image")},
-                    bewijs=bewijs,
-                    zekerheid="hoog",
-                    bron="detector:compose",
-                    toelichting=(
-                        f"'{naam}' wordt uit deze repo gebouwd en hoort dus in een "
-                        "branch-lab, niet in de vaste laag."
-                    ),
-                ))
+                vondst = gebouwd.get(naam)
+                if vondst is None:
+                    gebouwd[naam] = Vondst(
+                        soort="lab_image",
+                        sleutel=naam,
+                        waarde={"build": spec.get("build"), "image": spec.get("image")},
+                        bewijs=[bewijs],
+                        zekerheid="hoog",
+                        bron="detector:compose",
+                        toelichting=(
+                            f"'{naam}' wordt uit deze repo gebouwd en hoort dus in een "
+                            "branch-lab, niet in de vaste laag."
+                        ),
+                    )
+                else:
+                    vondst.bewijs.append(bewijs)
                 continue
 
-            image = spec.get("image")
-            if not image:
-                continue
-            vondsten.append(Vondst(
-                soort="dienst",
-                sleutel=str(naam),
-                waarde={
-                    "image": str(image),
-                    "poorten": _compose_poorten(spec),
-                    "omgeving": _compose_omgeving(spec),
-                },
-                bewijs=bewijs,
-                zekerheid="hoog",
-                bron="detector:compose",
-                toelichting=f"Vaste dienst uit {pad}.",
-            ))
-    return vondsten
+            vondst = diensten.get(naam)
+            if vondst is None:
+                diensten[naam] = Vondst(
+                    soort="dienst",
+                    sleutel=naam,
+                    waarde={
+                        "image": str(spec.get("image") or ""),
+                        "poorten": _compose_poorten(spec),
+                        "omgeving": _compose_omgeving(spec),
+                    },
+                    bewijs=[bewijs],
+                    zekerheid="hoog",
+                    bron="detector:compose",
+                    toelichting=f"Vaste dienst uit {pad}.",
+                )
+            else:
+                vondst.bewijs.append(bewijs)
+
+    for naam in gebouwd:
+        weg = diensten.pop(naam, None)
+        if weg is not None:
+            gebouwd[naam].bewijs.extend(weg.bewijs)
+            gebouwd[naam].toelichting += (
+                f" Staat elders ook als kant-en-klaar image ({weg.waarde.get('image')}); "
+                "dat is de uitgerolde versie, niet wat een branch-lab moet draaien."
+            )
+
+    # Een dienst zonder image en zonder build zegt niets bruikbaars.
+    return [*gebouwd.values(), *(v for v in diensten.values() if v.waarde.get("image"))]
 
 
 def _compose_poorten(spec: Dict[str, Any]) -> List[int]:

@@ -224,3 +224,47 @@ def test_staven_vervangt_een_verzonnen_regelnummer():
 def test_envlezer_verdraagt_commentaar_export_en_aanhalingstekens():
     regels = lees_env('# uitleg\nexport A="een"\nB=twee\n\nniet-een-sleutel\nC=\n')
     assert regels == [(2, "A", "een"), (3, "B", "twee"), (6, "C", "")]
+
+
+# ── compose over meerdere bestanden ──────────────────────────────────────────
+
+TWEE_COMPOSES = {
+    "docker-compose.yml": (
+        "services:\n"
+        "  api:\n"
+        "    build: ./backend\n"
+        "  ollama:\n"
+        "    image: ollama/ollama\n"
+    ),
+    "deploy/docker-compose.server.yml": (
+        "services:\n"
+        "  api:\n"
+        "    image: ghcr.io/org/api:latest\n"
+        "  tls:\n"
+        "    image: caddy:2\n"
+    ),
+}
+
+
+def test_dezelfde_dienst_in_twee_composes_wordt_een_vondst():
+    """`build:` wint, waar het ook staat.
+
+    Een repo heeft vaak twee composes: een om te ontwikkelen, een om uit te
+    rollen. Los geteld is `api` dan tegelijk de applicatie en een vaste
+    dienst — en draait elke branch tegen de code van wie het cluster aanmaakte.
+    """
+    vondsten = detecteer_compose(TWEE_COMPOSES)
+    api = [v for v in vondsten if v.sleutel == "api"]
+    assert len(api) == 1 and api[0].soort == "lab_image"
+    assert {b.bestand for b in api[0].bewijs} == set(TWEE_COMPOSES), "beide vindplaatsen blijven"
+    assert "uitgerolde versie" in api[0].toelichting
+
+
+def test_diensten_uit_beide_composes_blijven_bestaan():
+    namen = {v.sleutel for v in detecteer_compose(TWEE_COMPOSES) if v.soort == "dienst"}
+    assert namen == {"ollama", "tls"}
+
+
+def test_dienst_zonder_image_en_zonder_build_valt_af():
+    beeld = {"compose.yml": "services:\n  leeg:\n    restart: always\n"}
+    assert detecteer_compose(beeld) == []
