@@ -75,6 +75,17 @@ def _naam_uit_url(repo_url: str) -> str:
     return naam.strip() or "cluster"
 
 
+def _dienst_container(c: Cluster, d: ClusterDienst) -> str:
+    """Hoe deze dienst bij de Docker-daemon heet.
+
+    Niet gelijk aan `d.naam`: die is de DNS-naam op het clusternetwerk en
+    hoort in elk cluster `cosmos` te mogen heten. De containernaam is globaal,
+    en twee clusters die hem delen vechten erom -- het starten van de tweede
+    maakt de eerste dood, want starten begint met `docker rm -f` op de naam.
+    """
+    return f"labx-c{c.id}-{_veilige_naam(d.naam)}"[:120]
+
+
 def _hernoem_host(waarde: str, oud: str, nieuw: str) -> str:
     """De dienstnaam vervangen waar hij als HOSTNAAM staat.
 
@@ -181,7 +192,19 @@ class ClusterService:
         if "omgeving" in velden and isinstance(velden["omgeving"], dict):
             rij.omgeving = {str(k): str(v) for k, v in velden["omgeving"].items()}
 
-    def verwijder(self, cluster_id: int) -> None:
+    async def verwijder(self, cluster_id: int) -> Dict[str, Any]:
+        """Het cluster weg, inclusief wat het bij Docker heeft achtergelaten.
+
+        Alleen de rijen uit de database halen is niet genoeg en voelt alleen
+        zo: de containers van de vaste diensten blijven dan draaien en het
+        netwerk blijft staan. Dat kost geheugen dat niemand nog kan vinden, en
+        bij een volgend cluster met dezelfde naam erft het netwerk van zijn
+        voorganger.
+
+        Opruimen dat halverwege struikelt is erger dan opruimen dat iets laat
+        staan: wat bij Docker misgaat wordt gemeld en teruggegeven, maar de
+        rijen gaan hoe dan ook weg.
+        """
         from models.lab import Lab
 
         rij = self.get_or_404(cluster_id)
@@ -193,10 +216,27 @@ class ClusterService:
                 detail=(f"Er horen nog branch-labs bij dit cluster: "
                         f"{', '.join(labs)}. Ruim die eerst op — anders blijven "
                         f"ze achter zonder vaste diensten om mee te praten."))
+
+        runtime = self._runtime(rij)
+        klachten: List[str] = []
         for d in self.diensten(cluster_id):
+            if d.container_id:
+                try:
+                    await runtime.remove(d.container_id)
+                except Exception as exc:  # noqa: BLE001
+                    klachten.append(f"container {d.naam}: {str(exc)[:160]}")
             self.db.delete(d)
+        try:
+            await runtime.verwijder_netwerk(rij.netwerk)
+        except Exception as exc:  # noqa: BLE001
+            klachten.append(f"netwerk {rij.netwerk}: {str(exc)[:160]}")
+
         self.db.delete(rij)
         self.db.commit()
+        if klachten:
+            log.warningx("Cluster verwijderd, maar niet alles opgeruimd",
+                         cluster=rij.naam, klachten="; ".join(klachten))
+        return {"ok": True, "niet_opgeruimd": klachten}
 
     # ── vaste diensten ───────────────────────────────────────────────────────
 
@@ -288,7 +328,8 @@ class ClusterService:
             kaart = self._ken_poorten_toe(d)
             d.poort_map = {str(k): v for k, v in kaart.items()}
             d.container_id = await rt.run_dienst_container(
-                naam=d.naam, image=d.image, netwerk=c.netwerk,
+                naam=d.naam, container_naam=_dienst_container(c, d),
+                image=d.image, netwerk=c.netwerk,
                 volume=f"labx_dienst_{c.id}_{d.naam}",
                 poorten=kaart,
                 omgeving=dict(d.omgeving or {}))

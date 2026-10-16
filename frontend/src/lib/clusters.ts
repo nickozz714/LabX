@@ -148,7 +148,12 @@ export const clusterApi = {
   lees: (id: number) => api.get<Cluster>(`/clusters/${id}`),
   maak: (body: { naam: string; host_id?: number | null }) => api.post<Cluster>("/clusters", body),
   wijzig: (id: number, body: Partial<Cluster>) => api.patch<Cluster>(`/clusters/${id}`, body),
-  verwijder: (id: number) => api.delete<{ ok: boolean }>(`/clusters/${id}`),
+  /** Haalt ook de containers van de vaste diensten en het clusternetwerk weg.
+   *  `niet_opgeruimd` zegt wat er bij Docker toch bleef staan — opruimen dat
+   *  halverwege struikelt is erger dan opruimen dat iets laat staan, maar je
+   *  hoort wel te zien wát er bleef. */
+  verwijder: (id: number) =>
+    api.delete<{ ok: boolean; niet_opgeruimd: string[] }>(`/clusters/${id}`),
 
   /** Kan dit cluster bij zijn repo, en mag het pushen? Vóór het klonen, want
    *  een mislukte kloon geeft een kale git-fout waar drie heel verschillende

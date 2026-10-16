@@ -337,6 +337,18 @@ class DockerRuntime:
         ips = [x for x in out.split() if x]
         return ips[0] if ips else None
 
+    async def verwijder_netwerk(self, naam: str) -> None:
+        """Een netwerk opruimen. Bestaat het niet (meer), dan is dat geen fout.
+
+        Docker weigert een netwerk met aangesloten containers; die horen dus
+        eerst weg. Mislukt het toch, dan is dat hier geen reden om de rest van
+        het opruimen te staken -- een achtergebleven netwerk is hinderlijk, een
+        halve verwijdering is erger.
+        """
+        code, _, err = await self._run_cli("network", "rm", naam, timeout=30)
+        if code != 0 and "not found" not in (err or "").lower():
+            raise RuntimeError((err or "").strip()[:300] or f"netwerk {naam} niet te verwijderen")
+
     async def ensure_network_named(self, naam: str) -> None:
         """Een netwerk met een EIGEN naam, voor een cluster.
 
@@ -351,6 +363,7 @@ class DockerRuntime:
 
     async def run_dienst_container(self, *, naam: str, image: str, netwerk: str,
                                    volume: str,
+                                   container_naam: Optional[str] = None,
                                    poorten: Optional[Dict[int, int]] = None,
                                    omgeving: Optional[Dict[str, str]] = None,
                                    timeout: float = 600.0) -> str:
@@ -362,8 +375,21 @@ class DockerRuntime:
         juist wegwerpbaar is.
 
         Poorten gaan naar 127.0.0.1 van de machine zelf. Binnen het cluster is
-        dat niet nodig: daar praat alles op containernaam.
+        dat niet nodig: daar praat alles op naam.
+
+        **`naam` en `container_naam` zijn met opzet twee dingen.** `naam` is
+        de DNS-naam op het clusternetwerk -- dat is wat een branch-lab typt
+        (`cosmos:8081`), en die hoort dus per cluster hetzelfde te kunnen
+        zijn. `container_naam` is hoe de container bij de daemon heet, en die
+        is GLOBAAL: twee clusters met allebei een `cosmos` delen die ene naam.
+
+        Dat liep echt mis en het liep stil mis: hieronder staat een
+        `docker rm -f` op de naam, dus het starten van de emulator in het
+        tweede cluster maakte die van het eerste dood en nam zijn plaats in.
+        LabX bleef voor allebei "draait" melden. Vandaar: de alias per
+        cluster, de containernaam uniek over alle clusters heen.
         """
+        container_naam = container_naam or naam
         await self._cli_ok("volume", "create", volume, timeout=30)
         # Een naamgenoot opruimen, ook als WIJ zijn id niet kennen.
         #
@@ -373,7 +399,7 @@ class DockerRuntime:
         # nooit een container_id kreeg. De volgende poging strandt dan op
         # "The container name is already in use" -- een fout over onze eigen
         # rommel, waar de gebruiker niets aan kan doen.
-        await self._run_cli("rm", "-f", naam, timeout=120)
+        await self._run_cli("rm", "-f", container_naam, timeout=120)
         # EERST ophalen, apart. Doet `docker run` dat zelf, dan loopt de
         # voortgang van een image van anderhalve gigabyte door de uitvoer van
         # het starten heen -- en belandt die bij een time-out als
@@ -387,7 +413,7 @@ class DockerRuntime:
         await self._cli_ok("pull", image, timeout=max(timeout, 1800.0))
         args = [
             "run", "-d",
-            "--name", naam,
+            "--name", container_naam,
             "--label", _DIENST_LABEL,
             "--restart", "unless-stopped",
             "--network", netwerk,
@@ -419,7 +445,7 @@ class DockerRuntime:
         await self._cli_ok("volume", "create", volume, timeout=30)
         args = [
             "run", "-d",
-            "--name", naam,
+            "--name", container_naam,
             "--label", _MODEL_LABEL,
             "--restart", "unless-stopped",
             "--memory", f"{int(mem_limit_mb)}m",

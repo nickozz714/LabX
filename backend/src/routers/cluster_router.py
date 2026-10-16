@@ -53,9 +53,8 @@ def wijzig(cluster_id: int, body: Dict[str, Any], db: Session = Depends(get_db))
 
 
 @router.delete("/{cluster_id}")
-def verwijder(cluster_id: int, db: Session = Depends(get_db)):
-    _svc(db).verwijder(cluster_id)
-    return {"ok": True}
+async def verwijder(cluster_id: int, db: Session = Depends(get_db)):
+    return await _svc(db).verwijder(cluster_id)
 
 
 # ── branch-labs ──────────────────────────────────────────────────────────────

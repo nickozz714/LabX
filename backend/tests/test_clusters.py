@@ -42,16 +42,22 @@ def db(monkeypatch):
 class NepDocker:
     def __init__(self):
         self.netwerken, self.gestart, self.verwijderd = [], [], []
+        self.netwerken_weg = []
+
+    async def verwijder_netwerk(self, naam):
+        self.netwerken_weg.append(naam)
 
     async def ensure_network_named(self, naam):
         self.netwerken.append(naam)
 
     async def run_dienst_container(self, *, naam, image, netwerk, volume,
-                                   poorten=None, omgeving=None, **kw):
-        self.gestart.append({"naam": naam, "image": image, "netwerk": netwerk,
+                                   container_naam=None, poorten=None,
+                                   omgeving=None, **kw):
+        self.gestart.append({"naam": naam, "container_naam": container_naam or naam,
+                             "image": image, "netwerk": netwerk,
                              "volume": volume, "poorten": dict(poorten or {}),
                              "omgeving": omgeving or {}})
-        return f"container-{naam}"
+        return f"container-{container_naam or naam}"
 
     async def remove(self, cid, **kw):
         self.verwijderd.append(cid)
@@ -174,7 +180,7 @@ def test_een_cluster_met_branch_labs_gaat_er_niet_uit(db):
     db.commit()
 
     with pytest.raises(HTTPException) as fout:
-        svc.verwijder(c.id)
+        asyncio.run(svc.verwijder(c.id))
     assert "feature/zoek" in str(fout.value.detail)
 
 
@@ -535,3 +541,74 @@ def test_een_niet_github_repo_wordt_niet_beoordeeld(db, monkeypatch):
     db.commit()
     uit = asyncio.run(svc.controleer_toegang(c))
     assert uit["gecontroleerd"] is False
+
+
+# ── opruimen laat niets bij Docker achter ────────────────────────────────────
+
+def test_verwijderen_ruimt_containers_en_netwerk_op(db):
+    """Alleen de rijen weghalen voelt opgeruimd en is het niet.
+
+    De containers van de vaste diensten blijven dan draaien en het netwerk
+    blijft staan: geheugen dat niemand nog kan vinden, en een volgend cluster
+    met dezelfde naam erft het netwerk van zijn voorganger.
+    """
+    docker = NepDocker()
+    svc = _svc(db, docker)
+    c = svc.maak(naam="Hive")
+    d = svc.voeg_dienst_toe(c.id, naam="cosmos", image="emulator:1")
+    d.container_id = "container-cosmos"
+    db.commit()
+
+    uit = asyncio.run(svc.verwijder(c.id))
+
+    assert uit["niet_opgeruimd"] == []
+    assert docker.verwijderd == ["container-cosmos"]
+    assert docker.netwerken_weg == [c.netwerk]
+    assert svc.lijst() == []
+
+
+def test_een_container_die_niet_weg_wil_stopt_het_opruimen_niet(db):
+    """Opruimen dat halverwege struikelt is erger dan opruimen dat iets laat
+    staan — maar je hoort wel te zien wat er bleef."""
+    docker = NepDocker()
+
+    async def stug(cid, **kw):
+        raise RuntimeError("daemon weg")
+
+    docker.remove = stug
+    svc = _svc(db, docker)
+    c = svc.maak(naam="Hive")
+    d = svc.voeg_dienst_toe(c.id, naam="cosmos", image="emulator:1")
+    d.container_id = "container-cosmos"
+    db.commit()
+
+    uit = asyncio.run(svc.verwijder(c.id))
+
+    assert svc.lijst() == [], "de rijen gaan hoe dan ook weg"
+    assert any("cosmos" in k for k in uit["niet_opgeruimd"])
+
+
+def test_twee_clusters_mogen_allebei_een_cosmos_hebben(db):
+    """De DNS-naam is per cluster, de containernaam is globaal.
+
+    Dit liep echt mis en het liep STIL mis: starten begint met een
+    `docker rm -f` op de containernaam, dus de emulator van het tweede cluster
+    maakte die van het eerste dood en nam zijn plaats in -- terwijl LabX voor
+    allebei "draait" bleef melden. Gemeten op een echte daemon: de container-id
+    van de eerste veranderde.
+    """
+    docker = NepDocker()
+    svc = _svc(db, docker)
+    een = svc.maak(naam="Hive")
+    twee = svc.maak(naam="Hub")
+    svc.voeg_dienst_toe(een.id, naam="cosmos", image="emulator:1")
+    svc.voeg_dienst_toe(twee.id, naam="cosmos", image="emulator:1")
+
+    for d in svc.diensten(een.id) + svc.diensten(twee.id):
+        asyncio.run(svc.start_dienst(d.id))
+
+    dns = [g["naam"] for g in docker.gestart]
+    containers = [g["container_naam"] for g in docker.gestart]
+    assert dns == ["cosmos", "cosmos"], "op het netwerk heet hij in beide clusters cosmos"
+    assert len(set(containers)) == 2, "bij de daemon hebben ze verschillende namen"
+    assert all(str(een.id) in c or str(twee.id) in c for c in containers)

@@ -91,16 +91,23 @@ export function ClustersPage() {
     const ja = await bevestig.vraag({
       titel: `Cluster '${c.naam}' verwijderen?`,
       tekst: c.labs.length
-        ? `Er ${c.labs.length === 1 ? "hangt 1 branch-lab" : `hangen ${c.labs.length} branch-labs`} aan dit cluster. ` +
-          "Die blijven bestaan, maar vinden de vaste diensten daarna niet meer."
-        : "De vaste diensten worden gestopt en verwijderd.",
+        // De backend weigert dit: branch-labs zonder hun vaste diensten zijn
+        // kapot zonder dat je het ziet. Het hier alvast zeggen scheelt een
+        // klik die op een foutmelding uitloopt.
+        ? `Er ${c.labs.length === 1 ? "hangt nog 1 branch-lab" : `hangen nog ${c.labs.length} branch-labs`} aan dit cluster. ` +
+          "Ruim die eerst op — anders blijven ze achter zonder vaste diensten om mee te praten."
+        : "De containers van de vaste diensten en het clusternetwerk worden ook verwijderd.",
       variant: "danger",
       bevestig: "Verwijderen",
     });
     if (!ja) return;
     try {
-      await clusterApi.verwijder(c.id);
-      melding.ok("Cluster verwijderd");
+      const uit = await clusterApi.verwijder(c.id);
+      if (uit.niet_opgeruimd?.length) {
+        melding.info(`Cluster verwijderd, maar dit bleef staan: ${uit.niet_opgeruimd.join("; ")}`);
+      } else {
+        melding.ok("Cluster verwijderd");
+      }
       void laad();
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Verwijderen mislukte");
