@@ -1,0 +1,181 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="t8">
+  <title id="t8">Meer dan één machine: labs en modellen op computers uit je eigen netwerk</title>
+  <desc>De LabX-server stuurt containers aan op andere machines over SSH. Op elke
+  machine draait een agent die zich aanmeldt, de machine wakker houdt en capaciteit
+  meldt — maar zelf geen commando's uitvoert.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#64748B"/>
+    </marker>
+    <marker id="ablue" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="adark" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 z" fill="#0B1220"/>
+    </marker>
+  </defs>
+  <style>
+    .f { font-family: Archivo, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    .title { font-size: 38px; font-weight: 700; fill: #0B1220; }
+    .sub { font-size: 18px; fill: #64748B; }
+    .eyebrow { font-size: 14px; font-weight: 700; fill: #94A3B8; letter-spacing: 2.4px; }
+    .h { font-size: 19px; font-weight: 700; fill: #0B1220; }
+    .lab { font-size: 15px; fill: #334155; }
+    .sm { font-size: 13.5px; fill: #64748B; }
+    .xs { font-size: 12.5px; fill: #64748B; }
+    .tag { font-size: 12.5px; font-weight: 700; letter-spacing: 1.1px; }
+    .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 13px; fill: #475569; }
+    .monoxs { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 12px; fill: #64748B; }
+  </style>
+
+  <rect width="1600" height="900" fill="#FBFCFE"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#3B82F6"/>
+
+  <text class="f eyebrow" x="70" y="76">PLAAT 8 — MEER DAN ÉÉN MACHINE</text>
+  <text class="f title" x="70" y="120">Eén server die alles doet, krijgt het op zijn staart</text>
+  <text class="f sub" x="70" y="153">Een pc die toch aan staat kan labs en modellen overnemen. Containers gaan over SSH; er komt geen poort op je LAN bij.</text>
+
+  <!-- ===================== DE SERVER ===================== -->
+  <rect x="70" y="196" width="480" height="586" rx="16" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5"/>
+  <rect x="70" y="196" width="480" height="46" rx="16" fill="#3B82F6"/>
+  <rect x="70" y="226" width="480" height="16" fill="#3B82F6"/>
+  <text class="f tag" x="98" y="226" fill="#FFFFFF">DE LABX-SERVER</text>
+  <text class="f" x="522" y="226" text-anchor="end" font-size="13" fill="#D3E4FE">waar jij op inlogt</text>
+
+  <!-- web + tls -->
+  <rect x="98" y="264" width="200" height="88" rx="12" fill="#EAF1FE" stroke="#3B82F6" stroke-width="1.5"/>
+  <text class="f h" x="198" y="296" text-anchor="middle">web</text>
+  <text class="f sm" x="198" y="318" text-anchor="middle">de UI in je browser</text>
+  <text class="f mono" x="198" y="340" text-anchor="middle">:8080</text>
+
+  <rect x="314" y="264" width="208" height="88" rx="12" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+  <text class="f h" x="418" y="296" text-anchor="middle">tls</text>
+  <text class="f sm" x="418" y="318" text-anchor="middle">https, voor de microfoon</text>
+  <text class="f mono" x="418" y="340" text-anchor="middle">:8443</text>
+
+  <!-- api -->
+  <rect x="98" y="368" width="424" height="118" rx="12" fill="#EAF1FE" stroke="#3B82F6" stroke-width="2.5"/>
+  <text class="f h" x="122" y="400">api</text>
+  <text class="f sm" x="154" y="400">FastAPI + SQLite</text>
+  <text class="f mono" x="498" y="400" text-anchor="end">:8090</text>
+  <rect x="122" y="414" width="376" height="54" rx="9" fill="#FFFFFF" stroke="#1D4ED8" stroke-width="2"/>
+  <text class="f" x="140" y="437" font-size="15" font-weight="700" fill="#1D4ED8">Claude Code CLI draait híer</text>
+  <text class="f xs" x="140" y="457">het denken blijft op de server — waar het lab ook staat</text>
+
+  <!-- ollama op de server -->
+  <rect x="98" y="502" width="424" height="76" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.5"/>
+  <text class="f lab" x="122" y="530" font-weight="700">ollama</text>
+  <text class="f sm" x="186" y="530">het guardmodel — de tweede mening van de data-guard</text>
+  <text class="f xs" x="122" y="556">Altijd hier, als terugval. Is er geen runner vrij in je netwerk, dan gaat de vraag hierheen.</text>
+
+  <!-- labs op de server -->
+  <rect x="98" y="594" width="424" height="104" rx="12" fill="#F8FAFF" stroke="#94A3B8" stroke-width="2" stroke-dasharray="10 7"/>
+  <text class="f tag" x="122" y="622" fill="#64748B">LABS OP DEZE SERVER</text>
+  <rect x="122" y="634" width="178" height="48" rx="9" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="f lab" x="211" y="654" text-anchor="middle">Lab · werker 1</text>
+  <text class="f xs" x="211" y="672" text-anchor="middle">1 CPU · 2 GB</text>
+  <rect x="316" y="634" width="178" height="48" rx="9" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="f lab" x="405" y="654" text-anchor="middle">Lab · werker 2</text>
+  <text class="f xs" x="405" y="672" text-anchor="middle">1 CPU · 2 GB</text>
+
+  <text class="f mono" x="98" y="716">volumes</text>
+  <text class="f monoxs" x="98" y="736">labx_data · labx_claude_home · labx_ssh · labx_ollama</text>
+  <text class="f xs" x="98" y="756">labx_ssh is de sleutel waarmee de server bij die machines komt.</text>
+
+  <!-- ===================== HET KANAAL ===================== -->
+  <text class="f tag" x="615" y="232" text-anchor="middle" fill="#0B1220">SSH</text>
+
+  <!-- aansturen -->
+  <path d="M556 330 L672 330" stroke="#0B1220" stroke-width="3" marker-end="url(#adark)"/>
+  <text class="f xs" x="614" y="316" text-anchor="middle" font-weight="700" fill="#0B1220">containers</text>
+  <text class="f monoxs" x="614" y="352" text-anchor="middle">DOCKER_HOST=</text>
+  <text class="f monoxs" x="614" y="368" text-anchor="middle">ssh://jij@pc</text>
+
+  <!-- tunnel -->
+  <path d="M556 470 L672 470" stroke="#3B82F6" stroke-width="3" marker-end="url(#ablue)"/>
+  <text class="f xs" x="614" y="456" text-anchor="middle" font-weight="700" fill="#1D4ED8">poorten</text>
+  <text class="f monoxs" x="614" y="492" text-anchor="middle">tunnel naar</text>
+  <text class="f monoxs" x="614" y="508" text-anchor="middle">127.0.0.1</text>
+
+  <!-- aanmelden, de enige kant op naar binnen -->
+  <path d="M672 640 L556 640" stroke="#64748B" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#a)"/>
+  <text class="f xs" x="614" y="626" text-anchor="middle" font-weight="700">aanmelden</text>
+  <text class="f monoxs" x="614" y="662" text-anchor="middle">elke 30s</text>
+  <text class="f monoxs" x="614" y="678" text-anchor="middle">HTTP</text>
+
+  <!-- ===================== MACHINE 1 ===================== -->
+  <rect x="680" y="196" width="420" height="586" rx="16" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2.5"/>
+  <rect x="680" y="196" width="420" height="46" rx="16" fill="#334155"/>
+  <rect x="680" y="226" width="420" height="16" fill="#334155"/>
+  <text class="f tag" x="706" y="226" fill="#FFFFFF">WERKPC</text>
+  <text class="f" x="1074" y="226" text-anchor="end" font-size="13" fill="#CBD5E1">gekoppeld</text>
+
+  <rect x="706" y="264" width="368" height="104" rx="12" fill="#FFF8EC" stroke="#D97706" stroke-width="2"/>
+  <text class="f h" x="730" y="294">de agent</text>
+  <text class="f xs" x="730" y="316">meldt zich · houdt wakker · meet geheugen en schijf</text>
+  <text class="f" x="730" y="342" font-size="14" font-weight="700" fill="#B45309">voert géén commando's uit</text>
+  <text class="f xs" x="730" y="360">wie hem overneemt, kan niets starten</text>
+
+  <rect x="706" y="384" width="368" height="186" rx="12" fill="#F8FAFF" stroke="#94A3B8" stroke-width="2" stroke-dasharray="10 7"/>
+  <text class="f tag" x="730" y="412" fill="#64748B">LABS HIER</text>
+  <rect x="730" y="424" width="320" height="52" rx="9" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="f lab" x="750" y="446">Lab · Swinkels</text>
+  <text class="f xs" x="750" y="464">/workspace staat op een volume van DEZE machine</text>
+  <rect x="730" y="486" width="320" height="52" rx="9" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="f lab" x="750" y="508">Lab · Beeminds</text>
+  <text class="f xs" x="750" y="526">verplaatst vanaf de server — het volume ging mee</text>
+
+  <rect x="706" y="586" width="368" height="90" rx="12" fill="#EAF1FE" stroke="#3B82F6" stroke-width="2"/>
+  <text class="f lab" x="730" y="614" font-weight="700">modelrunner</text>
+  <text class="f monoxs" x="1050" y="614" text-anchor="end">127.0.0.1:21434</text>
+  <text class="f xs" x="730" y="636">een Ollama erbij — jij zegt hoeveel er hier mogen</text>
+  <text class="f xs" x="730" y="656">publiceert op de loopback van deze pc, niet op je LAN</text>
+
+  <text class="f xs" x="706" y="706">Docker draait hier. Externe login staat aan.</text>
+  <text class="f xs" x="706" y="726">De server komt binnen met één publieke sleutel in</text>
+  <text class="f monoxs" x="706" y="746">~/.ssh/authorized_keys</text>
+
+  <!-- ===================== MACHINE 2 ===================== -->
+  <rect x="1120" y="196" width="410" height="586" rx="16" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2"/>
+  <rect x="1120" y="196" width="410" height="46" rx="16" fill="#94A3B8"/>
+  <rect x="1120" y="226" width="410" height="16" fill="#94A3B8"/>
+  <text class="f tag" x="1146" y="226" fill="#FFFFFF">IMAC</text>
+  <text class="f" x="1504" y="226" text-anchor="end" font-size="13" fill="#F1F5F9">slaapt</text>
+
+  <rect x="1146" y="264" width="358" height="104" rx="12" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="f h" x="1170" y="294" fill="#64748B">de agent</text>
+  <text class="f xs" x="1170" y="318">houdt de machine wakker zolang er labs draaien —</text>
+  <text class="f xs" x="1170" y="338">en laat hem slapen zodra dat niet meer zo is</text>
+  <text class="f monoxs" x="1170" y="358">caffeinate -w &lt;pid van de agent&gt;</text>
+
+  <rect x="1146" y="384" width="358" height="186" rx="12" fill="#FAFBFC" stroke="#CBD5E1" stroke-width="2" stroke-dasharray="10 7"/>
+  <text class="f tag" x="1170" y="412" fill="#94A3B8">GEEN LABS</text>
+  <text class="f xs" x="1170" y="440">Een machine die uit staat telt niet mee in de</text>
+  <text class="f xs" x="1170" y="460">capaciteit die het overzicht laat zien.</text>
+  <text class="f xs" x="1170" y="492">Komt hij terug, dan kijkt LabX zijn labs na:</text>
+  <text class="f xs" x="1170" y="512">een container die de herstart niet overleefde</text>
+  <text class="f xs" x="1170" y="532">wordt &#8220;gestopt&#8221;, niet &#8220;fout&#8221; — starten maakt</text>
+  <text class="f xs" x="1170" y="552">gewoon een verse aan.</text>
+
+  <rect x="1146" y="586" width="358" height="90" rx="12" fill="#FAFBFC" stroke="#E2E8F0" stroke-width="1.5"/>
+  <text class="f lab" x="1170" y="614" font-weight="700" fill="#94A3B8">geen modelrunner</text>
+  <text class="f xs" x="1170" y="636">Je stelt per machine in hoeveel er mogen draaien.</text>
+  <text class="f xs" x="1170" y="656">Nul is een geldig antwoord.</text>
+
+  <text class="f xs" x="1146" y="706">Capaciteit erbij zetten is een schakelaar,</text>
+  <text class="f xs" x="1146" y="726">geen verhuizing: labs gaan heen en weer</text>
+  <text class="f xs" x="1146" y="746">terwijl ze blijven bestaan.</text>
+
+  <!-- ===================== ONDERSTE BALK ===================== -->
+  <rect x="70" y="812" width="1460" height="62" rx="12" fill="#0B1220"/>
+  <text class="f tag" x="98" y="840" fill="#64748B">DRIE GRENZEN</text>
+
+  <circle cx="300" cy="836" r="4" fill="#3B82F6"/>
+  <text class="f" x="314" y="841" font-size="14" fill="#E2E8F0">Een aanmelding is geen bewijs — een mens bevestigt de code van dát scherm</text>
+
+  <circle cx="860" cy="836" r="4" fill="#3B82F6"/>
+  <text class="f" x="874" y="841" font-size="14" fill="#E2E8F0">Alles op loopback, bereikbaar via SSH — geen poort op je LAN</text>
+
+  <circle cx="300" cy="862" r="4" fill="#3B82F6"/>
+  <text class="f" x="314" y="867" font-size="14" fill="#E2E8F0">De agent voert niets uit — de gevaarlijke kant zit achter jouw sleutel</text>
+</svg>

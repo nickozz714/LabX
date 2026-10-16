@@ -1,6 +1,6 @@
 # Platen
 
-Zes diagrammen die LabX uitleggen, in de volgorde waarin je het aan een zaal vertelt.
+Acht diagrammen die LabX uitleggen, in de volgorde waarin je het aan een zaal vertelt.
 Allemaal **1600 × 900** (16:9 — precies een slide) en **SVG**, dus scherp op elk formaat.
 
 | # | Bestand | Waarvoor |
@@ -12,6 +12,14 @@ Allemaal **1600 × 900** (16:9 — precies een slide) en **SVG**, dus scherp op 
 | 5 | `5-de-data-guard.svg` | Invoer- én uitvoercontrole, wat je zelf instelt, en de audit |
 | 6 | `6-labx-en-nectar.svg` | De combinatie: LabX doet het werk, Nectar onthoudt het |
 | 7 | `7-waar-het-draait.svg` | Welke containers, welke poorten, welke volumes — en waar de CLI draait |
+| 8 | `8-meer-dan-een-machine.svg` | Labs en modellen op computers uit je eigen netwerk, aangestuurd over SSH |
+
+Plaat 8 hoort bij plaat 7 en niet in plaats daarvan: 7 laat zien wat er op één machine
+draait, 8 wat er gebeurt zodra je er computers uit je netwerk bij zet. Hij is afgelezen uit
+`backend/src/services/lab/` — `lab_service.runtime_voor()` (welke daemon hoort bij welk lab),
+`poort_tunnel.py` (hoe een poort bereikbaar wordt zonder iets op je LAN te zetten) en
+`modelpool.py` (hoe een guard-vraag bij een vrije runner komt). Verandert daar iets aan de
+grenzen, dan hoort de onderste balk van de plaat mee te veranderen.
 
 Plaat 3 is de plaat voor de vraag die altijd komt: *wat weet dat model eigenlijk, en waar
 haalt het dat vandaan?* Hij is niet naar smaak getekend maar afgelezen uit
