@@ -1,0 +1,226 @@
+"""De detectoren van de clusterverkenner: harde vondsten met een vindplaats.
+
+Wat hier vastligt is de regel die het plan nakijkbaar houdt: **geen vondst
+zonder vindplaats.** Een detector die wel een dienst voorstelt maar niet kan
+zeggen wáár hij dat las, levert een mening op, en een plan vol meningen keurt
+niemand nog goed.
+
+Twee dingen die stil kunnen verdwijnen als iemand hier later aan sleutelt:
+
+- Een compose-service met `build:` is de APPLICATIE, geen vaste dienst. Gaat
+  die scheiding kapot, dan belandt de app in de vaste laag en draait elke
+  branch tegen de code van wie het cluster aanmaakte.
+- Van `8081:8081` nemen we de RECHTERkant. De linkerkant overnemen is hoe de
+  emulator bij de eerste proef op een bezette poort botste.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from services.lab import verkenner_catalogus as cat  # noqa: E402
+from services.lab.verkenner_detectoren import (  # noqa: E402
+    Bewijs,
+    Vondst,
+    detecteer_alles,
+    detecteer_compose,
+    detecteer_env_profielen,
+    detecteer_manifesten,
+    detecteer_omgevingsbestanden,
+    lees_env,
+    staaf,
+)
+
+#: Een repo in de vorm van IntelligentHive: yarn-workspaces, geen compose,
+#: Cosmos alleen zichtbaar in de omgevingssleutels.
+HIVE = {
+    "package.json": (
+        '{"packageManager":"yarn@4.9.2","engines":{"node":">=22"},'
+        '"workspaces":["components/*"],'
+        '"scripts":{"build:dependencies":"a","build:apps":"b",'
+        '"start:api":"c","start:app":"d","start:agent":"e"}}'
+    ),
+    "components/api/.env.example": (
+        "NODE_ENV=development\n"
+        "LOG_LEVEL=info\n"
+        "COSMOS_ENDPOINT=\n"
+        "COSMOS_KEY=\n"
+        "APPLICATIONINSIGHTS_CONNECTION_STRING=\n"
+        "LANGFUSE_SECRET_KEY=\n"
+        "LOCIZE_API_KEY=\n"
+        "API_KEY=\n"
+    ),
+    "components/app/.env.debug": "VITE_TENANT_ID=x\n",
+    "components/app/.env.realestate": "VITE_TENANT_ID=y\n",
+    "components/app/.env.insurance": "VITE_TENANT_ID=z\n",
+}
+
+
+def _van(vondsten, soort, sleutel=None):
+    uit = [v for v in vondsten if v.soort == soort and (sleutel is None or v.sleutel == sleutel)]
+    return uit[0] if uit else None
+
+
+# ── de kernregel ─────────────────────────────────────────────────────────────
+
+def test_elke_vondst_heeft_een_vindplaats():
+    for vondst in detecteer_alles(HIVE):
+        assert vondst.bewijs, f"{vondst.soort}/{vondst.sleutel} heeft geen bewijs"
+        for bewijs in vondst.bewijs:
+            assert bewijs.bestand in HIVE, f"bewijs wijst naar een bestand dat er niet is: {bewijs.bestand}"
+
+
+# ── trede 3: de omgevingssleutels ────────────────────────────────────────────
+
+def test_cosmos_volgt_uit_de_omgevingssleutels():
+    """Zonder compose is dit de enige aanwijzing dat de emulator nodig is."""
+    vondst = _van(detecteer_omgevingsbestanden(HIVE), "dienst", "cosmos")
+    assert vondst is not None
+    assert "cosmos-emulator" in vondst.waarde["image"]
+    assert vondst.waarde["poorten"] == [8081, 1234]
+    assert vondst.zekerheid == "midden"  # afgeleid, niet afgelezen
+    regels = sorted(b.regel for b in vondst.bewijs)
+    assert regels == [3, 4], "moet naar COSMOS_ENDPOINT en COSMOS_KEY wijzen"
+
+
+def test_emulatorsleutel_komt_uit_de_catalogus_en_niet_uit_de_kluis():
+    """De Cosmos-sleutel is publiek. Hem als geheim opvoeren is ruis."""
+    vondst = _van(detecteer_omgevingsbestanden(HIVE), "dienst", "cosmos")
+    assert vondst.waarde["lab_omgeving"]["COSMOS_KEY"] == cat.COSMOS_EMULATOR_SLEUTEL
+    assert _van(detecteer_omgevingsbestanden(HIVE), "geheim", "COSMOS_KEY") is None
+
+
+def test_externe_diensten_komen_op_de_tweede_lijst():
+    """Het rijtje waar een branch-lab veertig minuten later op omvalt."""
+    vondsten = detecteer_omgevingsbestanden(HIVE)
+    namen = {v.sleutel for v in vondsten if v.soort == "extern"}
+    assert {"application-insights", "langfuse", "locize"} <= namen
+    for naam in namen:
+        assert _van(vondsten, "dienst", naam) is None, "extern is geen na te bouwen dienst"
+
+
+def test_onbekend_geheim_wordt_gemeld_maar_schakelaars_niet():
+    vondsten = detecteer_omgevingsbestanden(HIVE)
+    geheimen = {v.sleutel for v in vondsten if v.soort == "geheim"}
+    assert "API_KEY" in geheimen
+    assert "NODE_ENV" not in geheimen and "LOG_LEVEL" not in geheimen
+
+
+def test_database_url_zonder_waarde_levert_geen_harde_dienst():
+    """`DATABASE_URL=` zegt niet of het postgres of mysql is. Dan niets beweren."""
+    beeld = {".env.example": "DATABASE_URL=\n"}
+    assert _van(detecteer_omgevingsbestanden(beeld), "dienst") is None
+    beeld = {".env.example": "DATABASE_URL=postgresql://u:p@localhost/db\n"}
+    assert _van(detecteer_omgevingsbestanden(beeld), "dienst", "postgres") is not None
+
+
+def test_echte_envwaarden_komen_niet_in_het_plan():
+    """Een `.env` kan geldige sleutels bevatten. Alleen de NAAM mag eruit."""
+    beeld = {".env": "STRIPE_SECRET_KEY=sk_live_heelgeheim\n"}
+    vondst = _van(detecteer_omgevingsbestanden(beeld), "extern", "stripe")
+    assert vondst is not None
+    for bewijs in vondst.bewijs:
+        assert "sk_live_heelgeheim" not in bewijs.fragment
+
+
+def test_meerdere_profielen_worden_een_keuze():
+    vondst = _van(detecteer_env_profielen(HIVE), "omgeving", "env_profiel")
+    assert vondst is not None
+    assert vondst.waarde["keuzes"] == ["debug", "insurance", "realestate"]
+    assert vondst.waarde["standaard"] == "debug"
+
+
+def test_een_enkel_profiel_is_geen_keuze():
+    assert detecteer_env_profielen({"components/app/.env.debug": "A=1\n"}) == []
+
+
+# ── trede 4: de manifesten ───────────────────────────────────────────────────
+
+def test_yarn_vier_levert_een_node_image_geen_python():
+    vondst = _van(detecteer_manifesten(HIVE), "lab_image", "node")
+    assert vondst is not None
+    assert vondst.waarde["image"].startswith("node:22")
+    assert "corepack" in vondst.waarde["installeer"]
+
+
+def test_bouw_en_startcommandos_worden_opgehaald():
+    vondst = _van(detecteer_manifesten(HIVE), "startscript", "scripts")
+    assert sorted(vondst.waarde["bouwen"]) == ["build:apps", "build:dependencies"]
+    assert sorted(vondst.waarde["starten"]) == ["start:agent", "start:api", "start:app"]
+    assert vondst.waarde["werkruimtes"] is True
+
+
+# ── trede 1: compose ─────────────────────────────────────────────────────────
+
+COMPOSE = {
+    "docker-compose.yml": (
+        "services:\n"
+        "  api:\n"
+        "    build: ./components/api\n"
+        "    ports:\n"
+        "      - '3000:3000'\n"
+        "  redis:\n"
+        "    image: redis:7-alpine\n"
+        "    ports:\n"
+        "      - '16379:6379'\n"
+        "    environment:\n"
+        "      - REDIS_ARGS=--save 60 1\n"
+    ),
+}
+
+
+def test_compose_scheidt_de_app_van_haar_afhankelijkheden():
+    vondsten = detecteer_compose(COMPOSE)
+    assert _van(vondsten, "lab_image", "api") is not None, "build: = de applicatie zelf"
+    dienst = _van(vondsten, "dienst", "redis")
+    assert dienst is not None and dienst.zekerheid == "hoog"
+    assert _van(vondsten, "dienst", "api") is None, "de app hoort niet in de vaste laag"
+
+
+def test_van_een_poortkoppeling_telt_de_containerkant():
+    """De linkerkant overnemen is hoe de emulator op een bezette poort botste."""
+    dienst = _van(detecteer_compose(COMPOSE), "dienst", "redis")
+    assert dienst.waarde["poorten"] == [6379]
+    assert dienst.waarde["omgeving"] == {"REDIS_ARGS": "--save 60 1"}
+
+
+def test_kapotte_compose_sloopt_de_verkenning_niet():
+    beeld = {"docker-compose.yml": "services:\n  - dit: [is geen\n", **HIVE}
+    vondsten = detecteer_alles(beeld)
+    assert _van(vondsten, "dienst", "cosmos") is not None
+
+
+# ── staven: de controle op wat het model voorstelt ───────────────────────────
+
+def test_modelvondst_met_bewijs_wordt_bevestigd():
+    vondst = Vondst(soort="dienst", sleutel="cosmos", waarde={"image": "x/azure-cosmos-emulator"},
+                    bron="model", bewijs=[])
+    staaf(vondst, HIVE)
+    assert vondst.bevestigd is True
+    assert vondst.bewijs and vondst.bewijs[0].bestand == "components/api/.env.example"
+
+
+def test_modelvondst_zonder_bewijs_blijft_staan_maar_onbevestigd():
+    """Niet weggooien: tonen met lage zekerheid, uitgevinkt in het scherm."""
+    vondst = Vondst(soort="dienst", sleutel="rabbitmq", waarde={"image": "rabbitmq:3"},
+                    bron="model", zekerheid="hoog",
+                    bewijs=[Bewijs(bestand="docs/BESTAAT-NIET.md", regel=12)])
+    staaf(vondst, HIVE)
+    assert vondst.bevestigd is False
+    assert vondst.zekerheid == "laag"
+    assert vondst.bewijs, "de verzonnen vindplaats blijft zichtbaar, juist als vindplaats"
+
+
+def test_staven_vervangt_een_verzonnen_regelnummer():
+    vondst = Vondst(soort="geheim", sleutel="API_KEY", bron="model",
+                    bewijs=[Bewijs(bestand="components/api/.env.example", regel=999)])
+    staaf(vondst, HIVE)
+    assert vondst.bevestigd is True
+    assert all(b.regel != 999 for b in vondst.bewijs)
+
+
+# ── envlezer ─────────────────────────────────────────────────────────────────
+
+def test_envlezer_verdraagt_commentaar_export_en_aanhalingstekens():
+    regels = lees_env('# uitleg\nexport A="een"\nB=twee\n\nniet-een-sleutel\nC=\n')
+    assert regels == [(2, "A", "een"), (3, "B", "twee"), (6, "C", "")]
