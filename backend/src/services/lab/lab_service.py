@@ -556,9 +556,19 @@ class LabService:
         env = {"REPO_URL": spec["url"], "DEST": spec["name"]}
         if spec.get("token"):
             env["GIT_AUTH"] = _b64.b64encode(f"x-access-token:{spec['token']}".encode()).decode()
+        # De header in de git-config, niet als losse optie.
+        #
+        # `git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $X"} clone`
+        # ziet er goed uit en werkt niet: de shell splitst het resultaat van
+        # die expansie alsnog op spaties, dus git krijgt "basic" als los woord
+        # en antwoordt "'basic' is not a git command". Dat viel nooit op omdat
+        # het alleen misgaat MET een token -- een publieke repo kloont prima.
         cmd = ["sh", "-c",
-               'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} '
-               'clone --depth 1 "$REPO_URL" "$DEST"']
+               'set -e; '
+               'if [ -n "$GIT_AUTH" ]; then '
+               '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
+               'fi; '
+               'git clone --depth 1 "$REPO_URL" "$DEST"']
         await self.runtime_voor(p).run_ephemeral(
             image=p.image, volume=p.volume_name, cmd=cmd, env=env)
 
@@ -3076,7 +3086,12 @@ exec ssh -N \\
             raise HTTPException(status_code=404, detail=f"'{naam}' is hier niet geregistreerd")
         uit = await self._git(
             p, rij["name"],
-            'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} pull --ff-only',
+            # Zelfde reden als bij clone en push: die expansie wordt door de
+            # shell op spaties gesplitst en git ziet "basic" als subcommando.
+            'if [ -n "$GIT_AUTH" ]; then '
+            '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
+            'fi; '
+            'git pull --ff-only',
             token=self._repo_token(rij), timeout=180)
         self._touch(p)
         return {"repo": rij["name"], "output": uit[:2000]}
@@ -3118,8 +3133,10 @@ exec ssh -N \\
             'git config user.name "LabX"; '
             'if [ -n "$COMMIT_MSG" ]; then git add -A; '
             '  git diff --cached --quiet || git commit -m "$COMMIT_MSG"; fi; '
-            'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} '
-            'push "${PUSH_URL:-origin}" "HEAD:${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"'
+            'if [ -n "$GIT_AUTH" ]; then '
+            '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
+            'fi; '
+            'git push "${PUSH_URL:-origin}" "HEAD:${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"'
         )
         try:
             out = await self.runtime_voor(p).run_ephemeral(

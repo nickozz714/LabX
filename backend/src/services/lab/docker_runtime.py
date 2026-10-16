@@ -272,11 +272,21 @@ class DockerRuntime:
         allow_network: bool,
         ports: Optional[List[int]] = None,
         expires_at: Optional[str] = None,
+        netwerk: Optional[str] = None,
+        poort_map: Optional[Dict[int, int]] = None,
+        omgeving: Optional[Dict[str, str]] = None,
     ) -> str:
         """Start the lab container: idle process, /workspace on the volume,
         caps + no-new-privileges, NO host-mounts, on the shared lab network with
         a DNS alias == its container name. Returns the container id."""
-        await self.ensure_network()
+        # Een branch-lab hoort bij ZIJN cluster en niet bij het gedeelde
+        # labnetwerk: daar moet het de vaste diensten op naam kunnen vinden,
+        # en daar hoort niet elk ander lab bij te kunnen.
+        net = netwerk or self._network
+        if netwerk:
+            await self.ensure_network_named(netwerk)
+        else:
+            await self.ensure_network()
         args = [
             "run", "-d",
             "--name", name,
@@ -292,14 +302,23 @@ class DockerRuntime:
             # pids-limit vol zit en er niets meer start.
             "--init",
             "--security-opt", "no-new-privileges",
-            "--network", self._network,
+            "--network", net,
             "--network-alias", name,
             "-v", f"{volume}:/workspace",
             "-w", "/workspace",
         ]
+        for k, v in (omgeving or {}).items():
+            args += ["-e", f"{k}={v}"]
         if expires_at:
             args += ["--label", f"{_EXPIRES_LABEL}={expires_at}"]
+        # Een vast nummer als het gegeven is (een branch-lab hoort op een
+        # adres te staan dat niet elke herstart verandert), anders laat de
+        # daemon er een kiezen zoals altijd.
+        for container_poort, machine_poort in (poort_map or {}).items():
+            args += ["-p", f"127.0.0.1:{int(machine_poort)}:{int(container_poort)}"]
         for port in (ports or []):
+            if poort_map and int(port) in {int(k) for k in poort_map}:
+                continue
             args += ["-p", f"127.0.0.1:0:{int(port)}"]
         args += [image, "sleep", "infinity"]
         return await self._cli_ok(*args, timeout=180)

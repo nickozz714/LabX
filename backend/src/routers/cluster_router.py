@@ -58,6 +58,30 @@ def verwijder(cluster_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ── branch-labs ──────────────────────────────────────────────────────────────
+
+@router.post("/{cluster_id}/branches")
+async def maak_branch_lab(cluster_id: int, body: Dict[str, Any],
+                          db: Session = Depends(get_db)):
+    """Een lab voor één branch, afgetakt van een basis naar keuze.
+
+    `basis` is niet standaard "main" omdat dat vaak klopt maar niet altijd:
+    van `release/2026.09` aftakken is net zo gewoon, en dat achteraf
+    rechtzetten in een lab is omslachtiger dan het meteen goed doen.
+    """
+    return await _svc(db).maak_branch_lab(
+        cluster_id,
+        branch=str(body.get("branch") or ""),
+        basis=str(body.get("basis") or "main"),
+        naam=(str(body["naam"]) if body.get("naam") else None))
+
+
+@router.post("/branches/{lab_id}/start")
+async def start_branch_lab(lab_id: str, db: Session = Depends(get_db)):
+    """Een branch-lab aanzetten op het netwerk van zijn cluster."""
+    return await _svc(db).start_branch_lab(lab_id)
+
+
 # ── vaste diensten ───────────────────────────────────────────────────────────
 
 @router.post("/{cluster_id}/diensten")

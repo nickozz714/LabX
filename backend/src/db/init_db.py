@@ -121,6 +121,7 @@ _ADDITIVE_COLUMNS = {
         # wat er al staat: een bestaand lab is een gewoon lab.
         ("cluster_id", "INTEGER"),
         ("branch", "VARCHAR(255)"),
+        ("poort_map", "TEXT"),
         ("chat_deelt_werker", "BOOLEAN NOT NULL DEFAULT 1"),
         ("azure_profile_id", "INTEGER"),
         ("extras", "TEXT"),

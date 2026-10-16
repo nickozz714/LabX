@@ -51,6 +51,9 @@ class Lab(Base):
     #: machine -- geldt hier ook, en blijft op één plek geregeld.
     cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: {containerpoort: machinepoort} voor een branch-lab. Vast, zodat het
+    #: adres waarop jij die branch opent niet bij elke herstart verandert.
+    poort_map: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     # Data-egress-guard: container output heading to the LLM is screened
     # (services/lab/data_guard.py). Default ON.
     data_guard: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

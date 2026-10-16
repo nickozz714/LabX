@@ -188,6 +188,25 @@ class ClusterService:
     #: je in één oogopslag ziet wat van LabX is.
     POORT_BASIS = 18000
 
+    def _bezette_poorten(self, behalve_dienst: Optional[int] = None,
+                         behalve_lab: Optional[str] = None) -> set:
+        """Alle machinepoorten die dit LabX al vergeven heeft.
+
+        Diensten en branch-labs delen één bereik, want ze delen één machine.
+        Apart tellen zou twee diensten op hetzelfde nummer zetten zodra er
+        ook labs zijn.
+        """
+        from models.lab import Lab
+
+        bezet = set()
+        for ander in self.db.query(ClusterDienst).all():
+            if ander.id != behalve_dienst:
+                bezet.update(int(v) for v in (ander.poort_map or {}).values())
+        for lab in self.db.query(Lab).filter(Lab.cluster_id.isnot(None)).all():
+            if lab.id != behalve_lab:
+                bezet.update(int(v) for v in (lab.poort_map or {}).values())
+        return bezet
+
     def _ken_poorten_toe(self, d: ClusterDienst) -> Dict[int, int]:
         """{containerpoort: machinepoort}, stabiel zolang de dienst bestaat.
 
@@ -197,10 +216,7 @@ class ClusterService:
         geeft meteen het adres dat je wilt: http://machine:18000.
         """
         huidig = {int(k): int(v) for k, v in (d.poort_map or {}).items()}
-        bezet = set()
-        for ander in self.db.query(ClusterDienst).all():
-            if ander.id != d.id:
-                bezet.update(int(v) for v in (ander.poort_map or {}).values())
+        bezet = self._bezette_poorten(behalve_dienst=d.id)
         volgende = self.POORT_BASIS
         uit: Dict[int, int] = {}
         for p in [int(x) for x in (d.poorten or [])]:
@@ -277,6 +293,231 @@ class ClusterService:
         if rij is None:
             raise HTTPException(status_code=404, detail="Dienst niet gevonden")
         return rij
+
+    # ── branch-labs ──────────────────────────────────────────────────────────
+
+    def _pat(self, c: Cluster) -> Optional[str]:
+        """Het toegangstoken uit de kluis, of None.
+
+        Alleen hier, en alleen op het moment dat er gekloond wordt. Het token
+        staat nergens in een clusterrij, komt niet in een antwoord van de API
+        en niet in de context van een model -- het cluster kent alleen de
+        NAAM van het geheim.
+        """
+        if not c.repo_token_geheim:
+            return None
+        from services.secrets.vault import VaultService
+
+        kluis = VaultService(self.db)
+        rij = next((r for r in kluis.lijst() if r.name == c.repo_token_geheim), None)
+        if rij is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Het geheim '{c.repo_token_geheim}' staat niet in de kluis. "
+                        f"Zet hem erin, of pas de naam aan bij het cluster."))
+        waarde = kluis.waarde_van(rij)
+        if not waarde:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Het geheim '{c.repo_token_geheim}' is niet te lezen.")
+        return waarde
+
+    async def maak_branch_lab(self, cluster_id: int, *, branch: str,
+                              basis: str = "main",
+                              naam: Optional[str] = None) -> Dict[str, Any]:
+        """Een lab voor één branch, afgetakt van een basis naar keuze.
+
+        `basis` is met opzet geen vast "main": je wilt net zo goed van
+        `release/2026.09` aftakken, en dat achteraf rechtzetten in een lab is
+        omslachtiger dan het meteen goed doen.
+
+        Bestaat `branch` al op de remote, dan wordt die uitgecheckt. Bestaat
+        hij niet, dan wordt hij van `basis` afgetakt. Dat onderscheid maakt
+        git zelf; wij hoeven het niet te raden.
+        """
+        from services.lab.lab_service import LabService
+
+        c = self.get_or_404(cluster_id)
+        branch = (branch or "").strip()
+        if not branch:
+            raise HTTPException(status_code=400, detail="Geef een branchnaam op.")
+        if not c.repo_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Dit cluster heeft nog geen repo-URL; zonder repo valt er niets uit te checken.")
+
+        from models.lab import Lab
+
+        bestaat = (self.db.query(Lab)
+                   .filter(Lab.cluster_id == c.id, Lab.branch == branch).first())
+        if bestaat is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Er is al een lab voor '{branch}' in dit cluster: "
+                        f"{bestaat.name}."))
+
+        lab_svc = LabService(self.db)
+        uit = await lab_svc.create(
+            name=(naam or f"{c.naam} · {branch}")[:255],
+            image=c.lab_image or None,
+            host_id=c.host_id,
+            # Geen repos= : we klonen zelf, want we hebben een BASIS en een
+            # nieuwe branch nodig en dat kan de gewone kloon niet.
+            ttl_hours=24 * 7,
+            allow_network=True,
+        )
+        p = self.db.get(Lab, uit["id"])
+        p.cluster_id = c.id
+        p.branch = branch
+        # Het startscript hoort bij het CLUSTER, maar draait in het LAB. Het
+        # hier overnemen betekent dat het bestaande inrichten het uitvoert --
+        # met zijn log, zijn statussen en zijn herstel na een herstart. Een
+        # tweede manier om scripts te draaien zou al die dingen opnieuw moeten
+        # uitvinden.
+        if c.start_script:
+            p.setup_script = c.start_script
+        self.db.commit()
+
+        try:
+            await self._kloon_branch(c, p, branch=branch, basis=basis)
+        except Exception as exc:  # noqa: BLE001
+            # Het lab dat WIJ net maakten weer opruimen. Laten staan lijkt
+            # behulpzaam ("dan zie je wat er misging") maar is het niet: er
+            # staat niets in, en hij bezet de branchnaam -- dus de tweede
+            # poging strandde op "er is al een lab voor deze branch", een
+            # melding over onze eigen rommel.
+            reden = _laatste_zinnige_regel(str(exc))
+            try:
+                await lab_svc.delete(p.id)
+            except Exception as exc2:  # noqa: BLE001
+                log.warningx("Half aangemaakt branch-lab opruimen mislukt",
+                             lab_id=p.id, error=str(exc2)[:200])
+            raise HTTPException(
+                status_code=502,
+                detail=f"Klonen van '{branch}' mislukte: {reden[:400]}") from exc
+
+        log.infox("Branch-lab aangemaakt", cluster=c.naam, branch=branch,
+                  basis=basis, lab_id=p.id)
+        self.db.refresh(p)
+        return lab_svc._to_dict(p)
+
+    async def _kloon_branch(self, c: Cluster, p: Any, *, branch: str,
+                            basis: str) -> None:
+        """De repo in het volume zetten, op de juiste branch.
+
+        Eén shell-opdracht, want de stappen horen bij elkaar: klonen op de
+        basis, dan de branch pakken of aanmaken. Halverwege stoppen laat een
+        werkkopie achter waarvan niemand weet op welke commit hij staat.
+        """
+        from services.lab.lab_service import LabService
+
+        pat = self._pat(c)
+        naam = c.repo_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
+        env = {"REPO_URL": c.repo_url, "DEST": naam, "BASIS": basis, "TAK": branch}
+        if pat:
+            import base64 as _b64
+            env["GIT_AUTH"] = _b64.b64encode(f"x-access-token:{pat}".encode()).decode()
+
+        # De header in de GIT-CONFIG zetten, niet per opdracht meegeven.
+        #
+        # `git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $X"} clone`
+        # ziet er goed uit en is het niet: de shell splitst het resultaat van
+        # die expansie alsnog op spaties, dus git kreeg "basic" als los woord
+        # en antwoordde "'basic' is not a git command". Eén keer in de config
+        # zetten lost het op én geldt meteen voor fetch en push.
+        script = (
+            'set -e; '
+            'if [ -n "$GIT_AUTH" ]; then '
+            '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
+            'fi; '
+            # Geen --depth 1: je wilt van een BASIS kunnen aftakken en later
+            # kunnen pushen, en dat gaat niet met een afgeknipte historie.
+            'git clone --branch "$BASIS" "$REPO_URL" "$DEST"; '
+            'cd "$DEST"; '
+            # Bestaat de branch al op de remote? Dan die, anders aftakken.
+            'if git ls-remote --exit-code --heads origin "$TAK" >/dev/null 2>&1; then '
+            '  git fetch origin "$TAK":"$TAK" && git checkout "$TAK"; '
+            'else '
+            '  git checkout -b "$TAK"; '
+            'fi; '
+            'git rev-parse --abbrev-ref HEAD'
+        )
+        await LabService(self.db).runtime_voor(p).run_ephemeral(
+            image=p.image, volume=p.volume_name, cmd=["sh", "-c", script],
+            env=env, timeout=1800)
+
+    async def start_branch_lab(self, lab_id: str) -> Dict[str, Any]:
+        """Een branch-lab aanzetten op het netwerk van zijn cluster.
+
+        Niet via LabService.start(): dat zet een lab op het GEDEELDE
+        labnetwerk, en dan vindt het de vaste diensten niet op naam. Dit is
+        hetzelfde lab, alleen op de juiste bridge en met een vast adres.
+        """
+        from models.lab import Lab
+        from services.lab.lab_service import LabService, provision_in_background
+
+        p = self.db.get(Lab, lab_id)
+        if p is None or not p.cluster_id:
+            raise HTTPException(status_code=404,
+                                detail="Dit is geen branch-lab van een cluster.")
+        c = self.get_or_404(p.cluster_id)
+        lab_svc = LabService(self.db)
+        rt = lab_svc.runtime_voor(p)
+
+        kaart = self._lab_poorten(p, c)
+        p.poort_map = {str(k): v for k, v in kaart.items()}
+
+        omgeving = dict(c.omgeving or {})
+        if c.env_profiel:
+            omgeving.setdefault("LABX_ENV_PROFIEL", c.env_profiel)
+        omgeving.setdefault("LABX_BRANCH", p.branch or "")
+
+        for w in lab_svc.ensure_workers(p):
+            if w.container_id:
+                try:
+                    await rt.remove(w.container_id, timeout=120)
+                except Exception as exc:  # noqa: BLE001
+                    log.warningx("Oude branch-container opruimen mislukt",
+                                 lab_id=p.id, error=str(exc)[:200])
+            w.container_id = await rt.run_container(
+                name=w.network_alias, image=p.image, volume=p.volume_name,
+                cpu_limit=p.cpu_limit, mem_limit_mb=p.mem_limit_mb,
+                allow_network=True,
+                netwerk=c.netwerk,
+                poort_map=kaart if w.index <= 1 else None,
+                omgeving=omgeving)
+            w.status, w.error = "running", None
+            w.provision_status = "pending"
+            w.updated_at = _nu()
+        lab_svc._spiegel_werker1(p)
+        p.status = "running"
+        p.error = None
+        p.updated_at = _nu()
+        self.db.commit()
+        if c.start_script:
+            provision_in_background(p.id)
+        log.infox("Branch-lab gestart", cluster=c.naam, branch=p.branch,
+                  poorten=p.poort_map)
+        self.db.refresh(p)
+        return lab_svc._to_dict(p)
+
+    def _lab_poorten(self, p: Any, c: Cluster) -> Dict[int, int]:
+        """Welke poorten van dit branch-lab naar buiten gaan, en op welk
+        nummer. Hetzelfde bereik als de diensten: één machine, één reeks."""
+        gewenst = [int(x) for x in (p.ports or [])] or [3000, 7071]
+        huidig = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
+        bezet = self._bezette_poorten(behalve_lab=p.id)
+        volgende = self.POORT_BASIS
+        uit: Dict[int, int] = {}
+        for poort in gewenst:
+            if poort in huidig and huidig[poort] not in bezet:
+                uit[poort] = huidig[poort]
+            else:
+                while volgende in bezet or volgende in uit.values():
+                    volgende += 1
+                uit[poort] = volgende
+            bezet.add(uit[poort])
+        return uit
 
     # ── voor het scherm ──────────────────────────────────────────────────────
 

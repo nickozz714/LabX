@@ -303,3 +303,135 @@ def test_een_gebruiksfout_van_docker_wijst_niet_naar_de_help(db):
              "127.0.0.1:8081: address already in use.\n"
              "See 'docker run --help'.\n")
     assert "address already in use" in _laatste_zinnige_regel(tekst)
+
+
+# ── branch-labs ──────────────────────────────────────────────────────────────
+
+def _cluster_met_repo(db, svc):
+    c = svc.maak(naam="Hive")
+    c.repo_url = "https://github.com/beeminds-data/Intelligenthive.git"
+    c.lab_image = "node:22-bookworm"
+    c.start_script = "yarn build:all && yarn start:api"
+    db.commit()
+    return c
+
+
+def test_een_branch_lab_erft_het_startscript_van_het_cluster(db, monkeypatch):
+    """Het startscript hoort bij het cluster maar draait in het lab.
+
+    Het hier overnemen betekent dat het bestáánde inrichten het uitvoert, met
+    zijn log, zijn statussen en zijn herstel na een herstart. Een tweede
+    manier om scripts te draaien zou al die dingen opnieuw moeten uitvinden.
+    """
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    svc = ClusterService(db)
+    c = _cluster_met_repo(db, svc)
+
+    nu = "2026-10-16T12:00:00+00:00"
+
+    async def _nep_create(**kw):
+        p = Lab(id="branchlab", name=kw["name"], image="node:22-bookworm",
+                volume_name="v", status="stopped", cpu_limit=1, mem_limit_mb=512,
+                ttl_hours=4, created_at=nu, updated_at=nu)
+        db.add(p)
+        db.commit()
+        return {"id": p.id}
+
+    async def _nep_kloon(self, c, p, *, branch, basis):
+        return None
+
+    monkeypatch.setattr(LabService, "create", lambda self, **kw: _nep_create(**kw))
+    monkeypatch.setattr(ClusterService, "_kloon_branch", _nep_kloon)
+    monkeypatch.setattr(LabService, "_to_dict", lambda self, p: {"id": p.id})
+
+    asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x", basis="main"))
+    p = db.get(Lab, "branchlab")
+    assert p.cluster_id == c.id and p.branch == "feature/x"
+    assert p.setup_script == c.start_script
+
+
+def test_twee_labs_voor_dezelfde_branch_kan_niet(db):
+    import asyncio
+
+    from fastapi import HTTPException
+    from models.lab import Lab
+
+    svc = _svc(db)
+    c = _cluster_met_repo(db, svc)
+    nu = "2026-10-16T12:00:00+00:00"
+    db.add(Lab(id="al-er", name="x", image="node:22", volume_name="v",
+               status="running", cpu_limit=1, mem_limit_mb=512, ttl_hours=4,
+               cluster_id=c.id, branch="feature/x", created_at=nu, updated_at=nu))
+    db.commit()
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
+    assert fout.value.status_code == 409
+
+
+def test_een_cluster_zonder_repo_maakt_geen_branch_lab(db):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    svc = _svc(db)
+    c = svc.maak(naam="Leeg")
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
+    assert "repo" in str(fout.value.detail).lower()
+
+
+def test_diensten_en_branch_labs_delen_een_poortbereik(db):
+    """Apart tellen zou een dienst en een lab op hetzelfde nummer zetten --
+    ze draaien op dezelfde machine."""
+    import asyncio
+
+    from models.lab import Lab
+
+    d = NepDocker()
+    svc = _svc(db, d)
+    c = svc.maak(naam="Hive")
+    dienst = svc.voeg_dienst_toe(c.id, naam="cosmos", image="c:1", poorten=[8081])
+    asyncio.run(svc.start_dienst(dienst.id))
+    db.refresh(dienst)
+
+    nu = "2026-10-16T12:00:00+00:00"
+    p = Lab(id="bl", name="x", image="node:22", volume_name="v", status="stopped",
+            cpu_limit=1, mem_limit_mb=512, ttl_hours=4, cluster_id=c.id,
+            branch="feature/x", ports=[3000], created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+
+    kaart = svc._lab_poorten(p, c)
+    dienst_poorten = set(dienst.poort_map.values())
+    assert not (set(kaart.values()) & dienst_poorten), (
+        "een lab mag niet op de poort van een dienst landen")
+
+
+def test_de_auth_header_staat_in_de_git_config_en_niet_als_losse_optie():
+    """`git ${VAR:+-c "http.extraHeader=AUTHORIZATION: basic $X"}` wordt door
+    de shell alsnog op spaties gesplitst; git kreeg "basic" als subcommando.
+
+    Dat viel nooit op omdat het alleen misgaat MET een token -- een publieke
+    repo kloont prima. Het zat daarom ook in de gewone kloon van labs en in
+    publish.
+    """
+    from pathlib import Path
+
+    for naam in ("clusters.py", "lab_service.py"):
+        bron = (Path(__file__).resolve().parents[1] / "src" / "services" / "lab"
+                / naam).read_text(encoding="utf-8")
+        if "extraHeader" not in bron:
+            continue
+        assert "git config --global http.extraHeader" in bron, naam
+        # Alleen naar CODE kijken: de uitleg hierboven noemt het foute
+        # patroon met zoveel woorden, en die hoort niet mee te tellen.
+        code = "\n".join(r for r in bron.splitlines()
+                          if not r.lstrip().startswith("#"))
+        assert "${GIT_AUTH:+-c" not in code, (
+            f"{naam}: de losse -c met expansie is de constructie die stukging")
