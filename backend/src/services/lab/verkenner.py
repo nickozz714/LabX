@@ -325,6 +325,27 @@ class Verkenner:
 
 # ── hulpjes ──────────────────────────────────────────────────────────────────
 
+def _slug(ruw: Any, *, max_lengte: int = 40) -> str:
+    """Een naam van het model tot een bruikbare sleutel.
+
+    Het model antwoordt met wat het ziet, en dat is soms een hele zin:
+    bij de eerste echte proef kwam er `llm-providers (OpenAI/Anthropic/Gemini/
+    Azure Foundry)` terug. Als beschrijving klopt dat; als NAAM niet, want
+    deze wordt de DNS-naam van een dienst en de naam waaronder je een geheim
+    in de kluis zoekt. De zin zelf gaat niet verloren -- die staat in de
+    toelichting.
+    """
+    schoon = re.sub(r"[^a-z0-9]+", "-", str(ruw or "").lower()).strip("-")
+    if len(schoon) <= max_lengte:
+        return schoon
+    # Afkappen op een woordgrens. Midden in een woord afbreken levert
+    # `...-gemini-az` op, en dat leest als een naam die iemand verkeerd
+    # getypt heeft in plaats van als een afkorting.
+    kort = schoon[:max_lengte]
+    grens = kort.rfind("-")
+    return (kort[:grens] if grens > max_lengte // 3 else kort).strip("-")
+
+
 def _repomap(repo_url: str) -> str:
     naam = repo_url.rstrip("/").split("/")[-1].removesuffix(".git")
     return re.sub(r"[^A-Za-z0-9._-]", "-", naam) or "repo"
@@ -335,28 +356,30 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
     uit: List[det.Vondst] = []
 
     for d in (uitslag.get("vaste_diensten") or [])[:12]:
-        if not isinstance(d, dict) or not d.get("naam"):
+        naam = _slug(d.get("naam")) if isinstance(d, dict) else ""
+        if not naam:
             continue
         uit.append(det.Vondst(
-            soort="dienst", sleutel=str(d["naam"]),
+            soort="dienst", sleutel=naam,
             waarde={"image": str(d.get("image") or ""),
                     "poorten": [int(p) for p in (d.get("poorten") or []) if str(p).isdigit()],
                     "omgeving": {str(k): str(v) for k, v in (d.get("omgeving") or {}).items()},
                     "lab_omgeving": {str(k): str(v) for k, v in (d.get("lab_omgeving") or {}).items()}},
             bewijs=_model_bewijs(d.get("bewijs")),
             zekerheid="laag", bron="model", bevestigd=False,
-            toelichting=str(d.get("waarom") or "")[:400],
+            toelichting=_met_volledige_naam(d, str(d.get("waarom") or ""))[:400],
         ))
 
     for e in (uitslag.get("extern") or [])[:12]:
-        if not isinstance(e, dict) or not e.get("naam"):
+        naam = _slug(e.get("naam")) if isinstance(e, dict) else ""
+        if not naam:
             continue
         uit.append(det.Vondst(
-            soort="extern", sleutel=str(e["naam"]),
+            soort="extern", sleutel=naam,
             waarde={"sleutels": [str(s) for s in (e.get("sleutels") or [])][:12]},
             bewijs=_model_bewijs(e.get("bewijs")),
             zekerheid="laag", bron="model", bevestigd=False,
-            toelichting=str(e.get("waarom") or "")[:400],
+            toelichting=_met_volledige_naam(e, str(e.get("waarom") or ""))[:400],
         ))
 
     li = uitslag.get("lab_image")
@@ -380,6 +403,12 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
             toelichting=str(profiel.get("waarom") or "")[:400],
         ))
     return uit
+
+
+def _met_volledige_naam(bron: Dict[str, Any], waarom: str) -> str:
+    """De naam zoals het model hem schreef erbij, als de slug hem inkortte."""
+    ruw = str(bron.get("naam") or "")
+    return f"{ruw} — {waarom}" if _slug(ruw) != ruw.lower() and waarom else (waarom or ruw)
 
 
 def _model_bewijs(ruw: Any) -> List[det.Bewijs]:

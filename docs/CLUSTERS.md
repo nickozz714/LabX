@@ -286,6 +286,15 @@ verwarrend.
 De agent heeft verder een begrenzing in bestanden en tijd. Hij leest een repo,
 hij doorzoekt hem niet eindeloos.
 
+**Gemeten.** Op ND3X — een repo die het model niet kende — leverde dit een
+beeld van 614 paden en 29 gelezen bestanden op, en daarop 30 seconden werk
+voor ongeveer 35 cent. De uitkomst zette `web` en `api` niet in de vaste laag
+(die worden uit de repo gebouwd) en `ollama` wel, met de regelnummers uit
+`docker-compose.yml` erbij. Drie dingen die het niet uit de repo kon opmaken
+zette het in `vragen` in plaats van ze te gokken. Dat is het gedrag waar deze
+opzet op rekent, en het is de reden dat de uitkomst per commit bewaard wordt:
+dit is geen aanroep die je per ongeluk vijf keer doet.
+
 ### Opnieuw verkennen
 
 Het plan hoort bij het cluster en is goedgekeurd vanaf één basisbranch. Maar

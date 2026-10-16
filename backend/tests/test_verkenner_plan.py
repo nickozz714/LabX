@@ -216,3 +216,29 @@ def test_een_plan_zonder_model_levert_nog_steeds_een_cluster(db):
     assert rij.model_gebruikt == 0 and rij.fout == "geen sleutel"
     uit = svc.keur_goed(rij.id, naam="Hive")
     assert uit["diensten_toegevoegd"] == ["hiv-cosmos"], "eenwoordsnaam: eerste drie letters"
+
+
+# ── namen die het model verzint ──────────────────────────────────────────────
+
+def test_een_naam_van_het_model_wordt_een_bruikbare_sleutel():
+    """Het model antwoordt met wat het ziet, en dat is soms een hele zin.
+
+    Bij de eerste echte proef (ND3X) kwam er
+    `llm-providers (OpenAI/Anthropic/Gemini/Azure Foundry)` terug. Als
+    beschrijving klopt dat; als NAAM niet, want deze wordt de DNS-naam van een
+    dienst en de naam waaronder je een geheim in de kluis zoekt.
+    """
+    from services.lab.verkenner import _slug
+
+    assert _slug("Cosmos DB") == "cosmos-db"
+    lang = _slug("llm-providers (OpenAI/Anthropic/Gemini/Azure Foundry)")
+    assert len(lang) <= 40 and not lang.endswith("-")
+    assert not lang.endswith("-az"), "afkappen gebeurt op een woordgrens"
+
+
+def test_de_zin_van_het_model_blijft_leesbaar_in_de_toelichting():
+    from services.lab.verkenner import _model_vondsten
+
+    vondsten = _model_vondsten({"extern": [
+        {"naam": "llm-providers (OpenAI/Anthropic)", "waarom": "Betaalde API's."}]})
+    assert "llm-providers (OpenAI/Anthropic)" in vondsten[0].toelichting
