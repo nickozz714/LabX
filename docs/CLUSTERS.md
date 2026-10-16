@@ -166,3 +166,89 @@ Elke stap staat op zichzelf en is bruikbaar voordat de volgende er is.
 5. **Workflows op clusterniveau.**
 6. **Nette namen** via een reverse-proxy per cluster — pas als je weet welke
    namen je wilt.
+
+
+---
+
+## Bijlage: IntelligentHive als eerste cluster
+
+Afgelezen van de MacBook Pro, zodat het cluster reproduceert wat daar nu met
+de hand gebeurt. Dit is de maat waaraan stap 1 en 2 af te meten zijn.
+
+### De repo
+
+| | |
+|---|---|
+| Plek | `~/repos/Intelligenthive` |
+| Remote | `git@github.com:beeminds-data/Intelligenthive.git` (**SSH**, privé) |
+| Huidige branch | `feature/3130-losse-entiteiten-laden-in-gold` |
+| Soort | yarn-workspaces monorepo, `packageManager: yarn@4.9.2` |
+
+**Let op — dit raakt stap 2.** De remote is een SSH-URL. LabX kloont nu over
+HTTPS met een token in een header; dat werkt hier niet. Een branch-lab heeft
+dus óf een HTTPS-URL met een token, óf een deploy-key in het lab. Dat is een
+keuze die gemaakt moet worden vóór het eerste branch-lab, niet erna.
+
+### Hoe het start
+
+```
+yarn start:api     →  yarn workspace @beeminds/api start
+yarn start:app     →  yarn workspace @beeminds/app dev
+yarn start:agent   →  yarn workspace @beeminds/agent start
+```
+
+Daarvóór moet er gebouwd worden, en dat is geen detail:
+
+```
+yarn build:dependencies   # ~12 packages: interfaces, error-handling, auth,
+                          # cdm, loader-fabric, models, loader-synapse,
+                          # metamodel-purview, publisher-loganalytics,
+                          # markdown, openai
+yarn build:apps           # app + api
+```
+
+Dat is precies wat het **cluster-startscript** gaat bevatten: één keer
+opschrijven, elk branch-lab draait het.
+
+### De vaste dienst
+
+```
+ih-cosmos
+  image:  mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+  poorten: 8081 (data), 1234 (explorer)
+```
+
+In een cluster draait deze container onder dezelfde naam op het
+clusternetwerk. De API vindt hem dan via zijn eigen omgevingsvariabelen:
+
+```
+COSMOS_ENDPOINT=https://ih-cosmos:8081
+COSMOS_KEY=<de vaste emulator-sleutel>
+```
+
+Geen poorten nodig tussen de labs onderling — alleen naar buiten, voor jou.
+
+### Omgeving per onderdeel
+
+- `components/api/.env.example` — o.a. `COSMOS_ENDPOINT`, `COSMOS_KEY`,
+  `NODE_ENV`, `LOG_LEVEL`, `API_KEY`, en een reeks externe diensten
+  (Application Insights, Langfuse, Locize, Cognitive Services).
+- `components/app/.env.debug` — `VITE_TENANT_ID`,
+  `DATABASE_CONNECTION_STRING`.
+
+De front-end heeft **meerdere profielen**: `.env.debug`, `.env.realestate`,
+`.env.insurance`, `.env.municipality`. Een branch-lab moet er dus één kiezen.
+Voor ontwikkelwerk is `debug` de voor de hand liggende standaard; het hoort
+een instelling van het cluster te zijn, niet iets dat in een script
+vastgeroest zit.
+
+### Wat dit betekent voor de bouw
+
+1. Een branch-lab heeft een image met **Node en yarn 4** — niet het kale
+   python-image dat labs nu standaard krijgen.
+2. Het cluster heeft een **startscript** (bouwen + starten) en een
+   **env-profiel** als instelling.
+3. De **git-toegang** moet geregeld zijn vóór het eerste branch-lab.
+4. `yarn build:dependencies` duurt; een branch-lab is niet in tien seconden
+   klaar. Het inrichten loopt daarom op de achtergrond, zoals bij elk lab —
+   maar de verwachting hoort in het scherm te staan.
