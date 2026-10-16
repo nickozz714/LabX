@@ -322,6 +322,63 @@ class ClusterService:
                 detail=f"Het geheim '{c.repo_token_geheim}' is niet te lezen.")
         return waarde
 
+    async def controleer_toegang(self, c: Cluster) -> Dict[str, Any]:
+        """Kan dit cluster bij zijn repo, en mag het pushen?
+
+        Vóór het klonen, want een mislukte kloon geeft een kale git-fout
+        ("The requested URL returned error: 403") waar drie heel verschillende
+        oorzaken achter kunnen zitten. De API van GitHub zegt het wél precies,
+        en dat scheelt een avond zoeken.
+
+        Geen github.com? Dan slaan we het over -- we weten dan niet welke API
+        erbij hoort, en raden is erger dan niet kijken.
+        """
+        import json as _json
+        import urllib.error
+        import urllib.request
+
+        if not c.repo_url or "github.com" not in c.repo_url:
+            return {"gecontroleerd": False}
+        pat = self._pat(c)
+        if not pat:
+            return {"gecontroleerd": False,
+                    "hint": "Dit cluster heeft geen token; een privérepo kloont dan niet."}
+
+        deel = c.repo_url.split("github.com/")[-1].removesuffix(".git").strip("/")
+        verzoek = urllib.request.Request(
+            f"https://api.github.com/repos/{deel}",
+            headers={"Authorization": f"Bearer {pat}",
+                     "Accept": "application/vnd.github+json",
+                     "User-Agent": "labx"})
+        try:
+            with urllib.request.urlopen(verzoek, timeout=20) as a:
+                data = _json.loads(a.read() or b"{}")
+            mag_pushen = bool((data.get("permissions") or {}).get("push"))
+            return {"gecontroleerd": True, "ok": True, "mag_pushen": mag_pushen,
+                    "hint": None if mag_pushen else
+                            ("Het token kan lezen maar niet pushen. Zet Contents op "
+                             "'Read and write' als de agent wijzigingen moet kunnen "
+                             "terugduwen.")}
+        except urllib.error.HTTPError as fout:
+            if fout.code == 404:
+                return {"gecontroleerd": True, "ok": False, "hint": (
+                    f"Het token ziet '{deel}' niet. Drie oorzaken, in volgorde van "
+                    f"waarschijnlijkheid: (1) de organisatie heeft het token nog niet "
+                    f"goedgekeurd — kijk bij Organization settings → Personal access "
+                    f"tokens → Pending requests; (2) de repository staat niet in "
+                    f"'Repository access' van het token; (3) de resource owner van het "
+                    f"token is een persoonlijk account in plaats van de organisatie, en "
+                    f"dat is achteraf niet te wijzigen.")}
+            if fout.code in (401, 403):
+                return {"gecontroleerd": True, "ok": False, "hint": (
+                    "Het token wordt geweigerd (ongeldig of verlopen). Maak een nieuw "
+                    "token en vervang het geheim in de kluis.")}
+            return {"gecontroleerd": True, "ok": False,
+                    "hint": f"GitHub antwoordde {fout.code}."}
+        except Exception as exc:  # noqa: BLE001 — geen net? dan niet oordelen
+            log.warningx("Toegangscontrole overgeslagen", error=str(exc)[:200])
+            return {"gecontroleerd": False}
+
     async def maak_branch_lab(self, cluster_id: int, *, branch: str,
                               basis: str = "main",
                               naam: Optional[str] = None) -> Dict[str, Any]:
@@ -355,6 +412,13 @@ class ClusterService:
                 status_code=409,
                 detail=(f"Er is al een lab voor '{branch}' in dit cluster: "
                         f"{bestaat.name}."))
+
+        # Eerst kijken of we er überhaupt bij kunnen. Een lab aanmaken en
+        # het daarna weer opruimen omdat het token niet mag, is werk en
+        # verwarring voor niets.
+        toegang = await self.controleer_toegang(c)
+        if toegang.get("gecontroleerd") and not toegang.get("ok"):
+            raise HTTPException(status_code=400, detail=toegang["hint"])
 
         lab_svc = LabService(self.db)
         uit = await lab_svc.create(

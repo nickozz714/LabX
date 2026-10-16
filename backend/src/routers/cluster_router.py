@@ -76,6 +76,17 @@ async def maak_branch_lab(cluster_id: int, body: Dict[str, Any],
         naam=(str(body["naam"]) if body.get("naam") else None))
 
 
+@router.post("/{cluster_id}/toegang")
+async def controleer_toegang(cluster_id: int, db: Session = Depends(get_db)):
+    """Kan dit cluster bij zijn repo, en mag het pushen?
+
+    Meten in plaats van het bij de eerste kloon te ontdekken: een git-fout
+    zegt "403" waar drie verschillende oorzaken achter kunnen zitten.
+    """
+    svc = _svc(db)
+    return await svc.controleer_toegang(svc.get_or_404(cluster_id))
+
+
 @router.post("/branches/{lab_id}/start")
 async def start_branch_lab(lab_id: str, db: Session = Depends(get_db)):
     """Een branch-lab aanzetten op het netwerk van zijn cluster."""

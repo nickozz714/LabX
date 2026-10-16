@@ -435,3 +435,103 @@ def test_de_auth_header_staat_in_de_git_config_en_niet_als_losse_optie():
                           if not r.lstrip().startswith("#"))
         assert "${GIT_AUTH:+-c" not in code, (
             f"{naam}: de losse -c met expansie is de constructie die stukging")
+
+
+# ── kan het cluster bij zijn repo? ───────────────────────────────────────────
+
+def _met_pat(db, svc, monkeypatch, antwoord):
+    """Een cluster met een token, en een GitHub die `antwoord` geeft."""
+    import urllib.error
+    import urllib.request
+
+    c = _cluster_met_repo(db, svc)
+    c.repo_token_geheim = "pat"
+    db.commit()
+    monkeypatch.setattr(type(svc), "_pat", lambda self, c: "github_pat_proef")
+
+    def _nep(verzoek, timeout=0):
+        if isinstance(antwoord, int):
+            raise urllib.error.HTTPError("u", antwoord, "nee", {}, None)
+
+        class Antwoord:
+            def read(self):
+                import json
+                return json.dumps(antwoord).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        return Antwoord()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _nep)
+    return c
+
+
+def test_een_token_dat_wacht_op_goedkeuring_wordt_benoemd(db, monkeypatch):
+    """GitHub geeft 404 als een fine-grained token de repo niet mag zien — of
+    dat nu komt door goedkeuring, door de selectie, of door de verkeerde
+    resource owner. Een kale "403" uit git noemt geen van drieën."""
+    import asyncio
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch, 404)
+    uit = asyncio.run(svc.controleer_toegang(c))
+
+    assert uit["ok"] is False
+    for stuk in ("goedgekeurd", "Pending requests", "Repository access",
+                 "resource owner"):
+        assert stuk.lower() in uit["hint"].lower(), stuk
+
+
+def test_een_verlopen_token_krijgt_een_ander_antwoord(db, monkeypatch):
+    import asyncio
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch, 401)
+    uit = asyncio.run(svc.controleer_toegang(c))
+    assert uit["ok"] is False
+    assert "verlopen" in uit["hint"].lower()
+
+
+def test_alleen_lezen_wordt_gemeld_maar_houdt_niets_tegen(db, monkeypatch):
+    """Lezen is genoeg om te klonen. Pas als de agent wil pushen gaat het
+    knellen, en dan wil je het van tevoren weten."""
+    import asyncio
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch,
+                 {"full_name": "org/repo", "permissions": {"push": False}})
+    uit = asyncio.run(svc.controleer_toegang(c))
+    assert uit["ok"] is True and uit["mag_pushen"] is False
+    assert "Read and write" in uit["hint"]
+
+
+def test_een_branch_lab_wordt_niet_aangemaakt_als_het_token_niet_mag(db, monkeypatch):
+    """Een lab maken en daarna weer opruimen omdat het token niet mag, is
+    werk en verwarring voor niets."""
+    import asyncio
+
+    from fastapi import HTTPException
+    from models.lab import Lab
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch, 404)
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
+    assert fout.value.status_code == 400
+    assert db.query(Lab).count() == 0, "er mag geen half lab achterblijven"
+
+
+def test_een_niet_github_repo_wordt_niet_beoordeeld(db, monkeypatch):
+    """We weten dan niet welke API erbij hoort, en raden is erger dan niet
+    kijken."""
+    import asyncio
+
+    svc = _svc(db)
+    c = svc.maak(naam="Elders")
+    c.repo_url = "https://git.intern.example/team/app.git"
+    db.commit()
+    uit = asyncio.run(svc.controleer_toegang(c))
+    assert uit["gecontroleerd"] is False
