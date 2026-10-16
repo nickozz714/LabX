@@ -356,8 +356,13 @@ async def llm_second_opinion(text: str, *, db: Any = None) -> Optional[Dict[str,
             # dan lijkt die runner voorgoed vol en krijgt hij nooit meer werk.
             if runner_id is not None:
                 ModelPool.vrij(runner_id)
-            content = (resp.json().get("message") or {}).get("content") or "{}"
-            data = json.loads(content)
+        # BUITEN het finally: hier stonden deze twee regels per ongeluk IN.
+        # Bij een time-out bestaat `resp` dan niet, en gooit het finally een
+        # UnboundLocalError die de echte oorzaak verbergt -- het log meldde
+        # "cannot access local variable 'resp'" terwijl er gewoon een
+        # time-out van 38,9s op een budget van 25s was.
+        content = (resp.json().get("message") or {}).get("content") or "{}"
+        data = json.loads(content)
         confidential = bool(data.get("confidential"))
         category = (data.get("category") or "").lower()
         if any(k in category for k in _CONFIDENTIAL_CATEGORIES):

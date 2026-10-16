@@ -166,6 +166,9 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
     answer: str = ""
     session_id: Optional[str] = None
     status = "completed"
+    #: Eén keer klagen over mislukte voortgang, niet bij elke stap: anders
+    #: vult het log zich met dezelfde regel terwijl de run gewoon doorloopt.
+    voortgang_klaagde = False
     error: Optional[str] = None
     resume_at: Optional[str] = None
     foreground = mode == "foreground"
@@ -204,12 +207,33 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
             if kind in ("thinking", "tool"):
                 # Persist progress as it happens so a fresh page load (or a
                 # backend that later restarts) shows how far the run got.
+                #
+                # MAG NOOIT DE RUN KOSTEN. Dit is voortgang -- cosmetisch, om
+                # te laten zien hoe ver hij is. Op 16-10-2026 liep deze commit
+                # op "database is locked" (SQLite laat onder WAL één schrijver
+                # tegelijk toe, en er waren twee chats, een bordsync en de
+                # modelpool bezig). De OperationalError sloeg door naar de
+                # buitenste except, de sessie was daarna stuk, dus ook het
+                # ECHTE antwoord kon niet meer worden weggeschreven -- en de
+                # gebruiker zag zijn antwoord nooit verschijnen.
+                #
+                # Een gemiste voortgangsregel kost je niets; een gemist
+                # antwoord kost je het gesprek.
                 run = db.get(BackgroundRun, run_id)
                 if run is not None:
-                    run.steps = list(steps)
-                    if session_id:
-                        run.cli_session_id = session_id
-                    db.commit()
+                    try:
+                        run.steps = list(steps)
+                        if session_id:
+                            run.cli_session_id = session_id
+                        db.commit()
+                    except Exception as exc:  # noqa: BLE001
+                        db.rollback()
+                        if not voortgang_klaagde:
+                            voortgang_klaagde = True
+                            log.warningx(
+                                "Voortgang van een run niet opgeslagen (de run gaat door)",
+                                run_id=run_id, soort=type(exc).__name__,
+                                error=str(exc)[:200])
     except asyncio.CancelledError:
         status = "cancelled"
     except SessieLimiet as limiet:
@@ -232,6 +256,12 @@ async def _execute(run_id: str, *, lab_id: str, history: List[Dict[str, str]],
                      soort=type(exc).__name__, error=error[:300])
     finally:
         try:
+            # Eerst de sessie schoonvegen. Is er onderweg een schrijffout
+            # geweest, dan hangt deze sessie in een afgebroken transactie en
+            # mislukt ELKE volgende schrijfactie -- inclusief deze, die het
+            # antwoord bevat. Dat is precies hoe een afgeronde run toch als
+            # "verdwenen" eindigde.
+            db.rollback()
             run = db.get(BackgroundRun, run_id)
             if run is not None:
                 # De melder: heeft deze run een eigen CLI-tool gebruikt die wij
