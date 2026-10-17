@@ -635,3 +635,53 @@ def test_zonder_profiel_staat_er_niets_over_azure(db):
 
     prompt = _prompt(repo_url="x", branch="m", beeld={"boom": []}, inhoud={}, vondsten=[])
     assert "AZURE-AANMELDING" not in prompt
+
+
+def test_de_foutregels_worden_apart_opgediept(db, monkeypatch):
+    """Eén logbestand, twee processen: een devserver die doorpraat en een API
+    die omvalt. De staart is dan gevuld met yarn- en Vite-ruis en de crash is
+    allang weggescrold. Het model kreeg netjes de laatste tachtig regels — en
+    daar stond niets in."""
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    c = _cluster(db)
+    nu = "2026-10-18T10:00:00+00:00"
+    p = Lab(id="proef3", name="x", image="node:22", volume_name="v", status="running",
+            cpu_limit=2, mem_limit_mb=4096, ttl_hours=24, cluster_id=c.id,
+            branch="labx/proefbouw", poort_map={"5173": 18004, "7071": 18005},
+            created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+
+    async def nep_foutregels(zelf, lab_id, regels=40):
+        return "Error: Cosmos gaf 404 — database bestaat niet"
+
+    lus = NepLus(db, [LUKT] * 3, antwoorden=[False], luistert={5173},
+                 logtekst="YN0060: react is listed by your project with version 19.2.4")
+    lus_obj = lus.installeer(monkeypatch, db, p)
+    monkeypatch.setattr(LabService, "foutregels", nep_foutregels)
+
+    asyncio.run(lus_obj.start(c.id))
+    gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
+    assert "REGELS DIE OP EEN FOUT LIJKEN" in gemeld
+    assert "database bestaat niet" in gemeld
+    assert "react is listed" in gemeld, "de gewone staart blijft er ook bij"
+
+
+def test_het_model_krijgt_de_bestandslijst(db):
+    """Zonder dit moet het model repareren zonder te weten wat er in de repo
+    staat — en dat zei het ook: "ik kan dit niet betrouwbaar repareren, want
+    ik kon de repo niet lezen"."""
+    from models.cluster import ClusterPlan
+    from services.lab.proefbouw import Proefbouw
+
+    c = _cluster(db)
+    nu = "2026-10-18T10:00:00+00:00"
+    db.add(ClusterPlan(cluster_id=c.id, repo_url="x", branch="main", status="goedgekeurd",
+                       plan={"boom": ["deploy/pr/seed-emulator.mjs", "package.json"]},
+                       keuzes={}, created_at=nu, updated_at=nu))
+    db.commit()
+
+    boom = Proefbouw(db)._boom(c)
+    assert "seed-emulator.mjs" in boom

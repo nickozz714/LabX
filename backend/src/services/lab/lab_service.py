@@ -3252,6 +3252,31 @@ exec ssh -N \\
         return {"ok": uit.get("exit_code") == 0, "map": map_,
                 "uitvoer": str(uit.get("output") or "")[:400]}
 
+    async def foutregels(self, lab_id: str, *, regels: int = 40) -> str:
+        """De regels uit het startlog die op een FOUT lijken.
+
+        Eén logbestand, twee processen: een devserver die vrolijk doorpraat
+        en een API die omvalt. De staart is dan gevuld met yarn- en
+        Vite-ruis, en de crash is allang weggescrold. Het model kreeg dus
+        netjes de laatste tachtig regels -- en daar stond niets in.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        c = self.db.get(Cluster, p.cluster_id) if p.cluster_id else None
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return ""
+        map_ = self._repomap(c) if c else "/workspace"
+        patroon = r"error|exception|fatal|crash|ECONN|EPROTO|ENOENT|EADDR|cannot|failed|at [A-Za-z]"
+        uit = await self.runtime_voor(p).exec(
+            werkers[0].container_id,
+            ["sh", "-c",
+             f"grep -iE '{patroon}' {map_}/{self.START_LOG} 2>/dev/null "
+             f"| tail -n {int(regels)} | tail -c 4000"],
+            workdir="/workspace", timeout=30)
+        return str(uit.get("output") or "").strip()
+
     async def start_log(self, lab_id: str, *, regels: int = 80) -> str:
         """De laatste regels van het startscript. Het bewijsmateriaal.
 

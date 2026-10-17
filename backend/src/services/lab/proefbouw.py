@@ -222,6 +222,11 @@ class Proefbouw:
         # en van buiten ziet dat er identiek uit als een applicatie die niet
         # start.
         logtekst = (await lab_svc.start_log(p.id)).strip()
+        # Apart de regels die op een fout lijken. Eén logbestand, twee
+        # processen: de devserver praat door en de crash van de API is allang
+        # weggescrold. Het model kreeg dus de laatste tachtig regels -- en
+        # daar stond niets in.
+        fouten = (await lab_svc.foutregels(p.id)).strip()
         gewenst = self._containerpoort(p)
         luistert = await lab_svc.luisterpoorten(p.id)
         verkeerd = sorted(_gekozen_poorten(luistert) - {gewenst})
@@ -243,8 +248,9 @@ class Proefbouw:
             f"Niet alles luistert. LabX publiceert {', '.join(str(x) for x in sorted(alle))}; "
             f"{'daarvan luistert ' + ', '.join(str(x) for x in draait) + ' wel, maar ' if draait else 'er luistert niets op '}"
             f"{', '.join(str(x) for x in stil)} niet.\n"
-            f"Een cluster waarvan de helft dood is, is niet klaar -- ook al doet de rest het.\n"
-            f"De laatste regels van het startscript:\n{logtekst or '(het log is leeg)'}")
+            f"Een cluster waarvan de helft dood is, is niet klaar -- ook al doet de rest het.\n\n"
+            f"REGELS DIE OP EEN FOUT LIJKEN:\n{fouten or '(geen gevonden)'}\n\n"
+            f"DE LAATSTE REGELS VAN HET STARTSCRIPT:\n{logtekst or '(het log is leeg)'}")
 
     async def _wacht_op_container(self, lab_svc, p, *, seconden: int = 120) -> None:
         """Wachten tot het lab echt draait.
@@ -436,7 +442,7 @@ class Proefbouw:
             ronde=ronde, max_rondes=MAX_RONDES,
             image=c.lab_image or "het standaard lab-image",
             omgeving="\n".join(f"  {k}={v}" for k, v in sorted(omgeving.items())) or "  (geen)",
-            script=c.start_script or "", fout=fout)
+            boom=boom, script=c.start_script or "", fout=fout)
         try:
             from services.agent.claude_cli_provider import ClaudeCliProvider
             from services.settings_service import get_settings
@@ -462,6 +468,22 @@ class Proefbouw:
         antwoord = _lees_json(uit.text)
         return {"script": (antwoord.get("startscript") or "").strip() or None,
                 "toelichting": str(antwoord.get("toelichting") or "")[:600]}
+
+    def _boom(self, c: Cluster) -> str:
+        """De bestandslijst uit de laatste verkenning.
+
+        Zonder dit moet het model repareren zonder te weten wat er in de repo
+        staat -- en dat zei het ook: "ik kan dit niet betrouwbaar repareren,
+        want ik kon de repo niet lezen". Een seed-script voorstellen dat
+        bestaat is iets anders dan er een verzinnen.
+        """
+        from models.cluster import ClusterPlan
+
+        plan = (self.db.query(ClusterPlan)
+                .filter(ClusterPlan.cluster_id == c.id)
+                .order_by(ClusterPlan.id.desc()).first())
+        paden = ((plan.plan or {}).get("boom") or []) if plan else []
+        return "\n".join(f"  {q}" for q in paden[:400]) or "  (onbekend)"
 
     def _azure_sessie(self, c: Cluster) -> Optional[str]:
         """Onder welk account `az` in het lab is ingelogd, als dat zo is.
