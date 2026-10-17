@@ -77,7 +77,8 @@ class NepLus:
     """Een proefbouw waarvan alleen de BUITENkant echt is: geen docker, geen
     model. Wat hier getest wordt is de lus zelf."""
 
-    def __init__(self, db, uitslagen, scripts=None, antwoorden=None, logtekst="npm error ENOENT"):
+    def __init__(self, db, uitslagen, scripts=None, antwoorden=None,
+                 logtekst="npm error ENOENT", luistert=None):
         from services.lab.proefbouw import Proefbouw
 
         self.echt = Proefbouw(db)
@@ -87,6 +88,9 @@ class NepLus:
         #: één keer kijken en dat is juist het interessante geval.
         self.antwoorden = list(antwoorden if antwoorden is not None else [True])
         self.logtekst = logtekst
+        #: Wat er IN de container luistert. Leeg = niets; een ander nummer dan
+        #: de containerpoort betekent "op de verkeerde poort".
+        self.luistert = set(luistert or ())
         self.provisioned = 0
         self.gestart = 0
 
@@ -119,9 +123,13 @@ class NepLus:
         async def nep_log(zelf, lab_id, regels=80):
             return self.logtekst
 
+        async def nep_poorten(zelf, lab_id):
+            return set(self.luistert)
+
         monkeypatch.setattr(LabService, "provision", nep_provision)
         monkeypatch.setattr(LabService, "start_applicatie", nep_start)
         monkeypatch.setattr(LabService, "start_log", nep_log)
+        monkeypatch.setattr(LabService, "luisterpoorten", nep_poorten)
         monkeypatch.setattr(mod.Proefbouw, "_herstel", nep_herstel)
         monkeypatch.setattr(mod.Proefbouw, "_proeflab", nep_proeflab)
         monkeypatch.setattr(mod.Proefbouw, "_antwoordt", nep_antwoordt)
@@ -212,7 +220,7 @@ def test_niets_op_de_poort_is_de_fout_en_het_log_is_het_bewijs(db, monkeypatch):
     assert uit["status"] == "mislukt"
     gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
     assert "Cannot find module" in gemeld, "het log is het bewijsmateriaal"
-    assert "antwoordt niets op de poort" in gemeld
+    assert "antwoordt niets op poort" in gemeld
 
 
 def test_het_startscript_is_geen_inrichtingsstap(db, monkeypatch):
@@ -339,3 +347,52 @@ def test_het_model_ziet_de_variabelen_die_labx_zelf_zet(db):
     omgeving = Proefbouw(db)._labx_omgeving(c)
     assert omgeving["LABX_POORT"] == "8000"
     assert omgeving["LABX_LAB_POORT"] == "18009"
+
+
+def test_een_verkeerde_poort_wordt_als_zodanig_benoemd(db, monkeypatch):
+    """"Er antwoordt niets" is geen diagnose.
+
+    De applicatie kan prima draaien en op de VERKEERDE poort luisteren — dat
+    gebeurde: het model liet Vite op 18002 luisteren, het nummer op de
+    machine, terwijl de container 8099 publiceert. Van buiten ziet dat er
+    identiek uit als een applicatie die niet start, en dan gaat het model op
+    de verkeerde plek zoeken.
+    """
+    c = _cluster(db)
+    p = _lab(db, c)  # poort_map {"8000": 18009}
+    lus = NepLus(db, [LUKT] * 3, antwoorden=[False], luistert={18009})
+    lus_obj = lus.installeer(monkeypatch, db, p)
+
+    asyncio.run(lus_obj.start(c.id))
+
+    gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
+    assert "verkeerde poort" in gemeld
+    assert "$LABX_POORT (8000)" in gemeld
+    assert "18009" in gemeld, "zeg ook waar hij WEL luistert"
+
+
+def test_zonder_iets_dat_luistert_blijft_het_een_gewone_mislukking(db, monkeypatch):
+    c = _cluster(db)
+    p = _lab(db, c)
+    lus = NepLus(db, [LUKT] * 3, antwoorden=[False], luistert=set(),
+                 logtekst="Error: Cannot find module 'vite'")
+    asyncio.run(lus.installeer(monkeypatch, db, p).start(c.id))
+
+    gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
+    assert "verkeerde poort" not in gemeld
+    assert "Cannot find module" in gemeld
+
+
+def test_poorten_worden_uit_proc_gelezen_en_niet_uit_netstat():
+    """`ss` en `netstat` zitten niet in elk image. Een diagnose die afhangt
+    van geïnstalleerd gereedschap is er geen."""
+    import inspect
+
+    from services.lab.lab_service import LabService
+
+    bron = inspect.getsource(LabService.luisterpoorten)
+    # Het COMMANDO telt, niet de uitleg eromheen — die noemt netstat juist om
+    # te zeggen waarom we het niet gebruiken.
+    opdracht = bron.split('["sh", "-c",', 1)[1].split("]", 1)[0]
+    assert "/proc/net/tcp" in opdracht
+    assert "netstat" not in opdracht and "ss " not in opdracht

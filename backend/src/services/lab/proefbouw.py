@@ -53,9 +53,16 @@ MAX_RONDES = 3
 #: dan is er niets meer om op te wachten.
 GEREED_SECONDEN = int(__import__("os").environ.get("LABX_PROEF_WACHTTIJD", "900"))
 
-#: Hoe vaak we kijken of het script nog leeft. Een gevallen script hoeft de
-#: hele wachttijd niet uit te zitten.
+#: Hoe vaak we kijken of het script nog leeft, en of er misschien al iets op
+#: de VERKEERDE poort luistert. Een gevallen script hoeft de hele wachttijd
+#: niet uit te zitten, en een verkeerde poort al helemaal niet: die verandert
+#: niet meer vanzelf.
 LEEFT_ELKE = 15
+
+#: Poorten die niets zeggen over de applicatie. De Claude-CLI en wat gereedschap
+#: openen er zelf een; die horen niet als "hij luistert op het verkeerde
+#: nummer" gelezen te worden.
+_NEGEER_POORTEN = {22, 53}
 
 #: De naam van de proefbranch als je er zelf geen kiest.
 STANDAARD_BRANCH = "labx/proefbouw"
@@ -166,11 +173,35 @@ class Proefbouw:
         if await self._antwoordt(svc, c, p):
             return None
 
-        # Niets op de poort. Het logbestand is het bewijsmateriaal -- dit is
-        # wat het model moet zien, en niet een exitcode die er nooit komt.
+        # "Er antwoordt niets" is geen diagnose. Kijk wat er WEL luistert in
+        # de container: de applicatie kan prima draaien op de verkeerde poort,
+        # en van buiten ziet dat er identiek uit als een applicatie die niet
+        # start. Precies dat gebeurde -- Vite luisterde op 18002, het nummer
+        # op de MACHINE, terwijl de container 8099 publiceert.
         logtekst = (await lab_svc.start_log(p.id)).strip()
-        return (f"Er antwoordt niets op de poort binnen {GEREED_SECONDEN} seconden.\n"
+        gewenst = self._containerpoort(p)
+        luistert = await lab_svc.luisterpoorten(p.id)
+        verkeerd = sorted(luistert - {gewenst} - _NEGEER_POORTEN)
+
+        if gewenst and verkeerd:
+            return (
+                f"De applicatie luistert op de verkeerde poort. LabX publiceert "
+                f"containerpoort {gewenst}, maar binnen de container luistert er niets "
+                f"op {gewenst} -- wel op {', '.join(str(x) for x in verkeerd)}.\n"
+                f"Laat de applicatie luisteren op $LABX_POORT ({gewenst}). Dat is de "
+                f"poort BINNEN de container; LABX_LAB_POORT is het nummer op de machine "
+                f"en daar mag je nooit op binden.\n"
                 f"De laatste regels van het startscript:\n{logtekst or '(het log is leeg)'}")
+
+        return (f"Er antwoordt niets op poort {gewenst or '?'} binnen "
+                f"{GEREED_SECONDEN} seconden, en er luistert ook niets anders in de "
+                f"container.\nDe laatste regels van het startscript:\n"
+                f"{logtekst or '(het log is leeg)'}")
+
+    @staticmethod
+    def _containerpoort(p) -> Optional[int]:
+        kaart = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
+        return sorted(kaart)[0] if kaart else None
 
     # ── de onderdelen ────────────────────────────────────────────────────────
 
@@ -248,8 +279,27 @@ class Proefbouw:
                 if not await self._leeft(p):
                     log.infox("Startscript is gestopt; niet langer wachten", lab_id=p.id)
                     return None
+                # Luistert hij al, maar op een ander nummer? Dan verandert dat
+                # niet meer vanzelf, en is doorwachten een kwartier verspillen
+                # aan een fout die nu al vaststaat.
+                if await self._luistert_verkeerd(p, machine_poort):
+                    log.infox("Applicatie luistert op de verkeerde poort", lab_id=p.id)
+                    return None
             await asyncio.sleep(3)
         return None
+
+    async def _luistert_verkeerd(self, p, machine_poort: int) -> bool:
+        """Luistert er iets, maar niet op de poort die LabX publiceert?"""
+        from services.lab.lab_service import LabService
+
+        gewenst = self._containerpoort(p)
+        if not gewenst:
+            return False
+        try:
+            luistert = await LabService(self.db).luisterpoorten(p.id)
+        except Exception:  # noqa: BLE001
+            return False
+        return bool(luistert - {gewenst} - _NEGEER_POORTEN) and gewenst not in luistert
 
     async def _leeft(self, p) -> bool:
         """Draait het startscript nog?
@@ -407,6 +457,12 @@ LabX start dit script op de ACHTERGROND en kijkt daarna of er iets op de
 poort antwoordt. Laat de applicatie dus op de voorgrond draaien (`exec ...`):
 het script hoort NIET terug te keren als alles goed is. Een script dat wel
 terugkeert, laat een lab achter waar niets op luistert.
+
+DE POORT, en hier is geen keuze in: de applicatie luistert op $LABX_POORT.
+Dat is de poort BINNEN de container, en die publiceert LabX naar buiten.
+LABX_LAB_POORT is het nummer op de MACHINE -- dat is alleen voor het opbouwen
+van een adres, en daar mag je nooit op binden. Doe je dat toch, dan draait
+alles schijnbaar goed en komt er van buiten niets door.
 
 Deze omgevingsvariabelen staan klaar:
 {omgeving}

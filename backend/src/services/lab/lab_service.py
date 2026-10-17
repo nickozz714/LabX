@@ -3244,6 +3244,44 @@ exec ssh -N \\
             workdir="/workspace", timeout=30)
         return str(uit.get("output") or "")
 
+    async def luisterpoorten(self, lab_id: str) -> set:
+        """Op welke poorten luistert er iets IN de container?
+
+        Dit bestaat omdat "er antwoordt niets" geen diagnose is. De
+        applicatie kan prima draaien en op de VERKEERDE poort luisteren -- dat
+        gebeurde: het model liet Vite op 18002 luisteren, het poortnummer op
+        de machine, terwijl de container 8099 publiceert. Van buiten ziet dat
+        er identiek uit als een applicatie die niet start.
+
+        Uit /proc en niet met `ss` of `netstat`: die zitten niet in elk image,
+        en een diagnose die afhangt van geïnstalleerd gereedschap is er geen.
+        """
+        p = self.get(lab_id)
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return set()
+        try:
+            uit = await self.runtime_voor(p).exec(
+                werkers[0].container_id,
+                ["sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"],
+                workdir="/workspace", timeout=20)
+        except Exception as exc:  # noqa: BLE001 — niet kunnen kijken is geen fout
+            log.infox("Luisterpoorten niet op te vragen", lab_id=lab_id, error=str(exc)[:200])
+            return set()
+
+        poorten = set()
+        for regel in str(uit.get("output") or "").splitlines():
+            velden = regel.split()
+            # 0A = TCP_LISTEN. Het lokale adres is hex: "00000000:1F93".
+            if len(velden) < 4 or velden[3] != "0A":
+                continue
+            _, _, hex_poort = velden[1].rpartition(":")
+            try:
+                poorten.add(int(hex_poort, 16))
+            except ValueError:
+                continue
+        return poorten
+
     @staticmethod
     def _repomap(c: Any) -> str:
         """Waar de werkkopie staat.
