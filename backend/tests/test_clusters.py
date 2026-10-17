@@ -52,9 +52,10 @@ class NepDocker:
         self.netwerken.append(naam)
 
     async def run_dienst_container(self, *, naam, image, netwerk, volume,
-                                   container_naam=None, poorten=None,
+                                   container_naam=None, aliassen=None, poorten=None,
                                    omgeving=None, **kw):
         self.gestart.append({"naam": naam, "container_naam": container_naam or naam,
+                             "aliassen": list(aliassen or []),
                              "image": image, "netwerk": netwerk,
                              "volume": volume, "poorten": dict(poorten or {}),
                              "omgeving": omgeving or {}})
@@ -810,3 +811,37 @@ def test_een_branch_lab_krijgt_de_azure_sessie(db):
 
     bron = inspect.getsource(ClusterService.start_branch_lab)
     assert "_sync_azure_profile_into_lab" in bron
+
+
+def test_een_dienst_is_ook_op_zijn_kale_naam_bereikbaar(db):
+    """Repo's noemen hun diensten bij de kale naam, en soms met een harde
+    controle erop. Het seed-script van IntelligentHive weigert te schrijven
+    tenzij de host `cosmos` heet; met alleen `ih-cosmos` deed het niets, en
+    dat zag eruit als een lege database zonder uitleg.
+
+    Binnen één clusternetwerk kan dat veilig — elk cluster heeft zijn eigen
+    netwerk, dus twee keer `cosmos` botst niet. Het prefix was nodig voor de
+    CONTAINERnaam, die globaal is, niet voor de DNS-naam.
+    """
+    docker = NepDocker()
+    svc = _svc(db, docker)
+    c = svc.maak(naam="IntelligentHive")
+    d = svc.voeg_dienst_toe(c.id, naam="ih-cosmos", image="emulator:1")
+    asyncio.run(svc.start_dienst(d.id))
+
+    gestart = docker.gestart[-1]
+    assert gestart["naam"] == "ih-cosmos", "de hoofdalias blijft de dienstnaam"
+    assert "cosmos" in (gestart.get("aliassen") or []), "en de kale naam komt erbij"
+    assert gestart["container_naam"] != "ih-cosmos", "bij de daemon wel uniek"
+
+
+def test_een_dienst_zonder_prefix_krijgt_geen_dubbele_alias(db):
+    from services.lab.clusters import _kale_naam
+
+    class NepDienst:
+        naam = "mailpit"
+
+    class NepCluster:
+        naam = "IntelligentHive"
+
+    assert _kale_naam(NepCluster(), NepDienst()) == "mailpit"

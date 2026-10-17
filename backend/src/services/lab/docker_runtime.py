@@ -364,6 +364,7 @@ class DockerRuntime:
     async def run_dienst_container(self, *, naam: str, image: str, netwerk: str,
                                    volume: str,
                                    container_naam: Optional[str] = None,
+                                   aliassen: Optional[List[str]] = None,
                                    poorten: Optional[Dict[int, int]] = None,
                                    omgeving: Optional[Dict[str, str]] = None,
                                    timeout: float = 600.0) -> str:
@@ -417,6 +418,17 @@ class DockerRuntime:
             "--label", _DIENST_LABEL,
             "--restart", "unless-stopped",
             "--network", netwerk,
+            # Meer dan één alias op het clusternetwerk.
+            #
+            # De dienst heet `ih-cosmos` om bij de daemon uniek te zijn, maar
+            # repo's noemen hem vaak gewoon `cosmos` -- en soms met een
+            # harde controle erop. Het seed-script van IntelligentHive
+            # weigert te schrijven tenzij de host `localhost`, `127.0.0.1`,
+            # `0.0.0.0` of `cosmos` heet; met alleen `ih-cosmos` deed het
+            # niets, en dat zag eruit als een lege database zonder uitleg.
+            #
+            # Binnen één clusternetwerk kan dat veilig: elk cluster heeft zijn
+            # eigen netwerk, dus twee keer `cosmos` botst niet.
             "--network-alias", naam,
             "-v", f"{volume}:/data",
         ]
@@ -426,6 +438,9 @@ class DockerRuntime:
             args += ["-p", f"127.0.0.1:{int(machine_poort)}:{int(container_poort)}"]
         for k, v in (omgeving or {}).items():
             args += ["-e", f"{k}={v}"]
+        for extra in (aliassen or []):
+            if extra and extra != naam:
+                args += ["--network-alias", extra]
         args += [image]
         return await self._cli_ok(*args, timeout=timeout)
 

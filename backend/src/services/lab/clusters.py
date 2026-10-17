@@ -149,6 +149,22 @@ def _naam_uit_url(repo_url: str) -> str:
     return naam.strip() or "cluster"
 
 
+def _kale_naam(c: Cluster, d: ClusterDienst) -> str:
+    """De dienstnaam zonder het clusterprefix: `ih-cosmos` -> `cosmos`.
+
+    Repo's noemen hun diensten bij de kale naam, en soms met een harde
+    controle erop. Het seed-script van IntelligentHive weigert te schrijven
+    tenzij de host `cosmos` heet; met alleen `ih-cosmos` deed het niets, en
+    dat zag eruit als een lege database zonder uitleg.
+
+    Binnen één clusternetwerk kan die kale naam veilig als tweede alias: elk
+    cluster heeft zijn eigen netwerk. Het prefix was nodig voor de
+    CONTAINERnaam, die globaal is -- niet voor de DNS-naam.
+    """
+    voorvoegsel = f"{_voorvoegsel(c.naam)}-"
+    return d.naam[len(voorvoegsel):] if d.naam.startswith(voorvoegsel) else d.naam
+
+
 def _dienst_container(c: Cluster, d: ClusterDienst) -> str:
     """Hoe deze dienst bij de Docker-daemon heet.
 
@@ -438,6 +454,7 @@ class ClusterService:
             d.poort_map = {str(k): v for k, v in kaart.items()}
             d.container_id = await rt.run_dienst_container(
                 naam=d.naam, container_naam=_dienst_container(c, d),
+                aliassen=[_kale_naam(c, d)],
                 image=d.image, netwerk=c.netwerk,
                 volume=f"labx_dienst_{c.id}_{d.naam}",
                 poorten=kaart,
