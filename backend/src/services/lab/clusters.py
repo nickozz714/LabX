@@ -77,7 +77,7 @@ def _veilige_naam(naam: str) -> str:
 #:   drie zijn niet afgewezen -- je hebt er een gekozen. Ze alsnog "door jou
 #:   afgewezen" noemen maakt dat label betekenisloos, en dan leest niemand
 #:   het nog waar het wel toe doet.
-_GEEN_AFWIJZING = ("applicatie", "lab_image")
+_GEEN_AFWIJZING = ("applicatie", "lab_image", "lab_poorten")
 
 
 #: Sleutels in de omgeving van een CONTAINER die een inloggegeven zijn.
@@ -266,12 +266,26 @@ class ClusterService:
 
     @staticmethod
     def _zet_velden(rij: Cluster, velden: Dict[str, Any]) -> None:
+        # TEKSTvelden: leeg wordt None, zodat "" en null hetzelfde betekenen.
         for sleutel in ("repo_url", "repo_token_geheim", "lab_image",
-                        "lab_cpu", "lab_mem_mb", "lab_azure",
                         "start_script", "env_profiel", "notitie"):
             if sleutel in velden:
                 waarde = velden[sleutel]
                 setattr(rij, sleutel, (str(waarde).strip() or None) if waarde else None)
+
+        # En de rest NIET als tekst. Deze stonden eerst in dezelfde lus, en
+        # dan werd `[5173, 7071]` de string "[5173, 7071]" -- een lijst die
+        # er in een antwoord nog precies zo uitziet en bij het starten van
+        # een lab nergens meer op slaat.
+        if "lab_poorten" in velden:
+            ruw = velden["lab_poorten"] or []
+            rij.lab_poorten = [int(x) for x in ruw if str(x).strip().isdigit()][:6]
+        if "lab_cpu" in velden:
+            rij.lab_cpu = float(velden["lab_cpu"]) if velden["lab_cpu"] else None
+        if "lab_mem_mb" in velden:
+            rij.lab_mem_mb = int(velden["lab_mem_mb"]) if velden["lab_mem_mb"] else None
+        if "lab_azure" in velden:
+            rij.lab_azure = bool(velden["lab_azure"])
         if "omgeving" in velden and isinstance(velden["omgeving"], dict):
             rij.omgeving = {str(k): str(v) for k, v in velden["omgeving"].items()}
 
@@ -1123,7 +1137,7 @@ class ClusterService:
         beslist".
         """
         uit: List[Dict[str, str]] = []
-        image_gekozen = False
+        eenmalig: set = set()
         for v in plan.get("vondsten") or []:
             if v.get("uitgesloten"):
                 # Op grond van jouw opdracht weggelaten. Staat er nog, met
@@ -1138,14 +1152,15 @@ class ClusterService:
             if v.get("soort") == "applicatie":
                 # Een vaststelling, geen voorstel: hier valt niets te kiezen.
                 continue
-            if v.get("soort") == "lab_image":
+            if v.get("soort") in ("lab_image", "lab_poorten"):
                 # Een keuze, geen lijstje. De vondsten staan al op voorkeur
                 # gesorteerd, dus de eerste is de beste -- vijf aangevinkte
                 # images leveren er alsnog maar een op, en dan bepaalt de
-                # volgorde van een lus wat je krijgt.
-                if image_gekozen:
+                # volgorde van een lus wat je krijgt. Hetzelfde geldt voor de
+                # poorten: er is er maar één set waarop de applicatie luistert.
+                if v["soort"] in eenmalig:
                     continue
-                image_gekozen = True
+                eenmalig.add(v["soort"])
             uit.append({"soort": v["soort"], "sleutel": v["sleutel"]})
         return uit
 
@@ -1184,6 +1199,7 @@ class ClusterService:
         geheimen = dict(c.benodigde_geheimen or {})
         toegevoegd: List[str] = []
         image_gezet = False
+        poorten_gezet = False
 
         for v in plan.get("vondsten") or []:
             if (v.get("soort"), v.get("sleutel")) not in wil:
@@ -1272,8 +1288,9 @@ class ClusterService:
 
             elif soort == "lab_poorten":
                 poorten = [int(x) for x in (waarde.get("poorten") or []) if str(x).isdigit()]
-                if poorten:
+                if poorten and not poorten_gezet:
                     c.lab_poorten = poorten[:6]
+                    poorten_gezet = True
 
             elif soort == "startscript":
                 c.start_script = plan.get("startscript") or c.start_script

@@ -630,7 +630,14 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
     poorten = [int(x) for x in (uitslag.get("lab_poorten") or []) if str(x).isdigit()]
     if poorten:
         uit.append(det.Vondst(
-            soort="lab_poorten", sleutel="poorten",
+            # "voorstel" en niet "poorten": anders valt hij samen met de
+            # vondst van de detector, en die wint het samenvoegen. Dan kan
+            # het model de detector wél tegenspreken (uitsluiten) maar niet
+            # VERVANGEN -- en blijft er helemaal geen poort over. Precies wat
+            # er gebeurde: de detector gaf 8080/3000/80 uit het
+            # productie-image, het model wist dat het 5173 moest zijn, en het
+            # cluster hield er geen enkele over.
+            soort="lab_poorten", sleutel="voorstel",
             waarde={"poorten": poorten[:6]},
             bewijs=_model_bewijs(uitslag.get("lab_poorten_bewijs")),
             zekerheid="laag", bron="model", bevestigd=False,
@@ -781,7 +788,10 @@ alleen op localhost luistert is van buiten onbereikbaar terwijl het er wel
 uitziet alsof het draait.
 
 `niet_overnemen` is voor wat de DETECTOREN vonden en wat er toch niet in
-hoort. Een detector ziet wat er in de repo staat en weet niet wat de gebruiker
+hoort. Zet je iets op die lijst waar wél iets voor in de plaats moet komen --
+andere poorten, een ander image -- geef dan OOK het juiste antwoord in het
+bijbehorende veld (`lab_poorten`, `lab_image`). Alleen uitsluiten laat het
+cluster met niets achter. Een detector ziet wat er in de repo staat en weet niet wat de gebruiker
 ermee wil: zegt hij "de agent hoort er niet bij", dan blijft `postgres` gewoon
 gevonden worden. Zet zulke vondsten hier, met de soort en sleutel zoals ze in
 de lijst hierboven staan. Ze verdwijnen niet -- het bewijs blijft waar -- maar

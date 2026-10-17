@@ -717,3 +717,34 @@ def test_een_branch_lab_start_altijd_als_branch_lab(db):
     ClusterService.start_branch_lab = nep_branchstart
     asyncio.run(LabService(db).start("b1"))
     assert gezien.get("lab_id") == "b1", "de gewone start moet doorverwijzen"
+
+
+def test_de_poorten_van_een_cluster_zijn_met_de_hand_te_zetten(db):
+    """Zonder dit stond `lab_poorten` wel op het cluster maar was het niet te
+    wijzigen — en dan kun je een verkeerde detectie alleen rechtzetten door
+    opnieuw te verkennen, wat een modelaanroep kost."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    svc.wijzig(c.id, lab_poorten=[5173, 7071])
+    assert svc.get_or_404(c.id).lab_poorten == [5173, 7071]
+
+
+def test_getallen_en_lijsten_worden_geen_tekst(db):
+    """Deze stonden eerst in dezelfde lus als de tekstvelden, en dan werd
+    `[5173, 7071]` de string "[5173, 7071]" — een lijst die er in een antwoord
+    nog precies zo uitziet en bij het starten van een lab nergens meer op
+    slaat."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    svc.wijzig(c.id, lab_poorten=["5173", 7071], lab_cpu="4", lab_mem_mb="8192",
+               lab_azure=True, lab_image="  node:22  ")
+    ververst = svc.get_or_404(c.id)
+
+    assert ververst.lab_poorten == [5173, 7071]
+    assert ververst.lab_cpu == 4.0 and ververst.lab_mem_mb == 8192
+    assert bool(ververst.lab_azure) is True
+    assert ververst.lab_image == "node:22", "tekst wordt nog steeds getrimd"

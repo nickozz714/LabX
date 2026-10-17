@@ -1007,3 +1007,33 @@ def test_aanvinken_van_azure_cli_zet_het_op_het_cluster(db):
     # SQLite bewaart dit als 0/1; de code leest hem overal als bool.
     assert bool(svc.get_or_404(uit["cluster"]["id"]).lab_azure) is True
     assert uit["cluster"]["lab_azure"] is True
+
+
+def test_het_model_kan_de_poorten_van_de_detector_vervangen():
+    """De detector las 8080/3000/80 uit Dockerfile.pr — het productie-image.
+    Het model wist dat het 5173 moest zijn en sloot de detectorvondst uit,
+    maar zijn eigen voorstel had dezelfde sleutel en werd bij het samenvoegen
+    opgeslokt. Het cluster hield toen HELEMAAL geen poort over, en viel terug
+    op de standaard 3000/7071 — waar niets luistert.
+    """
+    from services.lab.verkenner import _model_vondsten
+
+    vondsten = _model_vondsten({"lab_poorten": [5173, 7071]})
+    poorten = [v for v in vondsten if v.soort == "lab_poorten"]
+    assert len(poorten) == 1
+    assert poorten[0].sleutel == "voorstel", "een eigen sleutel, anders botst hij"
+    assert poorten[0].waarde["poorten"] == [5173, 7071]
+
+
+def test_er_wordt_maar_een_poortenset_gekozen(db):
+    """Er is er maar één set waarop de applicatie luistert."""
+    from services.lab.clusters import ClusterService
+
+    plan = {"vondsten": [
+        {"soort": "lab_poorten", "sleutel": "voorstel", "bevestigd": True,
+         "waarde": {"poorten": [5173]}},
+        {"soort": "lab_poorten", "sleutel": "poorten", "bevestigd": True,
+         "waarde": {"poorten": [8080]}},
+    ]}
+    gekozen = [k for k in ClusterService.standaardkeuze(plan) if k["soort"] == "lab_poorten"]
+    assert len(gekozen) == 1
