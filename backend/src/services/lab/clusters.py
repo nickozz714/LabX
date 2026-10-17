@@ -1037,9 +1037,11 @@ class ClusterService:
                 or schone_instructie):
             raise HTTPException(
                 status_code=400,
-                detail=("Geef iets mee: een antwoord, een opmerking bij een onderdeel, "
-                        "of iets over het plan als geheel. Opnieuw verkennen zonder "
-                        "terugkoppeling levert hetzelfde plan op."))
+                detail=("Geef iets mee: een antwoord op een vraag, een opmerking bij een "
+                        "onderdeel, iets over het plan als geheel, of een gewijzigde "
+                        "opdracht voor de verkenner. Opnieuw verkennen zonder "
+                        "terugkoppeling levert hetzelfde plan op en kost wel een "
+                        "modelaanroep."))
 
         # Het token van het PLAN eerst: een plan kan zonder cluster bestaan,
         # en dan is er verder niets om op terug te vallen.

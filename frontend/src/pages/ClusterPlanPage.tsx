@@ -185,6 +185,7 @@ export function ClusterPlanPage() {
   const [antwoorden, setAntwoorden] = useState<Record<string, string>>({});
   const [opmerkingen, setOpmerkingen] = useState<Record<string, string>>({});
   const [opmerking, setOpmerking] = useState("");
+  const [instructie, setInstructie] = useState("");
   const [beantwoordt, setBeantwoordt] = useState(false);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
@@ -198,6 +199,9 @@ export function ClusterPlanPage() {
       setNaam(p.repo_url.replace(/\/$/, "").split("/").pop()?.replace(/\.git$/, "") || "");
       const profiel = p.vondsten.find((v) => v.soort === "omgeving" && v.sleutel === "env_profiel");
       setEnvProfiel(String(profiel?.waarde?.standaard || ""));
+      // Voorgevuld met wat er geldt: bijstellen is bijna altijd aanvullen,
+      // en opnieuw intypen wat je vorige ronde al zei is verspilling.
+      setInstructie(p.instructie || "");
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Plan niet op te halen");
     } finally {
@@ -256,6 +260,7 @@ export function ClusterPlanPage() {
         antwoorden,
         opmerkingen,
         opmerking: opmerking.trim() || undefined,
+        instructie: instructie.trim() || undefined,
         keuze: plan.vondsten
           .filter((v) => aan.has(sleutelVan(v)))
           .map((v) => ({ soort: v.soort, sleutel: v.sleutel })),
@@ -274,7 +279,10 @@ export function ClusterPlanPage() {
   const ietsGezegd = Boolean(
     opmerking.trim()
     || Object.values(opmerkingen).some((o) => o.trim())
-    || Object.values(antwoorden).some((a) => a.trim()));
+    || Object.values(antwoorden).some((a) => a.trim())
+    // Een gewijzigde opdracht telt ook: dat is vaak juist de grootste
+    // bijsturing die je kunt doen.
+    || instructie.trim() !== (plan?.instructie || "").trim());
 
   async function goedkeuren() {
     if (!plan) return;
@@ -551,6 +559,22 @@ export function ClusterPlanPage() {
             placeholder="Bijvoorbeeld: dit is geen python-project maar een node-project, en de emulator hoort er niet bij."
             onChange={(e) => setOpmerking(e.target.value)}
           />
+
+          <div className="mt-3">
+            <Label>Opdracht voor de verkenner</Label>
+            <TextArea
+              rows={3}
+              value={instructie}
+              disabled={beantwoordt}
+              placeholder="Wat er sowieso wel of niet in hoort — ook als het model er niet naar vraagt."
+              onChange={(e) => setInstructie(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Dit is de staande opdracht; hij geldt bij elke volgende ronde. Een opmerking
+              hierboven gaat over dít plan, een opdracht over alles wat erna komt — en die
+              weegt zwaarder dan wat de repo suggereert.
+            </p>
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <Button variant="secondary" onClick={opnieuwVerkennen} disabled={beantwoordt || !ietsGezegd}>
               {beantwoordt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}

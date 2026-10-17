@@ -27,7 +27,9 @@ import { clusterApi } from "@/lib/clusters";
 import type {
   BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, Toegang,
 } from "@/lib/clusters";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal } from "@/components/ui";
+import {
+  Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea,
+} from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
@@ -388,6 +390,10 @@ export function ClusterDetailPage() {
   const [bezig, setBezig] = useState(true);
   const [toegang, setToegang] = useState<Toegang | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [verkenOpen, setVerkenOpen] = useState(false);
+  const [verkenBranch, setVerkenBranch] = useState("main");
+  const [instructie, setInstructie] = useState("");
+  const [verkent, setVerkent] = useState(false);
   const [branch, setBranch] = useState("");
   const [basis, setBasis] = useState("main");
   const [maakt, setMaakt] = useState(false);
@@ -401,6 +407,12 @@ export function ClusterDetailPage() {
       ]);
       setC(cluster);
       setPlannen(lijst);
+      // De staande opdracht van de laatste verkenning voorvullen: bijstellen
+      // is bijna altijd aanvullen, en hem leeg laten betekent dat je hem
+      // stilzwijgend weggooit bij de volgende ronde.
+      const laatste = lijst.find((p) => p.instructie);
+      if (laatste?.instructie) setInstructie(laatste.instructie);
+      if (lijst[0]?.branch) setVerkenBranch(lijst[0].branch);
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Cluster niet op te halen");
     } finally {
@@ -421,13 +433,20 @@ export function ClusterDetailPage() {
 
   async function opnieuwVerkennen() {
     if (!c?.repo_url) return;
+    setVerkent(true);
     try {
       const plan = await clusterApi.verkennen({
-        repo_url: c.repo_url, branch: "main", cluster_id: c.id,
+        repo_url: c.repo_url,
+        branch: verkenBranch.trim() || "main",
+        cluster_id: c.id,
+        instructie: instructie.trim() || undefined,
       });
+      setVerkenOpen(false);
       navigate(`/clusters/plannen/${plan.id}`);
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Verkennen mislukte");
+    } finally {
+      setVerkent(false);
     }
   }
 
@@ -482,7 +501,7 @@ export function ClusterDetailPage() {
           <Button variant="secondary" onClick={controleerToegang}>
             <KeyRound className="h-4 w-4" /> Toegang testen
           </Button>
-          <Button variant="secondary" onClick={opnieuwVerkennen} disabled={!c.repo_url}>
+          <Button variant="secondary" onClick={() => setVerkenOpen(true)} disabled={!c.repo_url}>
             <Search className="h-4 w-4" /> Opnieuw verkennen
           </Button>
         </div>
@@ -640,6 +659,45 @@ export function ClusterDetailPage() {
           </ul>
         </Card>
       )}
+
+      <Modal open={verkenOpen} onClose={() => setVerkenOpen(false)} title="Opnieuw verkennen">
+        <p className="text-sm text-muted-foreground">
+          De repo wordt opnieuw gelezen. Het huidige plan blijft staan, zodat je ziet wat
+          er veranderd is.
+        </p>
+        <div className="mt-4 space-y-3">
+          <div>
+            <Label>Branch</Label>
+            <Input value={verkenBranch} onChange={(e) => setVerkenBranch(e.target.value)}
+                   placeholder="main" />
+          </div>
+          <div>
+            <Label>Opdracht voor de verkenner</Label>
+            <TextArea
+              rows={4}
+              value={instructie}
+              onChange={(e) => setInstructie(e.target.value)}
+              placeholder="Bijvoorbeeld: de agent in components/agent hoort er niet bij, en de spark-compose is een testopstelling."
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Voorgevuld met wat er bij de vorige verkenning gold. Dit weegt zwaarder dan
+              wat de repo suggereert, en het kan ook vondsten van de detectoren uitzetten.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex items-center gap-2">
+          <Button onClick={opnieuwVerkennen} disabled={verkent}>
+            {verkent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            {verkent ? "Bezig met lezen…" : "Verkennen"}
+          </Button>
+          <Button variant="secondary" onClick={() => setVerkenOpen(false)}>Annuleren</Button>
+        </div>
+        {verkent && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Dit duurt een halve tot twee minuten: klonen, lezen, en het model laten meekijken.
+          </p>
+        )}
+      </Modal>
 
       <Modal open={branchOpen} onClose={() => setBranchOpen(false)} title="Branch-lab aanmaken">
         <div className="space-y-3">
