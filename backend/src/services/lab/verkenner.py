@@ -647,6 +647,16 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
                 "terwijl het wel draait."),
         ))
 
+    if uitslag.get("geheimen_zelf_ophalen"):
+        uit.append(det.Vondst(
+            soort="omgeving", sleutel="geheimen_zelf_ophalen",
+            waarde={"zelf": True},
+            bewijs=_model_bewijs(uitslag.get("geheimen_zelf_bewijs")),
+            zekerheid="laag", bron="model", bevestigd=False,
+            toelichting=("Het project haalt zijn instellingen zelf op; dan hoeven ze "
+                         "niet in de kluis van dit cluster."),
+        ))
+
     profiel = uitslag.get("env_profiel")
     if isinstance(profiel, dict) and profiel.get("keuzes"):
         uit.append(det.Vondst(
@@ -716,6 +726,12 @@ Harde regels:
 3. Een dienst waar geen emulator of image van bestaat (Application Insights,
    Sentry, een betaalde API) is GEEN vaste dienst. Die hoort bij "extern":
    daar is een geheim voor nodig.
+   MAAR: haalt de repo zijn instellingen ZELF op -- een script dat ze uit een
+   vault trekt, een SDK die ze bij het starten ophaalt -- zet dan
+   `"geheimen_zelf_ophalen": true`. Dan hoeft er niets in de kluis en is het
+   enige dat LabX moet leveren het gereedschap en een aanmelding. Iemand tien
+   sleutels laten invullen die het project zelf ophaalt, is hem laten werken
+   voor niets.
 4. Omgevingsbestanden zijn geredigeerd: waarden van geheimen zijn weggelaten.
    Dat is geen fout en geen aanwijzing dat de sleutel ongebruikt is.
 5. VRAAG NOOIT OM EEN WACHTWOORD VAN EEN DIENST DIE JE ZELF OPVOERT. Zet je
@@ -773,6 +789,7 @@ Antwoord met UITSLUITEND JSON, zonder uitleg eromheen:
   "lab_poorten": [8000],
   "startscript": "#!/bin/sh\\nset -e\\n... bouwen en starten, in de juiste volgorde",
   "env_profiel": {"keuzes": ["debug"], "standaard": "debug", "waarom": "..."},
+  "geheimen_zelf_ophalen": false,
   "niet_overnemen": [
     {"soort": "dienst", "sleutel": "postgres", "waarom": "hoort bij de agent, en die valt buiten de opdracht"}
   ],

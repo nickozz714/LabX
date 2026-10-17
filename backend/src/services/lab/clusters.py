@@ -286,6 +286,8 @@ class ClusterService:
             rij.lab_mem_mb = int(velden["lab_mem_mb"]) if velden["lab_mem_mb"] else None
         if "lab_azure" in velden:
             rij.lab_azure = bool(velden["lab_azure"])
+        if "geheimen_zelf" in velden:
+            rij.geheimen_zelf = bool(velden["geheimen_zelf"])
         if "omgeving" in velden and isinstance(velden["omgeving"], dict):
             rij.omgeving = {str(k): str(v) for k, v in velden["omgeving"].items()}
 
@@ -948,6 +950,7 @@ class ClusterService:
             "lab_cpu": c.lab_cpu or BRANCH_LAB_CPU,
             "lab_mem_mb": c.lab_mem_mb or BRANCH_LAB_MEM_MB,
             "lab_azure": bool(c.lab_azure),
+            "geheimen_zelf": bool(c.geheimen_zelf),
             # De proefbouw: een plan is pas af als het script echt gedraaid
             # heeft en JIJ zegt dat de branch goed is.
             "proef_status": c.proef_status or "geen",
@@ -1295,6 +1298,11 @@ class ClusterService:
             elif soort == "startscript":
                 c.start_script = plan.get("startscript") or c.start_script
 
+            elif soort == "omgeving" and sleutel == "geheimen_zelf_ophalen":
+                # De applicatie regelt haar eigen sleutels. Wat overblijft is
+                # gereedschap en een aanmelding, niet een lijst om in te vullen.
+                c.geheimen_zelf = True
+
             elif soort == "omgeving" and sleutel == "azure_cli":
                 # De applicatie roept `az` aan; dan hoort hij in het lab te
                 # zitten, ook al krijgt een branch-lab hem standaard niet.
@@ -1347,9 +1355,18 @@ class ClusterService:
         Eerst de kluis van dit cluster, dan de gedeelde. Dit is de vraag die
         je vóór het eerste branch-lab beantwoord wilt hebben, niet veertig
         minuten later halverwege een bouw.
+
+        Tenzij de applicatie ze ZELF ophaalt. Dan is deze lijst een verkeerde
+        vraag: lokaal start het project ook zonder dat iemand tien waarden
+        invult, omdat een script ze uit een vault trekt. Wat LabX dan moet
+        leveren is gereedschap en een aanmelding -- en dat staat elders.
         """
         if not benodigd:
             return []
+        if cluster_id:
+            c = self.db.get(Cluster, cluster_id)
+            if c is not None and c.geheimen_zelf:
+                return []
         try:
             from services.lab.cluster_kluis import ClusterKluis
 

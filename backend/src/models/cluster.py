@@ -69,6 +69,13 @@ class Cluster(Base):
     #: vast of duurt eindeloos, en dat ziet eruit als een hangend lab.
     lab_cpu: Mapped[float | None] = mapped_column(Integer, nullable=True)
     lab_mem_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Haalt deze applicatie haar geheimen zelf op uit een vault?
+    #:
+    #: Dan is "deze tien sleutels ontbreken in de kluis" een verkeerde
+    #: conclusie. Lokaal start het project gewoon: een script trekt de
+    #: waarden eruit en zet ze klaar. Wat LabX moet leveren is niet de
+    #: WAARDE maar het GEREEDSCHAP -- de CLI en een aanmelding.
+    geheimen_zelf: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
     #: Heeft deze applicatie de Azure CLI nodig? Standaard NIET.
     #:
     #: Deze installatie zet hem in elk lab, want ze is voor Fabric-werk

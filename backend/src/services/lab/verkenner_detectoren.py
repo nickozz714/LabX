@@ -619,6 +619,49 @@ def detecteer_azure_cli(beeld: RepoBeeld) -> List[Vondst]:
     )]
 
 
+#: Hoe je ziet dat een repo zijn geheimen ZELF ophaalt. Dan hoeft er niets in
+#: de kluis: het project regelt het, en het enige wat LabX moet leveren is het
+#: gereedschap (meestal de Azure CLI) en een geldige aanmelding.
+_ZELF_OPHALEN = re.compile(
+    r"az\s+keyvault\s+secret"
+    r"|SecretClient\(|DefaultAzureCredential"
+    r"|fetch[-_]secrets"
+    r"|aws\s+secretsmanager|vault\s+kv\s+get|gcloud\s+secrets",
+    re.IGNORECASE)
+
+
+def detecteer_zelf_opgehaalde_geheimen(beeld: RepoBeeld) -> List[Vondst]:
+    """Haalt deze repo zijn eigen geheimen op?
+
+    Dan is "deze tien sleutels ontbreken in de kluis" een verkeerde
+    conclusie. Lokaal start het project gewoon: een script trekt de waarden
+    uit een vault en zet ze klaar. Wat LabX moet leveren is niet de WAARDE
+    maar het GEREEDSCHAP -- de CLI en een aanmelding.
+
+    Dat onderscheid maakt het verschil tussen "vul tien geheimen in voordat
+    je kunt beginnen" en "zorg dat je ingelogd bent".
+    """
+    bewijs: List[Bewijs] = []
+    for pad, tekst in beeld.items():
+        if not _ZELF_OPHALEN.search(tekst):
+            continue
+        nr = _regel_van(tekst, _ZELF_OPHALEN.pattern)
+        bewijs.append(Bewijs(bestand=pad, regel=nr, fragment=_fragment(tekst, nr)))
+        if len(bewijs) >= 4:
+            break
+    if not bewijs:
+        return []
+    return [Vondst(
+        soort="omgeving", sleutel="geheimen_zelf_ophalen",
+        waarde={"zelf": True},
+        bewijs=bewijs,
+        zekerheid="hoog", bron="detector:geheimen",
+        toelichting=("Deze repo haalt zijn instellingen zelf uit een vault. De sleutels "
+                     "hoeven dan niet in de kluis van dit cluster; wat nodig is, is het "
+                     "gereedschap en een geldige aanmelding."),
+    )]
+
+
 # ── alles bij elkaar ─────────────────────────────────────────────────────────
 
 def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
@@ -629,6 +672,7 @@ def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
         detecteer_dockerfile,
         detecteer_poorten,
         detecteer_azure_cli,
+        detecteer_zelf_opgehaalde_geheimen,
         detecteer_omgevingsbestanden,
         detecteer_env_profielen,
         detecteer_manifesten,

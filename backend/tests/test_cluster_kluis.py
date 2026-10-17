@@ -185,3 +185,39 @@ def test_de_kluis_gaat_mee_als_het_cluster_weg_gaat(db):
 
     asyncio.run(svc.verwijder(c.id))
     assert db.query(ClusterSecret).count() == 0
+
+
+# ── een repo die zijn eigen geheimen ophaalt ────────────────────────────────
+
+def test_zelf_ophalen_maakt_de_kluislijst_leeg(db):
+    """Lokaal start het project gewoon: een script trekt de waarden uit een
+    vault en zet ze klaar. "Deze tien sleutels ontbreken" is dan een
+    verkeerde vraag — wat LabX moet leveren is niet de WAARDE maar het
+    GEREEDSCHAP."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = _cluster(db, "Hive")
+    c.benodigde_geheimen = {"ENGINEER_PASSWORD": "e2e", "azure-key-vault-devbox": "vault"}
+    db.commit()
+
+    assert len(svc.to_dict(c)["geheimen_ontbreken"]) == 2
+
+    svc.wijzig(c.id, geheimen_zelf=True)
+    assert svc.to_dict(svc.get_or_404(c.id))["geheimen_ontbreken"] == []
+
+
+def test_de_namen_blijven_wel_staan(db):
+    """Weten WELKE sleutels het project nodig heeft blijft nuttig — je moet
+    alleen niet gevraagd worden ze in te vullen."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = _cluster(db, "Hive")
+    c.benodigde_geheimen = {"ENGINEER_PASSWORD": "e2e"}
+    db.commit()
+    svc.wijzig(c.id, geheimen_zelf=True)
+
+    uit = svc.to_dict(svc.get_or_404(c.id))
+    assert "ENGINEER_PASSWORD" in uit["benodigde_geheimen"]
+    assert uit["geheimen_zelf"] is True

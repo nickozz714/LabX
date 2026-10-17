@@ -41,6 +41,9 @@ _ADDITIVE_COLUMNS = {
         # Standaard 0: een branch-lab krijgt de Azure CLI niet, ook al zet
         # deze installatie hem in elk gewoon lab.
         ("lab_azure", "BOOLEAN NOT NULL DEFAULT 0"),
+        # Haalt de applicatie haar geheimen zelf op? Dan hoeven ze niet in
+        # de kluis; LabX levert alleen het gereedschap.
+        ("geheimen_zelf", "BOOLEAN NOT NULL DEFAULT 0"),
         ("ssh_publiek", "TEXT"),
         ("ssh_prive_encrypted", "TEXT"),
     ],
