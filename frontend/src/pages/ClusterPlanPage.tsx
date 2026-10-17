@@ -409,6 +409,7 @@ export function ClusterPlanPage() {
                           <Badge tone={zekerheidsTint(v.zekerheid)}>{v.zekerheid}</Badge>
                           {!v.bevestigd && <Badge tone="red">niet teruggevonden</Badge>}
                           {v.door_gebruiker_uit && <Badge tone="yellow">door jou afgewezen</Badge>}
+                          {v.uitgesloten && <Badge tone="yellow">buiten je opdracht</Badge>}
                           <span className="text-xs text-muted-foreground">{bronTekst(v.bron)}</span>
                         </div>
                         <Inhoud v={v} />
@@ -419,7 +420,7 @@ export function ClusterPlanPage() {
                         )}
                         {v.opmerking && (
                           <p className="mt-1 text-xs leading-relaxed text-amber-400">
-                            Jij zei: {v.opmerking}
+                            {v.uitgesloten ? "Weggelaten: " : "Jij zei: "}{v.opmerking}
                           </p>
                         )}
                         <Vindplaats bewijs={v.bewijs} />
@@ -559,6 +560,16 @@ export function ClusterPlanPage() {
               Kost ongeveer een minuut. Dit plan blijft staan, zodat je het verschil ziet.
             </span>
           </div>
+        </Card>
+      )}
+
+      {plan.instructie && (
+        <Card className="p-4">
+          <h2 className="mb-1 text-sm font-semibold">Jouw opdracht vooraf</h2>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Hiermee is deze verkenning gedaan. Blijft gelden bij elke volgende ronde.
+          </p>
+          <p className="text-sm leading-relaxed">{plan.instructie}</p>
         </Card>
       )}
 

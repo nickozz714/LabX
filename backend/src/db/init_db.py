@@ -46,6 +46,7 @@ _ADDITIVE_COLUMNS = {
         # nadat bleek dat antwoorden alleen kon op vragen die het model
         # toevallig stelde.
         ("opmerkingen", "TEXT"),
+        ("instructie", "TEXT"),
         ("opmerking", "TEXT"),
         ("vorig_plan_id", "INTEGER"),
     ],

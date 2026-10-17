@@ -87,6 +87,7 @@ class Verkenner:
                      token_geheim: Optional[str] = None,
                      ssh_prive: Optional[str] = None,
                      host_id: Optional[int] = None,
+                     instructie: Optional[str] = None,
                      antwoorden: Optional[Dict[str, str]] = None,
                      opmerkingen: Optional[Dict[str, str]] = None,
                      opmerking: Optional[str] = None,
@@ -120,8 +121,9 @@ class Verkenner:
             modeluitslag = await self._vraag_model(
                 runtime, volume, image, map_=kop["map"],
                 beeld=beeld_ruw, inhoud=inhoud, vondsten=vondsten,
-                repo_url=repo_url, branch=branch, antwoorden=antwoorden,
-                opmerkingen=opmerkingen, opmerking=opmerking, keuze=keuze)
+                repo_url=repo_url, branch=branch, instructie=instructie,
+                antwoorden=antwoorden, opmerkingen=opmerkingen,
+                opmerking=opmerking, keuze=keuze)
             inhoud.update(modeluitslag.pop("_nagelezen", {}))
             vondsten = self._voeg_samen(vondsten, modeluitslag, inhoud)
             # JOUW oordeel gaat boven dat van een detector.
@@ -136,6 +138,7 @@ class Verkenner:
             # De vondst verdwijnt niet: het bewijs is nog net zo waar. Hij
             # staat alleen niet meer vooraf aan, met jouw woorden erbij.
             _pas_terugkoppeling_toe(vondsten, opmerkingen, uitgezet)
+            _pas_uitsluitingen_toe(vondsten, modeluitslag.get("niet_overnemen"))
 
             return {
                 "repo_url": repo_url,
@@ -287,6 +290,7 @@ class Verkenner:
                            beeld: Dict[str, Any], inhoud: det.RepoBeeld,
                            vondsten: List[det.Vondst], repo_url: str,
                            branch: str,
+                           instructie: Optional[str] = None,
                            antwoorden: Optional[Dict[str, str]] = None,
                            opmerkingen: Optional[Dict[str, str]] = None,
                            opmerking: Optional[str] = None,
@@ -299,8 +303,9 @@ class Verkenner:
         niet meegekeken heeft.
         """
         prompt = _prompt(repo_url=repo_url, branch=branch, beeld=beeld,
-                         inhoud=inhoud, vondsten=vondsten, antwoorden=antwoorden,
-                         opmerkingen=opmerkingen, opmerking=opmerking, keuze=keuze)
+                         inhoud=inhoud, vondsten=vondsten, instructie=instructie,
+                         antwoorden=antwoorden, opmerkingen=opmerkingen,
+                         opmerking=opmerking, keuze=keuze)
         try:
             ruw = await self._claude(prompt)
         except Exception as exc:  # noqa: BLE001
@@ -437,6 +442,32 @@ def _splits_plaatshouders(omgeving: Dict[str, Any]) -> tuple[Dict[str, str], Dic
         else:
             echt[str(sleutel)] = tekst
     return echt, uit_kluis
+
+
+def _pas_uitsluitingen_toe(vondsten: List[det.Vondst], niet_overnemen: Any) -> None:
+    """Wat er volgens de opdracht van de gebruiker niet in hoort.
+
+    Een detector vindt wat er in de repo STAAT, en dat is precies zijn kracht:
+    hij heeft een vindplaats. Maar hij weet niet wat je ermee wilt. Zeg je
+    "de agent hoort er niet bij", dan blijft hij `postgres` gewoon vinden --
+    en dan staat die er alsnog, aangevinkt, want de detector wint van het
+    model.
+
+    Het model mag detectorvondsten daarom UITZETTEN op grond van jouw
+    opdracht. Niet weggooien: het bewijs blijft waar, en je ziet waarom hij
+    uit staat.
+    """
+    per_kern = {(v.soort, v.sleutel): v for v in vondsten}
+    for item in (niet_overnemen or [])[:20]:
+        if not isinstance(item, dict):
+            continue
+        vondst = per_kern.get((str(item.get("soort")), str(item.get("sleutel"))))
+        if vondst is None:
+            continue
+        vondst.uitgesloten = True
+        waarom = str(item.get("waarom") or "").strip()
+        if waarom:
+            vondst.opmerking = waarom[:400]
 
 
 def _ontdubbel_geheimen(op_sleutel: Dict[Any, det.Vondst]) -> None:
@@ -735,6 +766,9 @@ Antwoord met UITSLUITEND JSON, zonder uitleg eromheen:
   "lab_poorten": [8000],
   "startscript": "#!/bin/sh\\nset -e\\n... bouwen en starten, in de juiste volgorde",
   "env_profiel": {"keuzes": ["debug"], "standaard": "debug", "waarom": "..."},
+  "niet_overnemen": [
+    {"soort": "dienst", "sleutel": "postgres", "waarom": "hoort bij de agent, en die valt buiten de opdracht"}
+  ],
   "vragen": ["hooguit drie dingen die je niet uit de repo kon opmaken"],
   "lees_ook": ["pad/naar/bestand"]
 }
@@ -746,6 +780,13 @@ voorgrond, zodat de container blijft leven, en op 0.0.0.0 -- een lab dat
 alleen op localhost luistert is van buiten onbereikbaar terwijl het er wel
 uitziet alsof het draait.
 
+`niet_overnemen` is voor wat de DETECTOREN vonden en wat er toch niet in
+hoort. Een detector ziet wat er in de repo staat en weet niet wat de gebruiker
+ermee wil: zegt hij "de agent hoort er niet bij", dan blijft `postgres` gewoon
+gevonden worden. Zet zulke vondsten hier, met de soort en sleutel zoals ze in
+de lijst hierboven staan. Ze verdwijnen niet -- het bewijs blijft waar -- maar
+ze staan niet meer vooraf aan.
+
 Weet je iets niet, zet het dan in "vragen" in plaats van te gokken. Stel een
 vraag alleen als het ANTWOORD het plan of het startscript verandert -- de
 gebruiker kan erop antwoorden, en dan verken je opnieuw met zijn antwoord
@@ -756,6 +797,7 @@ het pad dan in "lees_ook"."""
 
 def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
             inhoud: det.RepoBeeld, vondsten: List[det.Vondst],
+            instructie: Optional[str] = None,
             antwoorden: Optional[Dict[str, str]] = None,
             opmerkingen: Optional[Dict[str, str]] = None,
             opmerking: Optional[str] = None,
@@ -767,6 +809,15 @@ def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
     geeft hem meteen de vorm waarin hij zelf moet antwoorden.
     """
     delen = [SYSTEEM, "", f"Repository: {repo_url}", f"Branch: {branch}", ""]
+
+    if instructie:
+        # Vooraan, en met zoveel woorden zwaarder gewogen dan de rest: dit is
+        # wat de gebruiker WIL, en de repo zegt alleen wat er is. Een briefing
+        # die ergens onderaan tussen de bestanden staat, leest als een detail.
+        delen += ["OPDRACHT VAN DE GEBRUIKER — dit is leidend. Wijkt de repo hiervan af,",
+                  "volg dan deze opdracht en zeg in `samenvatting` wat je daarvoor hebt",
+                  "laten vallen:",
+                  str(instructie)[:4000], ""]
 
     if opmerking or opmerkingen or keuze:
         delen += ["WAT DE GEBRUIKER VAN HET VORIGE PLAN VOND — dit weegt zwaarder dan",

@@ -209,7 +209,8 @@ async def verkennen(body: Dict[str, Any], db: Session = Depends(get_db)):
         branch=str(body.get("branch") or "main"),
         token_geheim=(str(body["token_geheim"]) if body.get("token_geheim") else None),
         host_id=(int(body["host_id"]) if body.get("host_id") else None),
-        cluster_id=(int(body["cluster_id"]) if body.get("cluster_id") else None))
+        cluster_id=(int(body["cluster_id"]) if body.get("cluster_id") else None),
+        instructie=(str(body["instructie"]) if body.get("instructie") else None))
     return svc.plan_dict(rij)
 
 
@@ -232,6 +233,7 @@ async def opnieuw(plan_id: int, body: Dict[str, Any], db: Session = Depends(get_
         antwoorden=_kaart("antwoorden"),
         opmerkingen=_kaart("opmerkingen"),
         opmerking=(str(body["opmerking"]) if body.get("opmerking") else None),
+        instructie=(str(body["instructie"]) if body.get("instructie") else None),
         keuze=(list(keuze) if isinstance(keuze, list) else None)))
 
 

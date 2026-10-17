@@ -25,7 +25,9 @@ import { labHostsApi } from "@/lib/labs";
 import { secretApi } from "@/lib/secrets";
 import type { SecretDto } from "@/lib/secrets";
 import type { LabHost } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select } from "@/components/ui";
+import {
+  Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea,
+} from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
@@ -48,6 +50,7 @@ export function ClustersPage() {
   const [branch, setBranch] = useState("main");
   const [tokenGeheim, setTokenGeheim] = useState("");
   const [hostId, setHostId] = useState("");
+  const [instructie, setInstructie] = useState("");
   const [hosts, setHosts] = useState<LabHost[]>([]);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
@@ -77,6 +80,7 @@ export function ClustersPage() {
         branch: branch.trim() || "main",
         token_geheim: tokenGeheim || null,
         host_id: hostId ? Number(hostId) : null,
+        instructie: instructie.trim() || undefined,
       });
       setOpen(false);
       navigate(`/clusters/plannen/${plan.id}`);
@@ -233,6 +237,23 @@ export function ClustersPage() {
               Het cluster onthoudt alleen de NAAM van het geheim. De waarde blijft in de kluis.
             </p>
           </div>
+        </div>
+
+        <div className="mt-3">
+          {/* Vooraf iets kunnen zeggen scheelt een hele ronde: zonder dit kun
+              je pas corrigeren als er al een plan ligt, en dat kost een minuut
+              plus een modelaanroep. */}
+          <Label>Instructies vooraf (optioneel)</Label>
+          <TextArea
+            rows={3}
+            value={instructie}
+            onChange={(e) => setInstructie(e.target.value)}
+            placeholder="Bijvoorbeeld: de agent in components/agent hoort er niet bij, en gebruik node 22 in plaats van de devcontainer."
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Wat je hier zet weegt zwaarder dan wat de repo suggereert. Je kunt achteraf
+            nog bijsturen, maar dat kost een nieuwe verkenning.
+          </p>
         </div>
 
         <div className="mt-5 flex items-center gap-2">

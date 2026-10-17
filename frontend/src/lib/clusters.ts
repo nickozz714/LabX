@@ -74,6 +74,10 @@ export type Vondst = {
    *  Dat is het verschil tussen "ik heb het niet gevonden" en "jij wilde het
    *  niet", en die twee horen niet hetzelfde te zien. */
   door_gebruiker_uit: boolean;
+  /** Op grond van jouw opdracht weggelaten. Een detector vindt wat er in de
+   *  repo staat en weet niet wat je ermee wilt. De vondst blijft staan — het
+   *  bewijs is waar — maar hij gaat niet vanzelf mee. */
+  uitgesloten: boolean;
 };
 
 export type VondstKeuze = { soort: string; sleutel: string };
@@ -100,6 +104,9 @@ export type ClusterPlan = {
   opmerkingen: Record<string, string>;
   /** Wat je van het plan als geheel vond. */
   opmerking: string | null;
+  /** Wat je VOORAF meegaf. Anders dan `opmerking`, dat gaat over een plan dat
+   *  er al ligt — deze stond er vóór de eerste regel gelezen was. */
+  instructie: string | null;
   /** Het plan waar dit uit voortkwam, als het een antwoordronde was. */
   vorig_plan_id: number | null;
   vondsten: Vondst[];
@@ -238,6 +245,9 @@ export const clusterApi = {
     token_geheim?: string | null;
     host_id?: number | null;
     cluster_id?: number | null;
+    /** Een briefing vooraf: "de agent hoort er niet bij", "gebruik node 22".
+     *  Scheelt een hele ronde ten opzichte van achteraf corrigeren. */
+    instructie?: string;
   }) => api.post<ClusterPlan>("/clusters/verkennen", body),
   plan: (planId: number) => api.get<ClusterPlan>(`/clusters/plannen/${planId}`),
   /** Terugkoppeling geven en opnieuw verkennen. Levert een NIEUW plan op
@@ -250,6 +260,7 @@ export const clusterApi = {
     antwoorden?: Record<string, string>;
     opmerkingen?: Record<string, string>;
     opmerking?: string;
+    instructie?: string;
     keuze?: VondstKeuze[];
   }) => api.post<ClusterPlan>(`/clusters/plannen/${planId}/opnieuw`, body),
   plannen: (clusterId: number) => api.get<ClusterPlan[]>(`/clusters/${clusterId}/plannen`),

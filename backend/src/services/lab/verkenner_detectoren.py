@@ -80,6 +80,11 @@ class Vondst:
     #: Dit is het verschil tussen "ik heb het niet gevonden" en "jij wilde het
     #: niet".
     door_gebruiker_uit: bool = False
+    #: Op grond van jouw OPDRACHT weggelaten. Een detector vindt wat er in de
+    #: repo staat en weet niet wat je ermee wilt: zeg je "de agent hoort er
+    #: niet bij", dan blijft hij `postgres` gewoon vinden. De vondst blijft
+    #: staan -- het bewijs is waar -- maar hij gaat niet vanzelf mee.
+    uitgesloten: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -93,6 +98,7 @@ class Vondst:
             "toelichting": self.toelichting,
             "opmerking": self.opmerking,
             "door_gebruiker_uit": self.door_gebruiker_uit,
+            "uitgesloten": self.uitgesloten,
         }
 
 

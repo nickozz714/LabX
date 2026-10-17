@@ -176,6 +176,10 @@ class ClusterPlan(Base):
     #: {vraag: antwoord}. Ze gaan mee naar het model en worden doorgegeven aan
     #: elk volgend plan, zodat je niet twee keer hetzelfde hoeft te typen.
     antwoorden: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Wat jij VOORAF meegaf: "de agent hoort er niet bij", "gebruik node 22".
+    #: Anders dan `opmerking`, dat gaat over een plan dat er al ligt. Deze
+    #: staat er vóór de eerste regel gelezen is, en scheelt dus een hele ronde.
+    instructie: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Wat je van afzonderlijke ONDERDELEN vond: {"dienst::mailpit": "deze
     #: hoort er niet bij"}. Antwoorden kon al, maar alleen op vragen die het
     #: model toevallig stelde -- en een plan zonder vragen liet je dus met

@@ -936,6 +936,7 @@ class ClusterService:
                      token_geheim: Optional[str] = None,
                      host_id: Optional[int] = None,
                      cluster_id: Optional[int] = None,
+                     instructie: Optional[str] = None,
                      antwoorden: Optional[Dict[str, str]] = None,
                      opmerkingen: Optional[Dict[str, str]] = None,
                      opmerking: Optional[str] = None,
@@ -958,12 +959,20 @@ class ClusterService:
             token_geheim = token_geheim or c.repo_token_geheim
             host_id = host_id if host_id is not None else c.host_id
             ssh_prive = self.ssh_prive(c)
+            # De briefing van de vorige keer blijft gelden. "Opnieuw
+            # verkennen" vanaf de clusterpagina heeft geen invoerveld, en dan
+            # is hem stil laten vallen de vervelendste uitkomst: je krijgt een
+            # plan dat alles terugbrengt wat je er net uit had gepraat.
+            if instructie is None:
+                vorige = self.plannen(cluster_id)
+                instructie = next((p.instructie for p in vorige if p.instructie), None)
 
         uitslag = await Verkenner(self.db).verken(
             repo_url=repo_url, branch=branch,
             token_geheim=token_geheim, ssh_prive=ssh_prive, host_id=host_id,
-            antwoorden=antwoorden, opmerkingen=opmerkingen,
-            opmerking=opmerking, keuze=keuze, uitgezet=uitgezet)
+            instructie=instructie, antwoorden=antwoorden,
+            opmerkingen=opmerkingen, opmerking=opmerking,
+            keuze=keuze, uitgezet=uitgezet)
 
         rij = ClusterPlan(
             cluster_id=cluster_id,
@@ -974,6 +983,7 @@ class ClusterService:
             plan=uitslag,
             keuzes={},
             token_geheim=token_geheim,
+            instructie=(instructie or None),
             antwoorden=dict(antwoorden or {}),
             opmerkingen=dict(opmerkingen or {}),
             opmerking=(opmerking or None),
@@ -993,6 +1003,7 @@ class ClusterService:
                       antwoorden: Optional[Dict[str, str]] = None,
                       opmerkingen: Optional[Dict[str, str]] = None,
                       opmerking: Optional[str] = None,
+                      instructie: Optional[str] = None,
                       keuze: Optional[List[Dict[str, str]]] = None) -> ClusterPlan:
         """Terugkoppeling geven en opnieuw verkennen.
 
@@ -1020,8 +1031,10 @@ class ClusterService:
         schone_opmerkingen = {str(k).strip(): str(w).strip()
                               for k, w in (opmerkingen or {}).items() if str(w).strip()}
         schone_opmerking = (opmerking or "").strip()
+        schone_instructie = (instructie or "").strip()
 
-        if not (schone_antwoorden or schone_opmerkingen or schone_opmerking):
+        if not (schone_antwoorden or schone_opmerkingen or schone_opmerking
+                or schone_instructie):
             raise HTTPException(
                 status_code=400,
                 detail=("Geef iets mee: een antwoord, een opmerking bij een onderdeel, "
@@ -1050,6 +1063,7 @@ class ClusterService:
             antwoorden={**(oud.antwoorden or {}), **schone_antwoorden},
             opmerkingen={**(oud.opmerkingen or {}), **schone_opmerkingen},
             opmerking=schone_opmerking or oud.opmerking,
+            instructie=schone_instructie or oud.instructie,
             keuze=gekozen, uitgezet=uitgezet,
             vorig_plan_id=oud.id)
 
@@ -1077,6 +1091,10 @@ class ClusterService:
         uit: List[Dict[str, str]] = []
         image_gekozen = False
         for v in plan.get("vondsten") or []:
+            if v.get("uitgesloten"):
+                # Op grond van jouw opdracht weggelaten. Staat er nog, met
+                # bewijs en met de reden, maar niet aangevinkt.
+                continue
             if v.get("door_gebruiker_uit"):
                 # Je hebt hem eerder uitgezet. Hij staat er nog, met zijn
                 # bewijs, maar hij gaat niet vanzelf weer aan.
@@ -1309,6 +1327,7 @@ class ClusterService:
             "antwoorden": rij.antwoorden or {},
             "opmerkingen": rij.opmerkingen or {},
             "opmerking": rij.opmerking,
+            "instructie": rij.instructie,
             "vorig_plan_id": rij.vorig_plan_id,
             "vondsten": plan.get("vondsten") or [],
             "url_omgezet": plan.get("url_omgezet"),

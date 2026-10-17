@@ -903,3 +903,87 @@ def test_de_database_krijgt_een_echte_naam(db):
     assert c.omgeving["DB_NAME"] == "slimmer_politiek"
     assert "${" not in str(dienst.omgeving) and "${" not in str(c.omgeving)
     assert len(dienst.omgeving["MYSQL_PASSWORD"]) >= 20, "het wachtwoord wordt alsnog gezet"
+
+
+# ── de briefing vooraf ───────────────────────────────────────────────────────
+
+def test_een_instructie_vooraf_komt_bij_het_model():
+    """Zonder dit kun je pas iets zeggen nadat er een plan ligt, en dat kost
+    een hele ronde van een minuut."""
+    from services.lab.verkenner import _prompt
+
+    prompt = _prompt(repo_url="x", branch="main", beeld={"boom": []}, inhoud={},
+                     vondsten=[], instructie="De agent hoort er niet bij.")
+    assert "OPDRACHT VAN DE GEBRUIKER" in prompt
+    assert "De agent hoort er niet bij." in prompt
+    # Vooraan, niet ergens tussen de bestanden: een briefing onderaan leest
+    # als een detail.
+    assert prompt.index("OPDRACHT VAN DE GEBRUIKER") < prompt.index("BESTANDEN")
+
+
+def test_de_instructie_wordt_bewaard_bij_het_plan(db):
+    svc = _svc(db)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"],
+                                 instructie="Gebruik node 22, niet de devcontainer."))
+    assert rij.instructie == "Gebruik node 22, niet de devcontainer."
+    assert svc.plan_dict(rij)["instructie"] == "Gebruik node 22, niet de devcontainer."
+
+
+def test_een_instructie_alleen_is_genoeg_om_opnieuw_te_verkennen(db):
+    svc, rij = _plan(db)
+    nieuw = asyncio.run(svc.opnieuw(rij.id, instructie="Laat de agent weg."))
+    assert nieuw.instructie == "Laat de agent weg."
+
+
+def test_de_briefing_blijft_gelden_bij_opnieuw_verkennen(db):
+    """"Opnieuw verkennen" vanaf de clusterpagina heeft geen invoerveld. Hem
+    daar stil laten vallen is de vervelendste uitkomst: je krijgt een plan dat
+    alles terugbrengt wat je er net uit had gepraat."""
+    svc = _svc(db)
+    eerste = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"],
+                                    instructie="De agent hoort er niet bij."))
+    uit = svc.keur_goed(eerste.id, naam="Hive")
+    cluster_id = uit["cluster"]["id"]
+
+    tweede = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"], cluster_id=cluster_id))
+    assert tweede.instructie == "De agent hoort er niet bij."
+
+
+def test_een_nieuwe_briefing_vervangt_de_oude(db):
+    svc, rij = _plan(db)
+    tweede = asyncio.run(svc.opnieuw(rij.id, instructie="Eerst dit."))
+    derde = asyncio.run(svc.opnieuw(tweede.id, instructie="Nee, toch dat."))
+    assert derde.instructie == "Nee, toch dat."
+
+
+def test_een_opdracht_kan_ook_een_detectorvondst_uitzetten():
+    """Een detector vindt wat er in de repo STAAT en weet niet wat je ermee
+    wilt. Zeg je "de agent hoort er niet bij", dan blijft hij `postgres`
+    gewoon vinden — en dan staat die er alsnog aangevinkt, want de detector
+    wint van het model."""
+    from services.lab.verkenner import _pas_uitsluitingen_toe
+    from services.lab.verkenner_detectoren import Vondst
+
+    vondsten = [
+        Vondst(soort="dienst", sleutel="postgres", bron="detector:omgeving", bevestigd=True),
+        Vondst(soort="dienst", sleutel="cosmos", bron="detector:omgeving", bevestigd=True),
+    ]
+    _pas_uitsluitingen_toe(vondsten, [
+        {"soort": "dienst", "sleutel": "postgres", "waarom": "hoort bij de agent"}])
+
+    assert vondsten[0].uitgesloten is True
+    assert vondsten[0].bevestigd is True, "het bewijs blijft waar"
+    assert vondsten[0].opmerking == "hoort bij de agent"
+    assert vondsten[1].uitgesloten is False
+
+
+def test_een_uitgesloten_vondst_staat_niet_vooraf_aan():
+    from services.lab.clusters import ClusterService
+
+    plan = {"vondsten": [
+        {"soort": "dienst", "sleutel": "cosmos", "bevestigd": True},
+        {"soort": "dienst", "sleutel": "postgres", "bevestigd": True, "uitgesloten": True},
+    ]}
+    keuze = {(k["soort"], k["sleutel"]) for k in ClusterService.standaardkeuze(plan)}
+    assert ("dienst", "cosmos") in keuze
+    assert ("dienst", "postgres") not in keuze
