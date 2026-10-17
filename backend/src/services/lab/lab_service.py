@@ -3175,6 +3175,8 @@ exec ssh -N \\
     #: volgende poging strandt op "Port 8099 is already in use" -- een fout
     #: over onze eigen rommel, waar niemand iets aan kan doen.
     START_PID = ".labx-start.pid"
+    #: De pijp die stdin openhoudt. Zie _LOPER_SCRIPT.
+    START_FIFO = ".labx-stdin"
 
     async def start_applicatie(self, lab_id: str) -> Dict[str, Any]:
         """Het startscript van het cluster draaien -- op de ACHTERGROND.
@@ -3206,53 +3208,33 @@ exec ssh -N \\
 
         rt = self.runtime_voor(p)
         map_ = self._repomap(c)
-        # Het script in een bestand zetten en NIET als argument meegeven: een
-        # script van dertig regels met aanhalingstekens erin overleeft de reis
-        # door `docker exec sh -c` niet ongeschonden.
-        pad = "/workspace/.labx-start.sh"
-        loper = "/workspace/.labx-loper.sh"
-        await rt.exec(werkers[0].container_id,
-                      ["sh", "-c", f"cat > {pad} && chmod +x {pad}"],
-                      stdin=(c.start_script or "").encode(), timeout=60)
+        cid = werkers[0].container_id
 
-        # Eerst de VORIGE opruimen. Zonder dit blijft bij elke ronde een
-        # devserver staan: de tweede poging kreeg "Port 8099 is already in
-        # use" omdat de eerste er nog op zat. Dat is een fout over onze eigen
-        # rommel, en het model ging hem netjes proberen op te lossen.
-        #
-        # De hele procesGROEP, want `setsid` zet het script en zijn kinderen
-        # in een eigen groep -- alleen het script doodmaken laat node gewoon
-        # draaien.
+        # Allebei de scripts via STDIN wegschrijven en niet als argument
+        # meegeven: een script met aanhalingstekens erin overleeft de reis
+        # door `docker exec sh -c` niet ongeschonden. Dat kostte een hele
+        # proefbouw -- het startcommando kwam verminkt aan en het enige wat
+        # er terugkwam was "Starten mislukte", waar niemand iets aan heeft.
+        await rt.exec(cid, ["sh", "-c", f"cat > {_START_SCRIPT} && chmod +x {_START_SCRIPT}"],
+                      stdin=(c.start_script or "").encode(), timeout=60)
+        await rt.exec(cid, ["sh", "-c", f"cat > {_LOPER} && chmod +x {_LOPER}"],
+                      stdin=_LOPER_SCRIPT.encode(), timeout=60)
+
         start = (
             f"cd {map_} 2>/dev/null || cd /workspace; "
+            # De vorige ronde eerst weg. Zonder dit blijft er bij elke poging
+            # een devserver staan en krijgt de volgende "Port is already in
+            # use" -- een fout over onze eigen rommel.
             f"if [ -f {self.START_PID} ]; then "
             f"  kill -TERM -$(cat {self.START_PID}) 2>/dev/null; sleep 2; "
             f"  kill -KILL -$(cat {self.START_PID}) 2>/dev/null; "
             f"fi; "
-            # De tail van de vorige ronde hoort er ook bij: hij zit niet in
-            # die procesgroep en zou anders bij elke poging blijven staan.
-            f"pkill -f 'tail -f /dev/null' 2>/dev/null; "
-            f"rm -f {self.START_LOG} {self.START_PID}; "
-            # `setsid` maakt hem los van deze exec: zonder dat sterft hij
-            # zodra de exec-sessie eindigt, en dat is precies wanneer wij
-            # teruggaan kijken of hij draait.
-            # STDIN MOET OPEN BLIJVEN. `< /dev/null` lijkt netjes en is het
-            # niet: een devserver als Vite luistert op stdin naar toetsen
-            # ('r' om te herladen) en sluit zichzelf af zodra stdin EOF geeft.
-            # Dat gebeurde: "ready in 102 ms" en meteen daarna weg, zonder
-            # een enkele foutmelding. Een `tail -f /dev/null` geeft een stdin
-            # die open blijft en nooit iets stuurt.
-            #
-            # De PID komt uit het proces ZELF ($$ onder setsid is het
-            # groepsnummer); `$!` zou de setsid-wrapper opleveren, en die is
-            # al weg tegen de tijd dat we hem willen stoppen.
-            f"printf '%s\\n' 'cd \"$1\" 2>/dev/null || cd /workspace' "
-            f"'echo $$ > {self.START_PID}' 'exec sh {pad}' > {loper}; "
-            f"tail -f /dev/null | setsid sh {loper} {map_} "
-            f"  > {self.START_LOG} 2>&1 & "
+            f"rm -f {self.START_LOG} {self.START_PID} {self.START_FIFO}; "
+            # `setsid` zet de loper en al zijn kinderen in een eigen
+            # procesgroep, zodat ze straks samen te stoppen zijn.
+            f"setsid sh {_LOPER} {map_} > {self.START_LOG} 2>&1 & "
             f"echo gestart")
-        uit = await rt.exec(werkers[0].container_id, ["sh", "-c", start],
-                            workdir="/workspace", timeout=60)
+        uit = await rt.exec(cid, ["sh", "-c", start], workdir="/workspace", timeout=60)
         log.infox("Applicatie gestart", lab_id=p.id, map=map_,
                   exit=uit.get("exit_code"))
         return {"ok": uit.get("exit_code") == 0, "map": map_,
@@ -3426,6 +3408,40 @@ _PROVISION_TASKS: Dict[str, Any] = {}
 # Labs waarvoor tijdens een lopende inrichtronde opnieuw om inrichten is
 # gevraagd. Zie _na_inrichten.
 _PROVISION_NOGMAALS: set = set()
+
+
+#: Het script van het cluster, zoals het in de container terechtkomt.
+_START_SCRIPT = "/workspace/.labx-start.sh"
+#: Het lopertje eromheen. Staat hier als tekst en niet in een commandoregel,
+#: want aanhalingstekens overleven `docker exec sh -c` niet.
+_LOPER = "/workspace/.labx-loper.sh"
+
+#: Waarom dit lopertje bestaat.
+#:
+#: 1. STDIN MOET OPEN BLIJVEN. `< /dev/null` lijkt netjes en is het niet: een
+#:    devserver als Vite luistert op stdin naar toetsen ('r' om te herladen)
+#:    en sluit zichzelf af zodra stdin EOF geeft. Dat gebeurde: "ready in
+#:    102 ms" en meteen daarna weg, zonder een enkele foutmelding.
+#:
+#:    Een pijp die openblijft doet dat niet. De `sleep` die hem openhoudt is
+#:    een KIND van deze loper, dus hij zit in dezelfde procesgroep en gaat
+#:    vanzelf mee als we die groep stoppen. Een losse `tail -f /dev/null`
+#:    buiten de groep leek simpeler, maar dan moet je hem met `pkill -f`
+#:    opruimen -- en dat patroon matcht ook de shell die het startcommando
+#:    uitvoert, want die heeft die tekst in zijn eigen commandoregel staan.
+#:    Die maakte dus zichzelf dood.
+#:
+#: 2. HET GROEPSNUMMER komt uit het proces zelf. Onder `setsid` is `$$` de
+#:    procesgroep; `$!` in de aanroepende shell levert de setsid-wrapper op,
+#:    en die is al weg tegen de tijd dat je hem wilt stoppen.
+_LOPER_SCRIPT = """#!/bin/sh
+cd "$1" 2>/dev/null || cd /workspace
+echo $$ > .labx-start.pid
+rm -f .labx-stdin
+mkfifo -m 600 .labx-stdin 2>/dev/null || true
+sleep 2147483647 > .labx-stdin &
+exec sh /workspace/.labx-start.sh < .labx-stdin
+"""
 
 
 def _na_inrichten_starten(lab_id: str) -> bool:

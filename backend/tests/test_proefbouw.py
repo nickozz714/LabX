@@ -422,13 +422,15 @@ def test_de_vorige_start_wordt_opgeruimd():
 
     from services.lab.lab_service import LabService
 
+    from services.lab.lab_service import _LOPER_SCRIPT
+
     bron = inspect.getsource(LabService.start_applicatie)
     assert "kill -TERM -$(cat" in bron, "de hele procesgroep, niet alleen het script"
     assert "kill -KILL -$(cat" in bron, "en doorpakken als TERM niet genoeg is"
     # Het groepsnummer komt uit het proces ZELF: `$$` onder setsid is de
     # groep. `$!` zou de setsid-wrapper opleveren, en die is al weg tegen de
     # tijd dat we hem willen stoppen.
-    assert "echo $$ > " in bron
+    assert "echo $$ > .labx-start.pid" in _LOPER_SCRIPT
 
 
 def test_stdin_blijft_open_voor_de_applicatie():
@@ -443,12 +445,22 @@ def test_stdin_blijft_open_voor_de_applicatie():
 
     from services.lab.lab_service import LabService
 
-    # Alleen de regels die een COMMANDO zijn; het commentaar eromheen noemt
-    # `< /dev/null` juist om te zeggen waarom we het niet doen.
-    opdracht = "".join(r for r in inspect.getsource(LabService.start_applicatie).splitlines()
-                       if r.strip().startswith('f"'))
-    assert "tail -f /dev/null |" in opdracht, "een stdin die open blijft en niets stuurt"
-    assert "< /dev/null" not in opdracht
+    from services.lab.lab_service import _LOPER_SCRIPT
+
+    # De pijp blijft open doordat een `sleep` hem voor schrijven openhoudt.
+    assert "mkfifo" in _LOPER_SCRIPT
+    assert "sleep 2147483647 > .labx-stdin &" in _LOPER_SCRIPT
+    assert "< .labx-stdin" in _LOPER_SCRIPT
+    # `2>/dev/null` mag; dat is stderr. Het gaat om STDIN.
+    assert "< /dev/null" not in _LOPER_SCRIPT and "0</dev/null" not in _LOPER_SCRIPT
+
+    # En die sleep is een KIND van de loper, dus hij zit in dezelfde
+    # procesgroep en gaat vanzelf mee. Een losse `tail -f /dev/null` buiten de
+    # groep moest met `pkill -f` opgeruimd worden -- en dat patroon matchte
+    # ook de shell die het startcommando uitvoerde, want die had die tekst in
+    # zijn eigen commandoregel staan. Die maakte dus zichzelf dood.
+    opdracht = inspect.getsource(LabService.start_applicatie)
+    assert "pkill" not in opdracht
 
 
 def test_het_model_krijgt_genoeg_tijd_om_een_script_te_herschrijven():
