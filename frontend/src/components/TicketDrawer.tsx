@@ -16,7 +16,7 @@
  * achter een agent-run is verborgen (Thread.source = "board").
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { boardApi } from "@/lib/boards";
@@ -380,6 +380,15 @@ export function TicketDrawer({
     );
   }
 
+  // Het lab waarin de agent voor DIT ticket gaat werken. Op een clusterbord
+  // is dat het lab van de branch van het ticket; anders het lab van het bord.
+  // Het wordt hier opgezocht en niet opgeslagen, want het lab is wegwerpbaar
+  // en de branch niet -- precies zoals de backend het ook doet.
+  const ticketLab = board.cluster_id && ticket.branch
+    ? (board.branches || []).find((b) => b.branch === ticket.branch) || null
+    : null;
+  const agentKan = board.cluster_id ? !!ticketLab : !!board.lab_id;
+
   return (
     <aside className="fixed inset-0 z-40 flex flex-col overflow-y-auto border-l border-border bg-card lg:static lg:z-auto lg:w-[30rem] lg:shrink-0">
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-3">
@@ -614,11 +623,31 @@ export function TicketDrawer({
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
             <Bot size={15} /> Laat de AI dit oppakken
           </div>
-          {!board.lab_id && (
+          {/* Op een clusterbord is het lab van het TICKET wat telt, niet dat
+              van het bord. Dat was de verwarring: het bord zei "geen lab"
+              terwijl het ticket wel degelijk een branch met een draaiend lab
+              had, en de knop bleef uit. */}
+          {board.cluster_id ? (
+            ticketLab ? (
+              <p className="text-xs text-muted-foreground">
+                De agent werkt in{" "}
+                <Link to={`/labs/${ticketLab.lab_id}`} className="underline">
+                  {ticket.branch}
+                </Link>{" "}
+                ({ticketLab.status}).
+              </p>
+            ) : (
+              <p className="text-xs text-destructive">
+                {ticket.branch
+                  ? `Er is nog geen branch-lab voor '${ticket.branch}'. Maak het aan op het cluster.`
+                  : "Zet een branch op dit ticket, zodat de agent weet in welke werkkopie hij moet werken."}
+              </p>
+            )
+          ) : !board.lab_id ? (
             <p className="text-xs text-destructive">
               Dit board heeft geen gekoppeld lab — koppel er een lab aan in de board-instellingen.
             </p>
-          )}
+          ) : null}
           <TextArea
             rows={2}
             className="text-xs"
@@ -635,7 +664,7 @@ export function TicketDrawer({
             <Button
               variant="secondary"
               className="text-xs"
-              disabled={busy || !board.lab_id || ticket.agent_state === "running"}
+              disabled={busy || !agentKan || ticket.agent_state === "running"}
               onClick={runAgent}
               busyLabel="Starten…"
             >
@@ -671,7 +700,7 @@ export function TicketDrawer({
               </Button>
             )}
             <BijlageKnop
-              labId={board.lab_id}
+              labId={ticketLab?.lab_id || board.lab_id}
               dir={ticketBijlageMap(ticket.key)}
               disabled={busy || ticket.agent_state === "running"}
               compact

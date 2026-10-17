@@ -299,7 +299,16 @@ export function BoardPage() {
               <Badge tone="violet">cluster: {board.cluster_naam}</Badge>
             </Link>
           )}
-          {board.lab_id ? (
+          {board.cluster_id ? (
+            /* Een clusterbord HEEFT geen lab, en hoort er ook geen te
+               hebben: elk ticket wijst naar een branch en de agent werkt in
+               het lab van díé branch. "Geen lab" zou hier dus een fout
+               melden die er niet is. */
+            <Badge tone={(board.branches || []).some((b) => b.status === "running") ? "green" : "yellow"}>
+              {(board.branches || []).filter((b) => b.status === "running").length}/
+              {(board.branches || []).length} branch-labs draaien
+            </Badge>
+          ) : board.lab_id ? (
             <Badge tone={board.lab_status === "running" ? "green" : "yellow"}>
               lab: {board.lab_name} ({board.lab_status})
             </Badge>
