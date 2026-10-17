@@ -317,13 +317,15 @@ def test_een_gevallen_script_hoeft_de_wachttijd_niet_uit_te_zitten(db, monkeypat
     c = _cluster(db)
     p = _lab(db, c)
 
-    async def nep_open(poort):
-        return False
+    from services.lab.lab_service import LabService
+
+    async def nep_poorten(zelf, lab_id):
+        return set()
 
     async def nep_leeft(zelf, lab):
         return False
 
-    monkeypatch.setattr(mod.Proefbouw, "_open", staticmethod(nep_open))
+    monkeypatch.setattr(LabService, "luisterpoorten", nep_poorten)
     monkeypatch.setattr(mod.Proefbouw, "_leeft", nep_leeft)
     monkeypatch.setattr(mod, "LEEFT_ELKE", 0)
 
@@ -472,3 +474,24 @@ def test_het_model_krijgt_genoeg_tijd_om_een_script_te_herschrijven():
 
     bron = inspect.getsource(Proefbouw._herstel)
     assert "timeout=900.0" in bron
+
+
+def test_de_poort_wordt_in_het_lab_gecontroleerd_en_niet_erbuiten():
+    """De hardnekkigste fout van allemaal.
+
+    De controle maakte een TCP-verbinding naar 127.0.0.1:<machinepoort>, maar
+    LabX draait zelf in een container — en daar is die poort niet; hij staat
+    op de loopback van de HOST. Dus faalde elke proefbouw op "er antwoordt
+    niets", terwijl een curl vanaf de host al rondenlang HTTP 200 gaf.
+
+    Binnen het lab kijken werkt bovendien ook als het lab op een andere
+    machine draait, waar we sowieso niet bij de loopback kunnen.
+    """
+    import inspect
+
+    from services.lab.proefbouw import Proefbouw
+
+    bron = inspect.getsource(Proefbouw._antwoordt)
+    assert "luisterpoorten" in bron, "de vraag hoort in het lab gesteld te worden"
+    assert "open_connection" not in bron
+    assert not hasattr(Proefbouw, "_open"), "de verbinding van buitenaf is weg"

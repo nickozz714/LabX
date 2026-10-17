@@ -266,25 +266,39 @@ class Proefbouw:
     async def _antwoordt(self, svc, c: Cluster, p, *, geduld: Optional[int] = None) -> Optional[str]:
         """Luistert er iets op de poort van dit lab?
 
-        Een script dat klaar is en een applicatie die antwoordt zijn twee
-        dingen. `exec` op de voorgrond betekent dat het script NIET terugkeert
-        als het goed is -- dus hier kijken we naar de poort en niet naar een
-        exitcode.
+        **De vraag wordt IN het lab gesteld, niet erbuiten.** Dat was de
+        hardnekkigste fout van allemaal: ik maakte een TCP-verbinding naar
+        127.0.0.1:<machinepoort>, maar LabX draait zelf in een container, en
+        daar is die poort niet -- die staat op de loopback van de HOST. Dus
+        faalde elke proefbouw op "er antwoordt niets", terwijl een curl vanaf
+        de host al rondenlang HTTP 200 gaf.
+
+        Binnen de container kijken heeft nog een voordeel: het werkt ook als
+        het lab op een andere machine draait, waar we sowieso niet zomaar bij
+        de loopback kunnen.
 
         We wachten lang, want het script installeert en bouwt ook. Maar we
         kijken ondertussen of het nog LEEFT: een gevallen script hoeft de hele
-        wachttijd niet uit te zitten, en de gebruiker hoeft er niet een kwartier
-        naar te kijken.
+        wachttijd niet uit te zitten.
         """
-        kaart = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
-        if not kaart:
+        from services.lab.lab_service import LabService
+
+        gewenst = self._containerpoort(p)
+        if not gewenst:
             return None
-        machine_poort = sorted(kaart.items())[0][1]
+        kaart = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
+        machine_poort = kaart[gewenst]
+
+        lab_svc = LabService(self.db)
         einde = asyncio.get_running_loop().time() + (geduld or GEREED_SECONDEN)
         volgende_controle = asyncio.get_running_loop().time() + LEEFT_ELKE
 
         while asyncio.get_running_loop().time() < einde:
-            if await self._open(machine_poort):
+            try:
+                luistert = await lab_svc.luisterpoorten(p.id)
+            except Exception:  # noqa: BLE001
+                luistert = set()
+            if gewenst in luistert:
                 return f"http://localhost:{machine_poort}"
             if asyncio.get_running_loop().time() >= volgende_controle:
                 volgende_controle += LEEFT_ELKE
@@ -294,24 +308,11 @@ class Proefbouw:
                 # Luistert hij al, maar op een ander nummer? Dan verandert dat
                 # niet meer vanzelf, en is doorwachten een kwartier verspillen
                 # aan een fout die nu al vaststaat.
-                if await self._luistert_verkeerd(p, machine_poort):
+                if _gekozen_poorten(luistert) - {gewenst}:
                     log.infox("Applicatie luistert op de verkeerde poort", lab_id=p.id)
                     return None
             await asyncio.sleep(3)
         return None
-
-    async def _luistert_verkeerd(self, p, machine_poort: int) -> bool:
-        """Luistert er iets, maar niet op de poort die LabX publiceert?"""
-        from services.lab.lab_service import LabService
-
-        gewenst = self._containerpoort(p)
-        if not gewenst:
-            return False
-        try:
-            luistert = await LabService(self.db).luisterpoorten(p.id)
-        except Exception:  # noqa: BLE001
-            return False
-        return bool(_gekozen_poorten(luistert) - {gewenst}) and gewenst not in luistert
 
     async def _leeft(self, p) -> bool:
         """Draait het startscript nog?
@@ -333,17 +334,6 @@ class Proefbouw:
             return "leeft" in str(uit.get("output") or "")
         except Exception:  # noqa: BLE001 — niet kunnen kijken is geen doodverklaring
             return True
-
-    @staticmethod
-    async def _open(poort: int) -> bool:
-        try:
-            lezer, schrijver = await asyncio.wait_for(
-                asyncio.open_connection("127.0.0.1", poort), timeout=3)
-            schrijver.close()
-            await schrijver.wait_closed()
-            return True
-        except Exception:  # noqa: BLE001 — dicht is een antwoord, geen fout
-            return False
 
     async def _herstel(self, c: Cluster, fout: str, ronde: int) -> Dict[str, Any]:
         """Het model het script laten bijstellen op grond van de echte fout."""
