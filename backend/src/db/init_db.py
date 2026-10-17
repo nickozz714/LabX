@@ -44,17 +44,6 @@ _ADDITIVE_COLUMNS = {
         ("ssh_publiek", "TEXT"),
         ("ssh_prive_encrypted", "TEXT"),
     ],
-    "boards": [
-        # Een bord kan bij een cluster horen. Eén bord per cluster; het
-        # "labbord" is dit bord gefilterd op één branch, want een bord per
-        # branch-lab zou verdwijnen zodra je dat wegwerplab opruimt.
-        ("cluster_id", "INTEGER"),
-    ],
-    "tickets": [
-        # Bij welke branch dit ticket hoort. De branch en niet het lab-id:
-        # het lab komt en gaat, de branch blijft.
-        ("branch", "VARCHAR(200)"),
-    ],
     "cluster_plannen": [
         # Antwoorden op de vragen van de verkenner, en het plan waar dit uit
         # voortkwam. Erbij gekomen nadat bleek dat een plan wel vragen stelde
@@ -210,6 +199,10 @@ _ADDITIVE_COLUMNS = {
         ("archived_at", "VARCHAR(64)"),
     ],
     "boards": [
+        # Een bord kan bij een cluster horen. Eén bord per cluster; het
+        # "labbord" is dit bord gefilterd op één branch, want een bord per
+        # branch-lab zou verdwijnen zodra je dat wegwerplab opruimt.
+        ("cluster_id", "INTEGER"),
         # Kolom waar een ticket heen gaat zodra de agent eraan begint.
         ("agent_busy_column", "VARCHAR(64)"),
         # Automatisch archiveren: in welke kolom, en na hoeveel dagen.
@@ -217,6 +210,9 @@ _ADDITIVE_COLUMNS = {
         ("archive_days", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "tickets": [
+        # Bij welke branch dit ticket hoort. De branch en niet het lab-id:
+        # het lab komt en gaat, de branch blijft.
+        ("branch", "VARCHAR(200)"),
         ("acceptance_criteria", "TEXT"),
         ("depends_on", "TEXT"),
         # Wat de bron als laatste zei; het ijkpunt voor "welk veld is hier
