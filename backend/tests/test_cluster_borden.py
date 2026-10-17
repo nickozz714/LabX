@@ -102,3 +102,61 @@ def test_een_gewoon_bord_verandert_niet(db):
     uit = svc.board_to_dict(b)
     assert uit["cluster_id"] is None
     assert "branches" not in uit, "geen cluster, geen branchlijst"
+
+
+# ── de agent werkt in de werkkopie van zíjn ticket ──────────────────────────
+
+def test_de_agent_werkt_in_het_lab_van_de_branch_van_het_ticket(db):
+    """Daar zit het hele punt van een clusterbord: één bord, tickets voor
+    verschillende branches, en elke agent werkt in de werkkopie die bij zíjn
+    ticket hoort. Zou hij in het bordlab werken, dan wijzigde hij de verkeerde
+    branch — en dat merk je pas bij de merge."""
+    from services.boards.agent_work import _lab_voor_ticket
+
+    svc, c, b = _opzet(db)
+    t = svc.create_ticket(b.id, {"title": "Filter", "branch": "feature/zoek"})
+
+    lab = _lab_voor_ticket(db, b, t)
+    assert lab.id == "l1"
+
+
+def test_zonder_branch_weigert_de_agent_met_uitleg(db):
+    from fastapi import HTTPException
+
+    from services.boards.agent_work import _lab_voor_ticket
+
+    svc, c, b = _opzet(db)
+    t = svc.create_ticket(b.id, {"title": "Filter"})
+    with pytest.raises(HTTPException) as fout:
+        _lab_voor_ticket(db, b, t)
+    assert "branch" in str(fout.value.detail).lower()
+
+
+def test_een_branch_zonder_lab_zegt_wat_je_moet_doen(db):
+    """Een ticket schrijf je vaak vóór het lab bestaat. Dan is dit geen fout
+    maar een volgende stap, en dat hoort de melding te zeggen."""
+    from fastapi import HTTPException
+
+    from services.boards.agent_work import _lab_voor_ticket
+
+    svc, c, b = _opzet(db)
+    t = svc.create_ticket(b.id, {"title": "Export", "branch": "feature/export"})
+    with pytest.raises(HTTPException) as fout:
+        _lab_voor_ticket(db, b, t)
+    assert "Maak het aan op het cluster" in str(fout.value.detail)
+
+
+def test_een_gewoon_bord_blijft_zijn_eigen_lab_gebruiken(db):
+    from models.lab import Lab
+    from services.boards.agent_work import _lab_voor_ticket
+    from services.boards.board_service import BoardService
+
+    nu = "2026-10-17T10:00:00+00:00"
+    db.add(Lab(id="los", name="Los lab", image="python:3", volume_name="v",
+               status="running", cpu_limit=1, mem_limit_mb=2048, ttl_hours=4,
+               created_at=nu, updated_at=nu))
+    db.commit()
+    svc = BoardService(db)
+    b = svc.create_board({"name": "Los bord", "lab_id": "los"})
+    t = svc.create_ticket(b.id, {"title": "Iets"})
+    assert _lab_voor_ticket(db, b, t).id == "los"

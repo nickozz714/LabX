@@ -532,7 +532,20 @@ export interface BoardColumnDto {
 export type BoardProvider = "local" | "azure_devops" | "jira";
 export type SyncDirection = "pull" | "two_way";
 
+/** Welke branches van dit cluster op dit moment een lab hebben. Een ticket
+ *  mag naar een branch zonder lab wijzen — dat is de normale beginsituatie. */
+export interface BoardBranch {
+  branch: string;
+  lab_id: string;
+  status: string;
+}
+
 export interface BoardDto {
+  /** Bij welk cluster dit bord hoort. Eén bord per cluster; het "labbord" is
+   *  dit bord gefilterd op één branch. */
+  cluster_id?: number | null;
+  cluster_naam?: string | null;
+  branches?: BoardBranch[];
   id: number;
   name: string;
   description: string | null;
@@ -673,6 +686,9 @@ export interface OverviewDto {
 }
 
 export interface TicketDto {
+  /** Bij welke branch dit ticket hoort. De branch en niet het lab: het lab
+   *  komt en gaat, de branch blijft. */
+  branch?: string | null;
   id: number;
   board_id: number;
   key: string;

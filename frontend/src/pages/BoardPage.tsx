@@ -8,7 +8,7 @@
  * zonder de pagina te herladen.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
 import type { BoardDto, PlanDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
@@ -18,7 +18,7 @@ import { useMelding } from "@/components/Meldingen";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
-import { Archive, ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Archive, ArrowLeft, Bot, ChevronLeft, ChevronRight, GitBranch, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X } from "lucide-react";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import type { Bijlage } from "@/lib/labs";
 
@@ -33,6 +33,11 @@ export function BoardPage() {
 
   const balk = useMelding();
   const [board, setBoard] = useState<BoardDto | null>(null);
+  // Het "labbord" is dit bord, gefilterd op één branch. Geen apart bord:
+  // een branch-lab is wegwerpbaar en een ticket niet, dus een bord per lab
+  // zou verdwijnen met het lab dat je opruimt.
+  const [zoekParams, setZoekParams] = useSearchParams();
+  const branchFilter = zoekParams.get("branch") || "";
   const [tickets, setTickets] = useState<TicketDto[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
@@ -269,6 +274,18 @@ export function BoardPage() {
     return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
   }
 
+  // Alle branches die op dit bord voorkomen: die met een lab, plus die waar
+  // alleen nog tickets voor zijn. Dat tweede is de normale beginsituatie --
+  // je schrijft het ticket voordat het lab bestaat.
+  const alleBranches = Array.from(new Set([
+    ...(board.branches || []).map((b) => b.branch),
+    ...tickets.map((t) => t.branch).filter((b): b is string => !!b),
+  ])).sort();
+
+  const zichtbareTickets = branchFilter
+    ? tickets.filter((t) => t.branch === branchFilter)
+    : tickets;
+
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -277,6 +294,11 @@ export function BoardPage() {
             <ArrowLeft size={16} />
           </button>
           <h1 className="text-lg font-bold">{board.name}</h1>
+          {board.cluster_id && (
+            <Link to={`/clusters/${board.cluster_id}`}>
+              <Badge tone="violet">cluster: {board.cluster_naam}</Badge>
+            </Link>
+          )}
           {board.lab_id ? (
             <Badge tone={board.lab_status === "running" ? "green" : "yellow"}>
               lab: {board.lab_name} ({board.lab_status})
@@ -369,13 +391,50 @@ export function BoardPage() {
           }}
         />
 
+        {board.cluster_id && (board.branches?.length || branchFilter) && (
+          /* De branchkiezer. "Alle branches" is het clusterbord; één branch
+             gekozen is het labbord. Branches zonder lab staan er ook bij:
+             een ticket mag naar een branch wijzen waarvan het lab nog
+             gemaakt moet worden, en dat is de normale beginsituatie. */
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2 sm:px-4">
+            <GitBranch size={14} className="text-muted-foreground" />
+            {["", ...alleBranches].map((br) => {
+              const actief = branchFilter === br;
+              const lab = board.branches?.find((b) => b.branch === br);
+              return (
+                <button
+                  key={br || "__alle__"}
+                  onClick={() => {
+                    const p = new URLSearchParams(zoekParams);
+                    if (br) p.set("branch", br); else p.delete("branch");
+                    setZoekParams(p, { replace: true });
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition ${
+                    actief ? "border-primary bg-primary/10 font-medium" : "border-border hover:bg-secondary"
+                  }`}
+                >
+                  {br ? <span className="font-mono">{br}</span> : "Alle branches"}
+                  {br && (
+                    <span
+                      className={`size-1.5 rounded-full ${
+                        lab?.status === "running" ? "bg-success" : "bg-muted-foreground/40"
+                      }`}
+                      title={lab ? `lab ${lab.status}` : "nog geen lab voor deze branch"}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Kanban op een telefoon: de kolommen blijven naast elkaar, maar
             eentje vult bijna het scherm en klikt netjes in bij het vegen.
             Een kolom van 288px op een scherm van 390px geeft anders die
             halve-kolom-rand waar je steeds overheen scrolt. */}
         <div className="schuif-x group/bord flex flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
           {board.columns.map((col, kolomIndex) => {
-            const cards = tickets.filter((t) => t.status === col.key);
+            const cards = zichtbareTickets.filter((t) => t.status === col.key);
             const overLimit = col.wip_limit != null && cards.length > col.wip_limit;
             return (
               <div

@@ -656,6 +656,24 @@ export function ClusterDetailPage() {
           <Button variant="secondary" onClick={controleerToegang}>
             <KeyRound className="h-4 w-4" /> Toegang testen
           </Button>
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              if (bordId) { navigate(`/boards/${bordId}`); return; }
+              try {
+                const b = await boardApi.create({
+                  name: c.naam, cluster_id: c.id,
+                  key_prefix: c.naam.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase() || "CLU",
+                });
+                melding.ok("Bord aangemaakt voor dit cluster");
+                navigate(`/boards/${b.id}`);
+              } catch (e) {
+                melding.fout(e instanceof ApiError ? e.message : "Bord maken mislukte");
+              }
+            }}
+          >
+            <KanbanSquare className="h-4 w-4" /> {bordId ? "Naar het bord" : "Bord maken"}
+          </Button>
           <Button variant="secondary" onClick={() => setVerkenOpen(true)} disabled={!c.repo_url}>
             <Search className="h-4 w-4" /> Opnieuw verkennen
           </Button>

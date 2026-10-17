@@ -436,6 +436,36 @@ export function TicketDrawer({
               ))}
             </Select>
           </div>
+          {board.cluster_id && (
+            /* De branch waar dit ticket bij hoort. Hier en niet op het bord:
+               dit is de plek waar je een ticket uitwerkt, en de branch hoort
+               bij de inhoud ("waar moet dit gebeuren"), niet bij de plaats op
+               het bord.
+
+               Vrij in te vullen: je schrijft het ticket vaak vóórdat het lab
+               bestaat, en een keuzelijst van alleen bestaande branches zou
+               precies dat onmogelijk maken. */
+            <div>
+              <Label>Branch</Label>
+              <Input
+                list="branches-van-dit-cluster"
+                placeholder="feature/zoek-filter"
+                value={ticket.branch || ""}
+                onChange={(e) => setTicket({ ...ticket, branch: e.target.value })}
+                onBlur={(e) => save({ branch: e.target.value.trim() || null })}
+              />
+              <datalist id="branches-van-dit-cluster">
+                {(board.branches || []).map((b) => (
+                  <option key={b.branch} value={b.branch}>{b.status}</option>
+                ))}
+              </datalist>
+              {ticket.branch && !(board.branches || []).some((b) => b.branch === ticket.branch) && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Nog geen lab voor deze branch. Maak er een aan op het cluster.
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <Label>Toegewezen</Label>
             <Input

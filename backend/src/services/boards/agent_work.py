@@ -221,14 +221,58 @@ def _zet_op_bezig(db: Session, svc: BoardService, board: Board, ticket: Ticket) 
                      error=str(exc.detail)[:200])
 
 
+def _lab_voor_ticket(db: Session, board: Board, ticket: Ticket):
+    """In welk lab hoort deze agent-run te draaien?
+
+    Op een CLUSTERBORD is dat het lab van de branch van dit ticket, en niet
+    het lab van het bord. Daar zit het hele punt van een clusterbord: één
+    bord, tickets voor verschillende branches, en elke agent werkt in de
+    werkkopie die bij zíjn ticket hoort. Zou hij in het bordlab werken, dan
+    wijzigde hij de verkeerde branch -- en dat merk je pas bij de merge.
+
+    Het lab wordt op het moment zelf opgezocht, want het ticket kent alleen
+    de branch. Dat is met opzet: het lab is wegwerpbaar, de branch niet.
+    """
+    from models.lab import Lab
+
+    if getattr(board, "cluster_id", None) and getattr(ticket, "branch", None):
+        lab = (db.query(Lab)
+               .filter(Lab.cluster_id == board.cluster_id, Lab.branch == ticket.branch)
+               .first())
+        if lab is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Er is nog geen branch-lab voor '{ticket.branch}'. Maak het aan "
+                        f"op het cluster; dan werkt de agent in die werkkopie."))
+        return lab
+
+    if getattr(board, "cluster_id", None) and not getattr(ticket, "branch", None):
+        raise HTTPException(
+            status_code=409,
+            detail=("Dit ticket hoort bij geen branch. Zet er een branch op, zodat de "
+                    "agent weet in welke werkkopie hij moet werken."))
+
+    if not board.lab_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Dit board heeft geen gekoppeld lab — de agent heeft een lab nodig om in te werken")
+    lab = db.get(Lab, board.lab_id)
+    if lab is None:
+        raise HTTPException(status_code=409, detail="Het lab van dit board bestaat niet meer")
+    return lab
+
+
 def _thread_for_ticket(db: Session, board: Board, ticket: Ticket) -> Thread:
+    # Hetzelfde lab als waar de run in draait -- anders staat de chat van dit
+    # ticket onder een ander lab dan waar het werk gebeurt.
+    lab = _lab_voor_ticket(db, board, ticket)
     if ticket.agent_thread_id:
         existing = db.get(Thread, ticket.agent_thread_id)
         if existing is not None:
             return existing
     now = _now_iso()
     t = Thread(id=str(uuid4()), title=f"{ticket.key} — {ticket.title}"[:255],
-               lab_id=board.lab_id, source="board", created_at=now, updated_at=now)
+               lab_id=lab.id, source="board", created_at=now, updated_at=now)
     db.add(t)
     db.commit()
     ticket.agent_thread_id = t.id
@@ -249,12 +293,7 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
     ticket = svc.get_ticket(ticket_id)
     board = svc.get_board(ticket.board_id)
 
-    if not board.lab_id:
-        raise HTTPException(status_code=409,
-                            detail="Dit board heeft geen gekoppeld lab — de agent heeft een lab nodig om in te werken")
-    lab = db.get(Lab, board.lab_id)
-    if not lab:
-        raise HTTPException(status_code=409, detail="Het lab van dit board bestaat niet meer")
+    lab = _lab_voor_ticket(db, board, ticket)
     if lab.status != "running":
         # Een lab dat uit staat is geen reden om te weigeren: aanzetten is
         # precies wat degene die op "agent" drukt bedoelde. Lukt dát niet, dan
@@ -298,7 +337,7 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
                              lab_id=lab.id, error=str(exc)[:200])
 
     run = background_runs.start(
-        db, thread_id=thread.id, lab_id=board.lab_id,
+        db, thread_id=thread.id, lab_id=lab.id,
         history=[{"role": "user", "content": prompt}], prompt=prompt,
         mode="background",
         # De werker waarin deze run moet werken. Zonder werker landt alles in
