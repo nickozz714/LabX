@@ -875,6 +875,19 @@ class ClusterService:
         p.error = None
         p.updated_at = _nu()
         self.db.commit()
+        # De az-sessie van het clusterprofiel in elke werker zetten.
+        #
+        # Dit ontbrak, en daarom ging een branch-lab langs de hele
+        # Azure-machinerie heen: `az` stond er wel, maar `az account show`
+        # zei "Please run 'az login'". Een project dat zijn geheimen zelf uit
+        # een vault haalt, haalt er dan niets op -- en valt om op
+        # "Missing API_KEY" terwijl de front-end gewoon draait.
+        try:
+            await lab_svc._sync_azure_profile_into_lab(p)
+        except Exception as exc:  # noqa: BLE001 — geen sessie is geen reden om niet te starten
+            log.warningx("Azure-sessie niet in het branch-lab gezet",
+                         lab_id=p.id, error=str(exc)[:200])
+
         if c.start_script:
             # Inrichten EN daarna de applicatie starten. Het startscript is
             # geen inrichtingsstap: het keert niet terug als het goed gaat.
@@ -1015,12 +1028,17 @@ class ClusterService:
         from services.lab.verkenner import Verkenner
 
         ssh_prive = None
+        azure_sessie = None
         if cluster_id:
             c = self.get_or_404(cluster_id)
             repo_url = repo_url or c.repo_url or ""
             token_geheim = token_geheim or c.repo_token_geheim
             host_id = host_id if host_id is not None else c.host_id
             ssh_prive = self.ssh_prive(c)
+            if c.azure_profiel_id:
+                from services.lab.proefbouw import Proefbouw
+
+                azure_sessie = Proefbouw(self.db)._azure_sessie(c)
             # De briefing van de vorige keer blijft gelden. "Opnieuw
             # verkennen" vanaf de clusterpagina heeft geen invoerveld, en dan
             # is hem stil laten vallen de vervelendste uitkomst: je krijgt een
@@ -1032,7 +1050,7 @@ class ClusterService:
         uitslag = await Verkenner(self.db).verken(
             repo_url=repo_url, branch=branch,
             token_geheim=token_geheim, ssh_prive=ssh_prive, host_id=host_id,
-            instructie=instructie, antwoorden=antwoorden,
+            instructie=instructie, azure_sessie=azure_sessie, antwoorden=antwoorden,
             opmerkingen=opmerkingen, opmerking=opmerking,
             keuze=keuze, uitgezet=uitgezet)
 

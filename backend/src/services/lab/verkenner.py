@@ -88,6 +88,7 @@ class Verkenner:
                      ssh_prive: Optional[str] = None,
                      host_id: Optional[int] = None,
                      instructie: Optional[str] = None,
+                     azure_sessie: Optional[str] = None,
                      antwoorden: Optional[Dict[str, str]] = None,
                      opmerkingen: Optional[Dict[str, str]] = None,
                      opmerking: Optional[str] = None,
@@ -291,6 +292,7 @@ class Verkenner:
                            vondsten: List[det.Vondst], repo_url: str,
                            branch: str,
                            instructie: Optional[str] = None,
+                           azure_sessie: Optional[str] = None,
                            antwoorden: Optional[Dict[str, str]] = None,
                            opmerkingen: Optional[Dict[str, str]] = None,
                            opmerking: Optional[str] = None,
@@ -304,6 +306,7 @@ class Verkenner:
         """
         prompt = _prompt(repo_url=repo_url, branch=branch, beeld=beeld,
                          inhoud=inhoud, vondsten=vondsten, instructie=instructie,
+                         azure_sessie=azure_sessie,
                          antwoorden=antwoorden, opmerkingen=opmerkingen,
                          opmerking=opmerking, keuze=keuze)
         try:
@@ -825,6 +828,7 @@ het pad dan in "lees_ook"."""
 def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
             inhoud: det.RepoBeeld, vondsten: List[det.Vondst],
             instructie: Optional[str] = None,
+            azure_sessie: Optional[str] = None,
             antwoorden: Optional[Dict[str, str]] = None,
             opmerkingen: Optional[Dict[str, str]] = None,
             opmerking: Optional[str] = None,
@@ -836,6 +840,20 @@ def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
     geeft hem meteen de vorm waarin hij zelf moet antwoorden.
     """
     delen = [SYSTEEM, "", f"Repository: {repo_url}", f"Branch: {branch}", ""]
+
+    if azure_sessie:
+        delen += [
+            "ER IS AL EEN AZURE-AANMELDING in het lab. `az` is ingelogd als",
+            f"{azure_sessie} -- een GEBRUIKERSsessie, gezet door LabX uit het",
+            "profiel van het cluster. Gebruik die.",
+            "",
+            "Dus: GEEN `az login`, en zeker geen service principal met",
+            "AZURE_CLIENT_ID/AZURE_CLIENT_SECRET -- die zijn er niet, en een script",
+            "dat erop wacht slaat de hele stap over. Wil je weten of je erbij kunt,",
+            "doe dan gewoon de aanroep (`az keyvault secret list ...`) en behandel",
+            "een fout als een fout.",
+            "",
+        ]
 
     if instructie:
         # Vooraan, en met zoveel woorden zwaarder gewogen dan de rest: dit is

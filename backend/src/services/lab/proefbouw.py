@@ -463,6 +463,31 @@ class Proefbouw:
         return {"script": (antwoord.get("startscript") or "").strip() or None,
                 "toelichting": str(antwoord.get("toelichting") or "")[:600]}
 
+    def _azure_sessie(self, c: Cluster) -> Optional[str]:
+        """Onder welk account `az` in het lab is ingelogd, als dat zo is.
+
+        Het model moet dit weten. Zonder deze regel schreef het een script
+        dat zelf inlogt met een service principal -- en omdat
+        AZURE_CLIENT_ID/SECRET er niet zijn, sloeg het de hele
+        geheimen-stap over. Resultaat: de front-end draaide en de API viel om
+        op "Missing API_KEY", terwijl `az keyvault secret list` in dat lab
+        gewoon 21 geheimen opsomt.
+        """
+        if not c.azure_profiel_id:
+            return None
+        try:
+            from models.azure_profile import AzureProfile
+
+            profiel = self.db.get(AzureProfile, c.azure_profiel_id)
+            if profiel is None:
+                return None
+            gegevens = getattr(profiel, "identity", None) or {}
+            if isinstance(gegevens, dict):
+                return str(gegevens.get("account") or profiel.name)
+            return str(profiel.name)
+        except Exception:  # noqa: BLE001 — niet kunnen kijken is geen fout
+            return None
+
     def _labx_omgeving(self, c: Cluster) -> Dict[str, str]:
         """Wat LabX zelf aan het lab meegeeft.
 

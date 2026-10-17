@@ -613,3 +613,25 @@ def test_alle_poorten_moeten_antwoorden(db, monkeypatch):
     assert "5173" in gemeld and "7071" in gemeld
     assert "Missing API_KEY" in gemeld
     assert db.get(type(c), c.id).proef_status == "mislukt", "half is niet klaar"
+
+
+def test_het_model_hoort_dat_er_al_een_azure_sessie_is(db):
+    """Zonder deze regel schreef het model een script dat zelf inlogt met een
+    service principal — en omdat AZURE_CLIENT_ID/SECRET er niet zijn, sloeg
+    het de hele geheimen-stap over. De front-end draaide, de API viel om op
+    "Missing API_KEY", terwijl `az keyvault secret list` in dat lab gewoon
+    21 geheimen opsomt."""
+    from services.lab.verkenner import _prompt
+
+    prompt = _prompt(repo_url="x", branch="m", beeld={"boom": []}, inhoud={},
+                     vondsten=[], azure_sessie="nick@beeminds.nl")
+    assert "ER IS AL EEN AZURE-AANMELDING" in prompt
+    assert "nick@beeminds.nl" in prompt
+    assert "service principal" in prompt
+
+
+def test_zonder_profiel_staat_er_niets_over_azure(db):
+    from services.lab.verkenner import _prompt
+
+    prompt = _prompt(repo_url="x", branch="m", beeld={"boom": []}, inhoud={}, vondsten=[])
+    assert "AZURE-AANMELDING" not in prompt

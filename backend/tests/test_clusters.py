@@ -688,7 +688,7 @@ def test_het_lab_zegt_bij_welke_branch_het_hoort(db):
     assert uit["poort_map"] == {"8080": 18002}
 
 
-def test_een_branch_lab_start_altijd_als_branch_lab(db):
+def test_een_branch_lab_start_altijd_als_branch_lab(db, monkeypatch):
     """Er is maar één deur.
 
     Zonder dit hing het ervan af welke knop je toevallig gebruikte: via het
@@ -714,7 +714,11 @@ def test_een_branch_lab_start_altijd_als_branch_lab(db):
         gezien["lab_id"] = lab_id
         return {"id": lab_id}
 
-    ClusterService.start_branch_lab = nep_branchstart
+    # Via monkeypatch en niet met een gewone toewijzing: dat laatste blijft
+    # staan voor de rest van de sessie, en dan draait een latere test tegen
+    # een nepmethode aan. Dat gebeurde ook -- de test die controleert of de
+    # Azure-sessie gezet wordt, las de BRON van deze nepfunctie.
+    monkeypatch.setattr(ClusterService, "start_branch_lab", nep_branchstart)
     asyncio.run(LabService(db).start("b1"))
     assert gezien.get("lab_id") == "b1", "de gewone start moet doorverwijzen"
 
@@ -792,3 +796,17 @@ def test_een_ontbrekend_profiel_wordt_gemeld_als_het_nodig_is(db):
 
     svc.wijzig(c.id, azure_profiel_id=1)
     assert svc.to_dict(svc.get_or_404(c.id))["azure_profiel_nodig"] is False
+
+
+def test_een_branch_lab_krijgt_de_azure_sessie(db):
+    """Dit ontbrak, en daarom ging een branch-lab langs de hele
+    Azure-machinerie heen: `az` stond er wel, maar `az account show` zei
+    "Please run 'az login'". Een project dat zijn geheimen zelf uit een vault
+    haalt, haalt er dan niets op — en valt om op "Missing API_KEY" terwijl de
+    front-end gewoon draait."""
+    import inspect
+
+    from services.lab.clusters import ClusterService
+
+    bron = inspect.getsource(ClusterService.start_branch_lab)
+    assert "_sync_azure_profile_into_lab" in bron
