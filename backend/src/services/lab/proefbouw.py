@@ -41,9 +41,21 @@ log = get_logger(__name__)
 #: een lus die een uur later nog bezig is met de verkeerde aanname.
 MAX_RONDES = 3
 
-#: Hoe lang we wachten tot er iets op de poort antwoordt nadat het script
-#: klaar is. Een server die net gestart is heeft een paar tellen nodig.
-GEREED_SECONDEN = 45
+#: Hoe lang we wachten tot er iets op de poort antwoordt.
+#:
+#: Dit stond op 45 seconden, en dat was de denkfout: het startscript INSTALLEERT
+#: ook. Bij een kleine React-app duurde `npm install` alleen al twintig
+#: seconden, bij een monorepo met twaalf packages duurt de bouw minuten. De
+#: proefbouw gaf het dus op terwijl alles goed ging -- de applicatie stond een
+#: halve minuut later gewoon te draaien, met een HTTP 200.
+#:
+#: Lang wachten kost niets zolang we ook merken dat het script GESTOPT is:
+#: dan is er niets meer om op te wachten.
+GEREED_SECONDEN = int(__import__("os").environ.get("LABX_PROEF_WACHTTIJD", "900"))
+
+#: Hoe vaak we kijken of het script nog leeft. Een gevallen script hoeft de
+#: hele wachttijd niet uit te zitten.
+LEEFT_ELKE = 15
 
 #: De naam van de proefbranch als je er zelf geen kiest.
 STANDAARD_BRANCH = "labx/proefbouw"
@@ -93,15 +105,18 @@ class Proefbouw:
             raise
 
     async def _rondes(self, svc, c: Cluster, p) -> Dict[str, Any]:
+        """Inrichten, starten, kijken of er iets antwoordt.
+
+        Drie stappen en niet één, omdat ze op verschillende dingen afgerekend
+        worden. Inrichten moet EINDIGEN. De applicatie moet juist blijven
+        draaien -- die wordt dus op de achtergrond gestart en beoordeeld op de
+        poort, niet op een exitcode die nooit komt.
+        """
         from services.lab.lab_service import LabService
 
         lab_svc = LabService(self.db)
         for ronde in range(1, MAX_RONDES + 1):
-            p.setup_script = c.start_script
-            self.db.commit()
-
-            uitslag = await lab_svc.provision(p.id, force=True)
-            fout = self._fout_uit(uitslag)
+            fout = await self._poging(lab_svc, svc, c, p)
 
             if fout is None:
                 adres = await self._antwoordt(svc, c, p)
@@ -115,15 +130,16 @@ class Proefbouw:
                         "adres": adres, "log": list(c.proef_log or [])}
 
             if ronde == MAX_RONDES:
+                self._noteer(c, {"ronde": ronde, "fase": "opgegeven", "fout": fout})
                 break
 
-            nieuw = await self._herstel(c, fout, ronde)
+            nieuw_script = await self._herstel(c, fout, ronde)
             self._noteer(c, {"ronde": ronde, "fase": "bijgesteld", "fout": fout,
-                             "toelichting": nieuw.get("toelichting"),
-                             "gewijzigd": bool(nieuw.get("script"))})
-            if not nieuw.get("script"):
+                             "toelichting": nieuw_script.get("toelichting"),
+                             "gewijzigd": bool(nieuw_script.get("script"))})
+            if not nieuw_script.get("script"):
                 break
-            c.start_script = nieuw["script"]
+            c.start_script = nieuw_script["script"]
             c.updated_at = _nu()
             self.db.commit()
 
@@ -132,6 +148,29 @@ class Proefbouw:
         self.db.commit()
         log.warningx("Proefbouw niet gelukt", cluster=c.naam, rondes=MAX_RONDES)
         return {"status": "mislukt", "lab_id": p.id, "log": list(c.proef_log or [])}
+
+    async def _poging(self, lab_svc, svc, c: Cluster, p) -> Optional[str]:
+        """Eén poging: inrichten, starten, wachten tot de poort antwoordt.
+
+        Geeft terug wat er misging, of None als de applicatie draait.
+        """
+        uitslag = await lab_svc.provision(p.id, force=True)
+        fout = self._fout_uit(uitslag)
+        if fout is not None:
+            return fout
+
+        gestart = await lab_svc.start_applicatie(p.id)
+        if not gestart.get("ok"):
+            return str(gestart.get("reden") or gestart.get("uitvoer") or "Starten mislukte.")
+
+        if await self._antwoordt(svc, c, p):
+            return None
+
+        # Niets op de poort. Het logbestand is het bewijsmateriaal -- dit is
+        # wat het model moet zien, en niet een exitcode die er nooit komt.
+        logtekst = (await lab_svc.start_log(p.id)).strip()
+        return (f"Er antwoordt niets op de poort binnen {GEREED_SECONDEN} seconden.\n"
+                f"De laatste regels van het startscript:\n{logtekst or '(het log is leeg)'}")
 
     # ── de onderdelen ────────────────────────────────────────────────────────
 
@@ -181,24 +220,57 @@ class Proefbouw:
             return "Het inrichten is mislukt vóór het startscript."
         return None
 
-    async def _antwoordt(self, svc, c: Cluster, p) -> Optional[str]:
+    async def _antwoordt(self, svc, c: Cluster, p, *, geduld: Optional[int] = None) -> Optional[str]:
         """Luistert er iets op de poort van dit lab?
 
         Een script dat klaar is en een applicatie die antwoordt zijn twee
         dingen. `exec` op de voorgrond betekent dat het script NIET terugkeert
         als het goed is -- dus hier kijken we naar de poort en niet naar een
         exitcode.
+
+        We wachten lang, want het script installeert en bouwt ook. Maar we
+        kijken ondertussen of het nog LEEFT: een gevallen script hoeft de hele
+        wachttijd niet uit te zitten, en de gebruiker hoeft er niet een kwartier
+        naar te kijken.
         """
         kaart = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
         if not kaart:
             return None
         machine_poort = sorted(kaart.items())[0][1]
-        einde = asyncio.get_running_loop().time() + GEREED_SECONDEN
+        einde = asyncio.get_running_loop().time() + (geduld or GEREED_SECONDEN)
+        volgende_controle = asyncio.get_running_loop().time() + LEEFT_ELKE
+
         while asyncio.get_running_loop().time() < einde:
             if await self._open(machine_poort):
                 return f"http://localhost:{machine_poort}"
+            if asyncio.get_running_loop().time() >= volgende_controle:
+                volgende_controle += LEEFT_ELKE
+                if not await self._leeft(p):
+                    log.infox("Startscript is gestopt; niet langer wachten", lab_id=p.id)
+                    return None
             await asyncio.sleep(3)
         return None
+
+    async def _leeft(self, p) -> bool:
+        """Draait het startscript nog?
+
+        Zo niet, dan is er niets meer om op te wachten -- het is gevallen of
+        het keerde terug, en allebei betekent dat er niets gaat luisteren.
+        """
+        from services.lab.lab_service import LabService
+
+        svc = LabService(self.db)
+        werkers = [w for w in svc.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return False
+        try:
+            uit = await svc.runtime_voor(p).exec(
+                werkers[0].container_id,
+                ["sh", "-c", "pgrep -f labx-start.sh >/dev/null && echo leeft || echo weg"],
+                workdir="/workspace", timeout=20)
+            return "leeft" in str(uit.get("output") or "")
+        except Exception:  # noqa: BLE001 — niet kunnen kijken is geen doodverklaring
+            return True
 
     @staticmethod
     async def _open(poort: int) -> bool:
@@ -215,10 +287,16 @@ class Proefbouw:
         """Het model het script laten bijstellen op grond van de echte fout."""
         from services.lab.verkenner import VERKENNER_MODEL, _lees_json
 
+        # De omgeving die het lab ECHT krijgt, niet alleen wat op het cluster
+        # staat. Zonder de LABX_*-variabelen erbij concludeerde het model
+        # "LABX_POORT is niet gezet" en ging het een workaround schrijven voor
+        # een probleem dat niet bestond -- die variabele stond er gewoon.
+        omgeving = dict(c.omgeving or {})
+        omgeving.update(self._labx_omgeving(c))
         prompt = _HERSTEL_PROMPT.format(
             ronde=ronde, max_rondes=MAX_RONDES,
             image=c.lab_image or "het standaard lab-image",
-            omgeving="\n".join(f"  {k}={v}" for k, v in (c.omgeving or {}).items()) or "  (geen)",
+            omgeving="\n".join(f"  {k}={v}" for k, v in sorted(omgeving.items())) or "  (geen)",
             script=c.start_script or "", fout=fout)
         try:
             from services.agent.claude_cli_provider import ClaudeCliProvider
@@ -238,6 +316,22 @@ class Proefbouw:
         antwoord = _lees_json(uit.text)
         return {"script": (antwoord.get("startscript") or "").strip() or None,
                 "toelichting": str(antwoord.get("toelichting") or "")[:600]}
+
+    def _labx_omgeving(self, c: Cluster) -> Dict[str, str]:
+        """Wat LabX zelf aan het lab meegeeft.
+
+        Staat niet op het cluster maar wordt bij het starten toegevoegd, en
+        het model moet het wél weten -- anders lost het iets op wat al
+        geregeld is.
+        """
+        from models.lab import Lab
+
+        p = self.db.get(Lab, c.proef_lab_id) if c.proef_lab_id else None
+        if p is None or not (p.poort_map or {}):
+            return {}
+        from services.lab.clusters import ClusterService
+
+        return ClusterService._adres_omgeving(c, {int(k): int(v) for k, v in p.poort_map.items()})
 
     def _noteer(self, c: Cluster, regel: Dict[str, Any]) -> None:
         regels = list(c.proef_log or [])
@@ -305,7 +399,14 @@ class Proefbouw:
 _HERSTEL_PROMPT = """Je stelt een startscript bij dat zojuist is gedraaid en gefaald.
 
 Dit is ronde {ronde} van {max_rondes}. Het script draait IN een container
-({image}), in de werkkopie van de repo, als root, op de voorgrond.
+({image}), ALS ROOT, en met de werkkopie van de repo als werkmap -- dus
+`package.json` en `pyproject.toml` staan gewoon naast je, zonder dat je ze
+hoeft te zoeken.
+
+LabX start dit script op de ACHTERGROND en kijkt daarna of er iets op de
+poort antwoordt. Laat de applicatie dus op de voorgrond draaien (`exec ...`):
+het script hoort NIET terug te keren als alles goed is. Een script dat wel
+terugkeert, laat een lab achter waar niets op luistert.
 
 Deze omgevingsvariabelen staan klaar:
 {omgeving}

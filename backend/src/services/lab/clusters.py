@@ -800,7 +800,9 @@ class ClusterService:
         hetzelfde lab, alleen op de juiste bridge en met een vast adres.
         """
         from models.lab import Lab
-        from services.lab.lab_service import LabService, provision_in_background
+        from services.lab.lab_service import (
+            LabService, _na_inrichten_starten,
+        )
 
         p = self.db.get(Lab, lab_id)
         if p is None or not p.cluster_id:
@@ -850,7 +852,9 @@ class ClusterService:
         p.updated_at = _nu()
         self.db.commit()
         if c.start_script:
-            provision_in_background(p.id)
+            # Inrichten EN daarna de applicatie starten. Het startscript is
+            # geen inrichtingsstap: het keert niet terug als het goed gaat.
+            _na_inrichten_starten(p.id)
         log.infox("Branch-lab gestart", cluster=c.naam, branch=p.branch,
                   poorten=p.poort_map)
         self.db.refresh(p)

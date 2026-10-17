@@ -77,14 +77,18 @@ class NepLus:
     """Een proefbouw waarvan alleen de BUITENkant echt is: geen docker, geen
     model. Wat hier getest wordt is de lus zelf."""
 
-    def __init__(self, db, uitslagen, scripts=None, antwoordt=True):
+    def __init__(self, db, uitslagen, scripts=None, antwoorden=None, logtekst="npm error ENOENT"):
         from services.lab.proefbouw import Proefbouw
 
         self.echt = Proefbouw(db)
         self.uitslagen = list(uitslagen)
         self.scripts = list(scripts or [])
-        self.antwoordt = antwoordt
+        #: Per poging: antwoordt de poort? Een lijst, want de lus mag meer dan
+        #: één keer kijken en dat is juist het interessante geval.
+        self.antwoorden = list(antwoorden if antwoorden is not None else [True])
+        self.logtekst = logtekst
         self.provisioned = 0
+        self.gestart = 0
 
     def installeer(self, monkeypatch, db, p):
         from services.lab import proefbouw as mod
@@ -101,9 +105,23 @@ class NepLus:
             return p
 
         async def nep_antwoordt(zelf, svc, c, lab):
-            return "http://localhost:18009" if self.antwoordt else None
+            ja = self.antwoorden.pop(0) if self.antwoorden else False
+            # De lus kijkt twee keer bij een geslaagde poging (eenmaal om te
+            # oordelen, eenmaal voor het adres); de uitkomst blijft dan staan.
+            if not self.antwoorden:
+                self.antwoorden = [ja]
+            return "http://localhost:18009" if ja else None
+
+        async def nep_start(zelf, lab_id):
+            self.gestart += 1
+            return {"ok": True, "map": "/workspace/repo"}
+
+        async def nep_log(zelf, lab_id, regels=80):
+            return self.logtekst
 
         monkeypatch.setattr(LabService, "provision", nep_provision)
+        monkeypatch.setattr(LabService, "start_applicatie", nep_start)
+        monkeypatch.setattr(LabService, "start_log", nep_log)
         monkeypatch.setattr(mod.Proefbouw, "_herstel", nep_herstel)
         monkeypatch.setattr(mod.Proefbouw, "_proeflab", nep_proeflab)
         monkeypatch.setattr(mod.Proefbouw, "_antwoordt", nep_antwoordt)
@@ -133,8 +151,8 @@ def test_een_fout_wordt_bijgesteld_en_opnieuw_geprobeerd(db, monkeypatch):
     c = _cluster(db)
     p = _lab(db, c)
     nieuw = "#!/bin/sh\n[ -f components/app/.env.example ] && cp ...\nexec node server.js"
-    lus = NepLus(db, [FAALT, LUKT],
-                 [{"script": nieuw, "toelichting": "dat bestand bestaat niet"}])
+    lus = NepLus(db, [FAALT, LUKT], [{"script": nieuw, "toelichting": "dat bestand bestaat niet"}],
+                 antwoorden=[True])
     lus_obj = lus.installeer(monkeypatch, db, p)
 
     uit = asyncio.run(lus_obj.start(c.id))
@@ -163,7 +181,8 @@ def test_elke_ronde_is_terug_te_lezen(db, monkeypatch):
     c = _cluster(db)
     p = _lab(db, c)
     lus = NepLus(db, [FAALT, LUKT],
-                 [{"script": "#!/bin/sh\necho x", "toelichting": "pad bestaat niet"}])
+                 [{"script": "#!/bin/sh\necho x", "toelichting": "pad bestaat niet"}],
+                 antwoorden=[True])
     asyncio.run(lus.installeer(monkeypatch, db, p).start(c.id))
 
     regels = db.get(type(c), c.id).proef_log
@@ -172,15 +191,42 @@ def test_elke_ronde_is_terug_te_lezen(db, monkeypatch):
     assert any(r["fase"] == "gelukt" for r in regels)
 
 
-def test_een_script_dat_klaar_is_maar_niets_laat_luisteren_telt_als_gelukt_zonder_adres(db, monkeypatch):
-    """Een script dat klaar is en een applicatie die antwoordt zijn twee
-    dingen. Geen adres is geen fout, maar je hoort het wel te zien."""
+def test_niets_op_de_poort_is_de_fout_en_het_log_is_het_bewijs(db, monkeypatch):
+    """Hier zat de oorspronkelijke denkfout.
+
+    Het startscript draaide `exec npm run dev` -- precies wat de prompt vraagt
+    -- en kwam dus nooit terug. Na een half uur sloeg de inrichtingsstap om in
+    exitcode 124, en die GESLAAGDE uitvoer ging als "fout" naar het model.
+    Dat antwoordde terecht: "Ik zie in deze uitvoer geen fout."
+
+    Een draaiende applicatie herken je aan de poort, niet aan een exitcode die
+    er nooit komt. En wat er misging staat in het logbestand.
+    """
     c = _cluster(db)
     p = _lab(db, c)
-    lus = NepLus(db, [LUKT], antwoordt=False).installeer(monkeypatch, db, p)
+    lus = NepLus(db, [LUKT, LUKT, LUKT], antwoorden=[False],
+                 logtekst="Error: Cannot find module 'vite'")
+    lus_obj = lus.installeer(monkeypatch, db, p)
 
-    uit = asyncio.run(lus.start(c.id))
-    assert uit["status"] == "wacht_op_fiat" and uit["adres"] is None
+    uit = asyncio.run(lus_obj.start(c.id))
+    assert uit["status"] == "mislukt"
+    gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
+    assert "Cannot find module" in gemeld, "het log is het bewijsmateriaal"
+    assert "antwoordt niets op de poort" in gemeld
+
+
+def test_het_startscript_is_geen_inrichtingsstap(db, monkeypatch):
+    """Inrichten moet EINDIGEN, een applicatie moet juist blijven draaien.
+    Allebei als inrichtingsstap behandelen levert een time-out op die eruit
+    ziet als een fout terwijl alles werkt."""
+    c = _cluster(db)
+    p = _lab(db, c)
+    lus = NepLus(db, [LUKT])
+    asyncio.run(lus.installeer(monkeypatch, db, p).start(c.id))
+
+    assert lus.gestart == 1, "de applicatie wordt apart gestart, op de achtergrond"
+    assert not (db.get(type(p), p.id).setup_script or ""), \
+        "het startscript hoort niet in het inrichten terecht te komen"
 
 
 def test_alleen_het_eigen_script_telt_als_fout():
@@ -239,3 +285,57 @@ def test_zonder_startscript_valt_er_niets_te_proberen(db):
     with pytest.raises(HTTPException) as fout:
         asyncio.run(Proefbouw(db).start(c.id))
     assert fout.value.status_code == 400
+
+
+# ── geduld, en weten wanneer je het kunt opgeven ─────────────────────────────
+
+def test_er_wordt_lang_genoeg_gewacht_voor_een_bouw():
+    """Dit stond op 45 seconden, en dat was de denkfout: het startscript
+    INSTALLEERT ook. Bij een kleine React-app duurde `npm install` alleen al
+    twintig seconden; de proefbouw gaf het op terwijl de applicatie een halve
+    minuut later gewoon een HTTP 200 gaf."""
+    from services.lab.proefbouw import GEREED_SECONDEN
+
+    assert GEREED_SECONDEN >= 600, "een monorepo bouwt niet in een minuut"
+
+
+def test_een_gevallen_script_hoeft_de_wachttijd_niet_uit_te_zitten(db, monkeypatch):
+    """Lang wachten kost niets zolang we merken dat het script gestopt is.
+    Anders kijkt de gebruiker een kwartier naar iets dat al gevallen was."""
+    import time
+
+    from services.lab import proefbouw as mod
+
+    c = _cluster(db)
+    p = _lab(db, c)
+
+    async def nep_open(poort):
+        return False
+
+    async def nep_leeft(zelf, lab):
+        return False
+
+    monkeypatch.setattr(mod.Proefbouw, "_open", staticmethod(nep_open))
+    monkeypatch.setattr(mod.Proefbouw, "_leeft", nep_leeft)
+    monkeypatch.setattr(mod, "LEEFT_ELKE", 0)
+
+    begin = time.monotonic()
+    uit = asyncio.run(mod.Proefbouw(db)._antwoordt(None, c, p, geduld=900))
+    assert uit is None
+    assert time.monotonic() - begin < 20, "niet 900 seconden blijven wachten"
+
+
+def test_het_model_ziet_de_variabelen_die_labx_zelf_zet(db):
+    """Zonder deze concludeerde het model "LABX_POORT is niet gezet" en ging
+    het een workaround schrijven voor een probleem dat niet bestond — die
+    variabele stond er gewoon."""
+    from services.lab.proefbouw import Proefbouw
+
+    c = _cluster(db)
+    p = _lab(db, c)
+    c.proef_lab_id = p.id
+    db.commit()
+
+    omgeving = Proefbouw(db)._labx_omgeving(c)
+    assert omgeving["LABX_POORT"] == "8000"
+    assert omgeving["LABX_LAB_POORT"] == "18009"

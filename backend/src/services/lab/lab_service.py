@@ -764,6 +764,12 @@ class LabService:
             steps.append(_AZ_STEP)
         steps += self._extra_steps(p)
         script = (p.setup_script or "").strip()
+        # Een branch-lab start zijn applicatie apart, op de achtergrond (zie
+        # start_applicatie). Hem hier als stap draaien betekent wachten op een
+        # proces dat per definitie niet terugkomt -- en dat eindigt in een
+        # time-out die eruitziet als een fout terwijl alles werkt.
+        if p.cluster_id:
+            script = ""
         if script:
             # Geen check: een eigen script hoort zelf idempotent te zijn, en wat
             # het klaar-zijn ervan betekent weet alleen de schrijver.
@@ -3158,6 +3164,100 @@ exec ssh -N \\
                 out["port_map"] = {}
         return out
 
+
+    # ── de applicatie starten ────────────────────────────────────────────────
+
+    #: Waar de uitvoer van het startscript heen gaat. In de werkkopie, zodat
+    #: je er via de bestandsbrowser van het lab bij kunt.
+    START_LOG = ".labx-start.log"
+
+    async def start_applicatie(self, lab_id: str) -> Dict[str, Any]:
+        """Het startscript van het cluster draaien -- op de ACHTERGROND.
+
+        Dit was eerst een inrichtingsstap, en dat is precies verkeerd om. Een
+        inrichtingsstap moet EINDIGEN; een applicatie moet juist blijven
+        draaien. Het script doet keurig wat de prompt vraagt --
+        `exec npm run dev` op de voorgrond -- en kwam dus nooit terug. Na een
+        half uur sloeg de stap om in exitcode 124, en die geslaagde uitvoer
+        ging als "fout" naar het model. Dat antwoordde, volkomen terecht:
+        "Ik zie in deze uitvoer geen fout."
+
+        Dus: op de achtergrond, met de uitvoer in een logbestand, en het
+        oordeel komt van de POORT. Een draaiende applicatie herken je eraan
+        dat er iets antwoordt, niet aan een exitcode die er nooit komt.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        if not p.cluster_id:
+            raise HTTPException(status_code=400, detail="Dit is geen branch-lab.")
+        c = self.db.get(Cluster, p.cluster_id)
+        if c is None or not (c.start_script or "").strip():
+            return {"ok": False, "reden": "Dit cluster heeft geen startscript."}
+
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return {"ok": False, "reden": "Er draait geen container voor dit lab."}
+
+        rt = self.runtime_voor(p)
+        map_ = self._repomap(c)
+        # Het script in een bestand zetten en NIET als argument meegeven: een
+        # script van dertig regels met aanhalingstekens erin overleeft de reis
+        # door `docker exec sh -c` niet ongeschonden.
+        pad = "/workspace/.labx-start.sh"
+        await rt.exec(werkers[0].container_id,
+                      ["sh", "-c", f"cat > {pad} && chmod +x {pad}"],
+                      stdin=(c.start_script or "").encode(), timeout=60)
+
+        # `setsid` maakt hem los van deze exec: zonder dat sterft hij zodra
+        # de exec-sessie eindigt, en dat is precies wanneer wij teruggaan
+        # kijken of hij draait.
+        start = (f"cd {map_} 2>/dev/null || cd /workspace; "
+                 f"rm -f {self.START_LOG}; "
+                 f"setsid sh {pad} > {self.START_LOG} 2>&1 < /dev/null & "
+                 f"echo gestart")
+        uit = await rt.exec(werkers[0].container_id, ["sh", "-c", start],
+                            workdir="/workspace", timeout=60)
+        log.infox("Applicatie gestart", lab_id=p.id, map=map_,
+                  exit=uit.get("exit_code"))
+        return {"ok": uit.get("exit_code") == 0, "map": map_,
+                "uitvoer": str(uit.get("output") or "")[:400]}
+
+    async def start_log(self, lab_id: str, *, regels: int = 80) -> str:
+        """De laatste regels van het startscript. Het bewijsmateriaal.
+
+        Draait de applicatie niet, dan staat hier waarom -- en dit is wat het
+        model moet zien, niet een exitcode die nooit komt.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        c = self.db.get(Cluster, p.cluster_id) if p.cluster_id else None
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return ""
+        map_ = self._repomap(c) if c else "/workspace"
+        uit = await self.runtime_voor(p).exec(
+            werkers[0].container_id,
+            ["sh", "-c", f"tail -n {int(regels)} {map_}/{self.START_LOG} "
+                         f"2>/dev/null || tail -n {int(regels)} /workspace/{self.START_LOG} 2>/dev/null"],
+            workdir="/workspace", timeout=30)
+        return str(uit.get("output") or "")
+
+    @staticmethod
+    def _repomap(c: Any) -> str:
+        """Waar de werkkopie staat.
+
+        `git clone <url> <naam>` zet hem in een submap, dus de werkkopie is
+        /workspace/<reponaam> en niet /workspace. Het script dat daar niet van
+        uitging kreeg `npm error path /workspace/package.json` -- en het model
+        schreef er vervolgens zoekcode voor, om een vraag te beantwoorden die
+        LabX gewoon kan beantwoorden.
+        """
+        naam = (getattr(c, "repo_url", "") or "").rstrip("/").split("/")[-1]
+        naam = naam.removesuffix(".git").strip()
+        return f"/workspace/{naam}" if naam else "/workspace"
+
     def _az_gewenst(self, p: Lab) -> bool:
         """Moet dit lab de Azure CLI krijgen?
 
@@ -3253,6 +3353,46 @@ _PROVISION_TASKS: Dict[str, Any] = {}
 # Labs waarvoor tijdens een lopende inrichtronde opnieuw om inrichten is
 # gevraagd. Zie _na_inrichten.
 _PROVISION_NOGMAALS: set = set()
+
+
+def _na_inrichten_starten(lab_id: str) -> bool:
+    """Inrichten, en als dat klaar is de applicatie starten.
+
+    Twee handelingen die niet samen in één stap kunnen: inrichten moet
+    EINDIGEN, de applicatie moet juist blijven draaien. Ze allebei als
+    inrichtingsstap behandelen levert een time-out op die eruitziet als een
+    fout terwijl alles werkt -- dat kostte een hele proefbouw om te ontdekken.
+
+    Zelfde boekhouding als het gewone inrichten, zodat twee rondes niet
+    tegelijk in dezelfde container aan apt gaan zitten.
+    """
+    import asyncio
+
+    running = _PROVISION_TASKS.get(lab_id)
+    if running is not None and not running.done():
+        _PROVISION_NOGMAALS.add(lab_id)
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # geen draaiende loop (script/test) — dan niet
+        log.warningx("Inrichten niet gestart: geen event loop", lab_id=lab_id)
+        return False
+
+    async def _beide() -> None:
+        from db.database import SessionLocal
+
+        await _provision_worker(lab_id, force=True)
+        try:
+            with SessionLocal() as db:
+                await LabService(db).start_applicatie(lab_id)
+        except Exception as exc:  # noqa: BLE001 — starten mag het inrichten niet omverhalen
+            log.warningx("Applicatie starten mislukt", lab_id=lab_id, error=str(exc)[:300])
+
+    _PROVISION_NOGMAALS.discard(lab_id)
+    task = loop.create_task(_beide())
+    _PROVISION_TASKS[lab_id] = task
+    task.add_done_callback(lambda _t: _na_inrichten(lab_id))
+    return True
 
 
 def provision_in_background(lab_id: str, *, force: bool = False) -> bool:
