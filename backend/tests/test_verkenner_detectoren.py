@@ -332,3 +332,37 @@ def test_zonder_expose_wordt_er_niets_beweerd():
     from services.lab.verkenner_detectoren import detecteer_poorten
 
     assert detecteer_poorten({"Dockerfile": "FROM python:3.11\nCMD [\"x\"]\n"}) == []
+
+
+# ── de Azure CLI: alleen waar hij echt nodig is ─────────────────────────────
+
+def test_een_repo_die_az_aanroept_vraagt_om_de_azure_cli():
+    """Een branch-lab krijgt de Azure CLI standaard NIET: in een
+    node-monorepo kost dat 616 MB voor gereedschap dat nooit wordt
+    aangeroepen. Maar soms wordt hij wel aangeroepen — IntelligentHive draait
+    `.devcontainer/ensure-access.sh` en dat strandde op `az: command not
+    found`, in een lus die zichzelf eindeloos opnieuw probeerde. Het lab leek
+    dus te leven terwijl er niets gebeurde.
+    """
+    from services.lab.verkenner_detectoren import detecteer_azure_cli
+
+    beeld = {".devcontainer/ensure-access.sh":
+             "#!/bin/bash\nset -e\nif ! az account show; then\n  az login\nfi\n"}
+    vondst = detecteer_azure_cli(beeld)[0]
+    assert vondst.waarde["nodig"] is True
+    assert vondst.zekerheid == "hoog"
+    assert vondst.bewijs[0].bestand == ".devcontainer/ensure-access.sh"
+    assert vondst.bewijs[0].regel == 3, "met vindplaats, zoals elke vondst"
+
+
+def test_een_repo_zonder_azure_vraagt_er_niet_om():
+    from services.lab.verkenner_detectoren import detecteer_azure_cli
+
+    assert detecteer_azure_cli(HIVE) == []
+
+
+def test_het_woord_az_in_proza_telt_niet():
+    """Anders krijgt elke repo met "az" in een README de Azure CLI erbij."""
+    from services.lab.verkenner_detectoren import detecteer_azure_cli
+
+    assert detecteer_azure_cli({"README.md": "Dit project heet az en doet dingen.\n"}) == []

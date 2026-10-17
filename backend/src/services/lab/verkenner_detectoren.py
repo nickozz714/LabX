@@ -574,6 +574,51 @@ def detecteer_poorten(beeld: RepoBeeld) -> List[Vondst]:
     )]
 
 
+#: Hoe je ziet dat een repo de Azure CLI nodig heeft. Een aanroep van `az`
+#: aan het begin van een regel of na een pipe, of een installatie ervan.
+_AZ_GEBRUIK = re.compile(
+    r"(^|[\n;|&]\s*)az\s+(login|account|keyvault|storage|ad|group|webapp|functionapp|rest)\b"
+    r"|azure-cli|InstallAzureCLIDeb",
+    re.MULTILINE)
+
+
+def detecteer_azure_cli(beeld: RepoBeeld) -> List[Vondst]:
+    """Heeft deze applicatie de Azure CLI nodig in het lab?
+
+    Dit bestaat omdat een branch-lab hem standaard NIET krijgt: deze
+    installatie zet hem in elk gewoon lab, en in een node-monorepo kost dat
+    616 MB voor gereedschap dat nooit wordt aangeroepen.
+
+    Maar soms wordt hij wél aangeroepen. Bij IntelligentHive draait het
+    startscript `.devcontainer/ensure-access.sh`, en dat strandde op
+    `az: command not found` -- in een lus die zichzelf eindeloop opnieuw
+    probeerde, dus het lab leek te leven terwijl er niets gebeurde. Dat
+    hoort LabX te zien in plaats van jou te laten raden.
+    """
+    bewijs: List[Bewijs] = []
+    for pad, tekst in beeld.items():
+        treffer = _AZ_GEBRUIK.search(tekst)
+        if not treffer:
+            continue
+        # Per REGEL zoeken, en dus zonder de regelovergangen uit het patroon
+        # hierboven -- die matchen nooit binnen één regel.
+        nr = _regel_van(tekst, r"(^|[;|&]\s*|\s)az\s+\w|azure-cli|InstallAzureCLIDeb")
+        bewijs.append(Bewijs(bestand=pad, regel=nr, fragment=_fragment(tekst, nr)))
+        if len(bewijs) >= 4:
+            break
+    if not bewijs:
+        return []
+    return [Vondst(
+        soort="omgeving", sleutel="azure_cli",
+        waarde={"nodig": True},
+        bewijs=bewijs,
+        zekerheid="hoog", bron="detector:azure",
+        toelichting=("Deze repo roept de Azure CLI aan. Een branch-lab krijgt die "
+                     "standaard niet; vink dit aan, anders strandt het startscript op "
+                     "'az: command not found'."),
+    )]
+
+
 # ── alles bij elkaar ─────────────────────────────────────────────────────────
 
 def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
@@ -583,6 +628,7 @@ def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
         detecteer_compose,
         detecteer_dockerfile,
         detecteer_poorten,
+        detecteer_azure_cli,
         detecteer_omgevingsbestanden,
         detecteer_env_profielen,
         detecteer_manifesten,

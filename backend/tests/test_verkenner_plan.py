@@ -987,3 +987,23 @@ def test_een_uitgesloten_vondst_staat_niet_vooraf_aan():
     keuze = {(k["soort"], k["sleutel"]) for k in ClusterService.standaardkeuze(plan)}
     assert ("dienst", "cosmos") in keuze
     assert ("dienst", "postgres") not in keuze
+
+
+def test_aanvinken_van_azure_cli_zet_het_op_het_cluster(db):
+    """Zonder deze schakel blijft de vondst een melding en verandert er
+    niets: het lab krijgt de CLI nog steeds niet."""
+    uitslag = {
+        **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
+        "vondsten": [{
+            "soort": "omgeving", "sleutel": "azure_cli", "bevestigd": True,
+            "zekerheid": "hoog", "bron": "detector:azure", "toelichting": "",
+            "bewijs": [{"bestand": ".devcontainer/ensure-access.sh", "regel": 3}],
+            "waarde": {"nodig": True},
+        }],
+    }
+    svc = _svc(db, uitslag)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="Hive")
+    # SQLite bewaart dit als 0/1; de code leest hem overal als bool.
+    assert bool(svc.get_or_404(uit["cluster"]["id"]).lab_azure) is True
+    assert uit["cluster"]["lab_azure"] is True

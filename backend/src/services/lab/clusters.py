@@ -1270,6 +1270,11 @@ class ClusterService:
             elif soort == "startscript":
                 c.start_script = plan.get("startscript") or c.start_script
 
+            elif soort == "omgeving" and sleutel == "azure_cli":
+                # De applicatie roept `az` aan; dan hoort hij in het lab te
+                # zitten, ook al krijgt een branch-lab hem standaard niet.
+                c.lab_azure = True
+
             elif soort == "omgeving" and sleutel == "env_profiel":
                 c.env_profiel = (env_profiel or str(waarde.get("standaard") or ""))[:64] or None
 
