@@ -687,3 +687,28 @@ def test_een_keuze_maken_is_geen_afwijzing(db):
     soorten = {k["soort"] for k in gezien["uitgezet"]}
     assert "lab_image" not in soorten
     assert "applicatie" not in soorten
+
+
+# ── een git-fout die ergens over gaat ────────────────────────────────────────
+
+GIT_SSH_FOUT = """git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists."""
+
+
+def test_de_oorzaak_wordt_uit_een_git_fout_gehaald():
+    """Git spreidt zijn fout over vijf regels en zet de kern bovenaan. De
+    laatste regel pakken levert "and the repository exists." op — waar en
+    volstrekt nutteloos."""
+    from services.lab.verkenner import _git_reden
+
+    assert "Permission denied (publickey)" in _git_reden(GIT_SSH_FOUT)
+
+
+def test_een_geweigerde_sleutel_telt_als_toegangsprobleem():
+    """Anders krijg je geen hint over waar je de deploy key moet neerzetten."""
+    from services.lab.verkenner import _lijkt_prive
+
+    assert _lijkt_prive(GIT_SSH_FOUT)

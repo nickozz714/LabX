@@ -132,6 +132,22 @@ async def verwijder_dienst(dienst_id: int, db: Session = Depends(get_db)):
 # merkt: de waarde is nergens te zien.
 
 
+@router.post("/{cluster_id}/sleutel")
+def sleutel_maken(cluster_id: int, db: Session = Depends(get_db)):
+    """Een deploy key voor dit cluster maken.
+
+    De publieke helft komt terug; die zet jij bij de repo onder
+    Settings → Deploy keys. Deploy keys zijn op repo-niveau en vallen buiten
+    het OAuth- en PAT-goedkeuringsbeleid van een organisatie.
+    """
+    return _svc(db).maak_sleutel(cluster_id)
+
+
+@router.delete("/{cluster_id}/sleutel")
+def sleutel_weg(cluster_id: int, db: Session = Depends(get_db)):
+    return _svc(db).verwijder_sleutel(cluster_id)
+
+
 @router.get("/{cluster_id}/geheimen")
 def geheimen(cluster_id: int, db: Session = Depends(get_db)):
     """Wat er in de kluis van dit cluster staat, en wat er nog ontbreekt.

@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from component_logging import get_logger
 from models.cluster import Cluster, ClusterDienst, ClusterPlan
+from services.lab import git_auth as _git
 
 log = get_logger(__name__)
 
@@ -421,6 +422,75 @@ class ClusterService:
                 detail=f"Het geheim '{c.repo_token_geheim}' is niet te lezen.")
         return waarde
 
+    # ── de deploy key van een cluster ────────────────────────────────────────
+
+    def maak_sleutel(self, cluster_id: int) -> Dict[str, Any]:
+        """Een sleutelpaar voor dit cluster maken.
+
+        Per cluster een eigen sleutel, en niet één voor heel LabX: intrekken
+        raakt dan alleen dit cluster, en je ziet bij de repo welke omgeving
+        toegang heeft. De publieke helft zet jij bij de repo onder
+        Settings → Deploy keys.
+
+        Opnieuw maken vervangt de oude. Dat is geen ongeluk dat je per ongeluk
+        begaat -- het staat in de bevestiging -- maar de oude sleutel werkt
+        daarna niet meer en moet bij de repo weg.
+        """
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        from utils.crypto import encrypt
+
+        c = self.get_or_404(cluster_id)
+        sleutel = ed25519.Ed25519PrivateKey.generate()
+        prive = sleutel.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.OpenSSH,
+            encryption_algorithm=serialization.NoEncryption()).decode()
+        publiek = sleutel.public_key().public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH).decode()
+        publiek = f"{publiek} labx-cluster-{_veilige_naam(c.naam)}"
+
+        c.ssh_publiek = publiek
+        c.ssh_prive_encrypted = encrypt(prive)
+        c.updated_at = _nu()
+        self.db.commit()
+        log.infox("Deploy key gemaakt", cluster=c.naam)
+        return {"publieke_sleutel": publiek, "vervangen": True}
+
+    def verwijder_sleutel(self, cluster_id: int) -> Dict[str, Any]:
+        c = self.get_or_404(cluster_id)
+        c.ssh_publiek = None
+        c.ssh_prive_encrypted = None
+        c.updated_at = _nu()
+        self.db.commit()
+        return {"ok": True}
+
+    def ssh_prive(self, c: Cluster) -> Optional[str]:
+        """De privésleutel, of None. Alleen voor het klonen.
+
+        Komt nergens anders vandaan en gaat nergens anders heen: niet naar een
+        antwoord van de API, niet naar een scherm, niet naar een model.
+        """
+        if not c.ssh_prive_encrypted:
+            return None
+        try:
+            from utils.crypto import decrypt
+
+            return decrypt(c.ssh_prive_encrypted)
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("Deploy key niet te ontsleutelen", cluster=c.naam,
+                         error=str(exc)[:200])
+            return None
+
+    def toegang_voor(self, c: Cluster):
+        """Hoe dit cluster bij zijn repo komt: sleutel als die er is, anders
+        het token."""
+        from services.lab import git_auth
+
+        return git_auth.bouw(pat=self._pat(c), ssh_prive=self.ssh_prive(c))
+
     async def controleer_toegang(self, c: Cluster) -> Dict[str, Any]:
         """Kan dit cluster bij zijn repo, en mag het pushen?
 
@@ -574,36 +644,23 @@ class ClusterService:
         """
         from services.lab.lab_service import LabService
 
-        pat = self._pat(c)
+        toegang = self.toegang_voor(c)
         naam = c.repo_url.rstrip("/").split("/")[-1].removesuffix(".git") or "repo"
-        env = {"REPO_URL": c.repo_url, "DEST": naam, "BASIS": basis, "TAK": branch}
-        if pat:
-            import base64 as _b64
-            env["GIT_AUTH"] = _b64.b64encode(f"x-access-token:{pat}".encode()).decode()
+        env = {"REPO_URL": _git.url_voor(c.repo_url, toegang), "DEST": naam,
+               "BASIS": basis, "TAK": branch, **toegang.omgeving}
 
-        # De header in de GIT-CONFIG zetten, niet per opdracht meegeven.
-        #
-        # `git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $X"} clone`
-        # ziet er goed uit en is het niet: de shell splitst het resultaat van
-        # die expansie alsnog op spaties, dus git kreeg "basic" als los woord
-        # en antwoordde "'basic' is not a git command". Eén keer in de config
-        # zetten lost het op én geldt meteen voor fetch en push.
-        script = (
-            'set -e; '
-            'if [ -n "$GIT_AUTH" ]; then '
-            '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
-            'fi; '
+        script = toegang.script(
             # Geen --depth 1: je wilt van een BASIS kunnen aftakken en later
             # kunnen pushen, en dat gaat niet met een afgeknipte historie.
-            'git clone --branch "$BASIS" "$REPO_URL" "$DEST"; '
-            'cd "$DEST"; '
+            'git clone --branch "$BASIS" "$REPO_URL" "$DEST";',
+            'cd "$DEST";',
             # Bestaat de branch al op de remote? Dan die, anders aftakken.
-            'if git ls-remote --exit-code --heads origin "$TAK" >/dev/null 2>&1; then '
-            '  git fetch origin "$TAK":"$TAK" && git checkout "$TAK"; '
-            'else '
-            '  git checkout -b "$TAK"; '
-            'fi; '
-            'git rev-parse --abbrev-ref HEAD'
+            'if git ls-remote --exit-code --heads origin "$TAK" >/dev/null 2>&1; then',
+            '  git fetch origin "$TAK":"$TAK" && git checkout "$TAK";',
+            'else',
+            '  git checkout -b "$TAK";',
+            'fi;',
+            'git rev-parse --abbrev-ref HEAD',
         )
         await LabService(self.db).runtime_voor(p).run_ephemeral(
             image=p.image, volume=p.volume_name, cmd=["sh", "-c", script],
@@ -742,6 +799,10 @@ class ClusterService:
             # vóór het eerste branch-lab beantwoord hebben, niet veertig
             # minuten later halverwege een bouw.
             "benodigde_geheimen": c.benodigde_geheimen or {},
+            # De publieke helft is geen geheim; die hoort juist gekopieerd te
+            # worden. De privéhelft komt hier nooit in.
+            "ssh_publiek": c.ssh_publiek,
+            "toegang_soort": "ssh" if c.ssh_prive_encrypted else ("https" if c.repo_token_geheim else "geen"),
             "lab_poorten": c.lab_poorten or [],
             "geheimen_ontbreken": self._ontbrekende_geheimen(c.benodigde_geheimen or {}, c.id),
             "notitie": c.notitie,
@@ -776,15 +837,17 @@ class ClusterService:
         """
         from services.lab.verkenner import Verkenner
 
+        ssh_prive = None
         if cluster_id:
             c = self.get_or_404(cluster_id)
             repo_url = repo_url or c.repo_url or ""
             token_geheim = token_geheim or c.repo_token_geheim
             host_id = host_id if host_id is not None else c.host_id
+            ssh_prive = self.ssh_prive(c)
 
         uitslag = await Verkenner(self.db).verken(
             repo_url=repo_url, branch=branch,
-            token_geheim=token_geheim, host_id=host_id,
+            token_geheim=token_geheim, ssh_prive=ssh_prive, host_id=host_id,
             antwoorden=antwoorden, opmerkingen=opmerkingen,
             opmerking=opmerking, keuze=keuze, uitgezet=uitgezet)
 

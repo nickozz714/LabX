@@ -142,6 +142,11 @@ export type Cluster = {
   env_profiel: string | null;
   omgeving: Record<string, string>;
   benodigde_geheimen: Record<string, string>;
+  /** De publieke helft van de deploy key. Geen geheim — die hoort juist
+   *  gekopieerd te worden, naar Settings → Deploy keys van de repo. */
+  ssh_publiek: string | null;
+  /** Hoe dit cluster bij zijn repo komt. Een sleutel wint van een token. */
+  toegang_soort: "ssh" | "https" | "geen";
   /** Waarop de applicatie IN een branch-lab luistert; LabX publiceert die. */
   lab_poorten: number[];
   /** Welke daarvan nog niet in de kluis staan. */
@@ -211,6 +216,13 @@ export const clusterApi = {
   // zijn juist niet uniek. In één gedeelde kluis vechten twee clusters dan om
   // hetzelfde geheim, en wie het laatst opslaat wint zonder dat iemand het
   // merkt: de waarde is nergens te zien.
+  /** Een deploy key voor dit cluster maken. Deploy keys zijn op repo-niveau
+   *  en vallen buiten het OAuth- en PAT-goedkeuringsbeleid van een
+   *  organisatie — precies de muur waar een token op stuit. */
+  sleutelMaken: (id: number) =>
+    api.post<{ publieke_sleutel: string }>(`/clusters/${id}/sleutel`),
+  sleutelWeg: (id: number) => api.delete<{ ok: boolean }>(`/clusters/${id}/sleutel`),
+
   geheimen: (id: number) =>
     api.get<{ eigen: ClusterGeheim[]; benodigd: BenodigdGeheim[] }>(`/clusters/${id}/geheimen`),
   geheimZetten: (id: number, naam: string, body: { waarde?: string; omschrijving?: string }) =>

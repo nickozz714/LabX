@@ -30,6 +30,11 @@ _ADDITIVE_COLUMNS = {
         # Waarop de applicatie in een branch-lab luistert. Bestaande clusters
         # hebben dit niet en vallen terug op de oude standaard.
         ("lab_poorten", "TEXT"),
+        # De deploy key van dit cluster. Erbij gekomen omdat een organisatie
+        # met goedkeuringsbeleid een token kan tegenhouden, en een deploy key
+        # op repo-niveau daarbuiten valt.
+        ("ssh_publiek", "TEXT"),
+        ("ssh_prive_encrypted", "TEXT"),
     ],
     "cluster_plannen": [
         # Antwoorden op de vragen van de verkenner, en het plan waar dit uit

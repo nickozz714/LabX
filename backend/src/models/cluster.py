@@ -51,6 +51,15 @@ class Cluster(Base):
     #: het token zelf: dat hoort in de kluis, met alles wat daar al voor
     #: geregeld is (versleuteling, maskeren in uitvoer, vervaltijd).
     repo_token_geheim: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: De publieke helft van de deploy key van dit cluster. Geen geheim --
+    #: die hoort juist gekopieerd te worden, naar Settings → Deploy keys van
+    #: de repo.
+    ssh_publiek: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: De privéhelft, Fernet-versleuteld. Staat hier en niet in de kluis van
+    #: het cluster: die kluis is voor geheimen van de APPLICATIE, en de lijst
+    #: "wat moet ik nog invullen" wordt onleesbaar als er infrastructuur
+    #: tussen staat die LabX zelf beheert.
+    ssh_prive_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Het image waarin een branch-lab draait. IntelligentHive heeft Node en
     #: yarn 4 nodig; het standaard python-image volstaat daar niet.
     lab_image: Mapped[str | None] = mapped_column(String(255), nullable=True)

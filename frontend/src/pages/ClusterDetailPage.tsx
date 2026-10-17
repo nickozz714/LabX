@@ -20,8 +20,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Box, Check, GitBranch, KeyRound, Loader2, Play, Plus, RefreshCw,
-  Search, Server, Square, Terminal, Trash2, TriangleAlert,
+  ArrowLeft, Box, Check, Copy, GitBranch, KeyRound, Loader2, Play, Plus,
+  RefreshCw, Search, Server, Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
 import { clusterApi } from "@/lib/clusters";
 import type {
@@ -107,6 +107,123 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
  * De namen staan er al in — ze komen uit het plan, van de verkenner. Je hoeft
  * dus niet te raden hoe iets heet, alleen de waarde te plakken.
  */
+/** De deploy key van dit cluster.
+ *
+ * Staat hier omdat een token bij een organisatie met goedkeuringsbeleid
+ * tegengehouden kan worden — en dan sta je stil tot iemand anders klikt. Een
+ * deploy key is op REPO-niveau en valt buiten dat beleid: wie admin is op de
+ * repo zet hem erin, en klaar.
+ *
+ * Per cluster een eigen sleutel, niet één voor heel LabX. Intrekken raakt dan
+ * alleen dit cluster, en bij de repo zie je welke omgeving toegang heeft.
+ */
+function SleutelKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void }) {
+  const melding = useMelding();
+  const bevestig = useBevestiging();
+  const [bezig, setBezig] = useState(false);
+  const [gekopieerd, setGekopieerd] = useState(false);
+
+  async function maak() {
+    if (c.ssh_publiek) {
+      const ja = await bevestig.vraag({
+        titel: "Een nieuwe sleutel maken?",
+        tekst: "De huidige werkt daarna niet meer en moet bij de repo weggehaald worden.",
+        bevestig: "Nieuwe maken",
+      });
+      if (!ja) return;
+    }
+    setBezig(true);
+    try {
+      await clusterApi.sleutelMaken(c.id);
+      melding.ok("Sleutel gemaakt. Zet de publieke helft bij de repo.");
+      onWijziging();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Sleutel maken mislukte");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  async function weg() {
+    const ja = await bevestig.vraag({
+      titel: "Deploy key verwijderen?",
+      tekst: "Dit cluster kloont daarna alleen nog met een token, als dat er is.",
+      variant: "danger",
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
+    await clusterApi.sleutelWeg(c.id);
+    onWijziging();
+  }
+
+  const repoPad = (c.repo_url || "").replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h2 className="text-sm font-semibold">Toegang tot de repo</h2>
+          <p className="text-xs text-muted-foreground">
+            {c.toegang_soort === "ssh"
+              ? "Dit cluster kloont met een eigen deploy key."
+              : c.toegang_soort === "https"
+                ? "Dit cluster kloont met een token uit de kluis."
+                : "Dit cluster heeft nog geen toegang tot zijn repo."}
+          </p>
+        </div>
+      </div>
+
+      {c.ssh_publiek ? (
+        <>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Zet deze regel bij de repo onder <span className="font-medium">Settings → Deploy keys →
+            Add deploy key</span>
+            {repoPad && <> (<span className="font-mono">github.com/{repoPad}/settings/keys</span>)</>}.
+            Vink <span className="font-medium">Allow write access</span> aan als een agent vanuit
+            een branch-lab moet kunnen pushen.
+          </p>
+          <pre className="overflow-x-auto rounded-lg bg-muted/40 p-3 font-mono text-xs">
+            {c.ssh_publiek}
+          </pre>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                await navigator.clipboard.writeText(c.ssh_publiek || "");
+                setGekopieerd(true);
+                setTimeout(() => setGekopieerd(false), 2000);
+              }}
+            >
+              {gekopieerd ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {gekopieerd ? "Gekopieerd" : "Kopiëren"}
+            </Button>
+            <Button variant="secondary" onClick={maak} disabled={bezig}>
+              {bezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Nieuwe sleutel
+            </Button>
+            <Button variant="ghost" onClick={weg}>
+              <Trash2 className="h-4 w-4" /> Verwijderen
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Werkt een token niet omdat de organisatie het nog moet goedkeuren? Een deploy key
+            is op repo-niveau en valt buiten dat beleid. LabX maakt een sleutelpaar, bewaart de
+            privéhelft, en jij plakt de publieke helft één keer bij de repo.
+          </p>
+          <Button variant="secondary" onClick={maak} disabled={bezig}>
+            {bezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+            Deploy key maken
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Record<string, string> }) {
   const melding = useMelding();
   const bevestig = useBevestiging();
@@ -381,6 +498,9 @@ export function ClusterDetailPage() {
           {toegang.hint && <p className="mt-1 text-xs text-muted-foreground">{toegang.hint}</p>}
         </Card>
       )}
+
+      {/* ── toegang en geheimen ─────────────────────────────────────────── */}
+      <SleutelKaart c={c} onWijziging={laad} />
 
       {/* ── de kluis ────────────────────────────────────────────────────── */}
       <KluisKaart clusterId={c.id} benodigd={c.benodigde_geheimen || {}} />

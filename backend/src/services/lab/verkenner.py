@@ -74,6 +74,7 @@ class Verkenner:
 
     async def verken(self, *, repo_url: str, branch: str = "main",
                      token_geheim: Optional[str] = None,
+                     ssh_prive: Optional[str] = None,
                      host_id: Optional[int] = None,
                      antwoorden: Optional[Dict[str, str]] = None,
                      opmerkingen: Optional[Dict[str, str]] = None,
@@ -100,7 +101,7 @@ class Verkenner:
             await runtime.create_volume(volume)
             kop = await self._kloon(runtime, volume, image,
                                     repo_url=repo_url, branch=branch,
-                                    token_geheim=token_geheim)
+                                    token_geheim=token_geheim, ssh_prive=ssh_prive)
             beeld_ruw = await self._beeld(runtime, volume, image, map_=kop["map"])
             inhoud: det.RepoBeeld = dict(beeld_ruw.get("inhoud") or {})
 
@@ -171,48 +172,46 @@ class Verkenner:
 
     async def _kloon(self, runtime, volume: str, image: str, *,
                      repo_url: str, branch: str,
-                     token_geheim: Optional[str]) -> Dict[str, Any]:
+                     token_geheim: Optional[str],
+                     ssh_prive: Optional[str] = None) -> Dict[str, Any]:
         """Ondiep klonen. We lezen alleen; historie hebben we hier niet nodig.
 
         Dit is bewust NIET dezelfde kloon als die van een branch-lab: daar
         mag `--depth 1` juist niet, want daar wil je van een basis aftakken en
         later pushen.
         """
-        naam = _repomap(repo_url)
-        env = {"REPO_URL": repo_url, "DEST": naam, "TAK": branch}
-        token = self._token(token_geheim)
-        if token:
-            env["GIT_AUTH"] = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        from services.lab import git_auth
 
-        # De header in de git-CONFIG zetten, niet per opdracht meegeven: de
-        # shell splitst zo'n expansie alsnog op spaties, en git ziet "basic"
-        # dan als een subcommando.
-        script = (
-            'set -e; '
-            'if [ -n "$GIT_AUTH" ]; then '
-            '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
-            'fi; '
+        naam = _repomap(repo_url)
+        token = self._token(token_geheim)
+        toegang = git_auth.bouw(pat=token, ssh_prive=ssh_prive)
+        env = {"REPO_URL": git_auth.url_voor(repo_url, toegang), "DEST": naam,
+               "TAK": branch, **toegang.omgeving}
+
+        script = toegang.script(
             # --quiet in plaats van stderr dichtgooien: dat haalt de
             # voortgangsbalk weg maar laat de FOUT staan. Met 2>/dev/null
             # bleef er van een mislukte kloon niets over dan "docker run
             # faalde (128)", en daar kan niemand iets mee.
-            'git clone --quiet --depth 1 --branch "$TAK" "$REPO_URL" "$DEST" '
-            '  || git clone --quiet --depth 1 "$REPO_URL" "$DEST"; '
-            'cd "$DEST"; '
-            'echo "COMMIT=$(git rev-parse HEAD)"; '
-            'echo "BRANCH=$(git rev-parse --abbrev-ref HEAD)"'
+            'git clone --quiet --depth 1 --branch "$TAK" "$REPO_URL" "$DEST"',
+            '  || git clone --quiet --depth 1 "$REPO_URL" "$DEST";',
+            'cd "$DEST";',
+            'echo "COMMIT=$(git rev-parse HEAD)";',
+            'echo "BRANCH=$(git rev-parse --abbrev-ref HEAD)"',
         )
         try:
             uit = await runtime.run_ephemeral(
                 image=image, volume=volume, cmd=["sh", "-c", script],
                 env=env, timeout=KLOON_TIJD)
         except Exception as exc:  # noqa: BLE001
-            from services.lab.clusters import _laatste_zinnige_regel
-
-            reden = _laatste_zinnige_regel(str(exc))
-            if not token and _lijkt_prive(reden):
-                reden += (" — er is geen toegangstoken meegegeven; een privérepo "
-                          "kloont dan niet. Zet er een in de kluis en kies hem erbij.")
+            ruw = str(exc)
+            reden = _git_reden(ruw)
+            if toegang.soort == "geen" and _lijkt_prive(ruw):
+                reden += (" — er is geen toegangstoken en geen deploy key meegegeven; "
+                          "een privérepo kloont dan niet.")
+            elif toegang.soort == "ssh" and _lijkt_prive(ruw):
+                reden += (" — de deploy key wordt geweigerd. Staat de publieke helft bij "
+                          "de repo onder Settings → Deploy keys?")
             raise HTTPException(
                 status_code=502,
                 detail=f"Verkennen mislukte bij het klonen: {reden[:500]}") from exc
@@ -476,12 +475,44 @@ def _slug(ruw: Any, *, max_lengte: int = 40) -> str:
 #: woorden -- "not found" is wat je krijgt als het token ontbreekt, want
 #: zonder token BESTAAT een privérepo niet voor je.
 _PRIVE = ("authentication", "not found", "could not read", "permission denied",
-          "repository not found", "terminal prompts disabled")
+          "repository not found", "terminal prompts disabled",
+          # Git zegt het ook zo, en dan staat "permission denied" op een
+          # andere regel dan de regel die je uiteindelijk toont.
+          "correct access rights", "repository exists")
 
 
 def _lijkt_prive(reden: str) -> bool:
     laag = reden.lower()
     return any(t in laag for t in _PRIVE)
+
+
+#: Regels waar de ECHTE oorzaak in staat. Git spreidt zijn fout over vijf
+#: regels en zet de kern bovenaan:
+#:
+#:     git@github.com: Permission denied (publickey).
+#:     fatal: Could not read from remote repository.
+#:
+#:     Please make sure you have the correct access rights
+#:     and the repository exists.
+#:
+#: De laatste regel pakken levert dus "and the repository exists." op -- waar
+#: en volstrekt nutteloos. Dit zoekt de regel die er wel toe doet.
+_GIT_OORZAKEN = (
+    "permission denied", "repository not found", "authentication failed",
+    "could not read from remote", "invalid username or password",
+    "terminal prompts disabled", "host key verification failed",
+)
+
+
+def _git_reden(ruw: str) -> str:
+    """De regel uit een git-fout waar de oorzaak in staat."""
+    from services.lab.clusters import _laatste_zinnige_regel
+
+    for regel in (ruw or "").splitlines():
+        kaal = regel.strip()
+        if any(t in kaal.lower() for t in _GIT_OORZAKEN):
+            return kaal[:300]
+    return _laatste_zinnige_regel(ruw)
 
 
 def _repomap(repo_url: str) -> str:

@@ -35,6 +35,31 @@ _SCP = re.compile(r"^(?:ssh://)?(?:[\w.-]+@)?([\w.-]+):(?!\d)(.+?)(?:\.git)?/?$"
 _SSH = re.compile(r"^ssh://(?:[\w.-]+@)?([\w.-]+)(?::\d+)?/(.+?)(?:\.git)?/?$")
 
 
+def naar_ssh(ruw: str) -> str:
+    """De SSH-vorm van deze URL, voor een deploy key.
+
+    De omgekeerde weg van `normaliseer`. Nodig omdat LabX een repo-URL
+    opslaat in HTTPS-vorm -- dat is wat je plakt en wat een token nodig heeft
+    -- terwijl een deploy key alleen over SSH werkt.
+    """
+    url = (ruw or "").strip()
+    if not url:
+        return ""
+    if url.startswith(("git@", "ssh://")):
+        return url
+    kaal = re.sub(r"^https?://", "", url).rstrip("/")
+    kaal = re.sub(r"^[^/@]+@", "", kaal)  # een gebruikersnaam in de URL hoort hier niet
+    host, _, pad = kaal.partition("/")
+    if not pad:
+        return url
+    return f"git@{host}:{pad.removesuffix('.git')}.git"
+
+
+def naar_https(ruw: str) -> RepoUrl:
+    """Alias van `normaliseer`, zodat de bedoeling in de aanroep staat."""
+    return normaliseer(ruw)
+
+
 def normaliseer(ruw: str) -> RepoUrl:
     """Een repo-URL in kloonbare vorm, plus of er iets veranderd is."""
     url = (ruw or "").strip()
