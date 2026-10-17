@@ -80,6 +80,69 @@ def _veilige_naam(naam: str) -> str:
 _GEEN_AFWIJZING = ("applicatie", "lab_image")
 
 
+#: Sleutels in de omgeving van een CONTAINER die een inloggegeven zijn.
+_WACHTWOORD_SLEUTEL = re.compile(r"(PASSWORD|PASSWD|_PASS$|ROOT_PASSWORD|_SECRET|_KEY)$", re.I)
+
+#: Waarden die geen wachtwoord zijn maar een belofte: leeg, een plaatshouder,
+#: of een voorbeeld uit de documentatie van het project.
+_ZWAK = re.compile(r"^\s*$|^<.*>$|^\$\{.*\}$|^(labx|dev|test|secret|password|changeme|example)[-_a-z0-9]*$", re.I)
+
+
+#: `${VAR:-standaard}` en `${VAR-standaard}` -- de enige vorm waarvan de
+#: bedoelde waarde zwart op wit in de tekst staat.
+_MET_STANDAARD = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?-(.*)\}$", re.DOTALL)
+#: Elke andere vorm van shell-expansie.
+_EXPANSIE = re.compile(r"^\$\{.*\}$|^\$[A-Za-z_][A-Za-z0-9_]*$", re.DOTALL)
+
+
+def _zonder_expansie(omgeving: Dict[str, str], *, leeg_laten: bool = True) -> Dict[str, str]:
+    """Shell-expansie uit een container-omgeving halen.
+
+    Een compose-bestand vult `${DB_NAME:-slimmer_politiek}` in; `docker run -e`
+    doet dat niet. Die tekst komt dan LETTERLIJK in de container terecht, en
+    MySQL maakt een database die zo heet -- of weigert de naam. Het ziet er
+    bovendien uit alsof het klopt, want in de compose stond het er net zo.
+
+    Staat de bedoelde waarde in de tekst (`:-standaard`), dan nemen we die.
+    Staat hij er niet, dan hangt het van de sleutel af:
+
+    - een INLOGGEGEVEN blijft staan, leeg. Hij moet er zijn, en de stap
+      hierna vult hem met een gegenereerd wachtwoord. Hem hier weggooien
+      betekende dat MySQL zonder wachtwoord startte;
+    - al het andere valt weg. Een image gebruikt dan zijn eigen standaard, en
+      dat is altijd beter dan starten met een naam die niemand bedoeld heeft.
+    """
+    uit: Dict[str, str] = {}
+    for sleutel, waarde in (omgeving or {}).items():
+        treffer = _MET_STANDAARD.match(waarde)
+        if treffer:
+            uit[sleutel] = treffer.group(1)
+        elif _EXPANSIE.match(waarde):
+            if leeg_laten and _WACHTWOORD_SLEUTEL.search(sleutel):
+                uit[sleutel] = ""
+            else:
+                log.infox("Omgevingsvariabele met shell-expansie weggelaten",
+                          sleutel=sleutel)
+        else:
+            uit[sleutel] = waarde
+    return uit
+
+
+def _wachtwoord() -> str:
+    """Een wachtwoord dat niemand hoeft te onthouden.
+
+    LabX start deze container zelf, dus LabX kiest de inloggegevens. Dat is
+    niet alleen veiliger dan `labx:labx` -- het haalt ook de vraag weg die
+    nergens over ging: het model maakte een MySQL aan, verzon er op eigen
+    houtje een wachtwoord bij, en vroeg de gebruiker daarna wat het
+    wachtwoord van de database moest zijn. Die kon dat niet weten; de
+    database bestond nog niet.
+    """
+    import secrets
+
+    return secrets.token_urlsafe(24)
+
+
 def _naam_uit_url(repo_url: str) -> str:
     """De repo-naam als clusternaam, zodat je er geen hoeft te verzinnen."""
     naam = (repo_url or "").rstrip("/").split("/")[-1].removesuffix(".git")
@@ -496,22 +559,71 @@ class ClusterService:
 
         Vóór het klonen, want een mislukte kloon geeft een kale git-fout
         ("The requested URL returned error: 403") waar drie heel verschillende
-        oorzaken achter kunnen zitten. De API van GitHub zegt het wél precies,
-        en dat scheelt een avond zoeken.
+        oorzaken achter kunnen zitten.
 
-        Geen github.com? Dan slaan we het over -- we weten dan niet welke API
-        erbij hoort, en raden is erger dan niet kijken.
+        Twee manieren, want er zijn twee methoden:
+
+        - Met een DEPLOY KEY wordt er echt geprobeerd: `git ls-remote` in een
+          wegwerpcontainer. Dat is geen benadering maar precies de handeling
+          die straks ook moet lukken.
+        - Met een TOKEN vraagt de API van GitHub het, want die zegt het
+          preciezer dan een kale git-fout -- en dat scheelt een avond zoeken.
         """
+        if not c.repo_url:
+            return {"gecontroleerd": False, "hint": "Dit cluster heeft nog geen repo-URL."}
+
+        if c.ssh_prive_encrypted:
+            return await self._toegang_via_sleutel(c)
+        return await self._toegang_via_api(c)
+
+    async def _toegang_via_sleutel(self, c: Cluster) -> Dict[str, Any]:
+        """De echte handeling proberen: branches opvragen met de deploy key.
+
+        Of de sleutel ook MAG pushen is hier niet af te lezen -- dat staat bij
+        de repo in het vinkje 'Allow write access', en GitHub verraadt het niet
+        bij het ophalen. Dat eerlijk zeggen is beter dan het raden: een
+        "mag pushen: ja" die nergens op gebaseerd is, kost je een halve
+        agent-run om te ontdekken.
+        """
+        from services.lab import git_auth
+        from services.lab.lab_service import default_image
+
+        toegang = self.toegang_voor(c)
+        env = {"REPO_URL": git_auth.url_voor(c.repo_url, toegang), **toegang.omgeving}
+        script = toegang.script('git ls-remote --heads "$REPO_URL" | wc -l')
+        try:
+            uit = await self._runtime(c).run_ephemeral(
+                image=default_image(), volume=None,
+                cmd=["sh", "-c", script], env=env, timeout=120)
+            takken = int((uit or "0").strip().splitlines()[-1].strip() or 0)
+            return {"gecontroleerd": True, "ok": True, "methode": "deploy key",
+                    "branches": takken,
+                    "hint": ("De sleutel mag lezen. Of hij ook mag pushen staat bij de repo "
+                             "in 'Allow write access'; dat is hier niet af te lezen.")}
+        except Exception as exc:  # noqa: BLE001
+            from services.lab.verkenner import _git_reden
+
+            reden = _git_reden(str(exc))
+            return {"gecontroleerd": True, "ok": False, "methode": "deploy key",
+                    "hint": (f"{reden} — staat de publieke helft bij de repo onder "
+                             f"Settings → Deploy keys?")}
+
+    async def _toegang_via_api(self, c: Cluster) -> Dict[str, Any]:
+        """Geen github.com? Dan slaan we het over -- we weten dan niet welke
+        API erbij hoort, en raden is erger dan niet kijken."""
         import json as _json
         import urllib.error
         import urllib.request
 
-        if not c.repo_url or "github.com" not in c.repo_url:
-            return {"gecontroleerd": False}
+        if "github.com" not in c.repo_url:
+            return {"gecontroleerd": False,
+                    "hint": "Geen GitHub-repo; hier valt niets te vragen. Een deploy key "
+                            "maken en die testen werkt wel."}
         pat = self._pat(c)
         if not pat:
             return {"gecontroleerd": False,
-                    "hint": "Dit cluster heeft geen token; een privérepo kloont dan niet."}
+                    "hint": "Dit cluster heeft geen token en geen deploy key; een privérepo "
+                            "kloont dan niet."}
 
         deel = c.repo_url.split("github.com/")[-1].removesuffix(".git").strip("/")
         verzoek = urllib.request.Request(
@@ -523,26 +635,28 @@ class ClusterService:
             with urllib.request.urlopen(verzoek, timeout=20) as a:
                 data = _json.loads(a.read() or b"{}")
             mag_pushen = bool((data.get("permissions") or {}).get("push"))
-            return {"gecontroleerd": True, "ok": True, "mag_pushen": mag_pushen,
+            return {"gecontroleerd": True, "ok": True, "methode": "token",
+                    "mag_pushen": mag_pushen,
                     "hint": None if mag_pushen else
                             ("Het token kan lezen maar niet pushen. Zet Contents op "
                              "'Read and write' als de agent wijzigingen moet kunnen "
                              "terugduwen.")}
         except urllib.error.HTTPError as fout:
             if fout.code == 404:
-                return {"gecontroleerd": True, "ok": False, "hint": (
+                return {"gecontroleerd": True, "ok": False, "methode": "token", "hint": (
                     f"Het token ziet '{deel}' niet. Drie oorzaken, in volgorde van "
                     f"waarschijnlijkheid: (1) de organisatie heeft het token nog niet "
                     f"goedgekeurd — kijk bij Organization settings → Personal access "
                     f"tokens → Pending requests; (2) de repository staat niet in "
                     f"'Repository access' van het token; (3) de resource owner van het "
                     f"token is een persoonlijk account in plaats van de organisatie, en "
-                    f"dat is achteraf niet te wijzigen.")}
+                    f"dat is achteraf niet te wijzigen. Een deploy key omzeilt dit alles: "
+                    f"die staat op repo-niveau.")}
             if fout.code in (401, 403):
-                return {"gecontroleerd": True, "ok": False, "hint": (
+                return {"gecontroleerd": True, "ok": False, "methode": "token", "hint": (
                     "Het token wordt geweigerd (ongeldig of verlopen). Maak een nieuw "
                     "token en vervang het geheim in de kluis.")}
-            return {"gecontroleerd": True, "ok": False,
+            return {"gecontroleerd": True, "ok": False, "methode": "token",
                     "hint": f"GitHub antwoordde {fout.code}."}
         except Exception as exc:  # noqa: BLE001 — geen net? dan niet oordelen
             log.warningx("Toegangscontrole overgeslagen", error=str(exc)[:200])
@@ -1028,6 +1142,52 @@ class ClusterService:
                 image = str(waarde.get("image") or "")
                 if not image:
                     continue
+                # LabX start deze container, dus LabX kiest de inloggegevens.
+                #
+                # EEN wachtwoord per dienst, overal hetzelfde. Het model
+                # verzon er twee verschillende -- in de container
+                # `${DB_PASS:?zet DB_PASS in .env}` en in de lab-omgeving
+                # `labx-mysql-root-7f3k9q` -- en dan start de database met het
+                # ene en verbindt de applicatie met het andere. Dat merk je
+                # pas als het lab al draait.
+                #
+                # Dat root en gebruiker hetzelfde wachtwoord krijgen is voor
+                # een wegwerpdatabase in een lab geen bezwaar; een stille
+                # mismatch wel.
+                container_omgeving = {str(k): str(w) for k, w in (waarde.get("omgeving") or {}).items()}
+                lab_omgeving = {str(k): str(w) for k, w in (waarde.get("lab_omgeving") or {}).items()}
+
+                # Eerst de shell-expansie eruit, dan pas wachtwoorden kiezen:
+                # anders wordt `${DB_PASS:?...}` als "zwak" herkend en krijgt
+                # het de generatie, terwijl `${DB_NAME:-sp}` blijft staan.
+                container_omgeving = _zonder_expansie(container_omgeving)
+                lab_omgeving = _zonder_expansie(lab_omgeving)
+
+                ww = _wachtwoord()
+                oude_waarden = set()
+                for env_sleutel, oud_ww in list(container_omgeving.items()):
+                    if _WACHTWOORD_SLEUTEL.search(env_sleutel) and _ZWAK.match(oud_ww):
+                        container_omgeving[env_sleutel] = ww
+                        if oud_ww:
+                            oude_waarden.add(oud_ww)
+                for env_sleutel, oud_ww in list(lab_omgeving.items()):
+                    if _WACHTWOORD_SLEUTEL.search(env_sleutel) and _ZWAK.match(oud_ww):
+                        lab_omgeving[env_sleutel] = ww
+                        if oud_ww:
+                            oude_waarden.add(oud_ww)
+                # En wat er in een verbindingsreeks staat moet mee.
+                for weg in oude_waarden:
+                    lab_omgeving = {k: w.replace(weg, ww) for k, w in lab_omgeving.items()}
+
+                # Naar de inloggegevens van een dienst die LabX zelf start
+                # hoort niemand gevraagd te worden: de gebruiker kan ze niet
+                # weten, want de dienst bestaat nog niet.
+                for env_sleutel in list((waarde.get("omgeving_uit_kluis") or {})):
+                    if _WACHTWOORD_SLEUTEL.search(env_sleutel):
+                        lab_omgeving.setdefault(env_sleutel, ww)
+                    geheimen.pop(env_sleutel, None)
+                waarde["omgeving_uit_kluis"] = {}
+
                 dienstnaam = _veilige_naam(f"{_voorvoegsel(c.naam)}-{sleutel}")
                 bestaat = (self.db.query(ClusterDienst)
                            .filter(ClusterDienst.cluster_id == c.id,
@@ -1036,14 +1196,14 @@ class ClusterService:
                     self.voeg_dienst_toe(
                         c.id, naam=dienstnaam, image=image,
                         poorten=[int(p) for p in (waarde.get("poorten") or [])],
-                        omgeving={str(k): str(w) for k, w in (waarde.get("omgeving") or {}).items()})
+                        omgeving=container_omgeving)
                     toegevoegd.append(dienstnaam)
                 # Wat een branch-lab moet weten om deze dienst te vinden. De
                 # naam in de lab-omgeving moet de ECHTE dienstnaam zijn, niet
                 # die uit de catalogus of uit het model -- anders wijst
                 # COSMOS_ENDPOINT naar een host die op dit netwerk niet
                 # bestaat, en dat merk je pas als een lab al draait.
-                for k, w in (waarde.get("lab_omgeving") or {}).items():
+                for k, w in lab_omgeving.items():
                     omgeving[str(k)] = _hernoem_host(str(w), sleutel, dienstnaam)
                 # Wat het model niet WIST staat niet in de omgeving maar op
                 # de lijst "moet uit de kluis komen". Een plaatshouder als
@@ -1079,6 +1239,12 @@ class ClusterService:
             c.start_script = plan["startscript"]
         if env_profiel:
             c.env_profiel = env_profiel[:64]
+
+        # Een sleutel die LabX zelf in de omgeving zet, is geen geheim dat
+        # jij moet aanleveren. Dat ving de lus hierboven per dienst al op,
+        # maar een detector die `DB_PASS` los in een .env zag staan niet --
+        # en dan vraagt het scherm om een wachtwoord dat er allang is.
+        geheimen = {k: w for k, w in geheimen.items() if k not in omgeving}
 
         c.omgeving = omgeving
         c.benodigde_geheimen = geheimen

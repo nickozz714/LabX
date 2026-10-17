@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional
@@ -61,7 +62,17 @@ MAX_EXTRA_BESTANDEN = 12
 #: Tijdslimieten. Een kloon van een monorepo mag even duren; het model niet.
 KLOON_TIJD = 600.0
 LEES_TIJD = 120.0
-MODEL_TIJD = 300.0
+MODEL_TIJD = 600.0
+
+#: Het model dat de verkenning doet.
+#:
+#: Opus, en niet het goedkope model dat de chat gebruikt. Een verkenning is
+#: één aanroep per repo waarvan de uitkomst de hele inrichting van een cluster
+#: bepaalt -- en de fouten die een zwakker model maakt (een wachtwoord
+#: verzinnen en er daarna naar vragen, twee keer dezelfde sleutel opvoeren)
+#: kosten meer tijd dan het verschil in prijs. Te overrulen met
+#: LABX_VERKENNER_MODEL.
+VERKENNER_MODEL = os.environ.get("LABX_VERKENNER_MODEL", "opus").strip() or "opus"
 
 
 class Verkenner:
@@ -311,7 +322,7 @@ class Verkenner:
 
         s = get_settings(self.db)
         provider = ClaudeCliProvider(
-            default_model=getattr(s, "cli_default_model", None) or "sonnet",
+            default_model=VERKENNER_MODEL,
             oauth_token=getattr(s, "oauth_token", None),
             cli_path=s.cli_path or "claude",
             max_turns=1,
@@ -353,6 +364,8 @@ class Verkenner:
                 _vul_aan(bestaand, mv)
                 continue
             op_sleutel[kern] = det.staaf(mv, inhoud)
+
+        _ontdubbel_geheimen(op_sleutel)
 
         volgorde = {"dienst": 0, "applicatie": 1, "lab_image": 2, "lab_poorten": 3,
                     "startscript": 4, "omgeving": 5, "extern": 6, "geheim": 7}
@@ -424,6 +437,26 @@ def _splits_plaatshouders(omgeving: Dict[str, Any]) -> tuple[Dict[str, str], Dic
         else:
             echt[str(sleutel)] = tekst
     return echt, uit_kluis
+
+
+def _ontdubbel_geheimen(op_sleutel: Dict[Any, det.Vondst]) -> None:
+    """Een sleutel die al bij een dienst hoort, niet ook los opvoeren.
+
+    De detector ziet `CLAUDE_CODE_OAUTH_TOKEN` en weet niet van welke dienst
+    hij is, dus zet hem op de lijst losse geheimen. Het model herkent hem wél
+    en voert hem op onder `extern`. Zonder ontdubbelen staat hij er twee keer
+    en wordt er twee keer om hetzelfde gevraagd.
+
+    De EXTERNE vondst wint: die weet bij welke dienst de sleutel hoort, en dat
+    is precies wat je mist als er alleen een losse naam staat.
+    """
+    bij_dienst = {
+        str(s)
+        for v in op_sleutel.values() if v.soort == "extern"
+        for s in (v.waarde.get("sleutels") or [])
+    }
+    for kern in [k for k in op_sleutel if k[0] == "geheim" and k[1] in bij_dienst]:
+        op_sleutel.pop(kern, None)
 
 
 def _pas_terugkoppeling_toe(vondsten: List[det.Vondst],
@@ -647,6 +680,16 @@ Harde regels:
    daar is een geheim voor nodig.
 4. Omgevingsbestanden zijn geredigeerd: waarden van geheimen zijn weggelaten.
    Dat is geen fout en geen aanwijzing dat de sleutel ongebruikt is.
+5. VRAAG NOOIT OM EEN WACHTWOORD VAN EEN DIENST DIE JE ZELF OPVOERT. Zet je
+   een database of broker in `vaste_diensten`, dan maak JIJ de inloggegevens:
+   dezelfde waarde in `omgeving` (waarmee de container start) en in
+   `lab_omgeving` (waarmee de applicatie verbindt). Een plaatshouder hoort
+   daar niet, en de gebruiker hoort er niet naar gevraagd te worden -- hij kan
+   het niet weten, want de dienst bestaat nog niet. Alleen bij een ECHTE
+   dienst van buiten (waar LabX geen container van maakt) hoort een geheim.
+6. Noem een sleutel ÉÉN keer. Staat hij al bij een dienst onder `extern`, zet
+   hem dan niet ook nog los in de lijst met losse geheimen -- dan wordt er
+   twee keer om hetzelfde gevraagd.
 
 WAT LABX ZELF REGELT — vraag hier niet naar, ga ervan uit:
 

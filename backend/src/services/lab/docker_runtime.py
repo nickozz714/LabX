@@ -504,7 +504,7 @@ class DockerRuntime:
         self,
         *,
         image: str,
-        volume: str,
+        volume: Optional[str] = None,
         cmd: List[str],
         env: Optional[Dict[str, str]] = None,
         timeout: float = 300.0,
@@ -515,8 +515,11 @@ class DockerRuntime:
         await self.ensure_network()
         args = ["run", "--rm", "--label", _LABEL,
                 "--security-opt", "no-new-privileges",
-                "--network", self._network,
-                "-v", f"{volume}:/workspace", "-w", "/workspace"]
+                "--network", self._network]
+        # Zonder volume: een containertje dat alleen iets PROBEERT (mag deze
+        # sleutel bij de repo?) hoeft nergens te schrijven, en een leeg volume
+        # aanmaken om het daarna weg te gooien is werk voor niets.
+        args += ["-v", f"{volume}:/workspace", "-w", "/workspace"] if volume else ["-w", "/tmp"]
         for key, value in (env or {}).items():
             args += ["-e", f"{key}={value}"]
         args += [image, *cmd]

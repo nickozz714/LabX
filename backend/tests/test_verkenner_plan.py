@@ -369,14 +369,19 @@ def test_een_lege_waarde_telt_ook_als_onbekend():
 
 
 def test_plaatshouders_komen_op_de_lijst_voor_de_kluis(db):
+    """Bij een ECHTE dienst van buiten blijft een plaatshouder een vraag.
+
+    Bij een dienst die LabX zelf start is dat juist niet zo -- die vult hij in
+    (zie de tests verderop). Het verschil zit in wie de dienst maakt: wat
+    LabX aanzet, daarvan kiest LabX ook de inloggegevens.
+    """
     uitslag = {
         **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
         "vondsten": [{
-            "soort": "dienst", "sleutel": "mysql", "bevestigd": True, "zekerheid": "hoog",
-            "bron": "detector:compose", "toelichting": "", "bewijs": [{"bestand": "docker/docker-compose.yml"}],
-            "waarde": {"image": "mysql:8", "poorten": [3306],
-                       "lab_omgeving": {"DB_HOST": "mysql"},
-                       "omgeving_uit_kluis": {"DB_PASS": "zelfde waarde als MYSQL_PASSWORD"}},
+            "soort": "extern", "sleutel": "langfuse", "bevestigd": True, "zekerheid": "midden",
+            "bron": "detector:omgeving", "toelichting": "Hier bestaat geen emulator van.",
+            "bewijs": [{"bestand": "components/api/.env.example", "regel": 20}],
+            "waarde": {"sleutels": ["LANGFUSE_SECRET_KEY"]},
         }],
     }
     svc = _svc(db, uitslag)
@@ -384,10 +389,8 @@ def test_plaatshouders_komen_op_de_lijst_voor_de_kluis(db):
     uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
     c = svc.get_or_404(uit["cluster"]["id"])
 
-    assert c.omgeving == {"DB_HOST": "sp-mysql"}, "de echte waarde volgt de dienstnaam"
-    assert "DB_PASS" not in c.omgeving, "een plaatshouder hoort nooit een waarde te worden"
-    assert "DB_PASS" in c.benodigde_geheimen
-    assert "DB_PASS" in uit["geheimen_ontbreken"]
+    assert "langfuse" in (c.benodigde_geheimen or {})
+    assert "langfuse" in uit["geheimen_ontbreken"]
 
 
 # ── bereikbaarheid is geen vraag voor de gebruiker ───────────────────────────
@@ -712,3 +715,191 @@ def test_een_geweigerde_sleutel_telt_als_toegangsprobleem():
     from services.lab.verkenner import _lijkt_prive
 
     assert _lijkt_prive(GIT_SSH_FOUT)
+
+
+# ── LabX kiest de inloggegevens van wat hij zelf start ───────────────────────
+
+MET_DATABASE = {
+    **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
+    "vondsten": [{
+        "soort": "dienst", "sleutel": "mysql", "bevestigd": True, "zekerheid": "hoog",
+        "bron": "detector:compose", "toelichting": "", "bewijs": [{"bestand": "docker/docker-compose.yml"}],
+        "waarde": {
+            "image": "mysql:8", "poorten": [3306],
+            "omgeving": {"MYSQL_ROOT_PASSWORD": "dev-root", "MYSQL_USER": "sp_user",
+                         "MYSQL_PASSWORD": "dev-sp", "MYSQL_DATABASE": "sp"},
+            "lab_omgeving": {"DB_USER": "sp_user", "DB_PASS": "dev-sp",
+                             "DB_URL": "mysql://sp_user:dev-sp@mysql:3306/sp"},
+            "omgeving_uit_kluis": {"MYSQL_PASSWORD": "wat moet dit zijn?"},
+        },
+    }],
+}
+
+
+def test_labx_kiest_het_wachtwoord_van_een_dienst_die_hij_zelf_start(db):
+    """Het model maakte een MySQL aan, verzon er een wachtwoord bij, en vroeg
+    de gebruiker daarna wat het wachtwoord van de database moest zijn. Die kon
+    dat niet weten: de database bestond nog niet."""
+    svc = _svc(db, MET_DATABASE)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+    dienst = svc.diensten(c.id)[0]
+
+    gekozen = dienst.omgeving["MYSQL_PASSWORD"]
+    assert gekozen not in ("dev-sp", "", None) and len(gekozen) >= 20
+    # Root en gebruiker krijgen hetzelfde wachtwoord. Voor een wegwerp-
+    # database in een lab is dat geen bezwaar; een stille mismatch wel.
+    assert dienst.omgeving["MYSQL_ROOT_PASSWORD"] == gekozen
+    assert "dev-root" not in str(dienst.omgeving)
+
+
+def test_de_applicatie_verbindt_met_hetzelfde_wachtwoord(db):
+    """Anders start de database met het ene wachtwoord en verbindt de
+    applicatie met het andere — en dat merk je pas als het lab al draait."""
+    svc = _svc(db, MET_DATABASE)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+    gekozen = svc.diensten(c.id)[0].omgeving["MYSQL_PASSWORD"]
+
+    assert c.omgeving["DB_PASS"] == gekozen
+    assert gekozen in c.omgeving["DB_URL"], "ook in een verbindingsreeks"
+    assert "dev-sp" not in str(c.omgeving)
+
+
+def test_er_wordt_niet_meer_naar_gevraagd(db):
+    svc = _svc(db, MET_DATABASE)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+
+    assert "MYSQL_PASSWORD" not in (c.benodigde_geheimen or {})
+    assert "MYSQL_PASSWORD" not in uit["geheimen_ontbreken"]
+
+
+def test_een_echte_sleutel_blijft_met_rust(db):
+    """Een waarde die er al staat en geen voorbeeld is, is van de gebruiker."""
+    from services.lab.clusters import _ZWAK
+
+    assert _ZWAK.match("dev-sp") and _ZWAK.match("") and _ZWAK.match("<geheim>")
+    assert not _ZWAK.match("Xk9fQ2mLpR4vT8wZ")
+
+
+TWEE_VERZINSELS = {
+    **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
+    "vondsten": [
+        {"soort": "dienst", "sleutel": "mysql", "bevestigd": True, "zekerheid": "hoog",
+         "bron": "detector:compose", "toelichting": "", "bewijs": [{"bestand": "docker-compose.yml"}],
+         "waarde": {
+             "image": "mysql:8.0", "poorten": [3306],
+             "omgeving": {"MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD:?zet dit in .env}",
+                          "MYSQL_PASSWORD": "${DB_PASS:?zet dit in .env}"},
+             "lab_omgeving": {"DB_PASS": "labx-mysql-root-7f3k9q",
+                              "DB_URL": "mysql://root:labx-mysql-root-7f3k9q@mysql:3306/sp"},
+             "omgeving_uit_kluis": {},
+         }},
+        {"soort": "dienst", "sleutel": "mailpit", "bevestigd": True, "zekerheid": "midden",
+         "bron": "detector:omgeving", "toelichting": "", "bewijs": [{"bestand": ".env"}],
+         "waarde": {"image": "axllent/mailpit", "poorten": [1025], "omgeving": {},
+                    "lab_omgeving": {"SMTP_HOST": "mailpit"},
+                    "omgeving_uit_kluis": {"SMTP_USERNAME": "?", "SMTP_PASSWORD": "?"}}},
+        {"soort": "geheim", "sleutel": "DB_PASS", "bevestigd": True, "zekerheid": "laag",
+         "bron": "detector:omgeving", "toelichting": "", "bewijs": [{"bestand": ".env", "regel": 9}],
+         "waarde": {}},
+        {"soort": "geheim", "sleutel": "JWT_SECRET", "bevestigd": True, "zekerheid": "laag",
+         "bron": "detector:omgeving", "toelichting": "", "bewijs": [{"bestand": ".env", "regel": 18}],
+         "waarde": {}},
+    ],
+}
+
+
+def test_twee_verzinsels_worden_een_wachtwoord(db):
+    """Het model zette in de container `${DB_PASS:?...}` en in de lab-omgeving
+    `labx-mysql-root-7f3k9q`. Dan start de database met het ene en verbindt de
+    applicatie met het andere — en dat merk je pas als het lab al draait."""
+    svc = _svc(db, TWEE_VERZINSELS)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+    mysql = [d for d in svc.diensten(c.id) if d.naam.endswith("mysql")][0]
+
+    ww = mysql.omgeving["MYSQL_PASSWORD"]
+    assert ww == mysql.omgeving["MYSQL_ROOT_PASSWORD"], "één wachtwoord per dienst"
+    assert "${" not in ww and len(ww) >= 20
+    assert c.omgeving["DB_PASS"] == ww
+    assert ww in c.omgeving["DB_URL"] and "labx-mysql-root-7f3k9q" not in str(c.omgeving)
+
+
+def test_naar_de_inlog_van_een_eigen_dienst_wordt_niet_gevraagd(db):
+    """Mailpit wordt door LabX gestart en vraagt niet om authenticatie. De
+    gebruiker kan die gegevens sowieso niet weten: de dienst bestaat nog niet."""
+    svc = _svc(db, TWEE_VERZINSELS)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+
+    assert "SMTP_USERNAME" not in (c.benodigde_geheimen or {})
+    assert "SMTP_PASSWORD" not in (c.benodigde_geheimen or {})
+
+
+def test_een_sleutel_die_labx_zelf_invult_is_geen_ontbrekend_geheim(db):
+    """De detector zag DB_PASS los in een .env staan. Daar los om vragen
+    betekent vragen om een wachtwoord dat er allang is."""
+    svc = _svc(db, TWEE_VERZINSELS)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+
+    assert "DB_PASS" not in (c.benodigde_geheimen or {})
+    assert "JWT_SECRET" in (c.benodigde_geheimen or {}), "die is wel echt van jou"
+
+
+def test_shell_expansie_hoort_niet_in_een_container_omgeving():
+    """Een compose-bestand vult `${DB_NAME:-slimmer_politiek}` in; `docker run
+    -e` doet dat niet. Die tekst komt dan LETTERLIJK in de container terecht,
+    en MySQL maakt een database die zo heet — of weigert de naam. Het ziet er
+    bovendien uit alsof het klopt, want in de compose stond het er net zo."""
+    from services.lab.clusters import _zonder_expansie
+
+    uit = _zonder_expansie({
+        "MYSQL_DATABASE": "${DB_NAME:-slimmer_politiek}",
+        "MYSQL_USER": "${DB_USER-sp_user}",
+        "MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD:?zet dit in .env}",
+        "LOSSE": "$HOST",
+        "GEWOON": "utf8mb4",
+    })
+    assert uit["MYSQL_DATABASE"] == "slimmer_politiek", "de bedoelde waarde staat in de tekst"
+    assert uit["MYSQL_USER"] == "sp_user"
+    assert uit["GEWOON"] == "utf8mb4"
+    # Zonder bedoelde waarde hangt het van de sleutel af. Een inloggegeven
+    # blijft staan (leeg), want de stap erna vult hem met een gegenereerd
+    # wachtwoord -- weggooien betekende dat MySQL zonder wachtwoord startte.
+    assert uit["MYSQL_ROOT_PASSWORD"] == ""
+    # Al het andere valt weg; het image gebruikt dan zijn eigen standaard.
+    assert "LOSSE" not in uit
+
+
+def test_de_database_krijgt_een_echte_naam(db):
+    uitslag = {
+        **{k: v for k, v in UITSLAG.items() if k != "vondsten"},
+        "vondsten": [{
+            "soort": "dienst", "sleutel": "mysql", "bevestigd": True, "zekerheid": "hoog",
+            "bron": "detector:compose", "toelichting": "", "bewijs": [{"bestand": "docker-compose.yml"}],
+            "waarde": {"image": "mysql:8", "poorten": [3306],
+                       "omgeving": {"MYSQL_DATABASE": "${DB_NAME:-slimmer_politiek}",
+                                    "MYSQL_PASSWORD": "${DB_PASS:?zet dit in .env}"},
+                       "lab_omgeving": {"DB_NAME": "${DB_NAME:-slimmer_politiek}"},
+                       "omgeving_uit_kluis": {}},
+        }],
+    }
+    svc = _svc(db, uitslag)
+    rij = asyncio.run(svc.verken(repo_url=UITSLAG["repo_url"]))
+    uit = svc.keur_goed(rij.id, naam="SlimmerPolitiek")
+    c = svc.get_or_404(uit["cluster"]["id"])
+    dienst = svc.diensten(c.id)[0]
+
+    assert dienst.omgeving["MYSQL_DATABASE"] == "slimmer_politiek"
+    assert c.omgeving["DB_NAME"] == "slimmer_politiek"
+    assert "${" not in str(dienst.omgeving) and "${" not in str(c.omgeving)
+    assert len(dienst.omgeving["MYSQL_PASSWORD"]) >= 20, "het wachtwoord wordt alsnog gezet"
