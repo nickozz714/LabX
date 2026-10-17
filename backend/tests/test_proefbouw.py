@@ -396,3 +396,33 @@ def test_poorten_worden_uit_proc_gelezen_en_niet_uit_netstat():
     opdracht = bron.split('["sh", "-c",', 1)[1].split("]", 1)[0]
     assert "/proc/net/tcp" in opdracht
     assert "netstat" not in opdracht and "ss " not in opdracht
+
+
+def test_een_vluchtige_poort_telt_niet_als_verkeerde_poort(db, monkeypatch):
+    """In de proefbouw bleef 41361 opduiken — een nummer dat het
+    besturingssysteem uitdeelt, niet een dat iemand gekozen heeft. Het werd
+    gemeld als "hij luistert op het verkeerde nummer" terwijl er helemaal geen
+    applicatie luisterde, en dat stuurt het model de verkeerde kant op."""
+    c = _cluster(db)
+    p = _lab(db, c)
+    lus = NepLus(db, [LUKT] * 3, antwoorden=[False], luistert={41361},
+                 logtekst="Error: Cannot find module 'vite'")
+    asyncio.run(lus.installeer(monkeypatch, db, p).start(c.id))
+
+    gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
+    assert "verkeerde poort" not in gemeld
+    assert "Cannot find module" in gemeld
+
+
+def test_de_vorige_start_wordt_opgeruimd():
+    """Zonder dit blijft bij elke ronde een devserver staan, en kreeg de
+    tweede poging "Port 8099 is already in use" — een fout over onze eigen
+    rommel, die het model netjes ging proberen op te lossen."""
+    import inspect
+
+    from services.lab.lab_service import LabService
+
+    bron = inspect.getsource(LabService.start_applicatie)
+    assert "kill -TERM -$(cat" in bron, "de hele procesgroep, niet alleen het script"
+    assert "kill -KILL -$(cat" in bron, "en doorpakken als TERM niet genoeg is"
+    assert "echo $! >" in bron, "het groepsnummer moet bewaard worden"

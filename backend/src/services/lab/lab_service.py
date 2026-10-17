@@ -3170,6 +3170,11 @@ exec ssh -N \\
     #: Waar de uitvoer van het startscript heen gaat. In de werkkopie, zodat
     #: je er via de bestandsbrowser van het lab bij kunt.
     START_LOG = ".labx-start.log"
+    #: Het procesgroep-nummer van de vorige start. Nodig om hem te kunnen
+    #: stoppen: een devserver die blijft staan houdt de poort bezet, en de
+    #: volgende poging strandt op "Port 8099 is already in use" -- een fout
+    #: over onze eigen rommel, waar niemand iets aan kan doen.
+    START_PID = ".labx-start.pid"
 
     async def start_applicatie(self, lab_id: str) -> Dict[str, Any]:
         """Het startscript van het cluster draaien -- op de ACHTERGROND.
@@ -3209,13 +3214,27 @@ exec ssh -N \\
                       ["sh", "-c", f"cat > {pad} && chmod +x {pad}"],
                       stdin=(c.start_script or "").encode(), timeout=60)
 
-        # `setsid` maakt hem los van deze exec: zonder dat sterft hij zodra
-        # de exec-sessie eindigt, en dat is precies wanneer wij teruggaan
-        # kijken of hij draait.
-        start = (f"cd {map_} 2>/dev/null || cd /workspace; "
-                 f"rm -f {self.START_LOG}; "
-                 f"setsid sh {pad} > {self.START_LOG} 2>&1 < /dev/null & "
-                 f"echo gestart")
+        # Eerst de VORIGE opruimen. Zonder dit blijft bij elke ronde een
+        # devserver staan: de tweede poging kreeg "Port 8099 is already in
+        # use" omdat de eerste er nog op zat. Dat is een fout over onze eigen
+        # rommel, en het model ging hem netjes proberen op te lossen.
+        #
+        # De hele procesGROEP, want `setsid` zet het script en zijn kinderen
+        # in een eigen groep -- alleen het script doodmaken laat node gewoon
+        # draaien.
+        start = (
+            f"cd {map_} 2>/dev/null || cd /workspace; "
+            f"if [ -f {self.START_PID} ]; then "
+            f"  kill -TERM -$(cat {self.START_PID}) 2>/dev/null; sleep 2; "
+            f"  kill -KILL -$(cat {self.START_PID}) 2>/dev/null; "
+            f"fi; "
+            f"rm -f {self.START_LOG} {self.START_PID}; "
+            # `setsid` maakt hem los van deze exec: zonder dat sterft hij
+            # zodra de exec-sessie eindigt, en dat is precies wanneer wij
+            # teruggaan kijken of hij draait.
+            f"setsid sh {pad} > {self.START_LOG} 2>&1 < /dev/null & "
+            f"echo $! > {self.START_PID}; "
+            f"echo gestart")
         uit = await rt.exec(werkers[0].container_id, ["sh", "-c", start],
                             workdir="/workspace", timeout=60)
         log.infox("Applicatie gestart", lab_id=p.id, map=map_,

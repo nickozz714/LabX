@@ -59,10 +59,22 @@ GEREED_SECONDEN = int(__import__("os").environ.get("LABX_PROEF_WACHTTIJD", "900"
 #: niet meer vanzelf.
 LEEFT_ELKE = 15
 
-#: Poorten die niets zeggen over de applicatie. De Claude-CLI en wat gereedschap
-#: openen er zelf een; die horen niet als "hij luistert op het verkeerde
-#: nummer" gelezen te worden.
+#: Poorten die niets zeggen over de applicatie. De Claude-CLI en wat
+#: gereedschap openen er zelf een; die horen niet als "hij luistert op het
+#: verkeerde nummer" gelezen te worden.
 _NEGEER_POORTEN = {22, 53}
+
+#: Alles hierboven is een vluchtige poort die het besturingssysteem uitdeelt,
+#: geen nummer dat iemand gekozen heeft. In de proefbouw bleef 41361 opduiken
+#: en werd dus gemeld als "hij luistert op het verkeerde nummer" -- terwijl er
+#: helemaal geen applicatie luisterde. Dat stuurt het model de verkeerde kant
+#: op, en dat is erger dan niets zeggen.
+VLUCHTIG_VANAF = 32768
+
+
+def _gekozen_poorten(poorten) -> set:
+    """Alleen poorten waar iemand een besluit over genomen heeft."""
+    return {p for p in poorten if p not in _NEGEER_POORTEN and p < VLUCHTIG_VANAF}
 
 #: De naam van de proefbranch als je er zelf geen kiest.
 STANDAARD_BRANCH = "labx/proefbouw"
@@ -181,7 +193,7 @@ class Proefbouw:
         logtekst = (await lab_svc.start_log(p.id)).strip()
         gewenst = self._containerpoort(p)
         luistert = await lab_svc.luisterpoorten(p.id)
-        verkeerd = sorted(luistert - {gewenst} - _NEGEER_POORTEN)
+        verkeerd = sorted(_gekozen_poorten(luistert) - {gewenst})
 
         if gewenst and verkeerd:
             return (
@@ -299,7 +311,7 @@ class Proefbouw:
             luistert = await LabService(self.db).luisterpoorten(p.id)
         except Exception:  # noqa: BLE001
             return False
-        return bool(luistert - {gewenst} - _NEGEER_POORTEN) and gewenst not in luistert
+        return bool(_gekozen_poorten(luistert) - {gewenst}) and gewenst not in luistert
 
     async def _leeft(self, p) -> bool:
         """Draait het startscript nog?
