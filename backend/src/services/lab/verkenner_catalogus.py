@@ -69,7 +69,15 @@ DIENSTEN: Tuple[DienstSjabloon, ...] = (
         poorten=(8081, 1234),
         sleutelpatronen=(r"^COSMOS_(ENDPOINT|KEY|CONNECTION_STRING)$", r"^COSMOSDB_"),
         lab_omgeving={
-            "COSMOS_ENDPOINT": "https://{dienst}:8081",
+            # http en niet https. De OUDE Windows-emulator sprak TLS met een
+            # zelfondertekend certificaat; deze linux-variant (vnext-preview)
+            # spreekt gewoon HTTP. Gemeten op een draaiende emulator:
+            # http://ih-cosmos:8081 geeft 200, https geeft niets.
+            #
+            # Met https ernaast kreeg de API "EPROTO ... wrong version
+            # number" -- een TLS-fout die eruitziet als een certificaat- of
+            # netwerkprobleem, terwijl er alleen het verkeerde schema stond.
+            "COSMOS_ENDPOINT": "http://{dienst}:8081",
             "COSMOS_KEY": COSMOS_EMULATOR_SLEUTEL,
         },
         toelichting="Azure Cosmos DB-emulator. De sleutel is vast en publiek; die hoeft niet in de kluis.",

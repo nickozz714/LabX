@@ -366,3 +366,31 @@ def test_het_woord_az_in_proza_telt_niet():
     from services.lab.verkenner_detectoren import detecteer_azure_cli
 
     assert detecteer_azure_cli({"README.md": "Dit project heet az en doet dingen.\n"}) == []
+
+
+def test_de_cosmos_emulator_spreekt_http_en_geen_https():
+    """De OUDE Windows-emulator sprak TLS met een zelfondertekend
+    certificaat; deze linux-variant (vnext-preview) spreekt gewoon HTTP.
+    Gemeten op een draaiende emulator: http geeft 200, https geeft niets.
+
+    Met https ernaast kreeg de API "EPROTO ... wrong version number" — een
+    TLS-fout die eruitziet als een certificaat- of netwerkprobleem, terwijl
+    er alleen het verkeerde schema stond.
+    """
+    from services.lab import verkenner_catalogus as cat
+
+    cosmos = next(d for d in cat.DIENSTEN if d.naam == "cosmos")
+    assert "vnext-preview" in cosmos.image
+    assert cosmos.lab_omgeving["COSMOS_ENDPOINT"].startswith("http://")
+
+
+def test_het_startlog_toont_het_einde():
+    """De exec kapt lange uitvoer vooraan af en houdt het begin — dus kreeg
+    het model de eerste regels van een yarn-install te zien in plaats van de
+    fout waar het om ging."""
+    import inspect
+
+    from services.lab.lab_service import LabService
+
+    bron = inspect.getsource(LabService.start_log)
+    assert "tail -c" in bron

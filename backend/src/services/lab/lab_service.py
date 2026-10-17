@@ -3268,8 +3268,13 @@ exec ssh -N \\
         map_ = self._repomap(c) if c else "/workspace"
         uit = await self.runtime_voor(p).exec(
             werkers[0].container_id,
-            ["sh", "-c", f"tail -n {int(regels)} {map_}/{self.START_LOG} "
-                         f"2>/dev/null || tail -n {int(regels)} /workspace/{self.START_LOG} 2>/dev/null"],
+            # Twee keer afknippen: op regels én op tekens, en allebei aan het
+            # EINDE. De exec kapt lange uitvoer namelijk vooraan af en houdt
+            # het begin -- dus kreeg het model de eerste regels van een
+            # yarn-install te zien in plaats van de fout waar het om ging.
+            ["sh", "-c", f"(tail -n {int(regels)} {map_}/{self.START_LOG} 2>/dev/null "
+                         f"|| tail -n {int(regels)} /workspace/{self.START_LOG} 2>/dev/null) "
+                         f"| tail -c 6000"],
             workdir="/workspace", timeout=30)
         return str(uit.get("output") or "")
 
