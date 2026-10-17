@@ -84,6 +84,16 @@ def _nu() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class InrichtFout(RuntimeError):
+    """Het ging mis vóór of buiten het startscript.
+
+    Apart van een gewone fout omdat het een ANDER soort probleem is: een
+    mislukte installatie, een lab dat niet opkomt, een image dat niet
+    binnenkomt. Daar is geen startscript tegen opgewassen, dus gaat dit niet
+    naar het model maar naar jou -- met de echte uitvoer erbij.
+    """
+
+
 class Proefbouw:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -135,7 +145,20 @@ class Proefbouw:
 
         lab_svc = LabService(self.db)
         for ronde in range(1, MAX_RONDES + 1):
-            fout = await self._poging(lab_svc, svc, c, p)
+            try:
+                fout = await self._poging(lab_svc, svc, c, p)
+            except InrichtFout as exc:
+                # Niet naar het model: een mislukte apt of een lab dat niet
+                # opkomt is met geen enkel startscript te repareren. Hier
+                # hoort de echte uitvoer en een mens.
+                self._noteer(c, {"ronde": ronde, "fase": "inrichten mislukt",
+                                 "fout": str(exc)[:3000]})
+                c.proef_status = "mislukt"
+                c.updated_at = _nu()
+                self.db.commit()
+                log.warningx("Proefbouw gestrand op het inrichten", cluster=c.naam)
+                return {"status": "mislukt", "lab_id": p.id,
+                        "log": list(c.proef_log or [])}
 
             if fout is None:
                 adres = await self._antwoordt(svc, c, p)
@@ -171,16 +194,25 @@ class Proefbouw:
     async def _poging(self, lab_svc, svc, c: Cluster, p) -> Optional[str]:
         """Eén poging: inrichten, starten, wachten tot de poort antwoordt.
 
-        Geeft terug wat er misging, of None als de applicatie draait.
+        Geeft terug wat er misging, of None als de applicatie draait. Een
+        fout die NIET van het script komt wordt opgeworpen als
+        `InrichtFout` -- daar kan het model niets aan repareren, en hem toch
+        voorleggen levert alleen een ronde op waarin hij terecht om de echte
+        uitvoer vraagt.
         """
+        await self._wacht_op_container(lab_svc, p)
+
         uitslag = await lab_svc.provision(p.id, force=True)
-        fout = self._fout_uit(uitslag)
+        fout, van_script = self._fout_uit(uitslag)
+        if fout is not None and not van_script:
+            raise InrichtFout(fout)
         if fout is not None:
             return fout
 
         gestart = await lab_svc.start_applicatie(p.id)
         if not gestart.get("ok"):
-            return str(gestart.get("reden") or gestart.get("uitvoer") or "Starten mislukte.")
+            raise InrichtFout(str(gestart.get("reden") or gestart.get("uitvoer")
+                                  or "De applicatie kon niet gestart worden."))
 
         if await self._antwoordt(svc, c, p):
             return None
@@ -188,8 +220,7 @@ class Proefbouw:
         # "Er antwoordt niets" is geen diagnose. Kijk wat er WEL luistert in
         # de container: de applicatie kan prima draaien op de verkeerde poort,
         # en van buiten ziet dat er identiek uit als een applicatie die niet
-        # start. Precies dat gebeurde -- Vite luisterde op 18002, het nummer
-        # op de MACHINE, terwijl de container 8099 publiceert.
+        # start.
         logtekst = (await lab_svc.start_log(p.id)).strip()
         gewenst = self._containerpoort(p)
         luistert = await lab_svc.luisterpoorten(p.id)
@@ -209,6 +240,26 @@ class Proefbouw:
                 f"{GEREED_SECONDEN} seconden, en er luistert ook niets anders in de "
                 f"container.\nDe laatste regels van het startscript:\n"
                 f"{logtekst or '(het log is leeg)'}")
+
+    async def _wacht_op_container(self, lab_svc, p, *, seconden: int = 120) -> None:
+        """Wachten tot het lab echt draait.
+
+        `provision()` keert meteen terug met "Lab draait niet" als de
+        container nog aan het opkomen is -- en dat las ik als een mislukking.
+        Het model kreeg dan een zin zonder enige uitvoer en vroeg terecht om
+        de echte foutregel, want die was er niet: er was helemaal niets
+        misgegaan behalve dat ik te vroeg keek.
+        """
+        einde = asyncio.get_running_loop().time() + seconden
+        while asyncio.get_running_loop().time() < einde:
+            self.db.refresh(p)
+            werkers = [w for w in lab_svc.ensure_workers(p) if w.container_id]
+            if p.status == "running" and werkers:
+                return
+            await asyncio.sleep(3)
+        raise InrichtFout(
+            f"Het lab is na {seconden} seconden nog niet opgekomen; er is geen "
+            f"container om in te bouwen.")
 
     @staticmethod
     def _containerpoort(p) -> Optional[int]:
@@ -241,27 +292,42 @@ class Proefbouw:
         return self.db.get(Lab, bestaat.id)
 
     @staticmethod
-    def _fout_uit(uitslag: Dict[str, Any]) -> Optional[str]:
-        """Wat er misging, of None als alles liep.
+    def _fout_uit(uitslag: Dict[str, Any]) -> tuple:
+        """(wat er misging, kwam het van het eigen script?).
 
-        Alleen de stap van het EIGEN script telt. Dat de Azure CLI niet
-        installeerde is vervelend, maar het is niet waar dit script over gaat
-        -- en het model daarop laten repareren is hem een fout laten oplossen
-        die hij niet gemaakt heeft.
+        Alleen de stap van het EIGEN script is iets wat het model kan
+        repareren. Dat de Azure CLI niet installeerde of dat apt omviel is
+        vervelend, maar daar helpt een ander startscript niet tegen -- en hem
+        dat toch voorleggen levert een ronde op waarin hij terecht zegt dat
+        hij er niets uit kan afleiden.
+
+        En als het misgaat: de ECHTE uitvoer van de stap die faalde. Daar
+        stond eerst een zin van mij -- "Het inrichten is mislukt vóór het
+        startscript" -- en dat is precies wat je niet kunt gebruiken: geen
+        commando, geen foutregel, niets om op te handelen.
         """
         stappen = uitslag.get("steps") or []
         eigen = next((s for s in stappen if s.get("key") == "setup-script"), None)
+        if eigen is not None and eigen.get("status") == "error":
+            return (str(eigen.get("output") or "").strip()[-3000:] or "zonder uitvoer", True)
         if eigen is not None:
-            if eigen.get("status") == "error":
-                return str(eigen.get("output") or "").strip()[-3000:] or "zonder uitvoer"
-            # Het script is gedraaid en gaf geen fout. Dat een andere stap
-            # struikelde telt hier niet: anders repareert het model een fout
-            # die hij niet gemaakt heeft.
-            return None
+            return (None, True)
+
+        mislukt = [s for s in stappen if s.get("status") == "error"]
+        if mislukt:
+            regels = [
+                f"Stap '{s.get('label') or s.get('key')}' faalde "
+                f"(exitcode {s.get('exit_code')}):\n"
+                f"{str(s.get('output') or '').strip()[-1500:] or '(geen uitvoer)'}"
+                for s in mislukt
+            ]
+            return ("Het inrichten van het lab is mislukt:\n\n" + "\n\n".join(regels), False)
+
+        if uitslag.get("reason"):
+            return (f"Het inrichten kon niet beginnen: {uitslag['reason']}", False)
         if uitslag.get("status") == "error":
-            # Het script is niet eens aan de beurt geweest.
-            return "Het inrichten is mislukt vóór het startscript."
-        return None
+            return ("Het inrichten is mislukt, maar er is geen uitvoer bewaard.", False)
+        return (None, True)
 
     async def _antwoordt(self, svc, c: Cluster, p, *, geduld: Optional[int] = None) -> Optional[str]:
         """Luistert er iets op de poort van dit lab?

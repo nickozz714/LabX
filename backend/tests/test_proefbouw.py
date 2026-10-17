@@ -123,6 +123,10 @@ class NepLus:
         async def nep_log(zelf, lab_id, regels=80):
             return self.logtekst
 
+        async def nep_wachten(zelf, lab_svc, lab, *, seconden=120):
+            """Er is hier geen container om op te wachten."""
+            return None
+
         async def nep_poorten(zelf, lab_id):
             return set(self.luistert)
 
@@ -132,6 +136,7 @@ class NepLus:
         monkeypatch.setattr(LabService, "luisterpoorten", nep_poorten)
         monkeypatch.setattr(mod.Proefbouw, "_herstel", nep_herstel)
         monkeypatch.setattr(mod.Proefbouw, "_proeflab", nep_proeflab)
+        monkeypatch.setattr(mod.Proefbouw, "_wacht_op_container", nep_wachten)
         monkeypatch.setattr(mod.Proefbouw, "_antwoordt", nep_antwoordt)
         return self.echt
 
@@ -242,10 +247,13 @@ def test_alleen_het_eigen_script_telt_als_fout():
     laten repareren is hem een fout laten oplossen die hij niet maakte."""
     from services.lab.proefbouw import Proefbouw
 
-    assert Proefbouw._fout_uit({"status": "error", "steps": [
+    fout, van_script = Proefbouw._fout_uit({"status": "error", "steps": [
         {"key": "az", "status": "error", "output": "apt faalde"},
-        {"key": "setup-script", "status": "ok", "output": ""}]}) is None
-    assert "cp:" in (Proefbouw._fout_uit(FAALT) or "")
+        {"key": "setup-script", "status": "ok", "output": ""}]})
+    assert fout is None and van_script is True
+
+    fout, van_script = Proefbouw._fout_uit(FAALT)
+    assert "cp:" in (fout or "") and van_script is True
 
 
 # ── het oordeel ──────────────────────────────────────────────────────────────
@@ -495,3 +503,63 @@ def test_de_poort_wordt_in_het_lab_gecontroleerd_en_niet_erbuiten():
     assert "luisterpoorten" in bron, "de vraag hoort in het lab gesteld te worden"
     assert "open_connection" not in bron
     assert not hasattr(Proefbouw, "_open"), "de verbinding van buitenaf is weg"
+
+
+# ── een inrichtfout is geen scriptfout ───────────────────────────────────────
+
+def test_een_mislukte_inrichtstap_levert_de_echte_uitvoer_op():
+    """Hier stond eerst een zin van mij — "Het inrichten is mislukt vóór het
+    startscript" — en dat is precies wat je niet kunt gebruiken: geen
+    commando, geen foutregel, niets om op te handelen. Het model antwoordde
+    dan ook, volkomen terecht, dat het er niets uit kon afleiden."""
+    from services.lab.proefbouw import Proefbouw
+
+    fout, van_script = Proefbouw._fout_uit({"status": "error", "steps": [
+        {"key": "base-tools", "label": "bash, curl, jq", "status": "error",
+         "exit_code": 100, "output": "E: Unable to locate package jq"}]})
+    assert van_script is False, "hier helpt een ander startscript niet tegen"
+    assert "Unable to locate package jq" in fout
+    assert "exitcode 100" in fout
+    assert "bash, curl, jq" in fout
+
+
+def test_te_vroeg_kijken_is_geen_mislukking():
+    """`provision()` keert meteen terug met "Lab draait niet" als de container
+    nog aan het opkomen is. Dat las ik als een mislukking, en dan kreeg het
+    model een zin zonder enige uitvoer."""
+    from services.lab.proefbouw import Proefbouw
+
+    fout, van_script = Proefbouw._fout_uit({"ok": False, "status": "error",
+                                            "reason": "Lab draait niet"})
+    assert van_script is False
+    assert "Lab draait niet" in fout
+
+
+def test_een_inrichtfout_gaat_niet_naar_het_model(db, monkeypatch):
+    """Een mislukte apt of een lab dat niet opkomt is met geen enkel
+    startscript te repareren. Hem dat toch voorleggen kost een ronde waarin
+    hij terecht om de echte uitvoer vraagt."""
+    from services.lab import proefbouw as mod
+
+    c = _cluster(db)
+    p = _lab(db, c)
+    kapot = {"status": "error", "steps": [
+        {"key": "base-tools", "label": "bash", "status": "error",
+         "exit_code": 100, "output": "E: Unable to locate package jq"}]}
+    lus = NepLus(db, [kapot])
+    lus_obj = lus.installeer(monkeypatch, db, p)
+
+    gevraagd = {"n": 0}
+
+    async def tel_herstel(zelf, cl, fout, ronde):
+        gevraagd["n"] += 1
+        return {"script": None, "toelichting": "t"}
+
+    monkeypatch.setattr(mod.Proefbouw, "_herstel", tel_herstel)
+
+    uit = asyncio.run(lus_obj.start(c.id))
+    assert uit["status"] == "mislukt"
+    assert gevraagd["n"] == 0, "het model is hier niet aan zet"
+    regels = db.get(type(c), c.id).proef_log
+    assert any(r["fase"] == "inrichten mislukt" for r in regels)
+    assert any("Unable to locate package jq" in str(r.get("fout") or "") for r in regels)

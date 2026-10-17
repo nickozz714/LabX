@@ -172,12 +172,14 @@ function ProefKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void })
         </div>
       </div>
 
-      {adres && (
+      {(adres || c.proef_lab_id) && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <a href={adres} target="_blank" rel="noreferrer"
-             className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-secondary">
-            <ExternalLink size={12} /> {adres}
-          </a>
+          {adres && (
+            <a href={adres} target="_blank" rel="noreferrer"
+               className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-secondary">
+              <ExternalLink size={12} /> {adres}
+            </a>
+          )}
           {c.proef_lab_id && (
             <Link to={`/labs/${c.proef_lab_id}`} className="text-xs underline">
               naar het proeflab
@@ -207,17 +209,24 @@ function ProefKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void })
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {c.proef_status === "wacht_op_fiat" ? (
+        {/* Jouw oordeel staat ALTIJD open zodra er een proefbouw geweest is,
+            ook als LabX hem mislukt noemt. Die kan er namelijk naast zitten:
+            de poortcontrole zei ooit "er antwoordt niets" terwijl de
+            applicatie gewoon HTTP 200 gaf. Jij kijkt op het adres; LabX
+            kijkt naar een signaal. */}
+        {c.proef_status !== "geen" && c.proef_status !== "bezig" && (
           <>
             <Button onClick={() => doe(clusterApi.proefBevestigen(c.id), "Cluster klaar")}
                     disabled={bezig}>
-              <Check className="h-4 w-4" /> Dit werkt — cluster is klaar
+              <Check className="h-4 w-4" />
+              {c.proef_status === "goedgekeurd" ? "Bevestigd" : "Dit werkt — cluster is klaar"}
             </Button>
             <Button variant="secondary" onClick={() => setAfkeurOpen(true)} disabled={bezig}>
               Nog niet goed
             </Button>
           </>
-        ) : (
+        )}
+        {c.proef_status !== "wacht_op_fiat" && (
           <Button variant="secondary" disabled={bezig || !c.start_script}
                   onClick={() => doe(clusterApi.proefbouw(c.id),
                                      "Proefbouw klaar — kijk of de branch goed is")}>
