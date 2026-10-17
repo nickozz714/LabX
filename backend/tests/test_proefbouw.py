@@ -425,4 +425,38 @@ def test_de_vorige_start_wordt_opgeruimd():
     bron = inspect.getsource(LabService.start_applicatie)
     assert "kill -TERM -$(cat" in bron, "de hele procesgroep, niet alleen het script"
     assert "kill -KILL -$(cat" in bron, "en doorpakken als TERM niet genoeg is"
-    assert "echo $! >" in bron, "het groepsnummer moet bewaard worden"
+    # Het groepsnummer komt uit het proces ZELF: `$$` onder setsid is de
+    # groep. `$!` zou de setsid-wrapper opleveren, en die is al weg tegen de
+    # tijd dat we hem willen stoppen.
+    assert "echo $$ > " in bron
+
+
+def test_stdin_blijft_open_voor_de_applicatie():
+    """`< /dev/null` lijkt netjes en is het niet.
+
+    Een devserver als Vite luistert op stdin naar toetsen ('r' om te
+    herladen) en sluit zichzelf af zodra stdin EOF geeft. Dat gebeurde:
+    "ready in 102 ms" en meteen daarna weg, zonder een enkele foutmelding —
+    het onaangenaamste soort storing, want alles lijkt goed te gaan.
+    """
+    import inspect
+
+    from services.lab.lab_service import LabService
+
+    # Alleen de regels die een COMMANDO zijn; het commentaar eromheen noemt
+    # `< /dev/null` juist om te zeggen waarom we het niet doen.
+    opdracht = "".join(r for r in inspect.getsource(LabService.start_applicatie).splitlines()
+                       if r.strip().startswith('f"'))
+    assert "tail -f /dev/null |" in opdracht, "een stdin die open blijft en niets stuurt"
+    assert "< /dev/null" not in opdracht
+
+
+def test_het_model_krijgt_genoeg_tijd_om_een_script_te_herschrijven():
+    """Op 300 seconden sneuvelde een hele ronde aan de tijdslimiet, en dan is
+    de rest van die poging ook weg."""
+    import inspect
+
+    from services.lab.proefbouw import Proefbouw
+
+    bron = inspect.getsource(Proefbouw._herstel)
+    assert "timeout=900.0" in bron

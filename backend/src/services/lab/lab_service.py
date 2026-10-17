@@ -3210,6 +3210,7 @@ exec ssh -N \\
         # script van dertig regels met aanhalingstekens erin overleeft de reis
         # door `docker exec sh -c` niet ongeschonden.
         pad = "/workspace/.labx-start.sh"
+        loper = "/workspace/.labx-loper.sh"
         await rt.exec(werkers[0].container_id,
                       ["sh", "-c", f"cat > {pad} && chmod +x {pad}"],
                       stdin=(c.start_script or "").encode(), timeout=60)
@@ -3228,12 +3229,27 @@ exec ssh -N \\
             f"  kill -TERM -$(cat {self.START_PID}) 2>/dev/null; sleep 2; "
             f"  kill -KILL -$(cat {self.START_PID}) 2>/dev/null; "
             f"fi; "
+            # De tail van de vorige ronde hoort er ook bij: hij zit niet in
+            # die procesgroep en zou anders bij elke poging blijven staan.
+            f"pkill -f 'tail -f /dev/null' 2>/dev/null; "
             f"rm -f {self.START_LOG} {self.START_PID}; "
             # `setsid` maakt hem los van deze exec: zonder dat sterft hij
             # zodra de exec-sessie eindigt, en dat is precies wanneer wij
             # teruggaan kijken of hij draait.
-            f"setsid sh {pad} > {self.START_LOG} 2>&1 < /dev/null & "
-            f"echo $! > {self.START_PID}; "
+            # STDIN MOET OPEN BLIJVEN. `< /dev/null` lijkt netjes en is het
+            # niet: een devserver als Vite luistert op stdin naar toetsen
+            # ('r' om te herladen) en sluit zichzelf af zodra stdin EOF geeft.
+            # Dat gebeurde: "ready in 102 ms" en meteen daarna weg, zonder
+            # een enkele foutmelding. Een `tail -f /dev/null` geeft een stdin
+            # die open blijft en nooit iets stuurt.
+            #
+            # De PID komt uit het proces ZELF ($$ onder setsid is het
+            # groepsnummer); `$!` zou de setsid-wrapper opleveren, en die is
+            # al weg tegen de tijd dat we hem willen stoppen.
+            f"printf '%s\\n' 'cd \"$1\" 2>/dev/null || cd /workspace' "
+            f"'echo $$ > {self.START_PID}' 'exec sh {pad}' > {loper}; "
+            f"tail -f /dev/null | setsid sh {loper} {map_} "
+            f"  > {self.START_LOG} 2>&1 & "
             f"echo gestart")
         uit = await rt.exec(werkers[0].container_id, ["sh", "-c", start],
                             workdir="/workspace", timeout=60)

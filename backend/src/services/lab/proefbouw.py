@@ -369,7 +369,11 @@ class Proefbouw:
                 default_model=VERKENNER_MODEL,
                 oauth_token=getattr(s, "oauth_token", None),
                 cli_path=s.cli_path or "claude",
-                max_turns=1, timeout=300.0, enable_tool_search=False)
+                # Ruim: Opus leest een script, een foutmelding en een
+                # omgeving en schrijft er een nieuw script bij. Op 300
+                # seconden sneuvelde een hele ronde aan de tijdslimiet, en
+                # dan is de rest van de poging ook weg.
+                max_turns=1, timeout=900.0, enable_tool_search=False)
             uit = await provider.chat(prompt)
         except Exception as exc:  # noqa: BLE001
             log.warningx("Herstelronde zonder model", error=str(exc)[:300])
