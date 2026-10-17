@@ -876,7 +876,15 @@ class ClusterService:
         """
         if not kaart:
             return {}
-        container_poort, machine_poort = sorted(kaart.items())[0]
+        # De EERSTE poort, niet de laagste.
+        #
+        # De volgorde is betekenisvol: `lab_poorten` komt van de detector en
+        # die zet het hoofd-Dockerfile vooraan. Bij IntelligentHive is dat
+        # [8080, 3000, 80] -- numeriek sorteren koos 80, de nginx-poort uit
+        # het productie-image, en dan zoekt LabX een applicatie op een poort
+        # waar er nooit een komt.
+        container_poort = next(iter(kaart))
+        machine_poort = kaart[container_poort]
         uit = {"LABX_POORT": str(container_poort), "LABX_LAB_POORT": str(machine_poort)}
         if not c.host_id:
             uit["LABX_LAB_URL"] = f"http://localhost:{machine_poort}"

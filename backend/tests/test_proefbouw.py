@@ -563,3 +563,25 @@ def test_een_inrichtfout_gaat_niet_naar_het_model(db, monkeypatch):
     regels = db.get(type(c), c.id).proef_log
     assert any(r["fase"] == "inrichten mislukt" for r in regels)
     assert any("Unable to locate package jq" in str(r.get("fout") or "") for r in regels)
+
+
+def test_de_eerste_poort_telt_en_niet_de_laagste(db):
+    """De volgorde komt van de detector, die het hoofd-Dockerfile vooraan
+    zet. Bij IntelligentHive is dat [8080, 3000, 80]; numeriek sorteren koos
+    80 — de nginx-poort uit het productie-image — en dan wacht LabX een
+    kwartier op een applicatie die daar nooit komt."""
+    from services.lab.proefbouw import Proefbouw
+
+    class NepLab:
+        poort_map = {"8080": 18004, "3000": 18005, "80": 18006}
+
+    assert Proefbouw._containerpoort(NepLab()) == 8080
+
+
+def test_ook_de_omgeving_krijgt_de_eerste_poort(db):
+    from services.lab.clusters import ClusterService
+
+    c = ClusterService(db).maak(naam="Hive")
+    omgeving = ClusterService._adres_omgeving(c, {8080: 18004, 3000: 18005, 80: 18006})
+    assert omgeving["LABX_POORT"] == "8080"
+    assert omgeving["LABX_LAB_POORT"] == "18004"

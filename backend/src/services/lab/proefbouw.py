@@ -263,8 +263,17 @@ class Proefbouw:
 
     @staticmethod
     def _containerpoort(p) -> Optional[int]:
-        kaart = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
-        return sorted(kaart)[0] if kaart else None
+        """De poort waarop de applicatie hoort te luisteren.
+
+        De EERSTE uit de poortenlijst, niet de laagste. Die volgorde komt van
+        de detector, die het hoofd-Dockerfile vooraan zet. Numeriek sorteren
+        koos bij IntelligentHive poort 80 -- de nginx-poort uit het
+        productie-image -- en dan wacht LabX een kwartier op een applicatie
+        die daar nooit komt.
+        """
+        for sleutel in (p.poort_map or {}):
+            return int(sleutel)
+        return None
 
     # ── de onderdelen ────────────────────────────────────────────────────────
 
@@ -429,7 +438,10 @@ class Proefbouw:
                 # omgeving en schrijft er een nieuw script bij. Op 300
                 # seconden sneuvelde een hele ronde aan de tijdslimiet, en
                 # dan is de rest van de poging ook weg.
-                max_turns=1, timeout=900.0, enable_tool_search=False)
+                # Meer dan één beurt: met één sneuvelde een ronde op
+                # `error_max_turns` -- het model was nog niet klaar met
+                # nadenken en dan is de hele poging weg.
+                max_turns=4, timeout=900.0, enable_tool_search=False)
             uit = await provider.chat(prompt)
         except Exception as exc:  # noqa: BLE001
             log.warningx("Herstelronde zonder model", error=str(exc)[:300])
