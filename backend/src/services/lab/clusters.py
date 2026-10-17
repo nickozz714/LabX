@@ -1317,13 +1317,19 @@ class ClusterService:
                         poorten=[int(p) for p in (waarde.get("poorten") or [])],
                         omgeving=container_omgeving)
                     toegevoegd.append(dienstnaam)
-                # Wat een branch-lab moet weten om deze dienst te vinden. De
-                # naam in de lab-omgeving moet de ECHTE dienstnaam zijn, niet
-                # die uit de catalogus of uit het model -- anders wijst
-                # COSMOS_ENDPOINT naar een host die op dit netwerk niet
-                # bestaat, en dat merk je pas als een lab al draait.
+                # De KALE naam in de omgeving, niet de dienstnaam met prefix.
+                #
+                # Dit was eerst andersom: COSMOS_ENDPOINT werd
+                # http://ih-cosmos:8081, want dat is hoe de dienst heet. Maar
+                # een repo verwacht zijn dienst op de gewone naam, en soms
+                # met een harde controle erop -- het seed-script van
+                # IntelligentHive weigert te schrijven tenzij de host
+                # `cosmos` heet, en deed dus niets. Stil, zonder foutmelding.
+                #
+                # De dienst luistert op allebei (zie `_kale_naam`), dus de
+                # omgeving mag de naam gebruiken die de repo kent.
                 for k, w in lab_omgeving.items():
-                    omgeving[str(k)] = _hernoem_host(str(w), sleutel, dienstnaam)
+                    omgeving[str(k)] = str(w)
                 # Wat het model niet WIST staat niet in de omgeving maar op
                 # de lijst "moet uit de kluis komen". Een plaatshouder als
                 # waarde geeft een lab dat draait met een sleutel die

@@ -145,13 +145,20 @@ def test_goedkeuren_maakt_het_cluster_met_de_gestaafde_diensten(db):
     assert "yarn build:dependencies" in (c.start_script or "")
 
 
-def test_de_dienstnaam_krijgt_een_voorvoegsel_en_de_omgeving_volgt(db):
-    """De dienstnaam is ook de DNS-naam. Wijst de omgeving naar de catalogusnaam,
-    dan zoekt een branch-lab een host die op dit netwerk niet bestaat."""
+def test_de_omgeving_gebruikt_de_naam_die_de_repo_kent(db):
+    """De dienst heet `ih-cosmos` bij de daemon, maar in de omgeving staat
+    `cosmos`.
+
+    Dit was eerst andersom, en dat brak een repo op een manier die niemand
+    ziet: het seed-script van IntelligentHive weigert te schrijven tenzij de
+    host `cosmos` heet, en deed dus niets — zonder foutmelding, met een lege
+    database als enig spoor. De dienst luistert op beide namen, dus de
+    omgeving mag de naam gebruiken die de repo kent.
+    """
     svc, rij = _plan(db)
     uit = svc.keur_goed(rij.id, naam="IntelligentHive")
     c = svc.get_or_404(uit["cluster"]["id"])
-    assert c.omgeving["COSMOS_ENDPOINT"] == "https://ih-cosmos:8081"
+    assert c.omgeving["COSMOS_ENDPOINT"] == "https://cosmos:8081"
 
 
 def test_een_onbevestigde_dienst_gaat_niet_mee(db):
@@ -327,7 +334,7 @@ def test_de_omgeving_van_een_branch_lab_wijst_naar_de_echte_dienstnaam(db):
     svc, rij = _plan(db)
     uit = svc.keur_goed(rij.id, naam="IntelligentHive")
     c = svc.get_or_404(uit["cluster"]["id"])
-    assert c.omgeving["COSMOS_ENDPOINT"] == "https://ih-cosmos:8081"
+    assert c.omgeving["COSMOS_ENDPOINT"] == "https://cosmos:8081"
 
 
 # ── wat het model niet wist is geen waarde ───────────────────────────────────
