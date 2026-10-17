@@ -760,7 +760,7 @@ class LabService:
             return {"ok": True, "status": "skipped", "steps": list(p.provision_log)}
 
         steps: List[Dict[str, Any]] = list(_BASE_STEPS)
-        if settings.LAB_PROVISION_AZ:
+        if settings.LAB_PROVISION_AZ and self._az_gewenst(p):
             steps.append(_AZ_STEP)
         steps += self._extra_steps(p)
         script = (p.setup_script or "").strip()
@@ -3158,6 +3158,22 @@ exec ssh -N \\
                 out["port_map"] = {}
         return out
 
+    def _az_gewenst(self, p: Lab) -> bool:
+        """Moet dit lab de Azure CLI krijgen?
+
+        Deze installatie zet hem in elk lab, want ze is voor Fabric-werk
+        gebouwd. Een BRANCH-LAB is iets anders: daar kost het 616 MB en vier
+        minuten voor gereedschap dat een node-monorepo nooit aanroept. Het
+        cluster zegt of zijn applicatie hem nodig heeft, en standaard is dat
+        nee -- een development-lab vraagt andere dingen dan een Fabric-werkplek.
+        """
+        if not getattr(p, "cluster_id", None):
+            return True
+        from models.cluster import Cluster
+
+        c = self.db.get(Cluster, p.cluster_id)
+        return bool(c.lab_azure) if c is not None else True
+
     def _to_dict(self, p: Lab) -> Dict[str, Any]:
         # Eén telling voor alle werkers samen; per werker vragen zou een query
         # per container zijn op een lijst die bij elke verversing langskomt.
@@ -3165,6 +3181,13 @@ exec ssh -N \\
         return {
             "id": p.id, "name": p.name,
             "status": p.status, "image": p.image,
+            # Bij welk cluster en welke branch dit lab hoort, en waar je hem
+            # van buiten bereikt. Zonder deze drie kon een scherm niet zeggen
+            # dat dit een branch-lab is, laat staan op welk adres het draait --
+            # en dan staat er een lab dat je nergens kunt openen.
+            "cluster_id": getattr(p, "cluster_id", None),
+            "branch": getattr(p, "branch", None),
+            "poort_map": getattr(p, "poort_map", None) or {},
             # "container" of "host". De frontend verbergt hierop alles wat
             # alleen voor een container bestaat -- werkers, poorten, TTL,
             # opnieuw opbouwen.

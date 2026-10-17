@@ -613,3 +613,76 @@ def test_twee_clusters_mogen_allebei_een_cosmos_hebben(db):
     assert dns == ["cosmos", "cosmos"], "op het netwerk heet hij in beide clusters cosmos"
     assert len(set(containers)) == 2, "bij de daemon hebben ze verschillende namen"
     assert all(str(een.id) in c or str(twee.id) in c for c in containers)
+
+
+# ── een branch-lab is een ontwikkellab, geen Fabric-werkplek ─────────────────
+
+def test_een_branch_lab_krijgt_de_azure_cli_niet(db):
+    """Deze installatie zet de Azure CLI in elk lab, want ze is voor
+    Fabric-werk gebouwd. In een branch-lab kost dat 616 MB en vier minuten
+    voor gereedschap dat een node-monorepo nooit aanroept."""
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    c = ClusterService(db).maak(naam="Hive")
+    nu = "2026-10-17T10:00:00+00:00"
+    branch_lab = Lab(id="b1", name="Hive · feature/x", image="node:22", volume_name="v",
+                     status="running", cpu_limit=2, mem_limit_mb=4096, ttl_hours=4,
+                     cluster_id=c.id, branch="feature/x", created_at=nu, updated_at=nu)
+    gewoon = Lab(id="g1", name="Gewoon", image="python:3", volume_name="v2",
+                 status="running", cpu_limit=1, mem_limit_mb=2048, ttl_hours=4,
+                 created_at=nu, updated_at=nu)
+    db.add_all([branch_lab, gewoon])
+    db.commit()
+
+    svc = LabService(db)
+    assert svc._az_gewenst(gewoon) is True, "een gewoon lab verandert niet"
+    assert svc._az_gewenst(branch_lab) is False
+
+
+def test_een_cluster_kan_de_azure_cli_alsnog_vragen(db):
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    svc_c = ClusterService(db)
+    c = svc_c.maak(naam="Hive")
+    svc_c.wijzig(c.id, lab_azure=True)
+    nu = "2026-10-17T10:00:00+00:00"
+    db.add(Lab(id="b1", name="x", image="node:22", volume_name="v", status="running",
+               cpu_limit=2, mem_limit_mb=4096, ttl_hours=4, cluster_id=c.id,
+               branch="feature/x", created_at=nu, updated_at=nu))
+    db.commit()
+
+    assert LabService(db)._az_gewenst(db.get(Lab, "b1")) is True
+
+
+def test_een_branch_lab_is_ruimer_bemeten(db):
+    """Een gewoon lab is 1 CPU en 2 GB: genoeg om in rond te kijken, te krap
+    om een monorepo in te bouwen."""
+    from services.lab.clusters import BRANCH_LAB_CPU, BRANCH_LAB_MEM_MB, ClusterService
+
+    c = ClusterService(db).maak(naam="Hive")
+    uit = ClusterService(db).to_dict(c)
+    assert uit["lab_cpu"] == BRANCH_LAB_CPU and uit["lab_mem_mb"] == BRANCH_LAB_MEM_MB
+    assert BRANCH_LAB_MEM_MB > 2048 and BRANCH_LAB_CPU > 1.0
+
+
+def test_het_lab_zegt_bij_welke_branch_het_hoort(db):
+    """Zonder dit kan een scherm niet zeggen dat dit een branch-lab is, laat
+    staan op welk adres het draait — en dan staat er een lab dat je nergens
+    kunt openen."""
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-17T10:00:00+00:00"
+    db.add(Lab(id="b1", name="x", image="node:22", volume_name="v", status="stopped",
+               cpu_limit=2, mem_limit_mb=4096, ttl_hours=4, cluster_id=3,
+               branch="feature/x", poort_map={"8080": 18002}, created_at=nu, updated_at=nu))
+    db.commit()
+
+    uit = LabService(db)._to_dict(db.get(Lab, "b1"))
+    assert uit["cluster_id"] == 3
+    assert uit["branch"] == "feature/x"
+    assert uit["poort_map"] == {"8080": 18002}

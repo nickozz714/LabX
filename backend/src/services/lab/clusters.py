@@ -195,6 +195,14 @@ def _voorvoegsel(clusternaam: str) -> str:
     return (re.sub(r"[^a-z0-9]", "", (clusternaam or "").lower())[:3]) or "c"
 
 
+#: Hoe ruim een branch-lab standaard is. Een gewoon lab krijgt 1 CPU en 2 GB:
+#: genoeg om in rond te kijken, te krap om een monorepo in te bouwen.
+#: `yarn build:dependencies` over twaalf packages loopt daarop vast of duurt
+#: eindeloos, en dat ziet eruit als een hangend lab.
+BRANCH_LAB_CPU = 2.0
+BRANCH_LAB_MEM_MB = 4096
+
+
 class ClusterService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -259,6 +267,7 @@ class ClusterService:
     @staticmethod
     def _zet_velden(rij: Cluster, velden: Dict[str, Any]) -> None:
         for sleutel in ("repo_url", "repo_token_geheim", "lab_image",
+                        "lab_cpu", "lab_mem_mb", "lab_azure",
                         "start_script", "env_profiel", "notitie"):
             if sleutel in velden:
                 waarde = velden[sleutel]
@@ -708,6 +717,9 @@ class ClusterService:
             name=(naam or f"{c.naam} · {branch}")[:255],
             image=c.lab_image or None,
             host_id=c.host_id,
+            # Ruimer dan een gewoon lab: hier wordt gebouwd, niet rondgekeken.
+            cpu_limit=float(c.lab_cpu or BRANCH_LAB_CPU),
+            mem_limit_mb=int(c.lab_mem_mb or BRANCH_LAB_MEM_MB),
             # Geen repos= : we klonen zelf, want we hebben een BASIS en een
             # nieuwe branch nodig en dat kan de gewone kloon niet.
             ttl_hours=24 * 7,
@@ -907,6 +919,9 @@ class ClusterService:
             "host_id": c.host_id, "machine": host.naam if host else "deze server",
             "repo_url": c.repo_url, "repo_token_geheim": c.repo_token_geheim,
             "lab_image": c.lab_image, "start_script": c.start_script,
+            "lab_cpu": c.lab_cpu or BRANCH_LAB_CPU,
+            "lab_mem_mb": c.lab_mem_mb or BRANCH_LAB_MEM_MB,
+            "lab_azure": bool(c.lab_azure),
             "env_profiel": c.env_profiel, "omgeving": c.omgeving or {},
             # Wat er in de kluis moet staan voordat een branch-lab kan
             # draaien, en wat daarvan nog ontbreekt. Die tweede vraag wil je

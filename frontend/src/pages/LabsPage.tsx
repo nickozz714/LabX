@@ -7,12 +7,15 @@
  * banner is the direct fix for issue 1 ("geen Docker aanwezig").
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { dockerStatus, downloadLabFile, labHostsApi, labsApi, type BrowserStatus, type LabFileEntry } from "@/lib/labs";
 import type { DockerStatus, GuardModelStatus, ImagePreset, Lab, LabExtra, LabHost, LabRepo } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { ApiError } from "@/lib/api";
-import { Download, Loader2, Monitor, RefreshCw, Pencil, Trash2 , ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft, ChevronDown, ChevronRight, Download, ExternalLink, GitBranch,
+  Loader2, Monitor, Pencil, RefreshCw, Trash2,
+} from "lucide-react";
 import { LabTerminal } from "@/components/LabTerminal";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { AzureProfilePicker } from "@/components/AzureProfilePicker";
@@ -108,6 +111,10 @@ export function LabsPage() {
                     machine hebt: het verklaart snelheid, en het verklaart
                     waarom een lab niet start als die pc uit staat. */}
                 {lab.host_naam && <Badge tone="neutral">op {lab.host_naam}</Badge>}
+                {/* Een branch-lab hoort bij een cluster en heeft een adres.
+                    Zonder dit lijkt het een gewoon lab en zoek je de poorten
+                    met `docker ps`. */}
+                {lab.branch && <Badge tone="violet">{lab.branch}</Badge>}
                 {lab.llm_guard && <Badge tone="violet">llm-guard</Badge>}
                 {/* Het lab draait al terwijl de pakketten nog binnenkomen —
                     zonder dit zou je op "running" afgaan en je afvragen waarom
@@ -822,6 +829,61 @@ function HostPaneel({ lab, onChanged }: { lab: Lab; onChanged: () => void }) {
   );
 }
 
+/**
+ * Waar dit lab vandaan komt en waar je het opent.
+ *
+ * Alleen voor een branch-lab van een cluster. Zonder dit staat er een lab dat
+ * draait en dat je nergens kunt vinden: de poorten staan wel in de database,
+ * maar nergens op een scherm — en "hoe benader ik dat ding" is dan een vraag
+ * die je alleen met `docker ps` kunt beantwoorden.
+ *
+ * De eerste poort is de applicatie; de rest publiceert LabX omdat de repo ze
+ * noemt, en daar hoeft niet altijd iets op te luisteren.
+ */
+function BranchPaneel({ lab }: { lab: Lab }) {
+  const poorten = Object.entries(lab.poort_map || {});
+  if (!lab.cluster_id && poorten.length === 0) return null;
+  return (
+    <Card className="mb-3 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <GitBranch size={15} className="text-muted-foreground" />
+        {lab.branch
+          ? <span className="font-mono">{lab.branch}</span>
+          : <span className="text-muted-foreground">branch onbekend</span>}
+        {lab.cluster_id && (
+          <Link to={`/clusters/${lab.cluster_id}`} className="text-xs underline">
+            naar het cluster
+          </Link>
+        )}
+      </div>
+      {poorten.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {poorten.map(([container, machine], i) => (
+            <a
+              key={container}
+              href={`http://localhost:${machine}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-secondary"
+            >
+              <ExternalLink size={12} />
+              localhost:{machine}
+              <span className="text-muted-foreground">→ {container}</span>
+              {i === 0 && <span className="not-italic text-muted-foreground">(app)</span>}
+            </a>
+          ))}
+        </div>
+      )}
+      {lab.provision_status === "error" && (
+        <p className="mt-2 text-xs text-destructive">
+          Het inrichten is mislukt, dus er luistert waarschijnlijk niets op die poorten.
+          Kijk onder Inrichting wat er misging.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void; onChanged: () => void }) {
   // Vier tabbladen in plaats van tien over twee regels. Wat je ZELF instelt
   // staat vooraan; alles waarmee je in het lab wérkt zit onder Werkruimte met
@@ -894,6 +956,7 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
         </button>
         <h1 className="text-xl font-bold">{lab.name}</h1>
       </div>
+      <BranchPaneel lab={lab} />
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <Badge tone={statusTone(lab.status)}>{lab.status}</Badge>
         <span className="text-muted-foreground">{lab.image}</span>

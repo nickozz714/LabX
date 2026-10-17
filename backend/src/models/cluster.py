@@ -63,6 +63,18 @@ class Cluster(Base):
     #: Het image waarin een branch-lab draait. IntelligentHive heeft Node en
     #: yarn 4 nodig; het standaard python-image volstaat daar niet.
     lab_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Hoe ruim een branch-lab bemeten is. Een lab is standaard 1 CPU en
+    #: 2 GB -- genoeg om in rond te kijken, te krap om een monorepo in te
+    #: bouwen. `yarn build:dependencies` over twaalf packages loopt daarop
+    #: vast of duurt eindeloos, en dat ziet eruit als een hangend lab.
+    lab_cpu: Mapped[float | None] = mapped_column(Integer, nullable=True)
+    lab_mem_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Heeft deze applicatie de Azure CLI nodig? Standaard NIET.
+    #:
+    #: Deze installatie zet hem in elk lab, want ze is voor Fabric-werk
+    #: gebouwd. Een branch-lab is iets anders: daar kost het 616 MB en vier
+    #: minuten voor gereedschap dat een node-monorepo nooit aanroept.
+    lab_azure: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
     #: Bouwen en starten, één keer opgeschreven voor het hele cluster.
     start_script: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Welk env-profiel de front-end gebruikt (debug, realestate, ...). Een

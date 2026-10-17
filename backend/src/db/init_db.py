@@ -33,6 +33,11 @@ _ADDITIVE_COLUMNS = {
         # De deploy key van dit cluster. Erbij gekomen omdat een organisatie
         # met goedkeuringsbeleid een token kan tegenhouden, en een deploy key
         # op repo-niveau daarbuiten valt.
+        ("lab_cpu", "REAL"),
+        ("lab_mem_mb", "INTEGER"),
+        # Standaard 0: een branch-lab krijgt de Azure CLI niet, ook al zet
+        # deze installatie hem in elk gewoon lab.
+        ("lab_azure", "BOOLEAN NOT NULL DEFAULT 0"),
         ("ssh_publiek", "TEXT"),
         ("ssh_prive_encrypted", "TEXT"),
     ],

@@ -17,6 +17,12 @@ export interface Lab {
   heeft_agent_token?: boolean;
   status: "creating" | "running" | "stopped" | "error" | "expired";
   image: string;
+  /** Bij welk cluster en welke branch dit lab hoort. null = een gewoon lab. */
+  cluster_id?: number | null;
+  branch?: string | null;
+  /** Waar je dit lab van buiten bereikt: {containerpoort: machinepoort}.
+   *  Zonder dit staat er een lab dat je nergens kunt openen. */
+  poort_map?: Record<string, number>;
   network_alias: string | null;
   cpu_limit: number;
   mem_limit_mb: number;
