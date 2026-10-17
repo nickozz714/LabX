@@ -1960,6 +1960,18 @@ exec ssh -N \\
         p = self.get(lab_id)
         if p.status == "running":
             return self._to_dict(p)
+
+        # Een BRANCH-LAB start anders, en er is maar één deur.
+        #
+        # Zonder dit hing het ervan af welke knop je toevallig gebruikte: via
+        # het cluster kwam het lab op het clusternetwerk met zijn poorten en
+        # zijn LABX_-variabelen, via de labpagina op het gedeelde labnetwerk
+        # zonder poorten en zonder omgeving. Dat tweede lab stond vrolijk op
+        # "running" en was volstrekt onbruikbaar -- en nergens stond waarom.
+        if p.cluster_id:
+            from services.lab.clusters import ClusterService
+
+            return await ClusterService(self.db).start_branch_lab(p.id)
         if self.is_host(p):
             # Een hostlab "start" niet: de machine draait al. Wat we wél doen
             # is kijken of de agent er is, want anders zet je hem op running

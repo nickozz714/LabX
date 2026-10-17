@@ -23,6 +23,7 @@ import { LabResources } from "@/components/LabResources";
 import { BijlageKnop, leesbareMaat } from "@/components/Bijlagen";
 import { HostMeter } from "@/components/HostMeter";
 import { useMelding } from "@/components/Meldingen";
+import { useConcept } from "@/lib/useConcept";
 import { useBevestiging } from "@/components/Bevestiging";
 import { guardApi, type GuardProfiel } from "@/lib/guard";
 import { MODEL_OPTIONS, modelLabel } from "@/lib/modellen";
@@ -38,6 +39,12 @@ export function LabsPage() {
   const [docker, setDocker] = useState<DockerStatus | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Clusterlabs horen hier niet standaard tussen. Ze komen en gaan per
+  // branch, ze horen bij een cluster dat zijn eigen pagina heeft, en met een
+  // paar branches erbij verdrinken je eigen labs ertussen. Zichtbaar maken
+  // kan altijd; de keuze blijft staan zodat je hem niet elke keer opnieuw
+  // hoeft te maken.
+  const [toonCluster, setToonCluster, ] = useConcept<boolean>("labs:toon-cluster", false);
 
   async function refresh() {
     const [l, d] = await Promise.all([labsApi.list(), dockerStatus()]);
@@ -54,6 +61,9 @@ export function LabsPage() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const clusterLabs = labs.filter((l) => l.cluster_id).length;
+  const zichtbaar = toonCluster ? labs : labs.filter((l) => !l.cluster_id);
 
   return (
     <div className="pagina veilig-onder p-4 sm:p-6">
@@ -85,13 +95,27 @@ export function LabsPage() {
         <HostMeter />
       </div>
 
+      {clusterLabs > 0 && (
+        <div className="mb-3">
+          <Toggle
+            checked={toonCluster}
+            onChange={setToonCluster}
+            label={`Clusterlabs tonen (${clusterLabs})`}
+          />
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-muted-foreground">Laden…</p>
-      ) : labs.length === 0 ? (
-        <EmptyState>Nog geen labs. Maak er een aan om te beginnen.</EmptyState>
+      ) : zichtbaar.length === 0 ? (
+        <EmptyState>
+          {labs.length === 0
+            ? "Nog geen labs. Maak er een aan om te beginnen."
+            : "Alleen clusterlabs. Zet het schuifje aan om ze te zien, of ga naar het cluster."}
+        </EmptyState>
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {labs.map((lab) => (
+          {zichtbaar.map((lab) => (
             <Card key={lab.id} className="cursor-pointer p-4 hover:border-primary/40" onClick={() => navigate(`/labs/${lab.id}`)}>
               <div className="mb-1 flex items-center justify-between">
                 <span className="min-w-0 flex-1 break-words font-semibold">{lab.name}</span>

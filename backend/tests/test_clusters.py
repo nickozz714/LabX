@@ -686,3 +686,34 @@ def test_het_lab_zegt_bij_welke_branch_het_hoort(db):
     assert uit["cluster_id"] == 3
     assert uit["branch"] == "feature/x"
     assert uit["poort_map"] == {"8080": 18002}
+
+
+def test_een_branch_lab_start_altijd_als_branch_lab(db):
+    """Er is maar één deur.
+
+    Zonder dit hing het ervan af welke knop je toevallig gebruikte: via het
+    cluster kwam het lab op het clusternetwerk met zijn poorten en zijn
+    LABX_-variabelen, via de labpagina op het gedeelde labnetwerk zonder
+    poorten en zonder omgeving. Dat tweede lab stond vrolijk op "running" en
+    was volstrekt onbruikbaar — en nergens stond waarom.
+    """
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    c = ClusterService(db).maak(naam="Hive")
+    nu = "2026-10-17T10:00:00+00:00"
+    db.add(Lab(id="b1", name="Hive · main", image="node:22", volume_name="v",
+               status="stopped", cpu_limit=2, mem_limit_mb=4096, ttl_hours=4,
+               cluster_id=c.id, branch="main", created_at=nu, updated_at=nu))
+    db.commit()
+
+    gezien = {}
+
+    async def nep_branchstart(zelf, lab_id):
+        gezien["lab_id"] = lab_id
+        return {"id": lab_id}
+
+    ClusterService.start_branch_lab = nep_branchstart
+    asyncio.run(LabService(db).start("b1"))
+    assert gezien.get("lab_id") == "b1", "de gewone start moet doorverwijzen"
