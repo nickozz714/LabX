@@ -68,6 +68,7 @@ class BoardService:
             key_prefix=prefix,
             seq=0,
             lab_id=payload.get("lab_id") or None,
+            cluster_id=(int(payload["cluster_id"]) if payload.get("cluster_id") else None),
             columns=columns,
             agent_column=payload.get("agent_column") or self._default_agent_column(columns),
             agent_busy_column=(payload.get("agent_busy_column")
@@ -95,6 +96,8 @@ class BoardService:
             if not name:
                 raise HTTPException(status_code=400, detail="name mag niet leeg zijn")
             b.name = name
+        if "cluster_id" in payload:
+            b.cluster_id = int(payload["cluster_id"]) if payload.get("cluster_id") else None
         for field in ("description", "lab_id", "agent_column", "agent_busy_column",
                       "agent_done_column", "agent_instruction", "provider_config",
                       "archive_column"):
@@ -266,6 +269,8 @@ class BoardService:
             status=status,
             priority=payload.get("priority") or "normal",
             item_type=(payload.get("item_type") or None),
+            # Bij welke branch dit ticket hoort, op een clusterbord.
+            branch=((payload.get("branch") or "").strip() or None),
             sync_naar_bron=(False if payload.get("sync_naar_bron") is False else True),
             assignee=payload.get("assignee"),
             labels=payload.get("labels") or [],
@@ -296,7 +301,7 @@ class BoardService:
         if "depends_on" in payload:
             t.depends_on = [str(x).strip() for x in (payload.get("depends_on") or []) if str(x).strip()]
         for field in ("title", "description", "acceptance_criteria", "priority",
-                      "assignee", "labels", "item_type", "sync_naar_bron"):
+                      "assignee", "labels", "item_type", "sync_naar_bron", "branch"):
             if field in payload:
                 new_value = payload[field]
                 if getattr(t, field) != new_value:
@@ -501,6 +506,10 @@ class BoardService:
         out: Dict[str, Any] = {
             "id": b.id, "name": b.name, "description": b.description,
             "key_prefix": b.key_prefix, "lab_id": b.lab_id, "columns": b.columns or [],
+            # Bij welk cluster dit bord hoort, en welke branches er op dit
+            # moment een lab hebben. Dat laatste is wat een "labbord" tot een
+            # filter maakt in plaats van een apart bord.
+            "cluster_id": getattr(b, "cluster_id", None),
             "agent_column": b.agent_column,
             "archive_column": b.archive_column,
             "archive_days": b.archive_days,
@@ -514,6 +523,23 @@ class BoardService:
             "last_sync_at": b.last_sync_at, "last_sync_error": b.last_sync_error,
             "created_at": b.created_at, "updated_at": b.updated_at,
         }
+        if getattr(b, "cluster_id", None):
+            from models.cluster import Cluster
+            from models.lab import Lab
+
+            c = self.db.get(Cluster, b.cluster_id)
+            out["cluster_naam"] = c.naam if c else None
+            # De branches die NU een lab hebben, met dat lab erbij. Een
+            # ticket kan naar een branch wijzen waarvan het lab al opgeruimd
+            # is; dat is geen fout, en het scherm hoort het verschil te laten
+            # zien tussen "er is een lab" en "die moet nog gemaakt worden".
+            out["branches"] = [
+                {"branch": br, "lab_id": lid, "status": st}
+                for lid, br, st in self.db.query(Lab.id, Lab.branch, Lab.status)
+                .filter(Lab.cluster_id == b.cluster_id, Lab.branch.isnot(None))
+                .order_by(Lab.branch).all()
+            ]
+
         if b.lab_id:
             from models.lab import Lab
             lab = self.db.get(Lab, b.lab_id)
@@ -533,6 +559,8 @@ class BoardService:
             "id": t.id, "board_id": t.board_id, "key": t.key, "title": t.title,
             "description": t.description, "acceptance_criteria": t.acceptance_criteria,
             "status": t.status, "priority": t.priority,
+            # Bij welke branch dit ticket hoort op een clusterbord.
+            "branch": getattr(t, "branch", None),
             "item_type": getattr(t, "item_type", None),
             "sync_naar_bron": bool(getattr(t, "sync_naar_bron", True)),
             "archived_at": getattr(t, "archived_at", None),

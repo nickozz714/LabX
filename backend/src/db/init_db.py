@@ -44,6 +44,17 @@ _ADDITIVE_COLUMNS = {
         ("ssh_publiek", "TEXT"),
         ("ssh_prive_encrypted", "TEXT"),
     ],
+    "boards": [
+        # Een bord kan bij een cluster horen. Eén bord per cluster; het
+        # "labbord" is dit bord gefilterd op één branch, want een bord per
+        # branch-lab zou verdwijnen zodra je dat wegwerplab opruimt.
+        ("cluster_id", "INTEGER"),
+    ],
+    "tickets": [
+        # Bij welke branch dit ticket hoort. De branch en niet het lab-id:
+        # het lab komt en gaat, de branch blijft.
+        ("branch", "VARCHAR(200)"),
+    ],
     "cluster_plannen": [
         # Antwoorden op de vragen van de verkenner, en het plan waar dit uit
         # voortkwam. Erbij gekomen nadat bleek dat een plan wel vragen stelde

@@ -52,6 +52,16 @@ class Board(Base):
     lab_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("labs.id", ondelete="SET NULL"), nullable=True)
 
+    # Het gekoppelde CLUSTER. Eén bord per cluster, en de tickets daarop
+    # verwijzen naar een branch.
+    #
+    # Waarom niet een bord per branch-lab? Omdat een branch-lab wegwerpbaar
+    # is en een ticket niet. Een bord dat aan een lab hangt verdwijnt mee met
+    # dat lab -- en dan ben je precies het werk kwijt dat je wilde bewaren.
+    # Het "labbord" is daarom geen apart bord maar dit bord, gefilterd op één
+    # branch.
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
     # [{key, name, is_done?, wip_limit?}] — volgorde is de kolomvolgorde.
     columns: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
@@ -116,6 +126,15 @@ class Ticket(Base):
     # De kolom-key waar het ticket in staat.
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="todo")
     priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
+
+    # Bij welke BRANCH dit ticket hoort, op een clusterbord.
+    #
+    # De branch en niet het lab-id: een branch-lab komt en gaat, de branch
+    # blijft. Hing dit aan een lab, dan raakte het ticket zijn plek kwijt
+    # zodra je dat lab opruimde -- en dat is juist de normale gang van zaken.
+    # Het lab wordt op het moment zelf opgezocht: het lab van dit cluster met
+    # deze branch, als dat er is.
+    branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # Het soort werkitem in de bron: een Jira-issuetype ("Bug", "Verhaal") of
     # een Azure DevOps work item type. Leeg = wat er op het bord staat. Per
     # TICKET en niet alleen per bord, want een bug en een taak horen op
