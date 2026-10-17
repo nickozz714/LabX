@@ -86,6 +86,28 @@ async def controleer_toegang(cluster_id: int, db: Session = Depends(get_db)):
     return await svc.controleer_toegang(svc.get_or_404(cluster_id))
 
 
+@router.post("/branches/{lab_id}/herstart-app")
+async def branch_app_herstarten(lab_id: str, db: Session = Depends(get_db)):
+    """De applicatie in dit branch-lab opnieuw starten.
+
+    Nodig zodra het startscript bouwt in plaats van een devserver draait: een
+    agent die de code wijzigt is dan pas te zien na een nieuwe bouw. Bij een
+    devserver met file-watching (Vite, nodemon) hoeft dit niet -- die pikt de
+    wijziging zelf op.
+    """
+    from services.lab.lab_service import LabService
+
+    return await LabService(db).start_applicatie(lab_id)
+
+
+@router.get("/branches/{lab_id}/start-log")
+async def branch_start_log(lab_id: str, db: Session = Depends(get_db)):
+    """De uitvoer van het startscript. Waar je kijkt als er niets antwoordt."""
+    from services.lab.lab_service import LabService
+
+    return {"log": await LabService(db).start_log(lab_id, regels=200)}
+
+
 @router.post("/branches/{lab_id}/start")
 async def start_branch_lab(lab_id: str, db: Session = Depends(get_db)):
     """Een branch-lab aanzetten op het netwerk van zijn cluster."""

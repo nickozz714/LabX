@@ -313,6 +313,14 @@ export const clusterApi = {
   branchLab: (id: number, body: { branch: string; basis?: string; naam?: string }) =>
     api.post<{ id: string; name: string }>(`/clusters/${id}/branches`, body),
   branchStart: (labId: string) => api.post<unknown>(`/clusters/branches/${labId}/start`),
+  /** De applicatie opnieuw starten zonder het lab te herstarten. Nodig zodra
+   *  het startscript BOUWT in plaats van een devserver te draaien: dan is een
+   *  wijziging pas na een nieuwe bouw te zien. */
+  branchAppHerstarten: (labId: string) =>
+    api.post<{ ok: boolean; map?: string }>(`/clusters/branches/${labId}/herstart-app`),
+  /** De uitvoer van het startscript — waar je kijkt als er niets antwoordt. */
+  branchStartLog: (labId: string) =>
+    api.get<{ log: string }>(`/clusters/branches/${labId}/start-log`),
 };
 
 /** Wat een soort in het scherm heet, en waarom hij er toe doet. Eén plek,

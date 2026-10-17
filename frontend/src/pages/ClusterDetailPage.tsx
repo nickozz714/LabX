@@ -20,10 +20,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Box, Check, Copy, ExternalLink, GitBranch, KeyRound, Loader2,
-  Play, PlayCircle, Plus, RefreshCw, Search, Server, Square, Terminal, Trash2,
-  TriangleAlert,
+  ArrowLeft, Box, Check, Copy, ExternalLink, GitBranch, KanbanSquare, KeyRound,
+  Loader2, MessageSquare, Play, PlayCircle, Plus, RefreshCw, Search, Server,
+  Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
+import { boardApi } from "@/lib/boards";
 import { clusterApi } from "@/lib/clusters";
 import type {
   BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, Toegang,
@@ -541,6 +542,7 @@ export function ClusterDetailPage() {
   const [verkenBranch, setVerkenBranch] = useState("main");
   const [instructie, setInstructie] = useState("");
   const [verkent, setVerkent] = useState(false);
+  const [bordId, setBordId] = useState<number | null>(null);
   const [branch, setBranch] = useState("");
   const [basis, setBasis] = useState("main");
   const [maakt, setMaakt] = useState(false);
@@ -557,6 +559,12 @@ export function ClusterDetailPage() {
       // De staande opdracht van de laatste verkenning voorvullen: bijstellen
       // is bijna altijd aanvullen, en hem leeg laten betekent dat je hem
       // stilzwijgend weggooit bij de volgende ronde.
+      // Het bord van dit cluster, als er een is. Zonder dit kan de
+      // Bord-knop nergens heen wijzen.
+      boardApi.list()
+        .then((bs) => setBordId(
+          bs.find((b) => (b as { cluster_id?: number }).cluster_id === Number(clusterId))?.id ?? null))
+        .catch(() => { /* geen borden is geen fout */ });
       const laatste = lijst.find((p) => p.instructie);
       if (laatste?.instructie) setInstructie(laatste.instructie);
       if (lijst[0]?.branch) setVerkenBranch(lijst[0].branch);
@@ -713,25 +721,65 @@ export function ClusterDetailPage() {
           ? <EmptyState>Nog geen branch-labs.</EmptyState>
           : <ul className="space-y-2">
               {c.labs.map((l) => (
-                <li key={l.id} className="flex items-center justify-between rounded-lg border border-border p-3">
-                  <Link to={`/labs/${l.id}`} className="min-w-0">
-                    <span className="font-medium">{l.name}</span>
-                    {l.branch && <span className="ml-2 font-mono text-xs text-muted-foreground">{l.branch}</span>}
-                  </Link>
-                  <Button
-                    variant="secondary"
-                    onClick={async () => {
-                      try {
-                        await clusterApi.branchStart(l.id);
-                        melding.ok("Branch-lab gestart");
-                        void laad();
-                      } catch (e) {
-                        melding.fout(e instanceof ApiError ? e.message : "Starten mislukte");
-                      }
-                    }}
-                  >
-                    <Play className="h-3.5 w-3.5" /> Start
-                  </Button>
+                <li key={l.id} className="rounded-lg border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Link to={`/labs/${l.id}`} className="min-w-0">
+                      <span className="font-medium">{l.name}</span>
+                      {l.branch && <span className="ml-2 font-mono text-xs text-muted-foreground">{l.branch}</span>}
+                    </Link>
+                    <div className="flex flex-wrap gap-1">
+                      {/* Chatten en het bord staan hier omdat dit de plek is
+                          waar je een branch uitkiest. Anders moet je de naam
+                          van het lab onthouden en hem elders terugzoeken. */}
+                      <Button variant="secondary" onClick={() => navigate(`/chat?lab=${l.id}`)}>
+                        <MessageSquare className="h-3.5 w-3.5" /> Chat
+                      </Button>
+                      {bordId && (
+                        <Button variant="secondary"
+                                onClick={() => navigate(`/boards/${bordId}?branch=${encodeURIComponent(l.branch || "")}`)}>
+                          <KanbanSquare className="h-3.5 w-3.5" /> Bord
+                        </Button>
+                      )}
+                      <Button
+                        variant="secondary"
+                        onClick={async () => {
+                          try {
+                            await clusterApi.branchStart(l.id);
+                            melding.ok("Branch-lab gestart");
+                            void laad();
+                          } catch (e) {
+                            melding.fout(e instanceof ApiError ? e.message : "Starten mislukte");
+                          }
+                        }}
+                      >
+                        <Play className="h-3.5 w-3.5" /> Start
+                      </Button>
+                      {/* Opnieuw starten van de APPLICATIE, niet van het lab.
+                          Meestal niet nodig: draait het startscript een
+                          devserver die meekijkt (Vite, nodemon), dan is een
+                          wijziging van de agent meteen te zien -- gemeten op
+                          dit cluster: index.html aanpassen en de pagina
+                          serveert het direct.
+
+                          Wel nodig als het script BOUWT in plaats van kijkt,
+                          of als de applicatie is omgevallen. Vandaar een
+                          stil knopje en geen prominente knop. */}
+                      <Button
+                        variant="ghost"
+                        title="Applicatie opnieuw starten — meestal niet nodig: een devserver pikt wijzigingen zelf op"
+                        onClick={async () => {
+                          try {
+                            await clusterApi.branchAppHerstarten(l.id);
+                            melding.ok("Applicatie opnieuw gestart");
+                          } catch (e) {
+                            melding.fout(e instanceof ApiError ? e.message : "Herstarten mislukte");
+                          }
+                        }}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>}
