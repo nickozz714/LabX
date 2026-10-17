@@ -236,10 +236,15 @@ class Proefbouw:
                 f"en daar mag je nooit op binden.\n"
                 f"De laatste regels van het startscript:\n{logtekst or '(het log is leeg)'}")
 
-        return (f"Er antwoordt niets op poort {gewenst or '?'} binnen "
-                f"{GEREED_SECONDEN} seconden, en er luistert ook niets anders in de "
-                f"container.\nDe laatste regels van het startscript:\n"
-                f"{logtekst or '(het log is leeg)'}")
+        alle = {int(k) for k in (p.poort_map or {})}
+        stil = sorted(alle - luistert)
+        draait = sorted(alle & luistert)
+        return (
+            f"Niet alles luistert. LabX publiceert {', '.join(str(x) for x in sorted(alle))}; "
+            f"{'daarvan luistert ' + ', '.join(str(x) for x in draait) + ' wel, maar ' if draait else 'er luistert niets op '}"
+            f"{', '.join(str(x) for x in stil)} niet.\n"
+            f"Een cluster waarvan de helft dood is, is niet klaar -- ook al doet de rest het.\n"
+            f"De laatste regels van het startscript:\n{logtekst or '(het log is leeg)'}")
 
     async def _wacht_op_container(self, lab_svc, p, *, seconden: int = 120) -> None:
         """Wachten tot het lab echt draait.
@@ -363,6 +368,13 @@ class Proefbouw:
             return None
         kaart = {int(k): int(v) for k, v in (p.poort_map or {}).items()}
         machine_poort = kaart[gewenst]
+        # ALLE gepubliceerde poorten moeten antwoorden, niet alleen de eerste.
+        #
+        # Bij IntelligentHive draaide de front-end op 5173 en viel de API op
+        # 7071 om met "Missing API_KEY". Ik keek naar de eerste, kreeg een
+        # 200, en noemde het geslaagd. Een cluster waarvan de helft dood is,
+        # is niet klaar -- en het ergste is dat het er geslaagd uitziet.
+        ontbreekt = set(kaart)
 
         lab_svc = LabService(self.db)
         einde = asyncio.get_running_loop().time() + (geduld or GEREED_SECONDEN)
@@ -373,7 +385,7 @@ class Proefbouw:
                 luistert = await lab_svc.luisterpoorten(p.id)
             except Exception:  # noqa: BLE001
                 luistert = set()
-            if gewenst in luistert:
+            if ontbreekt and not (ontbreekt - luistert):
                 return f"http://localhost:{machine_poort}"
             if asyncio.get_running_loop().time() >= volgende_controle:
                 volgende_controle += LEEFT_ELKE
@@ -383,7 +395,7 @@ class Proefbouw:
                 # Luistert hij al, maar op een ander nummer? Dan verandert dat
                 # niet meer vanzelf, en is doorwachten een kwartier verspillen
                 # aan een fout die nu al vaststaat.
-                if _gekozen_poorten(luistert) - {gewenst}:
+                if _gekozen_poorten(luistert) - ontbreekt and not (ontbreekt & luistert):
                     log.infox("Applicatie luistert op de verkeerde poort", lab_id=p.id)
                     return None
             await asyncio.sleep(3)

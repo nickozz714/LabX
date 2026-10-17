@@ -158,6 +158,15 @@ export type Cluster = {
   lab_poorten: number[];
   /** De proefbouw. "af" is niet "exitcode 0": af is wanneer JIJ zegt dat de
    *  branch goed is, en tot dat moment blijft het proeflab staan. */
+  /** Haalt de applicatie haar geheimen zelf op uit een vault? Dan hoeven ze
+   *  niet in de kluis — wel is er een aanmelding nodig. */
+  geheimen_zelf: boolean;
+  /** Het Azure-profiel dat elk branch-lab meekrijgt. In het lab kan niemand
+   *  `az login` doen; de sessie komt hiervandaan. */
+  azure_profiel_id: number | null;
+  /** Nodig maar niet gekozen: de reden dat straks de helft van de applicatie
+   *  niet start. */
+  azure_profiel_nodig: boolean;
   proef_status: "geen" | "bezig" | "wacht_op_fiat" | "goedgekeurd" | "mislukt";
   proef_lab_id: string | null;
   proef_log: ProefRonde[];

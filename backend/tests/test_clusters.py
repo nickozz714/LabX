@@ -748,3 +748,47 @@ def test_getallen_en_lijsten_worden_geen_tekst(db):
     assert ververst.lab_cpu == 4.0 and ververst.lab_mem_mb == 8192
     assert bool(ververst.lab_azure) is True
     assert ververst.lab_image == "node:22", "tekst wordt nog steeds getrimd"
+
+
+# ── een cluster dat bij Azure moet kunnen ───────────────────────────────────
+
+def test_een_branch_lab_erft_het_azure_profiel_van_zijn_cluster(db):
+    """In het lab kan niemand `az login` doen; de sessie komt van dit
+    profiel. Zonder dat valt de API om op "Missing API_KEY" terwijl de
+    front-end gewoon draait — en dat ziet eruit als een half geslaagd lab."""
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    svc.wijzig(c.id, azure_profiel_id=1)
+
+    nu = "2026-10-17T10:00:00+00:00"
+    p = Lab(id="b1", name="x", image="node:22", volume_name="v", status="stopped",
+            cpu_limit=2, mem_limit_mb=4096, ttl_hours=4, created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+    # Wat maak_branch_lab doet na het aanmaken van het lab:
+    p.cluster_id = c.id
+    if svc.get_or_404(c.id).azure_profiel_id:
+        p.azure_profile_id = svc.get_or_404(c.id).azure_profiel_id
+    db.commit()
+
+    assert db.get(Lab, "b1").azure_profile_id == 1
+
+
+def test_een_ontbrekend_profiel_wordt_gemeld_als_het_nodig_is(db):
+    """Een project dat zijn geheimen zelf ophaalt heeft een aanmelding nodig.
+    Ontbreekt die, dan is dat geen detail maar de reden dat straks de helft
+    van de applicatie niet start."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    assert svc.to_dict(c)["azure_profiel_nodig"] is False, "zonder Azure geen eis"
+
+    svc.wijzig(c.id, geheimen_zelf=True)
+    assert svc.to_dict(svc.get_or_404(c.id))["azure_profiel_nodig"] is True
+
+    svc.wijzig(c.id, azure_profiel_id=1)
+    assert svc.to_dict(svc.get_or_404(c.id))["azure_profiel_nodig"] is False

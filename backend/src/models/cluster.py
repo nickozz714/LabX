@@ -69,6 +69,15 @@ class Cluster(Base):
     #: vast of duurt eindeloos, en dat ziet eruit als een hangend lab.
     lab_cpu: Mapped[float | None] = mapped_column(Integer, nullable=True)
     lab_mem_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Het Azure-profiel dat elk branch-lab meekrijgt.
+    #:
+    #: Nodig zodra de applicatie zelf bij Azure moet kunnen -- en dat is
+    #: precies wat `geheimen_zelf` betekent: het project haalt zijn
+    #: instellingen uit een vault, maar daarvoor moet er iemand aangemeld
+    #: zijn. In het lab kan niemand `az login` doen; de sessie komt van dit
+    #: profiel. Zonder dat valt de API om op "Missing API_KEY" terwijl de
+    #: front-end gewoon draait, en dat ziet eruit als een half geslaagd lab.
+    azure_profiel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: Haalt deze applicatie haar geheimen zelf op uit een vault?
     #:
     #: Dan is "deze tien sleutels ontbreken in de kluis" een verkeerde

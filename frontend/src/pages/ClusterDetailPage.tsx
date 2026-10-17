@@ -24,13 +24,14 @@ import {
   Loader2, MessageSquare, Play, PlayCircle, Plus, RefreshCw, Search, Server,
   Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
+import { azureProfilesApi } from "@/lib/azureProfiles";
 import { boardApi } from "@/lib/boards";
 import { clusterApi } from "@/lib/clusters";
 import type {
   BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, Toegang,
 } from "@/lib/clusters";
 import {
-  Badge, Button, Card, EmptyState, Input, Label, Modal, TextArea,
+  Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea,
 } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
@@ -552,6 +553,7 @@ export function ClusterDetailPage() {
   const [instructie, setInstructie] = useState("");
   const [verkent, setVerkent] = useState(false);
   const [bordId, setBordId] = useState<number | null>(null);
+  const [azureProfielen, setAzureProfielen] = useState<{ id: number; name: string }[]>([]);
   const [branch, setBranch] = useState("");
   const [basis, setBasis] = useState("main");
   const [maakt, setMaakt] = useState(false);
@@ -570,6 +572,10 @@ export function ClusterDetailPage() {
       // stilzwijgend weggooit bij de volgende ronde.
       // Het bord van dit cluster, als er een is. Zonder dit kan de
       // Bord-knop nergens heen wijzen.
+      azureProfilesApi.list()
+        .then((ps: { id: number; name: string }[]) =>
+          setAzureProfielen(ps.map((x) => ({ id: x.id, name: x.name }))))
+        .catch(() => { /* geen profielen is geen fout */ });
       boardApi.list()
         .then((bs) => setBordId(
           bs.find((b) => (b as { cluster_id?: number }).cluster_id === Number(clusterId))?.id ?? null))
@@ -697,6 +703,53 @@ export function ClusterDetailPage() {
               ? `Het token kan bij de repo${toegang.mag_pushen ? " en mag pushen." : "."}`
               : "Het token komt er niet bij."}
           {toegang.hint && <p className="mt-1 text-xs text-muted-foreground">{toegang.hint}</p>}
+        </Card>
+      )}
+
+      {/* Een project dat zijn geheimen zelf ophaalt, heeft een aanmelding
+          nodig. In het lab kan niemand `az login` doen, dus die sessie moet
+          van een profiel komen -- anders valt de helft van de applicatie om
+          terwijl de rest gewoon draait, en dat ziet eruit als een half
+          geslaagd lab. */}
+      {(c.azure_profiel_nodig || c.azure_profiel_id) && (
+        <Card className={`p-4 ${c.azure_profiel_nodig ? "border-amber-500/40 bg-amber-500/5" : ""}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="text-sm font-semibold">Azure-aanmelding</span>
+            {c.azure_profiel_id
+              ? <Badge tone="green">profiel gekoppeld</Badge>
+              : <Badge tone="yellow">nog geen profiel</Badge>}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {c.geheimen_zelf
+              ? "Deze applicatie haalt haar instellingen zelf uit een vault. Daarvoor moet er iemand aangemeld zijn, en in het lab kan dat niet — de sessie komt van dit profiel."
+              : "Deze applicatie gebruikt de Azure CLI. Zonder aanmelding werkt die niet in het lab."}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Select
+              className="max-w-xs"
+              value={c.azure_profiel_id ?? ""}
+              onChange={async (e: React.ChangeEvent<HTMLSelectElement>) => {
+                try {
+                  await clusterApi.wijzig(c.id, {
+                    azure_profiel_id: e.target.value ? Number(e.target.value) : null,
+                  } as Partial<Cluster>);
+                  melding.ok("Azure-profiel gekoppeld");
+                  laad();
+                } catch (err) {
+                  melding.fout(err instanceof ApiError ? err.message : "Koppelen mislukte");
+                }
+              }}
+            >
+              <option value="">Geen profiel</option>
+              {azureProfielen.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </Select>
+            <span className="text-xs text-muted-foreground">
+              Elk branch-lab krijgt dit profiel mee.
+            </span>
+          </div>
         </Card>
       )}
 

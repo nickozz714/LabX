@@ -225,7 +225,7 @@ def test_niets_op_de_poort_is_de_fout_en_het_log_is_het_bewijs(db, monkeypatch):
     assert uit["status"] == "mislukt"
     gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
     assert "Cannot find module" in gemeld, "het log is het bewijsmateriaal"
-    assert "antwoordt niets op poort" in gemeld
+    assert "er luistert niets op" in gemeld
 
 
 def test_het_startscript_is_geen_inrichtingsstap(db, monkeypatch):
@@ -585,3 +585,31 @@ def test_ook_de_omgeving_krijgt_de_eerste_poort(db):
     omgeving = ClusterService._adres_omgeving(c, {8080: 18004, 3000: 18005, 80: 18006})
     assert omgeving["LABX_POORT"] == "8080"
     assert omgeving["LABX_LAB_POORT"] == "18004"
+
+
+def test_alle_poorten_moeten_antwoorden(db, monkeypatch):
+    """Bij IntelligentHive draaide de front-end op 5173 en viel de API op
+    7071 om met "Missing API_KEY". Ik keek naar de eerste, kreeg een 200, en
+    noemde het geslaagd. Een cluster waarvan de helft dood is, is niet
+    klaar — en het ergste is dat het er geslaagd uitziet.
+    """
+    from models.lab import Lab
+
+    c = _cluster(db)
+    nu = "2026-10-17T10:00:00+00:00"
+    p = Lab(id="proef2", name="Hive · proef", image="node:22", volume_name="v",
+            status="running", cpu_limit=2, mem_limit_mb=4096, ttl_hours=24,
+            cluster_id=c.id, branch="labx/proefbouw",
+            poort_map={"5173": 18004, "7071": 18005}, created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+
+    # Alleen de front-end luistert.
+    lus = NepLus(db, [LUKT] * 3, antwoorden=[False], luistert={5173},
+                 logtekst="Error: Missing API_KEY environment variable.")
+    asyncio.run(lus.installeer(monkeypatch, db, p).start(c.id))
+
+    gemeld = " ".join(str(r.get("fout") or "") for r in db.get(type(c), c.id).proef_log)
+    assert "5173" in gemeld and "7071" in gemeld
+    assert "Missing API_KEY" in gemeld
+    assert db.get(type(c), c.id).proef_status == "mislukt", "half is niet klaar"

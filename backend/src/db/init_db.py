@@ -44,6 +44,9 @@ _ADDITIVE_COLUMNS = {
         # Haalt de applicatie haar geheimen zelf op? Dan hoeven ze niet in
         # de kluis; LabX levert alleen het gereedschap.
         ("geheimen_zelf", "BOOLEAN NOT NULL DEFAULT 0"),
+        # Het Azure-profiel dat elk branch-lab meekrijgt. Nodig zodra de
+        # applicatie zelf bij Azure moet kunnen.
+        ("azure_profiel_id", "INTEGER"),
         ("ssh_publiek", "TEXT"),
         ("ssh_prive_encrypted", "TEXT"),
     ],

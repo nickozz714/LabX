@@ -288,6 +288,9 @@ class ClusterService:
             rij.lab_azure = bool(velden["lab_azure"])
         if "geheimen_zelf" in velden:
             rij.geheimen_zelf = bool(velden["geheimen_zelf"])
+        if "azure_profiel_id" in velden:
+            waarde = velden["azure_profiel_id"]
+            rij.azure_profiel_id = int(waarde) if waarde else None
         if "omgeving" in velden and isinstance(velden["omgeving"], dict):
             rij.omgeving = {str(k): str(v) for k, v in velden["omgeving"].items()}
 
@@ -744,6 +747,11 @@ class ClusterService:
         p = self.db.get(Lab, uit["id"])
         p.cluster_id = c.id
         p.branch = branch
+        # Het Azure-profiel van het cluster. Zonder dit kan niets in het lab
+        # bij Azure -- en een project dat zijn geheimen zelf ophaalt, haalt
+        # dan niets op.
+        if c.azure_profiel_id:
+            p.azure_profile_id = c.azure_profiel_id
         # Het startscript hoort bij het CLUSTER, maar draait in het LAB. Het
         # hier overnemen betekent dat het bestaande inrichten het uitvoert --
         # met zijn log, zijn statussen en zijn herstel na een herstart. Een
@@ -951,6 +959,11 @@ class ClusterService:
             "lab_mem_mb": c.lab_mem_mb or BRANCH_LAB_MEM_MB,
             "lab_azure": bool(c.lab_azure),
             "geheimen_zelf": bool(c.geheimen_zelf),
+            "azure_profiel_id": c.azure_profiel_id,
+            # Een project dat zijn geheimen zelf ophaalt heeft een aanmelding
+            # nodig. Ontbreekt die, dan is dat geen detail maar de reden dat
+            # straks de helft van de applicatie niet start.
+            "azure_profiel_nodig": bool(c.geheimen_zelf or c.lab_azure) and not c.azure_profiel_id,
             # De proefbouw: een plan is pas af als het script echt gedraaid
             # heeft en JIJ zegt dat de branch goed is.
             "proef_status": c.proef_status or "geen",
