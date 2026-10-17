@@ -29,6 +29,7 @@ import {
   Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea,
 } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { useConcept } from "@/lib/useConcept";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
 
@@ -46,11 +47,15 @@ export function ClustersPage() {
   const [open, setOpen] = useState(false);
   const [verkent, setVerkent] = useState(false);
 
-  const [repoUrl, setRepoUrl] = useState("");
-  const [branch, setBranch] = useState("main");
+  // Een verkenning begin je vaak met een URL die je ergens vandaan moet
+  // halen en een opdracht die je formuleert. Dat twee keer typen omdat je
+  // sessie verliep, is de meest overbodige vorm van werk die er is.
+  const [repoUrl, setRepoUrl, vergeetRepo] = useConcept<string>("verkennen:repo", "");
+  const [branch, setBranch, vergeetBranch] = useConcept<string>("verkennen:branch", "main");
   const [tokenGeheim, setTokenGeheim] = useState("");
   const [hostId, setHostId] = useState("");
-  const [instructie, setInstructie] = useState("");
+  const [instructie, setInstructie, vergeetInstructie] =
+    useConcept<string>("verkennen:instructie", "");
   const [hosts, setHosts] = useState<LabHost[]>([]);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
@@ -82,6 +87,9 @@ export function ClustersPage() {
         host_id: hostId ? Number(hostId) : null,
         instructie: instructie.trim() || undefined,
       });
+      vergeetRepo();
+      vergeetBranch();
+      vergeetInstructie();
       setOpen(false);
       navigate(`/clusters/plannen/${plan.id}`);
     } catch (e) {

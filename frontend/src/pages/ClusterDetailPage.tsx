@@ -20,8 +20,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Box, Check, Copy, GitBranch, KeyRound, Loader2, Play, Plus,
-  RefreshCw, Search, Server, Square, Terminal, Trash2, TriangleAlert,
+  ArrowLeft, Box, Check, Copy, ExternalLink, GitBranch, KeyRound, Loader2,
+  Play, PlayCircle, Plus, RefreshCw, Search, Server, Square, Terminal, Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { clusterApi } from "@/lib/clusters";
 import type {
@@ -119,6 +120,152 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
  * Per cluster een eigen sleutel, niet één voor heel LabX. Intrekken raakt dan
  * alleen dit cluster, en bij de repo zie je welke omgeving toegang heeft.
  */
+/**
+ * De proefbouw: het startscript één keer echt draaien.
+ *
+ * Een plan dat er goed uitziet maar waarvan het script omvalt, heeft zijn
+ * werk niet af. Het model schrijft dat script op uit wat het LAS, en dat is
+ * een gok die pas bij het uitvoeren waar of onwaar wordt.
+ *
+ * En "af" is niet "exitcode 0". Af is wanneer JIJ zegt dat de branch goed is
+ * — dus blijft het proeflab staan, met zijn adres, zijn terminal en zijn
+ * bestanden, tot je het bevestigt. Daarom staan hier twee knoppen en niet één.
+ */
+function ProefKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void }) {
+  const melding = useMelding();
+  const [bezig, setBezig] = useState(false);
+  const [afkeurOpen, setAfkeurOpen] = useState(false);
+  const [opmerking, setOpmerking] = useState("");
+
+  const adres = [...(c.proef_log || [])].reverse().find((r) => r.adres)?.adres || null;
+
+  async function doe(taak: Promise<unknown>, gelukt: string) {
+    setBezig(true);
+    try {
+      await taak;
+      melding.ok(gelukt);
+      onWijziging();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Dat lukte niet");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <PlayCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold">Proefbouw</h2>
+            {c.proef_status === "bezig" && <Badge tone="yellow">bezig</Badge>}
+            {c.proef_status === "wacht_op_fiat" && <Badge tone="violet">wacht op jouw oordeel</Badge>}
+            {c.proef_status === "goedgekeurd" && <Badge tone="green">goedgekeurd</Badge>}
+            {c.proef_status === "mislukt" && <Badge tone="red">niet gelukt</Badge>}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Het startscript wordt echt gedraaid op een proefbranch. Faalt het, dan stelt
+            LabX het bij op grond van de echte fout — hooguit drie keer. Daarna is het aan jou.
+          </p>
+        </div>
+      </div>
+
+      {adres && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <a href={adres} target="_blank" rel="noreferrer"
+             className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-secondary">
+            <ExternalLink size={12} /> {adres}
+          </a>
+          {c.proef_lab_id && (
+            <Link to={`/labs/${c.proef_lab_id}`} className="text-xs underline">
+              naar het proeflab
+            </Link>
+          )}
+        </div>
+      )}
+
+      {(c.proef_log || []).length > 0 && (
+        <ol className="mb-3 space-y-2">
+          {c.proef_log.map((r, i) => (
+            <li key={i} className="rounded-lg border border-border p-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                {r.ronde > 0 && <span className="text-muted-foreground">ronde {r.ronde}</span>}
+                <span className="font-medium">{r.fase}</span>
+                {r.gewijzigd && <Badge tone="neutral">script aangepast</Badge>}
+              </div>
+              {r.toelichting && <p className="mt-1 leading-relaxed">{r.toelichting}</p>}
+              {r.fout && (
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 font-mono text-[11px]">
+                  {r.fout}
+                </pre>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {c.proef_status === "wacht_op_fiat" ? (
+          <>
+            <Button onClick={() => doe(clusterApi.proefBevestigen(c.id), "Cluster klaar")}
+                    disabled={bezig}>
+              <Check className="h-4 w-4" /> Dit werkt — cluster is klaar
+            </Button>
+            <Button variant="secondary" onClick={() => setAfkeurOpen(true)} disabled={bezig}>
+              Nog niet goed
+            </Button>
+          </>
+        ) : (
+          <Button variant="secondary" disabled={bezig || !c.start_script}
+                  onClick={() => doe(clusterApi.proefbouw(c.id),
+                                     "Proefbouw klaar — kijk of de branch goed is")}>
+            {bezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+            {c.proef_status === "geen" ? "Proefbouw starten" : "Opnieuw proberen"}
+          </Button>
+        )}
+        {!c.start_script && (
+          <span className="text-xs text-muted-foreground">
+            Eerst een plan goedkeuren; zonder startscript valt er niets te proberen.
+          </span>
+        )}
+        {bezig && (
+          <span className="text-xs text-muted-foreground">
+            Dit duurt zo lang als de bouw duurt — bij een monorepo minuten.
+          </span>
+        )}
+      </div>
+
+      <Modal open={afkeurOpen} onClose={() => setAfkeurOpen(false)} title="Wat is er niet goed?">
+        <p className="text-sm text-muted-foreground">
+          Jouw woorden gaan mee de volgende ronde in. Dit is geen mislukking maar de normale
+          gang van zaken: het model weet wat de repo zegt, jij weet wat je wilde zien.
+        </p>
+        <TextArea
+          className="mt-3"
+          rows={3}
+          value={opmerking}
+          onChange={(e) => setOpmerking(e.target.value)}
+          placeholder="Bijvoorbeeld: de front-end laadt wel maar de API geeft 502, en er staat niets in de logs."
+        />
+        <div className="mt-4 flex gap-2">
+          <Button
+            disabled={!opmerking.trim() || bezig}
+            onClick={async () => {
+              setAfkeurOpen(false);
+              await doe(clusterApi.proefAfkeuren(c.id, opmerking.trim()), "Opnieuw geprobeerd");
+              setOpmerking("");
+            }}
+          >
+            Opnieuw proberen
+          </Button>
+          <Button variant="secondary" onClick={() => setAfkeurOpen(false)}>Annuleren</Button>
+        </div>
+      </Modal>
+    </Card>
+  );
+}
+
 function SleutelKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void }) {
   const melding = useMelding();
   const bevestig = useBevestiging();
@@ -517,6 +664,9 @@ export function ClusterDetailPage() {
           {toegang.hint && <p className="mt-1 text-xs text-muted-foreground">{toegang.hint}</p>}
         </Card>
       )}
+
+      {/* ── de proefbouw ────────────────────────────────────────────────── */}
+      <ProefKaart c={c} onWijziging={laad} />
 
       {/* ── toegang en geheimen ─────────────────────────────────────────── */}
       <SleutelKaart c={c} onWijziging={laad} />

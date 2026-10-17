@@ -37,6 +37,7 @@ import { secretApi } from "@/lib/secrets";
 import type { SecretDto } from "@/lib/secrets";
 import type { LabHost } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/components/ui";
+import { useConcept } from "@/lib/useConcept";
 import { useMelding } from "@/components/Meldingen";
 import { ApiError } from "@/lib/api";
 
@@ -182,10 +183,18 @@ export function ClusterPlanPage() {
   const [tokenGeheim, setTokenGeheim] = useState<string>("");
   const [envProfiel, setEnvProfiel] = useState<string>("");
   const [hosts, setHosts] = useState<LabHost[]>([]);
-  const [antwoorden, setAntwoorden] = useState<Record<string, string>>({});
-  const [opmerkingen, setOpmerkingen] = useState<Record<string, string>>({});
-  const [opmerking, setOpmerking] = useState("");
-  const [instructie, setInstructie] = useState("");
+  // Concepten: wat je hier typt is het werk, geen bijzaak. Een verlopen
+  // sessie of een slapende pc mag het niet opeten. De sleutel hangt aan DIT
+  // plan -- anders staan andermans woorden in jouw veld.
+  const conceptSleutel = planId ? `plan:${planId}` : null;
+  const [antwoorden, setAntwoorden, vergeetAntwoorden] =
+    useConcept<Record<string, string>>(conceptSleutel && `${conceptSleutel}:antwoorden`, {});
+  const [opmerkingen, setOpmerkingen, vergeetOpmerkingen] =
+    useConcept<Record<string, string>>(conceptSleutel && `${conceptSleutel}:opmerkingen`, {});
+  const [opmerking, setOpmerking, vergeetOpmerking] =
+    useConcept<string>(conceptSleutel && `${conceptSleutel}:opmerking`, "");
+  const [instructie, setInstructie, vergeetInstructie] =
+    useConcept<string>(conceptSleutel && `${conceptSleutel}:instructie`, "");
   const [beantwoordt, setBeantwoordt] = useState(false);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
@@ -200,8 +209,9 @@ export function ClusterPlanPage() {
       const profiel = p.vondsten.find((v) => v.soort === "omgeving" && v.sleutel === "env_profiel");
       setEnvProfiel(String(profiel?.waarde?.standaard || ""));
       // Voorgevuld met wat er geldt: bijstellen is bijna altijd aanvullen,
-      // en opnieuw intypen wat je vorige ronde al zei is verspilling.
-      setInstructie(p.instructie || "");
+      // en opnieuw intypen wat je vorige ronde al zei is verspilling. Een
+      // CONCEPT wint: dat is wat jij net typte en nog niet verstuurd had.
+      setInstructie((bestaand) => bestaand || p.instructie || "");
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Plan niet op te halen");
     } finally {
@@ -265,6 +275,11 @@ export function ClusterPlanPage() {
           .filter((v) => aan.has(sleutelVan(v)))
           .map((v) => ({ soort: v.soort, sleutel: v.sleutel })),
       });
+      // Verstuurd is geen concept meer.
+      vergeetAntwoorden();
+      vergeetOpmerkingen();
+      vergeetOpmerking();
+      vergeetInstructie();
       setAntwoorden({});
       setOpmerkingen({});
       setOpmerking("");

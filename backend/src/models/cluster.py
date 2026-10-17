@@ -95,6 +95,24 @@ class Cluster(Base):
     #: dat is precies de gok die een lab onbereikbaar maakt terwijl het draait.
     lab_poorten: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
+    # ── de proefbouw ─────────────────────────────────────────────────────────
+    #
+    # Een plan dat er goed uitziet maar waarvan het script omvalt, heeft zijn
+    # werk niet af. Daarom bouwt LabX het één keer echt, op een proefbranch,
+    # en stelt het script bij op grond van wat er werkelijk misgaat.
+    #
+    # En "af" is niet "exitcode 0": af is wanneer JIJ zegt dat de branch goed
+    # is. Daarom blijft het proeflab staan, bereikbaar en bruikbaar, tot je
+    # het bevestigt.
+    #: `geen` · `bezig` · `wacht_op_fiat` · `goedgekeurd` · `mislukt`
+    proef_status: Mapped[str] = mapped_column(String(20), nullable=False, default="geen")
+    #: Het lab waarin geprobeerd is. Blijft bestaan na goedkeuring -- het IS
+    #: een branch-lab, er is niets bijzonders aan behalve hoe het ontstond.
+    proef_lab_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Elke ronde: wat er draaide, wat er misging, en wat het model veranderde.
+    #: Zodat je kunt meelezen in plaats van af te wachten.
+    proef_log: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
     notitie: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False)

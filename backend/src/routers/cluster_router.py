@@ -123,6 +123,42 @@ async def verwijder_dienst(dienst_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ── de proefbouw ─────────────────────────────────────────────────────────────
+#
+# Een plan dat er goed uitziet maar waarvan het script omvalt, heeft zijn werk
+# niet af. En "af" is niet "exitcode 0": af is wanneer de gebruiker zegt dat
+# de branch goed is. Daarom blijft het proeflab staan tot hij bevestigt.
+
+
+@router.post("/{cluster_id}/proefbouw")
+async def proefbouw(cluster_id: int, body: Dict[str, Any] | None = None,
+                    db: Session = Depends(get_db)):
+    """Het startscript echt draaien op een proefbranch, en bijstellen tot het
+    werkt. Duurt zo lang als de bouw duurt."""
+    from services.lab.proefbouw import Proefbouw
+
+    return await Proefbouw(db).start(
+        cluster_id, branch=(str((body or {}).get("branch")) if (body or {}).get("branch") else None))
+
+
+@router.post("/{cluster_id}/proefbouw/bevestigen")
+def proefbouw_bevestigen(cluster_id: int, db: Session = Depends(get_db)):
+    """Jij zegt dat de branch goed is. Pas nu is het cluster klaar."""
+    from services.lab.proefbouw import Proefbouw
+
+    return Proefbouw(db).bevestig(cluster_id)
+
+
+@router.post("/{cluster_id}/proefbouw/afkeuren")
+async def proefbouw_afkeuren(cluster_id: int, body: Dict[str, Any],
+                             db: Session = Depends(get_db)):
+    """Nog niet goed. Jouw woorden gaan mee de volgende ronde in."""
+    from services.lab.proefbouw import Proefbouw
+
+    return await Proefbouw(db).afkeuren(
+        cluster_id, opmerking=str(body.get("opmerking") or ""))
+
+
 # ── de kluis van een cluster ─────────────────────────────────────────────────
 #
 # Apart van de gedeelde kluis, want een cluster verwijst naar geheimen met de

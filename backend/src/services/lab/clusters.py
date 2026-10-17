@@ -922,6 +922,11 @@ class ClusterService:
             "lab_cpu": c.lab_cpu or BRANCH_LAB_CPU,
             "lab_mem_mb": c.lab_mem_mb or BRANCH_LAB_MEM_MB,
             "lab_azure": bool(c.lab_azure),
+            # De proefbouw: een plan is pas af als het script echt gedraaid
+            # heeft en JIJ zegt dat de branch goed is.
+            "proef_status": c.proef_status or "geen",
+            "proef_lab_id": c.proef_lab_id,
+            "proef_log": c.proef_log or [],
             "env_profiel": c.env_profiel, "omgeving": c.omgeving or {},
             # Wat er in de kluis moet staan voordat een branch-lab kan
             # draaien, en wat daarvan nog ontbreekt. Die tweede vraag wil je

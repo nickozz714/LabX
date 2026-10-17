@@ -156,6 +156,11 @@ export type Cluster = {
   toegang_soort: "ssh" | "https" | "geen";
   /** Waarop de applicatie IN een branch-lab luistert; LabX publiceert die. */
   lab_poorten: number[];
+  /** De proefbouw. "af" is niet "exitcode 0": af is wanneer JIJ zegt dat de
+   *  branch goed is, en tot dat moment blijft het proeflab staan. */
+  proef_status: "geen" | "bezig" | "wacht_op_fiat" | "goedgekeurd" | "mislukt";
+  proef_lab_id: string | null;
+  proef_log: ProefRonde[];
   /** Welke daarvan nog niet in de kluis staan. */
   geheimen_ontbreken: string[];
   notitie: string | null;
@@ -184,6 +189,18 @@ export type BenodigdGeheim = {
   waarvoor: string;
   in_eigen_kluis: boolean;
   gevonden: boolean;
+};
+
+/** Eén ronde van de proefbouw: wat er draaide, wat er misging, wat er
+ *  veranderd is. Meelezen in plaats van afwachten. */
+export type ProefRonde = {
+  ronde: number;
+  fase: string;
+  fout?: string | null;
+  toelichting?: string | null;
+  gewijzigd?: boolean;
+  adres?: string | null;
+  op: string;
 };
 
 export type Toegang = {
@@ -215,6 +232,19 @@ export const clusterApi = {
    *  een mislukte kloon geeft een kale git-fout waar drie heel verschillende
    *  oorzaken achter kunnen zitten. */
   toegang: (id: number) => api.post<Toegang>(`/clusters/${id}/toegang`),
+
+  // ── de proefbouw ───────────────────────────────────────────────────────
+  //
+  // Duurt zo lang als de bouw duurt — bij een monorepo minuten. De aanroep
+  // keert pas terug als de lus klaar is of op zijn plafond stuit.
+  proefbouw: (id: number, branch?: string) =>
+    api.post<{ status: string; ronde?: number; lab_id: string; adres?: string | null;
+               log: ProefRonde[] }>(`/clusters/${id}/proefbouw`, branch ? { branch } : {}),
+  proefBevestigen: (id: number) =>
+    api.post<{ status: string; lab_id: string | null }>(`/clusters/${id}/proefbouw/bevestigen`),
+  proefAfkeuren: (id: number, opmerking: string) =>
+    api.post<{ status: string; log: ProefRonde[] }>(
+      `/clusters/${id}/proefbouw/afkeuren`, { opmerking }),
 
   // ── de kluis van dit cluster ───────────────────────────────────────────
   //

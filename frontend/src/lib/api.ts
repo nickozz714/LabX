@@ -8,6 +8,8 @@
  * frontend/nginx.conf).
  */
 
+import { onthoudBestemming } from "@/lib/concept";
+
 const TOKEN_KEY = "labx_access_token";
 
 export function getToken(): string | null {
@@ -43,6 +45,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   });
   if (res.status === 401) {
     setToken(null);
+    // Waar je was gaat mee. Terugkomen op /overzicht nadat je uit een
+    // halfafgemaakt plan bent gegooid, betekent zelf terugzoeken waar je
+    // gebleven was -- en dat is precies het werk dat je kwijt was.
+    onthoudBestemming(window.location.pathname + window.location.search);
     window.location.href = "/login";
     throw new ApiError(401, "Niet ingelogd");
   }
@@ -69,6 +75,10 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
   });
   if (res.status === 401) {
     setToken(null);
+    // Waar je was gaat mee. Terugkomen op /overzicht nadat je uit een
+    // halfafgemaakt plan bent gegooid, betekent zelf terugzoeken waar je
+    // gebleven was -- en dat is precies het werk dat je kwijt was.
+    onthoudBestemming(window.location.pathname + window.location.search);
     window.location.href = "/login";
     throw new ApiError(401, "Niet ingelogd");
   }

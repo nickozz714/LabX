@@ -33,6 +33,9 @@ _ADDITIVE_COLUMNS = {
         # De deploy key van dit cluster. Erbij gekomen omdat een organisatie
         # met goedkeuringsbeleid een token kan tegenhouden, en een deploy key
         # op repo-niveau daarbuiten valt.
+        ("proef_status", "VARCHAR(20) NOT NULL DEFAULT 'geen'"),
+        ("proef_lab_id", "VARCHAR(64)"),
+        ("proef_log", "TEXT"),
         ("lab_cpu", "REAL"),
         ("lab_mem_mb", "INTEGER"),
         # Standaard 0: een branch-lab krijgt de Azure CLI niet, ook al zet
