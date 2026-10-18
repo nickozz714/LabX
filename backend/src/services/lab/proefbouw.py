@@ -442,7 +442,9 @@ class Proefbouw:
             ronde=ronde, max_rondes=MAX_RONDES,
             image=c.lab_image or "het standaard lab-image",
             omgeving="\n".join(f"  {k}={v}" for k, v in sorted(omgeving.items())) or "  (geen)",
-            boom=boom, script=c.start_script or "", fout=fout)
+            boom=self._boom(c), azure=self._azure_fragment(c),
+            instructie=self._instructie(c),
+            script=c.start_script or "", fout=fout)
         try:
             from services.agent.claude_cli_provider import ClaudeCliProvider
             from services.settings_service import get_settings
@@ -484,6 +486,43 @@ class Proefbouw:
                 .order_by(ClusterPlan.id.desc()).first())
         paden = ((plan.plan or {}).get("boom") or []) if plan else []
         return "\n".join(f"  {q}" for q in paden[:400]) or "  (onbekend)"
+
+    def _instructie(self, c: Cluster) -> str:
+        """De opdracht die de gebruiker bij de verkenning meegaf.
+
+        Die stond alleen in de verkenningsprompt, dus een herstelronde kon een
+        grens doorbreken die de gebruiker expliciet had getrokken -- precies de
+        ronde waarin het model vrij in het script snijdt. Een instructie als
+        "kopieer geen gegevens uit de bron" hoort juist hier te gelden.
+        """
+        from models.cluster import ClusterPlan
+
+        plan = (self.db.query(ClusterPlan)
+                .filter(ClusterPlan.cluster_id == c.id)
+                .order_by(ClusterPlan.id.desc()).first())
+        tekst = (getattr(plan, "instructie", None) or "").strip() if plan else ""
+        if not tekst:
+            return "\n"
+        return ("\nOPDRACHT VAN DE GEBRUIKER -- deze gaat voor op al het andere\n"
+                "hieronder; wijk er niet van af om een fout op te lossen:\n"
+                f"{tekst[:4000]}\n")
+
+    def _azure_fragment(self, c: Cluster) -> str:
+        """De az-sessie als prompt-alinea, of niets als er geen profiel is.
+
+        `_azure_sessie` bestond al, maar werd nergens aangeroepen -- met als
+        gevolg dat elke herstelronde opnieuw dacht dat er alleen een service
+        principal kon bestaan, en de Key Vault-stap oversloeg terwijl `az` in
+        het lab gewoon was aangemeld.
+        """
+        account = self._azure_sessie(c)
+        if not account:
+            return "\n"
+        return (f"\nER IS AL EEN AZURE-AANMELDING in het lab: `az` is aangemeld als\n"
+                f"{account}. Gebruik die sessie rechtstreeks (`az keyvault secret\n"
+                f"show ...`). Zoek NIET naar AZURE_CLIENT_ID/SECRET/TENANT_ID en log\n"
+                f"niet opnieuw in -- die variabelen bestaan hier niet, en een stap die\n"
+                f"daarop wacht slaat instellingen over die wel op te halen zijn.\n")
 
     def _azure_sessie(self, c: Cluster) -> Optional[str]:
         """Onder welk account `az` in het lab is ingelogd, als dat zo is.
@@ -590,7 +629,7 @@ class Proefbouw:
 
 
 _HERSTEL_PROMPT = """Je stelt een startscript bij dat zojuist is gedraaid en gefaald.
-
+{instructie}
 Dit is ronde {ronde} van {max_rondes}. Het script draait IN een container
 ({image}), ALS ROOT, en met de werkkopie van de repo als werkmap -- dus
 `package.json` en `pyproject.toml` staan gewoon naast je, zonder dat je ze
@@ -609,6 +648,14 @@ alles schijnbaar goed en komt er van buiten niets door.
 
 Deze omgevingsvariabelen staan klaar:
 {omgeving}
+
+Die waarden zijn door LabX bepaald en kloppen voor DIT lab: de dienstnamen
+erin zijn de namen waarop de containers in dit netwerk antwoorden, en de
+repo kan ze herkennen. Overschrijf ze niet met een naam of protocol dat je
+zelf afleidt -- gebruik ze zoals ze er staan, en vul alleen aan wat ontbreekt.
+{azure}
+BESTANDEN IN DE REPO:
+{boom}
 
 HET SCRIPT:
 {script}

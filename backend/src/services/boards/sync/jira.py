@@ -46,6 +46,7 @@ Twee Jira-eigenaardigheden die dit bestand afhandelt:
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any, Dict, List, Optional
 
 import httpx
