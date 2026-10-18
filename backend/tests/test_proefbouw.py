@@ -846,3 +846,52 @@ def test_een_hergebruikt_proeflab_krijgt_de_huidige_omgeving(db, monkeypatch):
 
     assert uit.id == p.id, "hetzelfde lab, dus de werkkopie blijft staan"
     assert opnieuw == [p.id], "de container hoort opnieuw te worden gemaakt"
+
+
+# ── welke regels uit het log als fout gelden ─────────────────────────────────
+
+_LOGFRAGMENT = [
+    ("➤ YN0060: │ react is listed by your project with version 19.2.4 (p81185), "
+     "which doesn't satisfy what react-diff-viewer-continued and other "
+     "dependencies request (but they have non-overlapping ranges!).", False),
+    ("➤ YN0002: │ @beeminds/openai@workspace:packages/openai doesn't provide "
+     "openai (p60569), requested by @langchain/community.", False),
+    ("➤ YN0086: │ Some peer dependencies are incorrectly met by your project", False),
+    ("  VITE v7.3.1  ready in 146 ms", False),
+    ("💥 API is exiting on unhandledRejection:", True),
+    ("    at httpRequest (/workspace/x/node_modules/@azure/cosmos/RequestHandler.js:115:31)", True),
+    ("Error: connect ECONNREFUSED 10.0.0.1:8081", True),
+    ("[lab] seeden mislukt", True),
+]
+
+
+def test_het_foutpatroon_vangt_de_crash_en_niet_de_waarschuwingen():
+    """Twee keer stil misgegaan, en allebei de keren kostte dat een ronde.
+
+    `at [A-Za-z]` stond er voor JS-stackframes maar zonder anker, dus de
+    yarn-regel "...satisfy what react-diff-viewer..." kwam als fout binnen.
+    En de enige regel die telde -- "API is exiting on unhandledRejection" --
+    matchte op geen enkel woord. Het model kreeg een lijst waarschuwingen
+    zonder de crash die ertoe deed.
+    """
+    import re
+
+    from services.lab.lab_service import FOUTPATROON
+
+    # [[:space:]] is POSIX; Python kent het niet. De shell draait grep -E,
+    # dus voor de test vertalen we die ene klasse.
+    patroon = re.compile(FOUTPATROON.replace("[[:space:]]", r"\s"),
+                         re.IGNORECASE | re.MULTILINE)
+
+    for regel, hoort_erbij in _LOGFRAGMENT:
+        raak = bool(patroon.search(regel))
+        assert raak == hoort_erbij, (
+            f"{'had moeten matchen' if hoort_erbij else 'is ruis'}: {regel[:80]}")
+
+
+def test_de_scripttaal_van_het_model_telt_mee():
+    """De scripts die het model schrijft loggen in het Nederlands; "[lab]
+    seeden mislukt" is vaak de enige regel die zegt wat er gebeurde."""
+    from services.lab.lab_service import FOUTPATROON
+
+    assert "mislukt" in FOUTPATROON

@@ -3259,6 +3259,9 @@ exec ssh -N \\
         en een API die omvalt. De staart is dan gevuld met yarn- en
         Vite-ruis, en de crash is allang weggescrold. Het model kreeg dus
         netjes de laatste tachtig regels -- en daar stond niets in.
+
+        Het patroon staat in `FOUTPATROON`, want het is zelf een keer stil
+        de mist in gegaan: zie daar.
         """
         from models.cluster import Cluster
 
@@ -3268,7 +3271,7 @@ exec ssh -N \\
         if not werkers:
             return ""
         map_ = self._repomap(c) if c else "/workspace"
-        patroon = r"error|exception|fatal|crash|ECONN|EPROTO|ENOENT|EADDR|cannot|failed|at [A-Za-z]"
+        patroon = FOUTPATROON
         uit = await self.runtime_voor(p).exec(
             werkers[0].container_id,
             ["sh", "-c",
@@ -3453,6 +3456,31 @@ _PROVISION_NOGMAALS: set = set()
 
 
 #: Het script van het cluster, zoals het in de container terechtkomt.
+#: Waar `foutregels` op zoekt in het startlog.
+#:
+#: Twee keer stil misgegaan, en allebei de keren koste dat een ronde:
+#:
+#: 1. `at [A-Za-z]` stond er om JS-stackframes te vangen, maar zonder anker.
+#:    De yarn-regel "...doesn't satisfy what react-diff-viewer-continued..."
+#:    bevat "at react" en kwam dus bovenaan de foutenlijst te staan, samen
+#:    met tientallen andere peer-dependency-waarschuwingen. Een echt frame
+#:    staat ingesprongen aan het begin van de regel; daar anker je op.
+#: 2. De ENIGE regel die telde -- "API is exiting on unhandledRejection" --
+#:    matchte op geen van de woorden. Het model kreeg een lijst vol
+#:    waarschuwingen zonder de crash die ertoe deed.
+#:
+#: Dat de scripts die het model schrijft in het Nederlands loggen, is geen
+#: detail: "[lab] seeden mislukt" is vaak de enige regel die zegt wat er
+#: gebeurde.
+FOUTPATROON = (
+    r"error|exception|fatal|crash|panic|traceback"
+    r"|unhandledRejection|uncaughtException"
+    r"|ECONN|EPROTO|ENOENT|EADDR|EACCES|ETIMEDOUT"
+    r"|cannot|failed|refused|denied|no such file"
+    r"|mislukt|geweigerd"
+    r"|^[[:space:]]+at [A-Za-z]"
+)
+
 _START_SCRIPT = "/workspace/.labx-start.sh"
 #: Het lopertje eromheen. Staat hier als tekst en niet in een commandoregel,
 #: want aanhalingstekens overleven `docker exec sh -c` niet.
