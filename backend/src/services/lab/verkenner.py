@@ -766,7 +766,15 @@ Harde regels:
 6. Noem een sleutel ÉÉN keer. Staat hij al bij een dienst onder `extern`, zet
    hem dan niet ook nog los in de lijst met losse geheimen -- dan wordt er
    twee keer om hetzelfde gevraagd.
-7. Env-bestanden: LabX vindt zelf elk `.env*` dat IN de repo staat, en leidt
+7. Moet er een datastore ingericht worden (databases, collections, tabellen,
+   schema's), zoek dan de definitie die het project ZELF als waarheid
+   gebruikt: infra-templates (bicep, terraform, ARM), migraties, een
+   schema-map. Een `setup`- of `seed`-script in de repo maakt vaak maar een
+   deelverzameling aan -- genoeg voor waar het voor bedoeld was, te weinig om
+   de applicatie te laten draaien. Dat verschil merk je pas als een scherm
+   een 500 geeft op een collection die niemand heeft aangemaakt, en dan is
+   de oorzaak ver weg van het symptoom.
+8. Env-bestanden: LabX vindt zelf elk `.env*` dat IN de repo staat, en leidt
    uit `x/.env.example` af dat `x/.env` de plek is. Wat het NIET kan zien, is
    een bestand dat gitignored is en dus in een verse kloon ontbreekt terwijl
    de documentatie, een script of een skill het wel bij naam noemt --
