@@ -334,6 +334,17 @@ export const clusterApi = {
   branchStartLog: (labId: string) =>
     api.get<{ log: string }>(`/clusters/branches/${labId}/start-log`),
 
+  /** De env-bestanden van dit cluster: pad en de NAMEN van de sleutels.
+   *  Nooit de waarden — die gaan één kant op, naar de werkkopie in een lab. */
+  envBestanden: (id: number) =>
+    api.get<EnvBestand[]>(`/clusters/${id}/env-bestanden`),
+  /** Een env-bestand importeren of vervangen. `pad` is waar het in de
+   *  werkkopie hoort, bijvoorbeeld `components/api/.env`. */
+  envBestandZetten: (id: number, pad: string, inhoud: string) =>
+    api.post<EnvBestand>(`/clusters/${id}/env-bestanden`, { pad, inhoud }),
+  envBestandVerwijderen: (id: number, bestandId: number) =>
+    api.delete<{ ok: boolean }>(`/clusters/${id}/env-bestanden/${bestandId}`),
+
   /** Een scriptje dat een VASTE poort op jouw machine naar dit lab stuurt.
    *
    *  LabX deelt oplopende machinepoorten uit zodat branches naast elkaar
@@ -398,4 +409,14 @@ export const SOORT_UITLEG: Record<Vondst["soort"], { titel: string; onder: strin
     titel: "Losse sleutels",
     onder: "Ziet eruit als een geheim, maar van welke dienst is onduidelijk.",
   },
+};
+
+/** Een env-bestand dat bij een cluster hoort. `sleutels` zijn alleen NAMEN:
+ *  de waarden komen nooit uit de API. */
+export type EnvBestand = {
+  id: number;
+  pad: string;
+  sleutels: string[];
+  aantal: number;
+  updated_at: string;
 };

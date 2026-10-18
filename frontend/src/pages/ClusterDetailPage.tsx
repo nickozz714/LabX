@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Box, Check, Copy, Download, ExternalLink, GitBranch, KanbanSquare,
+  ArrowLeft, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch, KanbanSquare,
   KeyRound, Loader2, MessageSquare, Play, PlayCircle, Plus, RefreshCw, Search,
   Server, Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
@@ -28,8 +28,8 @@ import { azureProfilesApi } from "@/lib/azureProfiles";
 import { boardApi } from "@/lib/boards";
 import { clusterApi } from "@/lib/clusters";
 import type {
-  BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, Toegang,
-  TunnelOs,
+  BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, EnvBestand,
+  Toegang, TunnelOs,
 } from "@/lib/clusters";
 import { TUNNEL_OS } from "@/lib/clusters";
 import {
@@ -765,6 +765,8 @@ export function ClusterDetailPage() {
       <KluisKaart clusterId={c.id} benodigd={c.benodigde_geheimen || {}} />
 
       {/* ── de vaste laag ────────────────────────────────────────────────── */}
+      <EnvBestandenKaart clusterId={c.id} />
+
       <Card className="p-4">
         <div className="mb-3 flex items-start gap-2">
           <Box className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1095,6 +1097,153 @@ function TunnelKnop(
               {o.naam}
             </Button>
           ))}
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+/**
+ * De env-bestanden van dit cluster.
+ *
+ * De bestanden die een applicatie lokaal laten werken staan vaak in
+ * .gitignore en nergens anders. IntelligentHive zegt het met zoveel woorden
+ * in components/app/.env.example: "ask these values from another developer".
+ * Hun eigen start-dev-skill lost dat op door die bestanden uit een bestaande
+ * hoofdcheckout te kopiëren — en precies dat is wat een branch-lab niet
+ * heeft.
+ *
+ * Het cluster is hier de hoofdcheckout: importeer ze één keer, en elk lab
+ * eronder krijgt ze bij het starten in zijn werkkopie.
+ *
+ * Je ziet alleen het pad en de NAMEN van de sleutels. De waarden komen niet
+ * uit de API terug: ze gaan één kant op.
+ */
+function EnvBestandenKaart({ clusterId }: { clusterId: number }) {
+  const melding = useMelding();
+  const bevestig = useBevestiging();
+  const [bestanden, setBestanden] = useState<EnvBestand[]>([]);
+  const [pad, setPad] = useState("");
+  const [inhoud, setInhoud] = useState("");
+  const [open, setOpen] = useState(false);
+  const [bezig, setBezig] = useState(false);
+
+  const laad = useCallback(() => {
+    clusterApi.envBestanden(clusterId).then(setBestanden).catch(() => { /* leeg is geen fout */ });
+  }, [clusterId]);
+  useEffect(laad, [laad]);
+
+  async function kiesBestand(bestand: File) {
+    setInhoud(await bestand.text());
+    // De browser geeft geen pad mee, alleen de naam. Een gok die vaak klopt is
+    // beter dan een leeg veld, en je kunt hem aanpassen voordat je opslaat.
+    if (!pad) setPad(bestand.name.startsWith(".env") ? `components/app/${bestand.name}` : bestand.name);
+  }
+
+  async function bewaar() {
+    setBezig(true);
+    try {
+      await clusterApi.envBestandZetten(clusterId, pad.trim(), inhoud);
+      melding.ok("Bestand geïmporteerd", "Elk branch-lab krijgt het bij de volgende start.");
+      setOpen(false);
+      setPad("");
+      setInhoud("");
+      laad();
+    } catch (e) {
+      melding.fout("Importeren lukte niet", e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  return (
+    <>
+      <Card className="p-4">
+        <div className="mb-3 flex items-start gap-2">
+          <FileKey className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">Env-bestanden</h2>
+            <p className="text-xs text-muted-foreground">
+              Bestanden die in <code>.gitignore</code> staan en die een verse kloon dus niet
+              heeft. Elk branch-lab krijgt ze bij het starten in zijn werkkopie. Je ziet hier
+              alleen de namen van de sleutels — de waarden komen niet terug uit de server.
+            </p>
+          </div>
+        </div>
+
+        {bestanden.length === 0
+          ? <EmptyState>
+              Nog geen bestanden. Heb je een werkende checkout? Importeer daar bijvoorbeeld
+              <code> components/api/.env</code> en <code> components/app/.env.local</code> uit.
+            </EmptyState>
+          : <ul className="space-y-2">
+              {bestanden.map((b) => (
+                <li key={b.id} className="rounded-md border p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-xs">{b.pad}</span>
+                    <div className="flex items-center gap-2">
+                      <Badge>{b.aantal} {b.aantal === 1 ? "sleutel" : "sleutels"}</Badge>
+                      <Button
+                        variant="ghost"
+                        onClick={async () => {
+                          const ja = await bevestig.vraag({
+                            titel: `${b.pad} verwijderen?`,
+                            tekst: "Branch-labs krijgen dit bestand daarna niet meer; een lab "
+                              + "dat al draait houdt wat er staat tot de volgende start.",
+                            bevestig: "Verwijderen",
+                            variant: "danger",
+                          });
+                          if (!ja) return;
+                          await clusterApi.envBestandVerwijderen(clusterId, b.id);
+                          laad();
+                        }}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  {b.sleutels.length > 0 && (
+                    <p className="mt-1 break-words font-mono text-[11px] text-muted-foreground">
+                      {b.sleutels.join(", ")}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>}
+
+        <Button className="mt-3" variant="secondary" onClick={() => setOpen(true)}>
+          <Plus className="h-3.5 w-3.5" /> Bestand importeren
+        </Button>
+      </Card>
+
+      <Modal open={open} onClose={() => setOpen(false)} dirty={!!inhoud}
+             title="Env-bestand importeren">
+        <p className="text-sm text-muted-foreground">
+          Kies het bestand of plak de inhoud. Het pad is waar het in de werkkopie hoort,
+          gerekend vanaf de wortel van de repo.
+        </p>
+
+        <div className="mt-3" />
+        <Label>Pad in de repo</Label>
+        <Input value={pad} onChange={(e) => setPad(e.target.value)}
+               placeholder="components/app/.env.local" />
+
+        <div className="mt-3" />
+        <Label>Bestand</Label>
+        <input type="file" className="text-xs"
+               onChange={(e) => { const f = e.target.files?.[0]; if (f) void kiesBestand(f); }} />
+
+        <div className="mt-3" />
+        <Label>Inhoud</Label>
+        <TextArea rows={8} className="font-mono text-xs" value={inhoud}
+                  onChange={(e) => setInhoud(e.target.value)}
+                  placeholder="VITE_TENANT_ID=..." />
+
+        <div className="mt-4 flex gap-2">
+          <Button onClick={() => void bewaar()} disabled={bezig || !pad.trim() || !inhoud}>
+            {bezig ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            Importeren
+          </Button>
+          <Button variant="ghost" onClick={() => setOpen(false)}>Annuleren</Button>
         </div>
       </Modal>
     </>

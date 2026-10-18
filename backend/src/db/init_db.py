@@ -345,6 +345,7 @@ def init_db() -> None:
         lab,
         lab_extra,
         cluster,
+        cluster_env_file,
         cluster_secret,
         lab_host,
         model_runner,

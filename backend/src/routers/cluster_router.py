@@ -100,6 +100,48 @@ async def branch_app_herstarten(lab_id: str, db: Session = Depends(get_db)):
     return await LabService(db).start_applicatie(lab_id)
 
 
+# ── env-bestanden van het cluster ────────────────────────────────────────────
+#
+# De bestanden die een applicatie lokaal laten werken staan vaak in
+# .gitignore en nergens anders. Het cluster is de plek om ze te bewaren: hij
+# hoort al bij één repo en elk branch-lab eronder heeft ze nodig. Zie
+# services/lab/cluster_env.py.
+
+
+@router.get("/{cluster_id}/env-bestanden")
+def env_bestanden(cluster_id: int, db: Session = Depends(get_db)):
+    """Welke bestanden er staan, met de NAMEN van hun sleutels -- nooit de waarden."""
+    from services.lab.cluster_env import ClusterEnvBestanden
+
+    _svc(db).get_or_404(cluster_id)
+    return ClusterEnvBestanden(db).lijst(cluster_id)
+
+
+@router.post("/{cluster_id}/env-bestanden")
+def env_bestand_zetten(cluster_id: int, payload: Dict[str, Any],
+                       db: Session = Depends(get_db)):
+    """Een env-bestand importeren of vervangen.
+
+    `pad` is waar het in de werkkopie hoort (bijvoorbeeld
+    `components/api/.env`), `inhoud` is het bestand zelf.
+    """
+    from services.lab.cluster_env import ClusterEnvBestanden
+
+    _svc(db).get_or_404(cluster_id)
+    return ClusterEnvBestanden(db).zet(cluster_id,
+                                       str(payload.get("pad") or ""),
+                                       str(payload.get("inhoud") or ""))
+
+
+@router.delete("/{cluster_id}/env-bestanden/{bestand_id}")
+def env_bestand_verwijderen(cluster_id: int, bestand_id: int,
+                            db: Session = Depends(get_db)):
+    from services.lab.cluster_env import ClusterEnvBestanden
+
+    _svc(db).get_or_404(cluster_id)
+    return ClusterEnvBestanden(db).verwijder(cluster_id, bestand_id)
+
+
 @router.get("/branches/{lab_id}/tunnel")
 def branch_tunnel(lab_id: str, os: str = "mac", poort: int | None = None,
                   container_poort: int | None = None,

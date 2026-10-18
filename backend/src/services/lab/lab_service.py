@@ -3222,6 +3222,15 @@ exec ssh -N \\
         map_ = self._repomap(c)
         cid = werkers[0].container_id
 
+        # De env-bestanden van het cluster in de werkkopie zetten, VOORDAT het
+        # startscript draait. Dit is LabX' antwoord op wat de start-dev-skill
+        # van IntelligentHive met `cp` doet: die kopieert de gitignored
+        # .env-bestanden uit een bestaande hoofdcheckout, en een verse kloon
+        # heeft die niet. Het cluster is de hoofdcheckout.
+        from services.lab.cluster_env import ClusterEnvBestanden
+
+        await ClusterEnvBestanden(self.db).schrijf_naar_lab(p, c)
+
         # Allebei de scripts via STDIN wegschrijven en niet als argument
         # meegeven: een script met aanhalingstekens erin overleeft de reis
         # door `docker exec sh -c` niet ongeschonden. Dat kostte een hele
