@@ -486,3 +486,55 @@ def test_het_model_hoort_detectorvondsten_in_te_trekken(db):
 
     assert "niet_overnemen" in prompt
     assert "aangevinkt in het plan" in prompt
+
+
+# ── waarom wordt er toch om een geheim gevraagd ─────────────────────────────
+
+
+def test_een_geheim_dat_niet_in_jouw_env_staat_krijgt_die_uitleg(db):
+    """"Ik gaf een .env en hij vraagt er toch om" is verwarrend tot je weet
+    dat die sleutel er niet in staat. LabX heeft de namen, dus dat hoort een
+    vaststelling te zijn en geen inschatting van het model."""
+    from services.lab.verkenner import _duid_geheimen
+    from services.lab.verkenner_detectoren import Vondst
+
+    v = [Vondst(soort="geheim", sleutel="CLAUDE_CODE_OAUTH_TOKEN",
+                toelichting="Nodig voor de Claude CLI")]
+    _duid_geheimen(v, {".env": ["DB_PASS"], "frontend/.env": ["VITE_API_URL"]})
+
+    assert "in de CODE voor" in v[0].toelichting
+    assert ".env" in v[0].toelichting
+    assert "Nodig voor de Claude CLI" in v[0].toelichting, "de eigen uitleg blijft staan"
+
+
+def test_een_geheim_dat_er_WEL_in_staat_wordt_als_geleverd_gemeld(db):
+    """Het model hoort zo'n vondst in te trekken; vergeet het dat, dan staat
+    het hier tenminste bij."""
+    from services.lab.verkenner import _duid_geheimen
+    from services.lab.verkenner_detectoren import Vondst
+
+    v = [Vondst(soort="geheim", sleutel="DB_PASS", toelichting="Wachtwoord")]
+    _duid_geheimen(v, {".env": ["DB_PASS"]})
+
+    assert "Staat al in .env" in v[0].toelichting
+    assert "niet in de kluis" in v[0].toelichting
+
+
+def test_zonder_env_bestanden_verandert_er_niets_aan_de_toelichting(db):
+    """Geen bestanden, geen uitspraak: dan is er niets vast te stellen."""
+    from services.lab.verkenner import _duid_geheimen
+    from services.lab.verkenner_detectoren import Vondst
+
+    v = [Vondst(soort="geheim", sleutel="DB_PASS", toelichting="Wachtwoord")]
+    _duid_geheimen(v, None)
+    assert v[0].toelichting == "Wachtwoord"
+
+
+def test_alleen_geheimen_krijgen_die_uitleg(db):
+    """Een dienst of een poort heeft niets met jouw env-bestanden te maken."""
+    from services.lab.verkenner import _duid_geheimen
+    from services.lab.verkenner_detectoren import Vondst
+
+    v = [Vondst(soort="dienst", sleutel="mysql", toelichting="Database")]
+    _duid_geheimen(v, {".env": ["DB_PASS"]})
+    assert v[0].toelichting == "Database"

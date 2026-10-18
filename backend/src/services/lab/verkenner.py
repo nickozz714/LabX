@@ -144,6 +144,7 @@ class Verkenner:
             # staat alleen niet meer vooraf aan, met jouw woorden erbij.
             _pas_terugkoppeling_toe(vondsten, opmerkingen, uitgezet)
             _pas_uitsluitingen_toe(vondsten, modeluitslag.get("niet_overnemen"))
+            _duid_geheimen(vondsten, env_bestanden)
 
             return {
                 "repo_url": repo_url,
@@ -405,6 +406,45 @@ _IMAGE_VOORKEUR = ("detector:manifest", "detector:dockerfile", "model")
 #: detector ze LEEG liet. Nooit overschrijven: de detector las ze af, het
 #: model leidde ze af.
 _AAN_TE_VULLEN = ("lab_omgeving", "omgeving_uit_kluis", "poorten", "omgeving")
+
+
+def _duid_geheimen(vondsten: List[det.Vondst],
+                   env_bestanden: Optional[Dict[str, Any]]) -> None:
+    """Zeggen WAAROM een geheim nog gevraagd wordt als je al een .env gaf.
+
+    "Je leverde een env-bestand en hij vraagt er toch om" is verwarrend tot
+    je weet dat die sleutel er niet in staat. Dat weet LabX zeker -- het
+    heeft de namen -- dus dat hoort niet een inschatting van het model te
+    zijn maar een vaststelling.
+
+    Andersom ook: staat de sleutel er WEL in, dan is hij geleverd en hoeft
+    hij niet in de kluis. Het model hoort zo'n vondst in te trekken, maar als
+    het dat vergeet, staat het hier tenminste bij.
+    """
+    if not env_bestanden:
+        return
+    waar: Dict[str, str] = {}
+    for pad, sleutels in env_bestanden.items():
+        for sleutel in (sleutels or []):
+            waar.setdefault(str(sleutel), str(pad))
+
+    bestanden = ", ".join(sorted(env_bestanden)) or "je env-bestanden"
+    for v in vondsten:
+        if v.soort not in ("geheim", "extern"):
+            continue
+        namen = [v.sleutel] + [str(k) for k in (v.waarde or {}).get("sleutels", [])] \
+            if isinstance(v.waarde, dict) else [v.sleutel]
+        gedekt = [n for n in namen if n in waar]
+        if gedekt:
+            plekken = ", ".join(sorted({waar[n] for n in gedekt}))
+            v.toelichting = ((v.toelichting or "").rstrip(". ")
+                             + f". Staat al in {plekken}; je hoeft hem niet in de "
+                               "kluis te zetten.").lstrip(". ")
+        else:
+            v.toelichting = ((v.toelichting or "").rstrip(". ")
+                             + f". Komt wel in de CODE voor, maar staat niet in "
+                               f"{bestanden} -- vandaar dat er toch om gevraagd "
+                               "wordt.").lstrip(". ")
 
 
 def _vul_aan(bestaand: det.Vondst, van_model: det.Vondst) -> None:

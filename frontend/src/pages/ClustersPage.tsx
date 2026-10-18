@@ -71,13 +71,26 @@ export function ClustersPage() {
   async function kiesEnv(bestanden: FileList) {
     const nieuw: { pad: string; inhoud: string }[] = [];
     for (const f of Array.from(bestanden).slice(0, 20)) {
-      // De browser geeft geen pad mee, alleen de naam. Een gok die vaak klopt
-      // is beter dan een leeg veld, en je kunt hem aanpassen voordat je
-      // verkent.
-      nieuw.push({ pad: f.name.startsWith(".env") ? f.name : `${f.name}`, inhoud: await f.text() });
+      // `webkitRelativePath` is gevuld als je een MAP koos; dan weten we het
+      // pad echt. Kies je losse bestanden, dan geeft de browser alleen de
+      // naam — en in een monorepo heten ze allemaal `.env`. Die gok is dus
+      // een startpunt, geen antwoord; daarom staat het veld ernaast en
+      // waarschuwt het scherm bij dubbele paden.
+      const relatief = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+      // De eerste map van een mapkeuze is de map zelf; die hoort er niet bij.
+      const pad = relatief ? relatief.split("/").slice(1).join("/") || f.name : f.name;
+      nieuw.push({ pad, inhoud: await f.text() });
     }
-    setEnvBestanden((o) => [...o.filter((x) => !nieuw.some((n) => n.pad === x.pad)), ...nieuw]);
+    setEnvBestanden((o) => [...o, ...nieuw]);
   }
+
+  // Twee bestanden op hetzelfde pad betekent dat er een stil verdwijnt: de
+  // server bewaart er één per pad. In een monorepo gebeurt dat meteen, want
+  // daar heet elk bestand `.env`.
+  const dubbelePaden = new Set(
+    envBestanden.map((b) => b.pad.trim())
+      .filter((pad, i, alle) => pad && alle.indexOf(pad) !== i),
+  );
   const [hosts, setHosts] = useState<LabHost[]>([]);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
@@ -302,9 +315,10 @@ export function ClustersPage() {
           {envBestanden.length > 0 && (
             <ul className="mt-2 space-y-1">
               {envBestanden.map((b, i) => (
-                <li key={b.pad} className="flex items-center gap-2">
+                <li key={i} className="flex items-center gap-2">
                   <Input
-                    className="flex-1 font-mono text-xs"
+                    className={`flex-1 font-mono text-xs ${
+                      dubbelePaden.has(b.pad.trim()) ? "border-red-500" : ""}`}
                     value={b.pad}
                     onChange={(e) => setEnvBestanden((o) =>
                       o.map((x, j) => (j === i ? { ...x, pad: e.target.value } : x)))}
@@ -320,10 +334,25 @@ export function ClustersPage() {
               ))}
             </ul>
           )}
+          {dubbelePaden.size > 0 && (
+            <p className="mt-1 text-xs text-red-400">
+              Twee bestanden op hetzelfde pad: er blijft er één over. Geef ze allebei
+              hun eigen plek.
+            </p>
+          )}
           <p className="mt-1 text-xs text-muted-foreground">
-            Het pad is waar het bestand in de repo hoort — pas het aan als de gok niet
-            klopt. Het model ziet alleen de NAMEN van de sleutels, nooit de waarden, en
-            weet dan dat het er niet om hoeft te vragen.
+            Het pad is waar het bestand in de repo hoort, gerekend vanaf de wortel.
+            In een monorepo heet elk bestand <code>.env</code>, en de browser geeft
+            alleen die naam door — zet er dus zelf de map bij:
+            <code> components/api/.env</code> en <code> components/app/.env</code>.
+            Kies je een hele MAP in plaats van losse bestanden, dan weet LabX het pad
+            wel en vult hij het voor je in.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Het model ziet alleen de NAMEN van de sleutels, nooit de waarden, en weet
+            dan dat het er niet om hoeft te vragen. Vindt het toch een sleutel die niet
+            in jouw bestanden staat, dan zegt het plan erbij dat die wél in de code
+            voorkomt maar niet in wat je gaf.
           </p>
 
           {/* Pakketten die elk branch-lab erbij krijgt. Git, curl, jq en unzip
@@ -359,7 +388,7 @@ export function ClustersPage() {
         </div>
 
         <div className="mt-5 flex items-center gap-2">
-          <Button onClick={verken} disabled={verkent || !repoUrl.trim()}>
+          <Button onClick={verken} disabled={verkent || !repoUrl.trim() || dubbelePaden.size > 0}>
             {verkent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
             {verkent ? "Bezig met lezen…" : "Verkennen"}
           </Button>
