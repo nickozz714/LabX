@@ -454,3 +454,35 @@ def test_vooraf_gekozen_pakketten_en_modelvoorstellen_sluiten_elkaar_niet_uit(db
     from models.cluster import Cluster
     c = db.get(Cluster, uit["id"] if isinstance(uit, dict) and "id" in uit else plan.cluster_id)
     assert set(c.lab_extras or []) == {"node", "uv"}
+
+
+def test_opnieuw_verkennen_houdt_de_env_bestanden_van_het_vorige_plan(db):
+    """Een plan bestaat vaak zonder cluster, en dan is het VORIGE plan de
+    enige plek waar je bestanden nog staan. Zonder deze terugval verloor een
+    tweede ronde ze stil, en vroeg het model opnieuw om sleutels die je al
+    had aangeleverd."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    # Zoals ze op een plan staan: versleuteld, met hun namen erbij.
+    eerder = [{"pad": "components/api/.env", "inhoud": "<versleuteld>",
+               "sleutels": ["DB_PASS", "JWT_SECRET"]}]
+
+    rijen = svc._env_rijen(eerder, None)
+
+    assert [r["pad"] for r in rijen] == ["components/api/.env"]
+    assert rijen[0]["sleutels"] == ["DB_PASS", "JWT_SECRET"]
+    assert rijen[0]["inhoud"] == "<versleuteld>", "niet nog eens versleutelen"
+
+
+def test_het_model_hoort_detectorvondsten_in_te_trekken(db):
+    """Alleen "vraag er niet om" is te weinig: de DETECTOR heeft die sleutels
+    al gevonden en ze staan aangevinkt in het plan. Zonder intrekken moet de
+    gebruiker ze met de hand uitzetten voor waarden die hij al gaf."""
+    from services.lab.verkenner import _prompt
+
+    prompt = _prompt(repo_url="https://x/y.git", branch="main", beeld={},
+                     inhoud={}, vondsten=[], env_bestanden={".env": ["DB_PASS"]})
+
+    assert "niet_overnemen" in prompt
+    assert "aangevinkt in het plan" in prompt

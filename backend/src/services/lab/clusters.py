@@ -1063,6 +1063,14 @@ class ClusterService:
         if meegegeven:
             uit: List[Dict[str, Any]] = []
             for item in meegegeven[:20]:
+                # Rijen uit een VORIG plan zijn al versleuteld en hebben hun
+                # sleutelnamen bij zich. Die nog eens door encrypt() halen
+                # maakt er onleesbare rommel van.
+                if (item or {}).get("sleutels") is not None:
+                    uit.append({"pad": controleer_pad(str(item.get("pad") or "")),
+                                "inhoud": str(item.get("inhoud") or ""),
+                                "sleutels": [str(x) for x in (item.get("sleutels") or [])]})
+                    continue
                 pad = controleer_pad(str((item or {}).get("pad") or ""))
                 inhoud = str((item or {}).get("inhoud") or "")
                 uit.append({"pad": pad, "inhoud": encrypt(inhoud),
@@ -1232,7 +1240,8 @@ class ClusterService:
             # Geef je nu niets mee, dan houdt deze ronde wat het vorige plan
             # al droeg. Anders verliest een tweede ronde stilletjes de
             # bestanden en pakketten van de eerste.
-            env_bestanden=env_bestanden,
+            env_bestanden=(env_bestanden if env_bestanden is not None
+                           else (oud.env_bestanden or None)),
             lab_extras=(lab_extras if lab_extras is not None else (oud.lab_extras or None)),
             instructie=schone_instructie or oud.instructie,
             keuze=gekozen, uitgezet=uitgezet,
