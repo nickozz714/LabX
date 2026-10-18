@@ -445,6 +445,12 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
 
   const eigenNamen = new Set(eigen.map((g) => g.naam));
   const los = eigen.filter((g) => !(g.naam in benodigd));
+  // Dekken de geïmporteerde env-bestanden alles wat dit cluster nodig heeft,
+  // dan valt er hier niets meer te doen. Een rij groene regels suggereert werk
+  // dat er niet is. De regels blijven wel opvraagbaar: WELK bestand welke
+  // sleutel levert, is precies wat je wilt weten als er straks iets mist.
+  const allesUitEnv = nodig.length > 0 && nodig.every((n) => n.in_env_bestand) && los.length === 0;
+  const [toonSleutels, setToonSleutels] = useState(false);
   const regels = [
     ...nodig.map((n) => ({ naam: n.naam, waarvoor: n.waarvoor, gevonden: n.gevonden,
                            eigen: n.in_eigen_kluis, uitEnv: n.in_env_bestand || null,
@@ -468,7 +474,23 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
         </div>
       </div>
 
-      {regels.length === 0 ? (
+      {allesUitEnv && !toonSleutels ? (
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3">
+          <p className="text-sm">
+            Niets nodig in deze kluis — alle {nodig.length} sleutels komen uit de
+            geïmporteerde env-bestanden.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Die bestanden gaan bij elke start mee naar de werkkopie. Zet een sleutel hier
+            alleen neer als hij óók als omgevingsvariabele nodig is — bijvoorbeeld omdat
+            het startscript hem leest, of omdat een vaste dienst hem nodig heeft voordat
+            de repo er is.
+          </p>
+          <Button className="mt-2" variant="ghost" onClick={() => setToonSleutels(true)}>
+            Toon de sleutels
+          </Button>
+        </div>
+      ) : regels.length === 0 ? (
         <EmptyState>
           Nog niets nodig. Zodra een verkenning zegt dat deze applicatie geheimen nodig
           heeft, staan de namen hier klaar.
@@ -526,6 +548,12 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
             </li>
           ))}
         </ul>
+      )}
+
+      {allesUitEnv && toonSleutels && (
+        <Button className="mt-2" variant="ghost" onClick={() => setToonSleutels(false)}>
+          Verberg de sleutels
+        </Button>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
