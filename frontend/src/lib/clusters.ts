@@ -174,7 +174,10 @@ export type Cluster = {
   geheimen_ontbreken: string[];
   notitie: string | null;
   diensten: ClusterDienst[];
-  labs: { id: string; name: string; branch: string | null }[];
+  /** poort_map = {containerpoort: machinepoort} — nodig voor het
+   *  tunnelvenster, dat je laat kiezen welke poort een vast nummer krijgt. */
+  labs: { id: string; name: string; branch: string | null;
+          poort_map?: Record<string, number> }[];
   created_at: string;
   updated_at: string;
 };
@@ -330,7 +333,34 @@ export const clusterApi = {
   /** De uitvoer van het startscript — waar je kijkt als er niets antwoordt. */
   branchStartLog: (labId: string) =>
     api.get<{ log: string }>(`/clusters/branches/${labId}/start-log`),
+
+  /** Een scriptje dat een VASTE poort op jouw machine naar dit lab stuurt.
+   *
+   *  LabX deelt oplopende machinepoorten uit zodat branches naast elkaar
+   *  kunnen draaien; een OAuth-redirect eist juist een vast nummer, want
+   *  `http://localhost:5173` staat bij de identity provider geregistreerd en
+   *  nergens anders. Je draait het script zelf en het is weg na een herstart
+   *  — zie backend services/lab/tunnel.py voor waarom dat opzet is.
+   *
+   *  Geeft het adres terug dat je daarna moet openen. */
+  branchTunnel: async (labId: string, os: TunnelOs, containerPoort?: number) => {
+    const q = new URLSearchParams({ os });
+    if (containerPoort) q.set("container_poort", String(containerPoort));
+    const kop = await api.download(`/clusters/branches/${labId}/tunnel?${q}`,
+                                   `labx-tunnel.${os === "windows" ? "cmd" : "sh"}`);
+    return kop.get("X-Labx-Tunnel-Url") || "";
+  },
 };
+
+/** De besturingssystemen waarvoor LabX een tunnelscript schrijft. */
+export type TunnelOs = "mac" | "windows" | "linux";
+
+/** Wat er in het menu staat, en welke extensie je krijgt. */
+export const TUNNEL_OS: { waarde: TunnelOs; naam: string }[] = [
+  { waarde: "mac", naam: "macOS (.sh)" },
+  { waarde: "windows", naam: "Windows (.cmd)" },
+  { waarde: "linux", naam: "Linux (.sh)" },
+];
 
 /** Wat een soort in het scherm heet, en waarom hij er toe doet. Eén plek,
  *  zodat de uitleg niet per scherm verschilt. */

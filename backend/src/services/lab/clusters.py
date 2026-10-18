@@ -976,8 +976,13 @@ class ClusterService:
         from models.lab_host import LabHost
 
         host = self.db.get(LabHost, c.host_id) if c.host_id else None
-        labs = [{"id": i, "name": n, "branch": b} for i, n, b in
-                self.db.query(Lab.id, Lab.name, Lab.branch)
+        # poort_map hoort erbij: het tunnelvenster moet kunnen vragen WELKE
+        # poort van dit lab je op een vast nummer wilt, en een cluster met een
+        # front-end en een API heeft er twee. Zonder dit kan het scherm die
+        # keuze niet tonen en kiest de server altijd de eerste.
+        labs = [{"id": i, "name": n, "branch": b, "poort_map": pm or {}}
+                for i, n, b, pm in
+                self.db.query(Lab.id, Lab.name, Lab.branch, Lab.poort_map)
                 .filter(Lab.cluster_id == c.id).all()]
         return {
             "id": c.id, "naam": c.naam, "status": c.status, "fout": c.fout,

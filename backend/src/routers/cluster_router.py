@@ -100,6 +100,32 @@ async def branch_app_herstarten(lab_id: str, db: Session = Depends(get_db)):
     return await LabService(db).start_applicatie(lab_id)
 
 
+@router.get("/branches/{lab_id}/tunnel")
+def branch_tunnel(lab_id: str, os: str = "mac", poort: int | None = None,
+                  container_poort: int | None = None,
+                  db: Session = Depends(get_db)):
+    """Een scriptje dat een VASTE poort op jouw machine naar dit lab stuurt.
+
+    Nodig omdat LabX oplopende machinepoorten uitdeelt en sommige applicaties
+    juist een vast nummer eisen: een OAuth-redirect staat op
+    `http://localhost:5173` geregistreerd en nergens anders. Zie
+    services/lab/tunnel.py voor waarom je hem zelf draait.
+    """
+    from fastapi.responses import PlainTextResponse
+    from services.lab.tunnel import Tunnel
+
+    uit = Tunnel(db).script(lab_id, os_naam=os, lokaal=poort,
+                            container_poort=container_poort)
+    return PlainTextResponse(
+        uit["inhoud"],
+        headers={"Content-Disposition": f'attachment; filename="{uit["bestandsnaam"]}"',
+                 # De front-end leest deze om te kunnen zeggen welk adres je
+                 # straks moet openen; zonder dit is het script stil over
+                 # waar je terechtkomt.
+                 "X-Labx-Tunnel-Url": uit["url"],
+                 "Access-Control-Expose-Headers": "X-Labx-Tunnel-Url"})
+
+
 @router.get("/branches/{lab_id}/start-log")
 async def branch_start_log(lab_id: str, db: Session = Depends(get_db)):
     """De uitvoer van het startscript. Waar je kijkt als er niets antwoordt."""

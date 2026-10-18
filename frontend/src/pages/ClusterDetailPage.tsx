@@ -20,16 +20,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Box, Check, Copy, ExternalLink, GitBranch, KanbanSquare, KeyRound,
-  Loader2, MessageSquare, Play, PlayCircle, Plus, RefreshCw, Search, Server,
-  Square, Terminal, Trash2, TriangleAlert,
+  ArrowLeft, Box, Check, Copy, Download, ExternalLink, GitBranch, KanbanSquare,
+  KeyRound, Loader2, MessageSquare, Play, PlayCircle, Plus, RefreshCw, Search,
+  Server, Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
 import { boardApi } from "@/lib/boards";
 import { clusterApi } from "@/lib/clusters";
 import type {
   BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, Toegang,
+  TunnelOs,
 } from "@/lib/clusters";
+import { TUNNEL_OS } from "@/lib/clusters";
 import {
   Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea,
 } from "@/components/ui";
@@ -814,6 +816,7 @@ export function ClusterDetailPage() {
                       <Button variant="secondary" onClick={() => navigate(`/chat?lab=${l.id}`)}>
                         <MessageSquare className="h-3.5 w-3.5" /> Chat
                       </Button>
+                      <TunnelKnop lab={l} />
                       {bordId && (
                         <Button variant="secondary"
                                 onClick={() => navigate(`/boards/${bordId}?branch=${encodeURIComponent(l.branch || "")}`)}>
@@ -1006,5 +1009,94 @@ export function ClusterDetailPage() {
         </div>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * Een vaste poort op jouw machine naar dit branch-lab.
+ *
+ * LabX deelt oplopende machinepoorten uit vanaf 18000, zodat branches naast
+ * elkaar kunnen draaien zonder elkaar te verdringen. Applicaties met een
+ * OAuth-redirect eisen juist een vast nummer: `http://localhost:5173` staat
+ * bij de identity provider geregistreerd en nergens anders, en daar valt in
+ * de repo niets aan te doen.
+ *
+ * Waarom een venster en geen knop in de rij: je moet twee dingen weten die
+ * nergens anders staan -- welk adres je daarna opent, en dat de tunnel na een
+ * herstart weg is. Een knop die stil een bestand neerzet laat je met allebei
+ * die vragen zitten.
+ */
+function TunnelKnop(
+  { lab }: { lab: { id: string; name: string; branch: string | null;
+                    poort_map?: Record<string, number> } },
+) {
+  const melding = useMelding();
+  const [open, setOpen] = useState(false);
+  const [bezig, setBezig] = useState<TunnelOs | null>(null);
+
+  const poorten = Object.keys(lab.poort_map || {}).map(Number);
+  const [poort, setPoort] = useState<number | undefined>(poorten[0]);
+
+  async function haal(os: TunnelOs) {
+    setBezig(os);
+    try {
+      const url = await clusterApi.branchTunnel(lab.id, os, poort);
+      melding.ok("Tunnelscript gedownload",
+                 `Start het en open daarna ${url}`);
+      setOpen(false);
+    } catch (e) {
+      melding.fout("Tunnel maken lukte niet",
+                   e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBezig(null);
+    }
+  }
+
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>
+        <Download className="h-3.5 w-3.5" /> Tunnel
+      </Button>
+      <Modal open={open} onClose={() => setOpen(false)} klikBuitenSluit
+             title={`Tunnel naar ${lab.branch || lab.name}`}>
+        <p className="text-sm text-muted-foreground">
+          LabX publiceert dit lab op een oplopend nummer, zodat meerdere branches
+          naast elkaar kunnen draaien. Sommige applicaties eisen juist een vaste
+          poort op <code>localhost</code> — een OAuth-redirect staat daar op
+          geregistreerd en nergens anders. Dit scriptje legt die verbinding.
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Je draait het zelf en laat het venster open staan. Sluiten stopt de
+          tunnel, en na een herstart van je machine is hij weg — dat is opzet:
+          een tunnel die blijft bestaan wijst op een dag naar een lab dat er
+          niet meer is. Eén poort kan maar naar één branch tegelijk.
+        </p>
+
+        {poorten.length > 1 && (
+          <div className="mt-4">
+            <Label>Welke poort van dit lab?</Label>
+            <Select value={poort} onChange={(e) => setPoort(Number(e.target.value))}>
+              {poorten.map((q) => (
+                <option key={q} value={q}>
+                  {q} → wordt localhost:{q} op jouw machine
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {TUNNEL_OS.map((o) => (
+            <Button key={o.waarde} variant="secondary" disabled={bezig !== null}
+                    onClick={() => void haal(o.waarde)}>
+              {bezig === o.waarde
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Download className="h-3.5 w-3.5" />}
+              {o.naam}
+            </Button>
+          ))}
+        </div>
+      </Modal>
+    </>
   );
 }

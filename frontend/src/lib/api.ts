@@ -91,7 +91,54 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
   return data as T;
 }
 
+/**
+ * Een bestand ophalen en als download aanbieden. Bewust NIET via `request`:
+ * die parseert altijd JSON, en een shellscript is dat niet.
+ *
+ * De servernaam uit `Content-Disposition` wint van een naam die wij
+ * verzinnen: de server weet welke branch en welke poort erin zitten, en die
+ * horen in de bestandsnaam terug te komen.
+ *
+ * Geeft de meegestuurde kopregels terug, zodat de aanroeper bijvoorbeeld kan
+ * zeggen welk adres je straks moet openen.
+ */
+async function download(path: string, valnaam: string): Promise<Headers> {
+  const res = await fetch(`/api${path}`, { headers: authHeaders() });
+  if (res.status === 401) {
+    setToken(null);
+    onthoudBestemming(window.location.pathname + window.location.search);
+    window.location.href = "/login";
+    throw new ApiError(401, "Niet ingelogd");
+  }
+  if (!res.ok) {
+    const tekst = await res.text();
+    let detail: string = res.statusText;
+    try {
+      const data = tekst ? JSON.parse(tekst) : null;
+      detail = (data && (data.detail || data.error)) || detail;
+    } catch {
+      /* geen JSON: dan is de statustekst het beste dat we hebben */
+    }
+    throw new ApiError(res.status, detail);
+  }
+
+  const opgegeven = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = opgegeven?.[1] || valnaam;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Pas vrijgeven nadat de browser de klik heeft afgehandeld; meteen
+  // intrekken levert soms een leeg bestand op.
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return res.headers;
+}
+
 export const api = {
+  download,
   get: <T>(path: string) => request<T>("GET", path),
   upload,
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
