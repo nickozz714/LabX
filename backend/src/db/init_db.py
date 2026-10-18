@@ -58,6 +58,9 @@ _ADDITIVE_COLUMNS = {
         # maar niemand ze kon beantwoorden.
         ("antwoorden", "TEXT"),
         ("token_geheim", "VARCHAR(120)"),
+        # Env-bestanden die bij het VERKENNEN zijn meegegeven, zodat het model
+        # de sleutelnamen kent voordat het een startscript schrijft.
+        ("env_bestanden", "TEXT"),
         # Terugkoppeling op het plan en op losse onderdelen. Erbij gekomen
         # nadat bleek dat antwoorden alleen kon op vragen die het model
         # toevallig stelde.

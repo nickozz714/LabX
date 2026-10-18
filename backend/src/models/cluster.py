@@ -243,6 +243,18 @@ class ClusterPlan(Base):
     #: Anders dan `opmerking`, dat gaat over een plan dat er al ligt. Deze
     #: staat er vóór de eerste regel gelezen is, en scheelt dus een hele ronde.
     instructie: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Env-bestanden die JIJ meegaf bij het verkennen, versleuteld:
+    #: [{"pad": ..., "inhoud": <versleuteld>, "sleutels": [...]}].
+    #:
+    #: Ze staan hier en niet bij het cluster omdat een plan ook ZONDER cluster
+    #: bestaat -- dat is zelfs de normale volgorde. Wie zijn .env pas na
+    #: goedkeuring kan aanleveren, laat het model raden naar sleutels die hij
+    #: had kunnen weten: het startscript verzint dan een naam waar jij er al
+    #: een had. Bij goedkeuren verhuizen ze naar cluster_env_files.
+    #:
+    #: Naar het model gaan alleen de NAMEN. De waarden gaan een kant op: naar
+    #: de werkkopie in een lab.
+    env_bestanden: Mapped[list | None] = mapped_column(JSON, nullable=True)
     #: Wat je van afzonderlijke ONDERDELEN vond: {"dienst::mailpit": "deze
     #: hoort er niet bij"}. Antwoorden kon al, maar alleen op vragen die het
     #: model toevallig stelde -- en een plan zonder vragen liet je dus met

@@ -362,3 +362,71 @@ def test_het_startscript_krijgt_te_horen_welke_bestanden_labx_levert(db, monkeyp
     assert "LABX_ENV_BESTANDEN=" in start, "het script moet weten wat LabX levert"
     assert "components/api/.env" in start and "components/app/.env" in start
     assert "export LABX_ENV_BESTANDEN" in start
+
+
+# ── env-bestanden al BIJ het verkennen ──────────────────────────────────────
+#
+# Een plan bestaat normaal zonder cluster, en env-bestanden hingen aan het
+# cluster. Wie zijn .env pas na goedkeuring kon aanleveren, liet het model
+# raden naar sleutels die het had kunnen weten -- en dan verzint het
+# startscript een naam waar jij er al een had.
+
+
+def test_de_namen_gaan_naar_het_model_en_de_waarden_niet(db):
+    """De scherpste grens van deze functie."""
+    from services.lab.verkenner import _prompt
+
+    prompt = _prompt(
+        repo_url="https://x/y.git", branch="main", beeld={}, inhoud={}, vondsten=[],
+        env_bestanden={"components/api/.env": ["COSMOS_KEY", "API_KEY"]})
+
+    assert "COSMOS_KEY" in prompt and "API_KEY" in prompt
+    assert "components/api/.env" in prompt
+    assert "Vraag er NIET om in de kluis" in prompt
+
+
+def test_zonder_bestanden_staat_er_niets_over_in_de_prompt(db):
+    """Een leeg blok met een kopje erboven is ruis die het model moet wegdenken."""
+    from services.lab.verkenner import _prompt
+
+    prompt = _prompt(repo_url="https://x/y.git", branch="main", beeld={},
+                     inhoud={}, vondsten=[])
+    assert "ENV-BESTANDEN AANGELEVERD" not in prompt
+
+
+def test_meegegeven_bestanden_worden_versleuteld_op_het_plan_bewaard(db, monkeypatch):
+    """Niet in platte tekst in de database, ook niet in een plan."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    rijen = svc._env_rijen([{"pad": "components/api/.env", "inhoud": "A=geheim123\nB=2\n"}], None)
+
+    assert rijen[0]["pad"] == "components/api/.env"
+    assert rijen[0]["sleutels"] == ["A", "B"]
+    assert "geheim123" not in rijen[0]["inhoud"], "de inhoud hoort versleuteld te zijn"
+
+
+def test_zonder_meegegeven_bestanden_pakt_hij_die_van_het_cluster(db):
+    """Dat maakt "opnieuw verkennen" zinvol nadat je ze alsnog hebt
+    geimporteerd: het model krijgt de namen die het de vorige keer miste."""
+    from services.lab.cluster_env import ClusterEnvBestanden
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Slim")
+    db.commit()
+    ClusterEnvBestanden(db).zet(c.id, "components/api/.env", "COSMOS_KEY=x\n")
+
+    rijen = svc._env_rijen(None, c.id)
+    assert [r["pad"] for r in rijen] == ["components/api/.env"]
+    assert rijen[0]["sleutels"] == ["COSMOS_KEY"]
+
+
+def test_een_pad_buiten_de_repo_wordt_ook_hier_geweigerd(db):
+    """Dezelfde controle als bij importeren; dit is een tweede ingang."""
+    from fastapi import HTTPException
+
+    from services.lab.clusters import ClusterService
+
+    with pytest.raises(HTTPException):
+        ClusterService(db)._env_rijen([{"pad": "../../etc/passwd", "inhoud": "A=1"}], None)

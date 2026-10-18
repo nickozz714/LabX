@@ -88,6 +88,7 @@ class Verkenner:
                      ssh_prive: Optional[str] = None,
                      host_id: Optional[int] = None,
                      instructie: Optional[str] = None,
+                     env_bestanden: Optional[Dict[str, Any]] = None,
                      azure_sessie: Optional[str] = None,
                      antwoorden: Optional[Dict[str, str]] = None,
                      opmerkingen: Optional[Dict[str, str]] = None,
@@ -125,6 +126,7 @@ class Verkenner:
                 runtime, volume, image, map_=kop["map"],
                 beeld=beeld_ruw, inhoud=inhoud, vondsten=vondsten,
                 repo_url=repo_url, branch=branch, instructie=instructie,
+                env_bestanden=env_bestanden,
                 antwoorden=antwoorden, opmerkingen=opmerkingen,
                 opmerking=opmerking, keuze=keuze)
             inhoud.update(modeluitslag.pop("_nagelezen", {}))
@@ -294,6 +296,7 @@ class Verkenner:
                            vondsten: List[det.Vondst], repo_url: str,
                            branch: str,
                            instructie: Optional[str] = None,
+                           env_bestanden: Optional[Dict[str, Any]] = None,
                            azure_sessie: Optional[str] = None,
                            antwoorden: Optional[Dict[str, str]] = None,
                            opmerkingen: Optional[Dict[str, str]] = None,
@@ -308,6 +311,7 @@ class Verkenner:
         """
         prompt = _prompt(repo_url=repo_url, branch=branch, beeld=beeld,
                          inhoud=inhoud, vondsten=vondsten, instructie=instructie,
+                         env_bestanden=env_bestanden,
                          azure_sessie=azure_sessie,
                          antwoorden=antwoorden, opmerkingen=opmerkingen,
                          opmerking=opmerking, keuze=keuze)
@@ -916,6 +920,7 @@ def _extras_lijst() -> str:
 def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
             inhoud: det.RepoBeeld, vondsten: List[det.Vondst],
             instructie: Optional[str] = None,
+            env_bestanden: Optional[Dict[str, Any]] = None,
             azure_sessie: Optional[str] = None,
             antwoorden: Optional[Dict[str, str]] = None,
             opmerkingen: Optional[Dict[str, str]] = None,
@@ -931,6 +936,22 @@ def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
     # en die zou format als plaatshouders lezen.
     delen = [SYSTEEM.replace("{extras}", _extras_lijst()), "",
              f"Repository: {repo_url}", f"Branch: {branch}", ""]
+
+    if env_bestanden:
+        delen += ["JE KRIJGT DEZE ENV-BESTANDEN AANGELEVERD.",
+                  "LabX zet ze bij ELKE start in de werkkopie, voordat jouw",
+                  "startscript begint. De WAARDEN krijg je niet te zien -- die",
+                  "hoef je ook niet te weten -- maar de sleutels staan er, dus:",
+                  "",
+                  "  - Vraag er NIET om in de kluis. Ze zijn er al.",
+                  "  - Verzin er geen nieuwe naast. Gebruik deze namen.",
+                  "  - Laat het startscript ze niet overschrijven; een `mv` of",
+                  "    `>` over zo'n pad veegt ze weg, bij elke start opnieuw.",
+                  ""]
+        for pad, sleutels in sorted(env_bestanden.items()):
+            namen = ", ".join(str(x) for x in (sleutels or [])) or "(geen sleutels gevonden)"
+            delen += [f"  {pad}", f"      {namen}"]
+        delen += [""]
 
     if azure_sessie:
         delen += [

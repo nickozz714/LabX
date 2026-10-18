@@ -348,7 +348,11 @@ async def verkennen(body: Dict[str, Any], db: Session = Depends(get_db)):
         token_geheim=(str(body["token_geheim"]) if body.get("token_geheim") else None),
         host_id=(int(body["host_id"]) if body.get("host_id") else None),
         cluster_id=(int(body["cluster_id"]) if body.get("cluster_id") else None),
-        instructie=(str(body["instructie"]) if body.get("instructie") else None))
+        instructie=(str(body["instructie"]) if body.get("instructie") else None),
+        # Env-bestanden mogen hier al mee: [{"pad": ..., "inhoud": ...}].
+        # Het model krijgt alleen de NAMEN te zien en kan ze dan in het
+        # startscript gebruiken in plaats van ernaast iets te verzinnen.
+        env_bestanden=(list(body["env_bestanden"]) if body.get("env_bestanden") else None))
     return svc.plan_dict(rij)
 
 
@@ -372,6 +376,10 @@ async def opnieuw(plan_id: int, body: Dict[str, Any], db: Session = Depends(get_
         opmerkingen=_kaart("opmerkingen"),
         opmerking=(str(body["opmerking"]) if body.get("opmerking") else None),
         instructie=(str(body["instructie"]) if body.get("instructie") else None),
+        # Ook hier: ben je ze bij de eerste ronde vergeten, dan kun je ze nu
+        # alsnog meegeven. Laat je het leeg, dan pakt `verken` wat er bij het
+        # cluster staat -- dat maakt opnieuw verkennen na een import zinvol.
+        env_bestanden=(list(body["env_bestanden"]) if body.get("env_bestanden") else None),
         keuze=(list(keuze) if isinstance(keuze, list) else None)))
 
 

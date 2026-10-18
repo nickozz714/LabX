@@ -1049,6 +1049,35 @@ class ClusterService:
     # vanaf hier stelt LabX er een voor. Het plan is wat daartussen staat --
     # een voorstel met bewijs, dat jij per onderdeel aan of uit zet.
 
+    def _env_rijen(self, meegegeven: Optional[List[Dict[str, str]]],
+                   cluster_id: Optional[int]) -> List[Dict[str, Any]]:
+        """De env-bestanden voor deze verkenning, versleuteld opgeslagen.
+
+        Meegegeven bestanden winnen; staat er niets bij, dan pakken we wat er
+        al bij het cluster ligt. Zo levert "opnieuw verkennen" na een import
+        wel het verschil op, zonder dat je alles opnieuw moet uploaden.
+        """
+        from services.lab.cluster_env import _sleutelnamen, controleer_pad
+        from utils.crypto import encrypt
+
+        if meegegeven:
+            uit: List[Dict[str, Any]] = []
+            for item in meegegeven[:20]:
+                pad = controleer_pad(str((item or {}).get("pad") or ""))
+                inhoud = str((item or {}).get("inhoud") or "")
+                uit.append({"pad": pad, "inhoud": encrypt(inhoud),
+                            "sleutels": _sleutelnamen(inhoud)})
+            return uit
+        if cluster_id:
+            from models.cluster_env_file import ClusterEnvFile
+
+            rijen = (self.db.query(ClusterEnvFile)
+                     .filter(ClusterEnvFile.cluster_id == cluster_id).all())
+            import json as _json
+            return [{"pad": r.pad, "inhoud": r.inhoud_encrypted,
+                     "sleutels": _json.loads(r.sleutels or "[]")} for r in rijen]
+        return []
+
     async def verken(self, *, repo_url: str, branch: str = "main",
                      token_geheim: Optional[str] = None,
                      host_id: Optional[int] = None,
@@ -1059,6 +1088,7 @@ class ClusterService:
                      opmerking: Optional[str] = None,
                      keuze: Optional[List[Dict[str, str]]] = None,
                      uitgezet: Optional[List[Dict[str, str]]] = None,
+                     env_bestanden: Optional[List[Dict[str, str]]] = None,
                      vorig_plan_id: Optional[int] = None) -> ClusterPlan:
         """Een repo verkennen en het voorstel bewaren.
 
@@ -1089,8 +1119,15 @@ class ClusterService:
                 vorige = self.plannen(cluster_id)
                 instructie = next((p.instructie for p in vorige if p.instructie), None)
 
+        # Env-bestanden: wat je NU meegeeft, en anders wat er al bij het
+        # cluster staat. Dat tweede maakt "opnieuw verkennen" zinvol nadat je
+        # ze alsnog hebt geimporteerd: het model krijgt de sleutelnamen die
+        # het de vorige keer miste.
+        env_rijen = self._env_rijen(env_bestanden, cluster_id)
+        env_namen = {r["pad"]: r["sleutels"] for r in env_rijen}
+
         uitslag = await Verkenner(self.db).verken(
-            repo_url=repo_url, branch=branch,
+            repo_url=repo_url, branch=branch, env_bestanden=env_namen,
             token_geheim=token_geheim, ssh_prive=ssh_prive, host_id=host_id,
             instructie=instructie, azure_sessie=azure_sessie, antwoorden=antwoorden,
             opmerkingen=opmerkingen, opmerking=opmerking,
@@ -1109,6 +1146,7 @@ class ClusterService:
             antwoorden=dict(antwoorden or {}),
             opmerkingen=dict(opmerkingen or {}),
             opmerking=(opmerking or None),
+            env_bestanden=(env_rijen or None),
             vorig_plan_id=vorig_plan_id,
             model_gebruikt=1 if (uitslag.get("model") or {}).get("gebruikt") else 0,
             fout=(uitslag.get("model") or {}).get("fout"),
@@ -1435,6 +1473,29 @@ class ClusterService:
         c.benodigde_geheimen = geheimen
         if env_paden:
             c.env_paden = sorted(env_paden)
+
+        # De bestanden die je bij het VERKENNEN meegaf, verhuizen mee naar het
+        # cluster. Zonder dit moest je ze na goedkeuren nog een keer
+        # importeren, terwijl je ze al had aangeleverd -- en tot dat moment
+        # startte het lab zonder.
+        from models.cluster_env_file import ClusterEnvFile
+
+        for meegegeven in (rij.env_bestanden or []):
+            pad = str(meegegeven.get("pad") or "")
+            if not pad:
+                continue
+            bestaat = (self.db.query(ClusterEnvFile)
+                       .filter(ClusterEnvFile.cluster_id == c.id,
+                               ClusterEnvFile.pad == pad).first())
+            if bestaat is not None:
+                continue          # al geimporteerd: die van jou wint
+            import json as _json
+
+            self.db.add(ClusterEnvFile(
+                cluster_id=c.id, pad=pad,
+                inhoud_encrypted=str(meegegeven.get("inhoud") or ""),
+                sleutels=_json.dumps(meegegeven.get("sleutels") or []),
+                created_at=_nu(), updated_at=_nu()))
         if extras:
             c.lab_extras = extras
         c.updated_at = _nu()
