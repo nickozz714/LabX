@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -3229,7 +3230,7 @@ exec ssh -N \\
         # heeft die niet. Het cluster is de hoofdcheckout.
         from services.lab.cluster_env import ClusterEnvBestanden
 
-        await ClusterEnvBestanden(self.db).schrijf_naar_lab(p, c)
+        geleverd = await ClusterEnvBestanden(self.db).schrijf_naar_lab(p, c)
 
         # Allebei de scripts via STDIN wegschrijven en niet als argument
         # meegeven: een script met aanhalingstekens erin overleeft de reis
@@ -3241,8 +3242,17 @@ exec ssh -N \\
         await rt.exec(cid, ["sh", "-c", f"cat > {_LOPER} && chmod +x {_LOPER}"],
                       stdin=_LOPER_SCRIPT.encode(), timeout=60)
 
+        # LABX_ENV_BESTANDEN hier meegeven en niet via de containeromgeving.
+        # Die wordt alleen bij het AANMAKEN van de container gezet, en een
+        # applicatie-herstart draait in de bestaande container -- dan bereikte
+        # de variabele het script nooit en haalde het alsnog instellingen op
+        # die de zojuist neergezette bestanden overschreven.
+        env_voorvoegsel = (f"LABX_ENV_BESTANDEN={shlex.quote(' '.join(geleverd))}; "
+                           f"export LABX_ENV_BESTANDEN; ") if geleverd else ""
+
         start = (
-            f"cd {map_} 2>/dev/null || cd /workspace; "
+            env_voorvoegsel
+            + f"cd {map_} 2>/dev/null || cd /workspace; "
             # De vorige ronde eerst weg. Zonder dit blijft er bij elke poging
             # een devserver staan en krijgt de volgende "Port is already in
             # use" -- een fout over onze eigen rommel.

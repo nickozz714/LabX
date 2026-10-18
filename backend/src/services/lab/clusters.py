@@ -870,6 +870,17 @@ class ClusterService:
 
         omgeving.update(ClusterKluis(self.db).los_op(c.id, c.benodigde_geheimen or {}))
 
+        # Welke bestanden LABX in de werkkopie zet. Het startscript moet dat
+        # weten, anders schrijft het eroverheen: fetch-secrets.sh van
+        # IntelligentHive doet `mv` over components/api/.env en veegde de
+        # import van de gebruiker weg -- bij elke start opnieuw, zonder een
+        # spoor in het log.
+        from services.lab.cluster_env import ClusterEnvBestanden
+
+        geleverd = [b["pad"] for b in ClusterEnvBestanden(self.db).lijst(c.id)]
+        if geleverd:
+            omgeving["LABX_ENV_BESTANDEN"] = " ".join(geleverd)
+
         for w in lab_svc.ensure_workers(p):
             if w.container_id:
                 try:

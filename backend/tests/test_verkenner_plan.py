@@ -925,7 +925,10 @@ def test_een_instructie_vooraf_komt_bij_het_model():
     assert "De agent hoort er niet bij." in prompt
     # Vooraan, niet ergens tussen de bestanden: een briefing onderaan leest
     # als een detail.
-    assert prompt.index("OPDRACHT VAN DE GEBRUIKER") < prompt.index("BESTANDEN")
+    # Op de SECTIEKOP zoeken, niet op het losse woord: de prompt noemt ook
+    # `LABX_ENV_BESTANDEN`, en dan wees deze test naar een zin in de regels
+    # in plaats van naar de bestandslijst.
+    assert prompt.index("OPDRACHT VAN DE GEBRUIKER") < prompt.index("\nBESTANDEN (")
 
 
 def test_de_instructie_wordt_bewaard_bij_het_plan(db):

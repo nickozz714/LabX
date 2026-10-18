@@ -317,3 +317,48 @@ def test_een_sleutel_uit_een_env_bestand_hoeft_niet_in_de_kluis(db):
     assert op_naam["NIET_GELEVERD"]["gevonden"] is False
     # De WAARDE blijft binnen: dit endpoint geeft namen, nooit inhoud.
     assert "7048a888" not in repr(uit)
+
+
+def test_het_startscript_krijgt_te_horen_welke_bestanden_labx_levert(db, monkeypatch):
+    """Via de startopdracht, NIET via de containeromgeving.
+
+    Die wordt alleen bij het aanmaken van de container gezet, en een
+    applicatie-herstart draait in de bestaande container. Toen de variabele
+    daar stond, bereikte hij het script nooit: het haalde alsnog instellingen
+    op en schreef over de bestanden heen die er net waren neergezet.
+    """
+    import asyncio as _a
+
+    from models.lab import Lab
+    from services.lab.cluster_env import ClusterEnvBestanden
+    from services.lab.lab_service import LabService
+
+    c = _cluster(db)
+    c.start_script = "#!/bin/sh\nexec node x"
+    nu = "2026-10-18T10:00:00+00:00"
+    p = Lab(id="lab1", name="Hive", image="node:22", volume_name="v", status="running",
+            cpu_limit=2, mem_limit_mb=4096, ttl_hours=24, cluster_id=c.id,
+            branch="labx/proefbouw", poort_map={"5173": 18004},
+            created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+    ClusterEnvBestanden(db).zet(c.id, "components/api/.env", "A=1\n")
+    ClusterEnvBestanden(db).zet(c.id, "components/app/.env", "B=2\n")
+
+    opdrachten = []
+
+    class _RT:
+        async def exec(self, cid, cmd, **kw):
+            opdrachten.append(cmd[-1] if cmd else "")
+            return {"output": "", "exit_code": 0}
+
+    monkeypatch.setattr(LabService, "runtime_voor", lambda self, _p: _RT())
+    monkeypatch.setattr(LabService, "ensure_workers",
+                        lambda self, _p: [type("W", (), {"container_id": "c1"})()])
+
+    _a.run(LabService(db).start_applicatie(p.id))
+
+    start = next((o for o in opdrachten if "setsid" in o), "")
+    assert "LABX_ENV_BESTANDEN=" in start, "het script moet weten wat LabX levert"
+    assert "components/api/.env" in start and "components/app/.env" in start
+    assert "export LABX_ENV_BESTANDEN" in start

@@ -793,6 +793,19 @@ WAT LABX ZELF REGELT — vraag hier niet naar, ga ervan uit:
                       ontbreken als het cluster op een andere machine draait
     LABX_BRANCH       de branch die dit lab draait
     LABX_ENV_PROFIEL  het gekozen omgevingsprofiel, als het cluster er een heeft
+    LABX_ENV_BESTANDEN  de env-bestanden die LABX in de werkkopie heeft gezet,
+                      met spaties gescheiden. Die zijn er al voordat jouw
+                      script begint, met waarden die de gebruiker bewust koos.
+                      Staat deze variabele gevuld, SLA DAN ELKE STAP OVER die
+                      instellingen ergens anders vandaan haalt -- een vault,
+                      een fetch-script, een `az keyvault`-aanroep. De
+                      gebruiker is de bron, en dat is precies hoe een lokale
+                      checkout ook werkt: zo'n stap zit meestal achter een
+                      "draai ik in de devcontainer?"-controle en blijft daar
+                      dus ook uit.
+                      Doe je het toch, dan veeg je de import weg: die scripts
+                      doen een `mv` of `>` over het pad, bij elke start
+                      opnieuw en zonder spoor in het log.
   Hangt een variabele af van het adres van het lab (PUBLIC_BASE_URL,
   FRONTEND_BASE_URL, CORS_ORIGINS en dergelijke), zet hem dan in
   `lab_omgeving` af van $LABX_LAB_URL in plaats van ernaar te vragen.
