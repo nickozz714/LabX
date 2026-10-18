@@ -1112,12 +1112,18 @@ function LabDetail({ lab, onClose, onChanged }: { lab: Lab; onClose: () => void;
       {/* Geen overflow hier: de bestandsbrowser en de terminal regelen hun
           eigen schuifgebieden. Eén schuifbalk eromheen zou de boom en de lijst
           samen laten schuiven in plaats van ieder apart. */}
-      <div className="flex min-h-0 flex-1 flex-col">
-        {tab === "werk" && werkTab === "files" && <FileBrowser lab={lab} />}
-        {tab === "werk" && werkTab === "git" && <PublishPanel lab={lab} />}
-        {tab === "werk" && werkTab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
-        {tab === "werk" && werkTab === "browser" && <BrowserPanel lab={lab} />}
-      </div>
+      {/* De voorwaarde hoort om de CONTAINER heen, niet alleen om de kinderen:
+          `flex-1` claimt de overgebleven hoogte ook als er niets in staat, en
+          dan houd je op elk ander tabblad een lege strook met een schuifbalk
+          over waar niets te zien of te schuiven valt. */}
+      {tab === "werk" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {werkTab === "files" && <FileBrowser lab={lab} />}
+          {werkTab === "git" && <PublishPanel lab={lab} />}
+          {werkTab === "terminal" && <LabTerminal labId={lab.id} token={getToken() || ""} />}
+          {werkTab === "browser" && <BrowserPanel lab={lab} />}
+        </div>
+      )}
     </div>
   );
 }
