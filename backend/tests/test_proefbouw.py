@@ -812,3 +812,37 @@ def test_bijvragen_weigert_buiten_de_repo():
 
     assert "/*|*..*" in _LEZER
     assert "geweigerd" in _LEZER
+
+
+def test_een_hergebruikt_proeflab_krijgt_de_huidige_omgeving(db, monkeypatch):
+    """Containeromgeving wordt alleen bij het AANMAKEN gezet.
+
+    Een bestaand proeflab werd hergebruikt met een vroege return, dus het
+    bleef praten tegen het adres van toen: COSMOS_ENDPOINT was op het cluster
+    allang gecorrigeerd en het lab probeerde rondenlang `https://ih-cosmos:8081`
+    -- een naam en een protocol die allebei niet meer klopten. Niets in het
+    log wees daarop; het leek een fout in het startscript.
+    """
+    import asyncio as _a
+
+    from services.lab.clusters import ClusterService
+    from services.lab.proefbouw import Proefbouw
+
+    c = _cluster(db)
+    p = _lab(db, c)
+    c.proef_lab_id = p.id
+    db.commit()
+
+    opnieuw = []
+
+    async def nep_start(zelf, lab_id):
+        opnieuw.append(lab_id)
+        return {"ok": True}
+
+    monkeypatch.setattr(ClusterService, "start_branch_lab", nep_start)
+
+    svc = ClusterService(db)
+    uit = _a.run(Proefbouw(db)._proeflab(svc, c, "labx/proefbouw"))
+
+    assert uit.id == p.id, "hetzelfde lab, dus de werkkopie blijft staan"
+    assert opnieuw == [p.id], "de container hoort opnieuw te worden gemaakt"

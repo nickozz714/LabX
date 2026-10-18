@@ -319,17 +319,26 @@ class Proefbouw:
         """
         from models.lab import Lab
 
+        bestaat = None
         if c.proef_lab_id:
-            bestaand = self.db.get(Lab, c.proef_lab_id)
-            if bestaand is not None:
-                return bestaand
-
-        bestaat = (self.db.query(Lab)
-                   .filter(Lab.cluster_id == c.id, Lab.branch == branch).first())
+            bestaat = self.db.get(Lab, c.proef_lab_id)
+        if bestaat is None:
+            bestaat = (self.db.query(Lab)
+                       .filter(Lab.cluster_id == c.id, Lab.branch == branch).first())
         if bestaat is None:
             await svc.maak_branch_lab(c.id, branch=branch, basis="main")
             bestaat = (self.db.query(Lab)
                        .filter(Lab.cluster_id == c.id, Lab.branch == branch).first())
+
+        # Ook een BESTAAND proeflab gaat hier doorheen, en dat is de hele
+        # reden dat dit geen vroege return meer is. Containeromgeving wordt
+        # alleen bij het aanmaken gezet, dus een hergebruikt lab bleef praten
+        # tegen het adres van toen: ik corrigeerde COSMOS_ENDPOINT op het
+        # cluster, en het lab bleef rondenlang `https://ih-cosmos:8081`
+        # proberen -- een naam en een protocol die allebei al niet meer
+        # klopten. `start_branch_lab` verwijdert de container en maakt hem
+        # opnieuw met de huidige omgeving; de werkkopie staat in het volume
+        # en overleeft dat.
         await svc.start_branch_lab(bestaat.id)
         return self.db.get(Lab, bestaat.id)
 
