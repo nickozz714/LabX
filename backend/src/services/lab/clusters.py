@@ -1166,6 +1166,8 @@ class ClusterService:
                       opmerkingen: Optional[Dict[str, str]] = None,
                       opmerking: Optional[str] = None,
                       instructie: Optional[str] = None,
+                      env_bestanden: Optional[List[Dict[str, str]]] = None,
+                      lab_extras: Optional[List[str]] = None,
                       keuze: Optional[List[Dict[str, str]]] = None) -> ClusterPlan:
         """Terugkoppeling geven en opnieuw verkennen.
 
@@ -1227,6 +1229,11 @@ class ClusterService:
             antwoorden={**(oud.antwoorden or {}), **schone_antwoorden},
             opmerkingen={**(oud.opmerkingen or {}), **schone_opmerkingen},
             opmerking=schone_opmerking or oud.opmerking,
+            # Geef je nu niets mee, dan houdt deze ronde wat het vorige plan
+            # al droeg. Anders verliest een tweede ronde stilletjes de
+            # bestanden en pakketten van de eerste.
+            env_bestanden=env_bestanden,
+            lab_extras=(lab_extras if lab_extras is not None else (oud.lab_extras or None)),
             instructie=schone_instructie or oud.instructie,
             keuze=gekozen, uitgezet=uitgezet,
             vorig_plan_id=oud.id)

@@ -381,6 +381,7 @@ async def opnieuw(plan_id: int, body: Dict[str, Any], db: Session = Depends(get_
         # alsnog meegeven. Laat je het leeg, dan pakt `verken` wat er bij het
         # cluster staat -- dat maakt opnieuw verkennen na een import zinvol.
         env_bestanden=(list(body["env_bestanden"]) if body.get("env_bestanden") else None),
+        lab_extras=(list(body["lab_extras"]) if body.get("lab_extras") else None),
         keuze=(list(keuze) if isinstance(keuze, list) else None)))
 
 
