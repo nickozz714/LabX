@@ -205,6 +205,10 @@ export type BenodigdGeheim = {
   naam: string;
   waarvoor: string;
   in_eigen_kluis: boolean;
+  /** Het pad van het geïmporteerde env-bestand dat deze sleutel al levert,
+   *  of null. Dan hoeft hij niet in de kluis: het bestand gaat bij elke start
+   *  mee naar de werkkopie. */
+  in_env_bestand?: string | null;
   gevonden: boolean;
 };
 

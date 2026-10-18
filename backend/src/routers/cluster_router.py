@@ -280,6 +280,7 @@ def geheimen(cluster_id: int, db: Session = Depends(get_db)):
 
     Nooit waarden -- alleen namen, lengtes en waar ze vandaan komen.
     """
+    from services.lab.cluster_env import ClusterEnvBestanden
     from services.lab.cluster_kluis import ClusterKluis
 
     svc = _svc(db)
@@ -287,12 +288,23 @@ def geheimen(cluster_id: int, db: Session = Depends(get_db)):
     kluis = ClusterKluis(db)
     eigen = {r.naam for r in kluis.lijst(cluster_id)}
     nodig = c.benodigde_geheimen or {}
+
+    # Wat een geïmporteerd env-bestand al levert, hoeft niet in de kluis.
+    # Zonder dit staat er een rode "ontbreekt" bij een sleutel die allang
+    # geleverd wordt, en vraagt het scherm om een waarde die je niet hoeft
+    # te geven -- precies het werk dat importeren juist wegnam.
+    uit_env: Dict[str, str] = {}
+    for bestand in ClusterEnvBestanden(db).lijst(cluster_id):
+        for sleutel in bestand["sleutels"]:
+            uit_env.setdefault(sleutel, bestand["pad"])
+
     return {
         "eigen": [kluis.to_dict(r) for r in kluis.lijst(cluster_id)],
         "benodigd": [
             {"naam": n, "waarvoor": w,
              "in_eigen_kluis": n in eigen,
-             "gevonden": kluis.bestaat(cluster_id, n)}
+             "in_env_bestand": uit_env.get(n),
+             "gevonden": kluis.bestaat(cluster_id, n) or n in uit_env}
             for n, w in sorted(nodig.items())
         ],
     }

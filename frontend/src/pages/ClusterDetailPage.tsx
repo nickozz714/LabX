@@ -447,9 +447,10 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
   const los = eigen.filter((g) => !(g.naam in benodigd));
   const regels = [
     ...nodig.map((n) => ({ naam: n.naam, waarvoor: n.waarvoor, gevonden: n.gevonden,
-                           eigen: n.in_eigen_kluis, verplicht: true })),
+                           eigen: n.in_eigen_kluis, uitEnv: n.in_env_bestand || null,
+                           verplicht: true })),
     ...los.map((g) => ({ naam: g.naam, waarvoor: g.omschrijving || "", gevonden: true,
-                         eigen: true, verplicht: false })),
+                         eigen: true, uitEnv: null, verplicht: false })),
   ];
 
   return (
@@ -480,14 +481,23 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
                 <span className="font-mono text-sm">{r.naam}</span>
                 {r.eigen
                   ? <Badge tone="green">in deze kluis</Badge>
-                  : r.gevonden
-                    ? <Badge tone="neutral">uit de gedeelde kluis</Badge>
-                    : <Badge tone="red">ontbreekt</Badge>}
+                  : r.uitEnv
+                    ? <Badge tone="green">uit {r.uitEnv}</Badge>
+                    : r.gevonden
+                      ? <Badge tone="neutral">uit de gedeelde kluis</Badge>
+                      : <Badge tone="red">ontbreekt</Badge>}
                 {!r.verplicht && <span className="text-xs text-muted-foreground">extra</span>}
               </div>
               {r.waarvoor && (
                 <p className="mt-0.5 text-xs text-muted-foreground">{r.waarvoor}</p>
               )}
+              {r.uitEnv && !r.eigen ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Dit bestand gaat bij elke start mee naar de werkkopie, dus deze sleutel
+                  hoeft niet in de kluis. Zet hem er alleen in als hij óók als
+                  omgevingsvariabele nodig is.
+                </p>
+              ) : (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Input
                   type="password"
@@ -512,6 +522,7 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
                   </Button>
                 )}
               </div>
+              )}
             </li>
           ))}
         </ul>

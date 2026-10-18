@@ -285,3 +285,35 @@ def test_de_boom_telt_mee_niet_alleen_de_gelezen_inhoud():
     op_pad = {v.sleutel: v.bewijs[0].fragment for v in vondsten}
     assert op_pad["components/api/.env"] == "2 sleutels"
     assert op_pad["components/app/.env"] == "staat in de repo"
+
+
+# ── de kluis hoeft niet te vragen wat een bestand al levert ──────────────────
+
+
+def test_een_sleutel_uit_een_env_bestand_hoeft_niet_in_de_kluis(db):
+    """Anders staat er een rode "ontbreekt" bij een sleutel die allang
+    geleverd wordt, en vraagt het scherm om een waarde die je niet hoeft te
+    geven -- precies het werk dat importeren wegnam.
+
+    De routerfunctie wordt rechtstreeks aangeroepen: een TestClient draait in
+    een andere thread, en een in-memory SQLite deelt daar niet mee.
+    """
+    from routers.cluster_router import geheimen
+    from services.lab.cluster_env import ClusterEnvBestanden
+
+    c = _cluster(db)
+    c.benodigde_geheimen = {"VITE_TENANT_ID": "voor het inloggen",
+                            "NIET_GELEVERD": "staat nergens"}
+    db.commit()
+    ClusterEnvBestanden(db).zet(c.id, "components/app/.env.local",
+                                "VITE_TENANT_ID=7048a888\n")
+
+    uit = geheimen(c.id, db)
+    op_naam = {r["naam"]: r for r in uit["benodigd"]}
+
+    assert op_naam["VITE_TENANT_ID"]["in_env_bestand"] == "components/app/.env.local"
+    assert op_naam["VITE_TENANT_ID"]["gevonden"] is True
+    assert op_naam["NIET_GELEVERD"]["in_env_bestand"] is None
+    assert op_naam["NIET_GELEVERD"]["gevonden"] is False
+    # De WAARDE blijft binnen: dit endpoint geeft namen, nooit inhoud.
+    assert "7048a888" not in repr(uit)
