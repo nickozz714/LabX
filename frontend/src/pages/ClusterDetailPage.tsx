@@ -21,11 +21,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch, KanbanSquare,
-  KeyRound, Loader2, MessageSquare, Play, PlayCircle, Plus, RefreshCw, Search,
+  KeyRound, Loader2, MessageSquare, Package, Play, PlayCircle, Plus, RefreshCw, Search,
   Server, Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
 import { boardApi } from "@/lib/boards";
+import { labsApi } from "@/lib/labs";
+import type { LabExtra } from "@/lib/types";
 import { clusterApi } from "@/lib/clusters";
 import type {
   BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, EnvBestand,
@@ -806,6 +808,8 @@ export function ClusterDetailPage() {
       {/* ── de vaste laag ────────────────────────────────────────────────── */}
       <EnvBestandenKaart clusterId={c.id} paden={c.env_paden || []} />
 
+      <ExtrasKaart clusterId={c.id} gekozen={c.lab_extras || []} onWijzig={laad} />
+
       <Card className="p-4">
         <div className="mb-3 flex items-start gap-2">
           <Box className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1309,5 +1313,99 @@ function EnvBestandenKaart({ clusterId, paden }: { clusterId: number; paden: str
         </div>
       </Modal>
     </>
+  );
+}
+
+/**
+ * De extra pakketten die elk branch-lab van dit cluster erbij krijgt.
+ *
+ * Git, bash, curl, jq en unzip komen in ELK lab, ongeacht het image — die
+ * staan hier bewust niet tussen. Dit gaat over wat dít project extra nodig
+ * heeft: node voor een npx-tool, build-essential voor een C-extensie.
+ *
+ * Twee bronnen: jij vinkt aan, en de verkenner mag voorstellen. Een voorstel
+ * komt binnen als onbevestigd en staat pas hier zodra je het plan goedkeurt.
+ */
+function ExtrasKaart(
+  { clusterId, gekozen, onWijzig }:
+  { clusterId: number; gekozen: string[]; onWijzig: () => void },
+) {
+  const melding = useMelding();
+  const [catalogus, setCatalogus] = useState<LabExtra[]>([]);
+  const [keuze, setKeuze] = useState<string[]>(gekozen);
+  const [bezig, setBezig] = useState(false);
+
+  useEffect(() => setKeuze(gekozen), [gekozen]);
+  useEffect(() => {
+    labsApi.extras().then((rijen) => setCatalogus(rijen.filter((e) => e.is_enabled)))
+      .catch(() => { /* geen catalogus is geen fout */ });
+  }, []);
+
+  const gewijzigd = keuze.slice().sort().join(",") !== gekozen.slice().sort().join(",");
+
+  async function bewaar() {
+    setBezig(true);
+    try {
+      await clusterApi.wijzig(clusterId, { lab_extras: keuze });
+      melding.ok("Pakketten bijgewerkt",
+                 "Branch-labs die hierna starten krijgen ze bij het inrichten.");
+      onWijzig();
+    } catch (e) {
+      melding.fout("Opslaan lukte niet", e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <Package className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold">Extra pakketten</h2>
+          <p className="text-xs text-muted-foreground">
+            Elk branch-lab krijgt deze erbij bij het inrichten. Git, bash, curl, jq en
+            unzip komen sowieso in elk lab — die hoef je hier niet te kiezen.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-1 rounded-md border border-border p-2">
+        {catalogus.length === 0 && (
+          <p className="text-xs text-muted-foreground">Geen pakketten in de catalogus.</p>
+        )}
+        {catalogus.map((e) => (
+          <label key={e.key} className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={keuze.includes(e.key)}
+              onChange={() => setKeuze((o) =>
+                o.includes(e.key) ? o.filter((x) => x !== e.key) : [...o, e.key])}
+            />
+            <span>
+              {e.label}
+              {e.description && (
+                <span className="block text-xs text-muted-foreground">{e.description}</span>
+              )}
+            </span>
+          </label>
+        ))}
+      </div>
+
+      {gewijzigd && (
+        <div className="mt-3 flex items-center gap-2">
+          <Button onClick={() => void bewaar()} disabled={bezig}>
+            {bezig ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                   : <Check className="h-3.5 w-3.5" />}
+            Opslaan
+          </Button>
+          <Button variant="ghost" onClick={() => setKeuze(gekozen)}>Terugdraaien</Button>
+          <span className="text-xs text-muted-foreground">
+            Labs die al draaien houden wat ze hebben tot de volgende keer inrichten.
+          </span>
+        </div>
+      )}
+    </Card>
   );
 }

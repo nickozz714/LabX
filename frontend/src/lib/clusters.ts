@@ -161,6 +161,9 @@ export type Cluster = {
    *  gitignored is maar wel in de documentatie staat. Alleen de PLEKKEN — de
    *  inhoud lever je zelf. */
   env_paden?: string[];
+  /** Extra pakketten die elk branch-lab erbij krijgt (sleutels uit de
+   *  lab-extra-catalogus). Git en het basisgereedschap zitten al in elk lab. */
+  lab_extras?: string[];
   /** De proefbouw. "af" is niet "exitcode 0": af is wanneer JIJ zegt dat de
    *  branch goed is, en tot dat moment blijft het proeflab staan. */
   /** Haalt de applicatie haar geheimen zelf op uit een vault? Dan hoeven ze
@@ -299,6 +302,14 @@ export const clusterApi = {
     /** Een briefing vooraf: "de agent hoort er niet bij", "gebruik node 22".
      *  Scheelt een hele ronde ten opzichte van achteraf corrigeren. */
     instructie?: string;
+    /** Env-bestanden die je NU al meegeeft. Het model krijgt alleen de
+     *  sleutelNAMEN te zien en kan ze dan in het startscript gebruiken in
+     *  plaats van ernaast iets te verzinnen. Bij goedkeuren verhuizen ze
+     *  naar het cluster. */
+    env_bestanden?: { pad: string; inhoud: string }[];
+    /** Pakketten die je vooraf kiest. Worden bij goedkeuren samengevoegd met
+     *  wat het model voorstelde; de twee sluiten elkaar niet uit. */
+    lab_extras?: string[];
   }) => api.post<ClusterPlan>("/clusters/verkennen", body),
   plan: (planId: number) => api.get<ClusterPlan>(`/clusters/plannen/${planId}`),
   /** Terugkoppeling geven en opnieuw verkennen. Levert een NIEUW plan op

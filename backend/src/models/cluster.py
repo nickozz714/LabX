@@ -255,6 +255,11 @@ class ClusterPlan(Base):
     #: Naar het model gaan alleen de NAMEN. De waarden gaan een kant op: naar
     #: de werkkopie in een lab.
     env_bestanden: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: Extra pakketten die JIJ vooraf koos. Het model mag er ook voorstellen;
+    #: bij goedkeuren worden de twee samengevoegd. Vooraf kunnen kiezen
+    #: scheelt een ronde: anders keur je een plan goed, zie je dat node
+    #: ontbreekt, en mag je opnieuw.
+    lab_extras: Mapped[list | None] = mapped_column(JSON, nullable=True)
     #: Wat je van afzonderlijke ONDERDELEN vond: {"dienst::mailpit": "deze
     #: hoort er niet bij"}. Antwoorden kon al, maar alleen op vragen die het
     #: model toevallig stelde -- en een plan zonder vragen liet je dus met

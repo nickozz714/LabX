@@ -430,3 +430,27 @@ def test_een_pad_buiten_de_repo_wordt_ook_hier_geweigerd(db):
 
     with pytest.raises(HTTPException):
         ClusterService(db)._env_rijen([{"pad": "../../etc/passwd", "inhoud": "A=1"}], None)
+
+
+def test_vooraf_gekozen_pakketten_en_modelvoorstellen_sluiten_elkaar_niet_uit(db):
+    """Het model kent de repo, jij kent de bedoeling. Bij goedkeuren horen
+    allebei te tellen -- anders moet je na elk plan alsnog aanvinken."""
+    from models.cluster import ClusterPlan
+    from services.lab.clusters import ClusterService
+
+    nu = "2026-10-18T10:00:00+00:00"
+    plan = ClusterPlan(
+        repo_url="https://x/y.git", branch="main", status="voorstel",
+        plan={"vondsten": [{"soort": "extra", "sleutel": "uv", "waarde": None}]},
+        keuzes={}, antwoorden={}, opmerkingen={},
+        lab_extras=["node"], created_at=nu, updated_at=nu)
+    db.add(plan)
+    db.commit()
+
+    uit = ClusterService(db).keur_goed(
+        plan.id, naam="Slim",
+        gekozen=[{"soort": "extra", "sleutel": "uv"}])
+
+    from models.cluster import Cluster
+    c = db.get(Cluster, uit["id"] if isinstance(uit, dict) and "id" in uit else plan.cluster_id)
+    assert set(c.lab_extras or []) == {"node", "uv"}

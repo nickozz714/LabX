@@ -352,7 +352,8 @@ async def verkennen(body: Dict[str, Any], db: Session = Depends(get_db)):
         # Env-bestanden mogen hier al mee: [{"pad": ..., "inhoud": ...}].
         # Het model krijgt alleen de NAMEN te zien en kan ze dan in het
         # startscript gebruiken in plaats van ernaast iets te verzinnen.
-        env_bestanden=(list(body["env_bestanden"]) if body.get("env_bestanden") else None))
+        env_bestanden=(list(body["env_bestanden"]) if body.get("env_bestanden") else None),
+        lab_extras=(list(body["lab_extras"]) if body.get("lab_extras") else None))
     return svc.plan_dict(rij)
 
 

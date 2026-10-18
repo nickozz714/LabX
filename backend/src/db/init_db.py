@@ -61,6 +61,7 @@ _ADDITIVE_COLUMNS = {
         # Env-bestanden die bij het VERKENNEN zijn meegegeven, zodat het model
         # de sleutelnamen kent voordat het een startscript schrijft.
         ("env_bestanden", "TEXT"),
+        ("lab_extras", "TEXT"),
         # Terugkoppeling op het plan en op losse onderdelen. Erbij gekomen
         # nadat bleek dat antwoorden alleen kon op vragen die het model
         # toevallig stelde.

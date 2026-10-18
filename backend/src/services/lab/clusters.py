@@ -1089,6 +1089,7 @@ class ClusterService:
                      keuze: Optional[List[Dict[str, str]]] = None,
                      uitgezet: Optional[List[Dict[str, str]]] = None,
                      env_bestanden: Optional[List[Dict[str, str]]] = None,
+                     lab_extras: Optional[List[str]] = None,
                      vorig_plan_id: Optional[int] = None) -> ClusterPlan:
         """Een repo verkennen en het voorstel bewaren.
 
@@ -1147,6 +1148,7 @@ class ClusterService:
             opmerkingen=dict(opmerkingen or {}),
             opmerking=(opmerking or None),
             env_bestanden=(env_rijen or None),
+            lab_extras=([str(x) for x in lab_extras] if lab_extras else None),
             vorig_plan_id=vorig_plan_id,
             model_gebruikt=1 if (uitslag.get("model") or {}).get("gebruikt") else 0,
             fout=(uitslag.get("model") or {}).get("fout"),
@@ -1496,8 +1498,12 @@ class ClusterService:
                 inhoud_encrypted=str(meegegeven.get("inhoud") or ""),
                 sleutels=_json.dumps(meegegeven.get("sleutels") or []),
                 created_at=_nu(), updated_at=_nu()))
-        if extras:
-            c.lab_extras = extras
+        # Jouw keuze vooraf plus wat je van het model hebt overgenomen. De
+        # twee sluiten elkaar niet uit: het model kent de repo, jij kent de
+        # bedoeling.
+        samen = [x for x in (rij.lab_extras or [])] + [x for x in extras if x not in (rij.lab_extras or [])]
+        if samen:
+            c.lab_extras = samen
         c.updated_at = _nu()
 
         rij.cluster_id = c.id

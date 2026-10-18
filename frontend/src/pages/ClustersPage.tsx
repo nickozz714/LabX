@@ -21,10 +21,10 @@ import {
 } from "lucide-react";
 import { clusterApi } from "@/lib/clusters";
 import type { Cluster } from "@/lib/clusters";
-import { labHostsApi } from "@/lib/labs";
+import { labHostsApi, labsApi } from "@/lib/labs";
 import { secretApi } from "@/lib/secrets";
 import type { SecretDto } from "@/lib/secrets";
-import type { LabHost } from "@/lib/types";
+import type { LabExtra, LabHost } from "@/lib/types";
 import {
   Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea,
 } from "@/components/ui";
@@ -56,6 +56,28 @@ export function ClustersPage() {
   const [hostId, setHostId] = useState("");
   const [instructie, setInstructie, vergeetInstructie] =
     useConcept<string>("verkennen:instructie", "");
+  // Env-bestanden en extra pakketten gaan BEWUST niet door useConcept: de
+  // inhoud van een .env hoort niet in de opslag van een browser te blijven
+  // hangen nadat je het venster sluit.
+  const [envBestanden, setEnvBestanden] = useState<{ pad: string; inhoud: string }[]>([]);
+  const [extras, setExtras] = useState<string[]>([]);
+  const [catalogus, setCatalogus] = useState<LabExtra[]>([]);
+
+  useEffect(() => {
+    labsApi.extras().then((rijen) => setCatalogus(rijen.filter((e) => e.is_enabled)))
+      .catch(() => { /* geen catalogus is geen fout */ });
+  }, []);
+
+  async function kiesEnv(bestanden: FileList) {
+    const nieuw: { pad: string; inhoud: string }[] = [];
+    for (const f of Array.from(bestanden).slice(0, 20)) {
+      // De browser geeft geen pad mee, alleen de naam. Een gok die vaak klopt
+      // is beter dan een leeg veld, en je kunt hem aanpassen voordat je
+      // verkent.
+      nieuw.push({ pad: f.name.startsWith(".env") ? f.name : `${f.name}`, inhoud: await f.text() });
+    }
+    setEnvBestanden((o) => [...o.filter((x) => !nieuw.some((n) => n.pad === x.pad)), ...nieuw]);
+  }
   const [hosts, setHosts] = useState<LabHost[]>([]);
   const [geheimen, setGeheimen] = useState<SecretDto[]>([]);
 
@@ -86,10 +108,14 @@ export function ClustersPage() {
         token_geheim: tokenGeheim || null,
         host_id: hostId ? Number(hostId) : null,
         instructie: instructie.trim() || undefined,
+        env_bestanden: envBestanden.length ? envBestanden : undefined,
+        lab_extras: extras.length ? extras : undefined,
       });
       vergeetRepo();
       vergeetBranch();
       vergeetInstructie();
+      setEnvBestanden([]);
+      setExtras([]);
       setOpen(false);
       navigate(`/clusters/plannen/${plan.id}`);
     } catch (e) {
@@ -261,6 +287,74 @@ export function ClustersPage() {
           <p className="mt-1 text-xs text-muted-foreground">
             Wat je hier zet weegt zwaarder dan wat de repo suggereert. Je kunt achteraf
             nog bijsturen, maar dat kost een nieuwe verkenning.
+          </p>
+
+          {/* Env-bestanden NU al meegeven. Geef je ze pas na goedkeuring, dan
+              moet het model raden naar sleutels die het had kunnen weten — en
+              dan verzint het startscript een naam waar jij er al een had. */}
+          <Label>Env-bestanden (optioneel)</Label>
+          <input
+            type="file"
+            multiple
+            className="text-xs"
+            onChange={(e) => { if (e.target.files?.length) void kiesEnv(e.target.files); }}
+          />
+          {envBestanden.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {envBestanden.map((b, i) => (
+                <li key={b.pad} className="flex items-center gap-2">
+                  <Input
+                    className="flex-1 font-mono text-xs"
+                    value={b.pad}
+                    onChange={(e) => setEnvBestanden((o) =>
+                      o.map((x, j) => (j === i ? { ...x, pad: e.target.value } : x)))}
+                  />
+                  <Badge tone="neutral">
+                    {(b.inhoud.match(/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=/gm) || []).length} sleutels
+                  </Badge>
+                  <Button variant="ghost"
+                          onClick={() => setEnvBestanden((o) => o.filter((_, j) => j !== i))}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">
+            Het pad is waar het bestand in de repo hoort — pas het aan als de gok niet
+            klopt. Het model ziet alleen de NAMEN van de sleutels, nooit de waarden, en
+            weet dan dat het er niet om hoeft te vragen.
+          </p>
+
+          {/* Pakketten die elk branch-lab erbij krijgt. Git, curl, jq en unzip
+              komen sowieso in elk lab; die staan hier bewust niet tussen. */}
+          <Label>Extra pakketten (optioneel)</Label>
+          <div className="space-y-1 rounded-md border border-border p-2">
+            {catalogus.length === 0 && (
+              <p className="text-xs text-muted-foreground">Geen pakketten in de catalogus.</p>
+            )}
+            {catalogus.map((e) => (
+              <label key={e.key} className="flex cursor-pointer items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={extras.includes(e.key)}
+                  onChange={() => setExtras((o) =>
+                    o.includes(e.key) ? o.filter((x) => x !== e.key) : [...o, e.key])}
+                />
+                <span>
+                  {e.label}
+                  {e.description && (
+                    <span className="block text-xs text-muted-foreground">{e.description}</span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Git, bash, curl, jq en unzip komen in elk lab, ongeacht het image — die hoef
+            je hier niet te kiezen. De verkenner mag zelf ook pakketten voorstellen; die
+            zie je dan in het plan staan.
           </p>
         </div>
 
