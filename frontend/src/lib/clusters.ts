@@ -42,7 +42,7 @@ export type Vondst = {
    *  kiezen, en er hoort dus ook geen vinkje bij. `lab_image` is het
    *  omgekeerde: een KEUZE waarvan er precies een waar kan zijn. */
   soort: "dienst" | "applicatie" | "lab_image" | "lab_poorten" | "startscript"
-       | "omgeving" | "extern" | "geheim";
+       | "omgeving" | "envbestand" | "extern" | "geheim";
   sleutel: string;
   waarde: {
     image?: string;
@@ -156,6 +156,11 @@ export type Cluster = {
   toegang_soort: "ssh" | "https" | "geen";
   /** Waarop de applicatie IN een branch-lab luistert; LabX publiceert die. */
   lab_poorten: number[];
+  /** Waar dit project env-bestanden verwacht. Uit de verkenning: afgeleid uit
+   *  de `.env.example`-bestanden in de repo, aangevuld door het model met wat
+   *  gitignored is maar wel in de documentatie staat. Alleen de PLEKKEN — de
+   *  inhoud lever je zelf. */
+  env_paden?: string[];
   /** De proefbouw. "af" is niet "exitcode 0": af is wanneer JIJ zegt dat de
    *  branch goed is, en tot dat moment blijft het proeflab staan. */
   /** Haalt de applicatie haar geheimen zelf op uit een vault? Dan hoeven ze
@@ -387,6 +392,11 @@ export const SOORT_UITLEG: Record<Vondst["soort"], { titel: string; onder: strin
   lab_image: {
     titel: "Waarin een branch-lab draait",
     onder: "Kies er \u00e9\u00e9n: het image met de taal en pakketbeheerder die dit project nodig heeft.",
+  },
+  envbestand: {
+    titel: "Env-bestanden die dit project verwacht",
+    onder: "De plekken, niet de inhoud. Deze bestanden staan in .gitignore, dus een verse "
+      + "kloon heeft ze niet \u2014 importeer ze bij het cluster en elk branch-lab krijgt ze.",
   },
   lab_poorten: {
     titel: "Waarop de applicatie luistert",

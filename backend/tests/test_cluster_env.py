@@ -197,3 +197,91 @@ def test_zonder_bestanden_gebeurt_er_niets(db):
     c = _cluster(db)
     p = type("P", (), {"id": "lab1"})()
     assert asyncio.run(ClusterEnvBestanden(db).schrijf_naar_lab(p, c)) == []
+
+
+# ── welke plekken een project verwacht ───────────────────────────────────────
+#
+# De inhoud levert de gebruiker; de PLEKKEN hoort LabX te weten. Anders moet
+# iemand vijf paden uit het hoofd intypen, en een typefout levert een bestand
+# op dat nergens gelezen wordt -- stil, want niets klaagt over een bestand dat
+# er niet is.
+
+
+def test_een_voorbeeldbestand_wijst_het_echte_pad_aan():
+    """`components/api/.env.example` staat in de repo; `components/api/.env`
+    is wat de applicatie leest en wat in .gitignore staat."""
+    from services.lab.verkenner_detectoren import detecteer_env_paden
+
+    vondsten = detecteer_env_paden({
+        "components/api/.env.example": "COSMOS_ENDPOINT=\nCOSMOS_KEY=\n",
+        "components/app/.env.example": "VITE_TENANT_ID=\n",
+        "utilities/env.template": "FOO=1\n",
+    })
+    paden = [v.sleutel for v in vondsten]
+
+    assert paden == ["components/api/.env", "components/app/.env", "utilities/.env"]
+    assert all(v.soort == "envbestand" for v in vondsten)
+    assert all(v.bewijs for v in vondsten), "zonder vindplaats is het een gok"
+
+
+def test_een_variant_is_zijn_eigen_doel():
+    """`.env.debug` is geen voorbeeld van iets anders -- het IS het bestand."""
+    from services.lab.verkenner_detectoren import detecteer_env_paden, doelpad
+
+    assert doelpad("components/app/.env.debug") == "components/app/.env.debug"
+    assert doelpad("components/app/.env.example") == "components/app/.env"
+    assert doelpad("env.sample") == ".env"
+    assert doelpad(".env") == ".env"
+
+    paden = [v.sleutel for v in detecteer_env_paden({"components/app/.env.debug": "A=1\n"})]
+    assert paden == ["components/app/.env.debug"]
+
+
+def test_voorbeeld_en_echt_bestand_leveren_een_slot_en_niet_twee():
+    """Staan ze er allebei, dan is het nog steeds één plek. Twee regels voor
+    hetzelfde pad is twee keer dezelfde vraag."""
+    from services.lab.verkenner_detectoren import detecteer_env_paden
+
+    paden = [v.sleutel for v in detecteer_env_paden({
+        "components/api/.env.example": "A=\n",
+        "components/api/.env": "A=1\n",
+    })]
+    assert paden == ["components/api/.env"]
+
+
+def test_het_model_mag_een_gitignored_pad_aanvullen():
+    """De detector loopt langs wat IN de repo staat. `.env.local` staat in
+    .gitignore en bestaat in een verse kloon niet, terwijl de start-dev-skill
+    van IntelligentHive hem bij naam noemt. Documentatie lezen kan een model
+    wel en een patroon niet."""
+    from services.lab.verkenner import _model_vondsten
+
+    uit = _model_vondsten({"env_bestanden": ["components/app/.env.local", "  ", ""]})
+    env = [v for v in uit if v.soort == "envbestand"]
+
+    assert [v.sleutel for v in env] == ["components/app/.env.local"]
+    assert env[0].bron == "model"
+    assert env[0].bevestigd is False, "een modelvoorstel hoort niet vooraf aangevinkt te staan"
+
+
+def test_de_boom_telt_mee_niet_alleen_de_gelezen_inhoud():
+    """Het snapshot leest maar een deel van de bestanden. IntelligentHive
+    heeft negen .env.example-bestanden en de inhoud haalde er maar een paar;
+    voor "waar hoort dit" is het pad genoeg."""
+    from services.lab.verkenner_detectoren import detecteer_env_paden
+
+    boom = ["components/api/.env.example", "components/app/.env.example",
+            "components/e2e/.env.example", "scripts/lib/child-env.mjs",
+            "assets/infra/services/fabric/environment.yml"]
+    beeld = {"components/api/.env.example": "A=\nB=\n"}
+
+    vondsten = detecteer_env_paden(beeld, boom)
+    paden = [v.sleutel for v in vondsten]
+
+    assert paden == ["components/api/.env", "components/app/.env", "components/e2e/.env"]
+    assert "child-env.mjs" not in repr(paden), "een .mjs is geen env-bestand"
+    assert "environment.yml" not in repr(paden)
+    # Waar we de inhoud hebben, telt hij de sleutels; waar niet, zegt hij dat.
+    op_pad = {v.sleutel: v.bewijs[0].fragment for v in vondsten}
+    assert op_pad["components/api/.env"] == "2 sleutels"
+    assert op_pad["components/app/.env"] == "staat in de repo"

@@ -297,6 +297,71 @@ def lees_env(tekst: str) -> List[tuple[int, str, str]]:
     return uit
 
 
+#: Achtervoegsels die een VOORBEELD aanduiden. Zo'n bestand staat in de repo
+#: om te laten zien welke sleutels er horen; het echte bestand ernaast is
+#: gitignored en bestaat in een verse kloon dus niet.
+_VOORBEELD = re.compile(r"\.(example|sample|template|dist)$")
+
+
+def doelpad(pad: str) -> str:
+    """Waar het ECHTE bestand hoort, gegeven een gevonden env-bestand.
+
+    `components/api/.env.example` wijst `components/api/.env` aan. Het
+    voorbeeld is het bewijs, niet het doel: wie het voorbeeld kopieert heeft
+    nog steeds geen waarden.
+    """
+    kaal = _VOORBEELD.sub("", pad)
+    map_, _, naam = kaal.rpartition("/")
+    if naam == "env":          # `env.example` naast `.env.example`
+        naam = ".env"
+    return f"{map_}/{naam}" if map_ else naam
+
+
+def detecteer_env_paden(beeld: RepoBeeld, boom: Optional[List[str]] = None) -> List[Vondst]:
+    """WAAR de applicatie env-bestanden verwacht.
+
+    `detecteer_omgevingsbestanden` leest de INHOUD van die bestanden om
+    diensten en geheimen te vinden, en gooit de paden weg. Juist die paden
+    zijn wat een branch-lab nodig heeft: de echte bestanden staan in
+    .gitignore, dus een verse kloon heeft ze niet, en dan moet iemand raden
+    waar ze horen. IntelligentHive heeft er vijf.
+
+    Een voorbeeldbestand telt als bewijs voor het echte pad ernaast. Een
+    variant die zelf geen voorbeeld is (`.env.local`, `.env.debug`) is zijn
+    eigen doel.
+    """
+    # De BOOM erbij, niet alleen de gelezen inhoud. Het snapshot leest maar
+    # een deel van de bestanden; IntelligentHive heeft negen .env.example-
+    # bestanden en daarvan haalde de inhoud er maar een paar. Voor "waar hoort
+    # een bestand" is het pad genoeg -- de inhoud voegt alleen een telling toe.
+    rx = re.compile(ENV_PATROON)
+    kandidaten = sorted({p for p in beeld if rx.search(p)}
+                        | {p for p in (boom or []) if rx.search(p)})
+
+    per_doel: Dict[str, Vondst] = {}
+    for pad in kandidaten:
+        doel = doelpad(pad)
+        bestaand = per_doel.get(doel)
+        # Het ECHTE bestand wint van zijn voorbeeld als bewijs, maar het doel
+        # blijft hetzelfde: een slot, niet twee.
+        if bestaand is not None and not (pad == doel):
+            continue
+        inhoud = beeld.get(pad)
+        aantal = len(lees_env(inhoud)) if inhoud is not None else None
+        per_doel[doel] = Vondst(
+            soort="envbestand",
+            sleutel=doel,
+            waarde=pad,
+            bewijs=[Bewijs(bestand=pad, regel=1,
+                           fragment=(f"{aantal} sleutels" if aantal is not None
+                                     else "staat in de repo"))],
+            zekerheid="hoog" if pad != doel else "midden",
+            toelichting=(f"Verwacht bij {doel}; {pad} laat zien welke sleutels erin horen"
+                         if pad != doel else f"Staat in de repo als {pad}"),
+        )
+    return sorted(per_doel.values(), key=lambda v: v.sleutel)
+
+
 def detecteer_omgevingsbestanden(beeld: RepoBeeld) -> List[Vondst]:
     """Welke diensten verwacht de applicatie, afgelezen aan haar sleutels?
 
@@ -664,8 +729,13 @@ def detecteer_zelf_opgehaalde_geheimen(beeld: RepoBeeld) -> List[Vondst]:
 
 # ── alles bij elkaar ─────────────────────────────────────────────────────────
 
-def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
-    """Elke detector over het repo-beeld, in volgorde van de ladder."""
+def detecteer_alles(beeld: RepoBeeld, boom: Optional[List[str]] = None) -> List[Vondst]:
+    """Elke detector over het repo-beeld, in volgorde van de ladder.
+
+    `boom` is de volledige bestandslijst. Alleen `detecteer_env_paden` heeft
+    hem nodig -- die beantwoordt een vraag over WAAR iets hoort, en daar is
+    een pad genoeg; de andere detectoren moeten de inhoud lezen.
+    """
     vondsten: List[Vondst] = []
     for detector in (
         detecteer_compose,
@@ -674,11 +744,13 @@ def detecteer_alles(beeld: RepoBeeld) -> List[Vondst]:
         detecteer_azure_cli,
         detecteer_zelf_opgehaalde_geheimen,
         detecteer_omgevingsbestanden,
+        detecteer_env_paden,
         detecteer_env_profielen,
         detecteer_manifesten,
     ):
         try:
-            vondsten.extend(detector(beeld))
+            vondsten.extend(detector(beeld, boom) if detector is detecteer_env_paden
+                            else detector(beeld))
         except Exception as exc:  # noqa: BLE001 — één kapotte detector sloopt de verkenning niet
             log.warning("detector %s viel om: %s", detector.__name__, exc)
     return vondsten

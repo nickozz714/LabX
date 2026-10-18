@@ -1015,6 +1015,7 @@ class ClusterService:
             "ssh_publiek": c.ssh_publiek,
             "toegang_soort": "ssh" if c.ssh_prive_encrypted else ("https" if c.repo_token_geheim else "geen"),
             "lab_poorten": c.lab_poorten or [],
+            "env_paden": c.env_paden or [],
             "geheimen_ontbreken": self._ontbrekende_geheimen(c.benodigde_geheimen or {}, c.id),
             "notitie": c.notitie,
             "diensten": [self.dienst_dict(d) for d in self.diensten(c.id)],
@@ -1256,11 +1257,21 @@ class ClusterService:
         toegevoegd: List[str] = []
         image_gezet = False
         poorten_gezet = False
+        #: Waar dit project env-bestanden verwacht. Niet de inhoud -- die
+        #: levert de gebruiker -- maar de PLEKKEN, zodat het scherm kan laten
+        #: zien wat er nog ontbreekt in plaats van te vragen of je een pad
+        #: wilt intypen.
+        env_paden: List[str] = []
 
         for v in plan.get("vondsten") or []:
             if (v.get("soort"), v.get("sleutel")) not in wil:
                 continue
             soort, sleutel, waarde = v["soort"], v["sleutel"], (v.get("waarde") or {})
+
+            if soort == "envbestand":
+                if sleutel not in env_paden:
+                    env_paden.append(sleutel)
+                continue
 
             if soort == "dienst":
                 image = str(waarde.get("image") or "")
@@ -1389,6 +1400,8 @@ class ClusterService:
 
         c.omgeving = omgeving
         c.benodigde_geheimen = geheimen
+        if env_paden:
+            c.env_paden = sorted(env_paden)
         c.updated_at = _nu()
 
         rij.cluster_id = c.id

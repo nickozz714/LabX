@@ -118,7 +118,9 @@ class Verkenner:
             beeld_ruw = await self._beeld(runtime, volume, image, map_=kop["map"])
             inhoud: det.RepoBeeld = dict(beeld_ruw.get("inhoud") or {})
 
-            vondsten = det.detecteer_alles(inhoud)
+            # De boom erbij: env-bestanden zijn te vinden op hun PAD, ook als
+            # het snapshot hun inhoud niet las.
+            vondsten = det.detecteer_alles(inhoud, beeld_ruw.get("boom") or [])
             modeluitslag = await self._vraag_model(
                 runtime, volume, image, map_=kop["map"],
                 beeld=beeld_ruw, inhoud=inhoud, vondsten=vondsten,
@@ -376,7 +378,8 @@ class Verkenner:
         _ontdubbel_geheimen(op_sleutel)
 
         volgorde = {"dienst": 0, "applicatie": 1, "lab_image": 2, "lab_poorten": 3,
-                    "startscript": 4, "omgeving": 5, "extern": 6, "geheim": 7}
+                    "startscript": 4, "omgeving": 5, "envbestand": 6, "extern": 7,
+                    "geheim": 8}
         return sorted(op_sleutel.values(),
                       key=lambda v: (volgorde.get(v.soort, 9),
                                      _image_voorkeur(v),
@@ -660,6 +663,22 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
                          "niet in de kluis van dit cluster."),
         ))
 
+    # Env-paden die de DETECTOR niet kan zien. Die loopt langs bestanden die
+    # in de repo staan; `components/app/.env.local` staat in .gitignore en
+    # bestaat in een verse kloon dus niet -- terwijl de start-dev-skill van
+    # IntelligentHive hem bij naam noemt. Documentatie lezen is precies wat
+    # een model wel kan en een patroon niet.
+    for pad in (uitslag.get("env_bestanden") or [])[:20]:
+        pad = str(pad or "").strip()
+        if not pad:
+            continue
+        uit.append(det.Vondst(
+            soort="envbestand", sleutel=pad, waarde=None,
+            bewijs=_model_bewijs(uitslag.get("env_bestanden_bewijs")),
+            zekerheid="laag", bron="model", bevestigd=False,
+            toelichting="Genoemd in de documentatie of de scripts, niet in de repo zelf.",
+        ))
+
     profiel = uitslag.get("env_profiel")
     if isinstance(profiel, dict) and profiel.get("keuzes"):
         uit.append(det.Vondst(
@@ -747,6 +766,15 @@ Harde regels:
 6. Noem een sleutel ÉÉN keer. Staat hij al bij een dienst onder `extern`, zet
    hem dan niet ook nog los in de lijst met losse geheimen -- dan wordt er
    twee keer om hetzelfde gevraagd.
+7. Env-bestanden: LabX vindt zelf elk `.env*` dat IN de repo staat, en leidt
+   uit `x/.env.example` af dat `x/.env` de plek is. Wat het NIET kan zien, is
+   een bestand dat gitignored is en dus in een verse kloon ontbreekt terwijl
+   de documentatie, een script of een skill het wel bij naam noemt --
+   `components/app/.env.local` is zo'n geval. Kom je die tegen, zet het pad
+   dan in `"env_bestanden": ["..."]`. Noem alleen paden die je ergens ZAG
+   staan; verzin er geen, en herhaal niet wat al in de repo staat.
+   Dit gaat over WAAR een bestand hoort, niet over wat erin staat: de inhoud
+   levert de gebruiker, LabX zet hem bij elke start in de werkkopie.
 
 WAT LABX ZELF REGELT — vraag hier niet naar, ga ervan uit:
 

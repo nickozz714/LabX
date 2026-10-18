@@ -111,6 +111,13 @@ class Cluster(Base):
     #: dat is precies de gok die een lab onbereikbaar maakt terwijl het draait.
     lab_poorten: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
+    #: Waar dit project env-bestanden verwacht, als lijst van paden in de repo.
+    #: Komt uit de verkenning: de detector leidt `x/.env` af uit `x/.env.example`,
+    #: en het model vult aan wat gitignored is maar wel in de documentatie staat
+    #: (`components/app/.env.local`). De INHOUD staat in cluster_env_files; dit
+    #: zijn alleen de plekken, zodat het scherm kan tonen wat nog ontbreekt.
+    env_paden: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     # ── de proefbouw ─────────────────────────────────────────────────────────
     #
     # Een plan dat er goed uitziet maar waarvan het script omvalt, heeft zijn

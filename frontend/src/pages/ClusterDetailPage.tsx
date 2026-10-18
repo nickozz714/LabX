@@ -17,7 +17,7 @@
  *   makkelijk zijn, want dat achteraf rechtzetten in een lab is omslachtiger
  *   dan het meteen goed doen.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch, KanbanSquare,
@@ -765,7 +765,7 @@ export function ClusterDetailPage() {
       <KluisKaart clusterId={c.id} benodigd={c.benodigde_geheimen || {}} />
 
       {/* ── de vaste laag ────────────────────────────────────────────────── */}
-      <EnvBestandenKaart clusterId={c.id} />
+      <EnvBestandenKaart clusterId={c.id} paden={c.env_paden || []} />
 
       <Card className="p-4">
         <div className="mb-3 flex items-start gap-2">
@@ -1119,7 +1119,7 @@ function TunnelKnop(
  * Je ziet alleen het pad en de NAMEN van de sleutels. De waarden komen niet
  * uit de API terug: ze gaan één kant op.
  */
-function EnvBestandenKaart({ clusterId }: { clusterId: number }) {
+function EnvBestandenKaart({ clusterId, paden }: { clusterId: number; paden: string[] }) {
   const melding = useMelding();
   const bevestig = useBevestiging();
   const [bestanden, setBestanden] = useState<EnvBestand[]>([]);
@@ -1132,6 +1132,19 @@ function EnvBestandenKaart({ clusterId }: { clusterId: number }) {
     clusterApi.envBestanden(clusterId).then(setBestanden).catch(() => { /* leeg is geen fout */ });
   }, [clusterId]);
   useEffect(laad, [laad]);
+
+  // De verwachte plekken eerst, in de volgorde van de verkenning, en daarna
+  // wat je zelf hebt geïmporteerd en wat de verkenning niet zag. Zo zie je in
+  // één oogopslag wat er nog ontbreekt in plaats van een lijst die alleen
+  // toont wat er al is.
+  const slots = useMemo(() => {
+    const perPad = new Map(bestanden.map((b) => [b.pad, b]));
+    const uit = paden.map((pad) => ({ pad, bestand: perPad.get(pad) }));
+    for (const b of bestanden) {
+      if (!paden.includes(b.pad)) uit.push({ pad: b.pad, bestand: b });
+    }
+    return uit;
+  }, [paden, bestanden]);
 
   async function kiesBestand(bestand: File) {
     setInhoud(await bestand.text());
@@ -1171,39 +1184,49 @@ function EnvBestandenKaart({ clusterId }: { clusterId: number }) {
           </div>
         </div>
 
-        {bestanden.length === 0
+        {slots.length === 0
           ? <EmptyState>
-              Nog geen bestanden. Heb je een werkende checkout? Importeer daar bijvoorbeeld
-              <code> components/api/.env</code> en <code> components/app/.env.local</code> uit.
+              De verkenning vond geen env-bestanden in deze repo. Hoort er toch een, importeer
+              hem dan met de knop hieronder.
             </EmptyState>
           : <ul className="space-y-2">
-              {bestanden.map((b) => (
-                <li key={b.id} className="rounded-md border p-2">
+              {slots.map((slot) => (
+                <li key={slot.pad} className="rounded-md border p-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-mono text-xs">{b.pad}</span>
+                    <span className="font-mono text-xs">{slot.pad}</span>
                     <div className="flex items-center gap-2">
-                      <Badge>{b.aantal} {b.aantal === 1 ? "sleutel" : "sleutels"}</Badge>
-                      <Button
-                        variant="ghost"
-                        onClick={async () => {
-                          const ja = await bevestig.vraag({
-                            titel: `${b.pad} verwijderen?`,
-                            tekst: "Branch-labs krijgen dit bestand daarna niet meer; een lab "
-                              + "dat al draait houdt wat er staat tot de volgende start.",
-                            bevestig: "Verwijderen",
-                            variant: "danger",
-                          });
-                          if (!ja) return;
-                          await clusterApi.envBestandVerwijderen(clusterId, b.id);
-                          laad();
-                        }}>
-                        <Trash2 className="h-3.5 w-3.5" />
+                      {slot.bestand
+                        ? <Badge>{slot.bestand.aantal} {slot.bestand.aantal === 1 ? "sleutel" : "sleutels"}</Badge>
+                        : <Badge tone="yellow">ontbreekt</Badge>}
+                      <Button variant="ghost"
+                              onClick={() => { setPad(slot.pad); setInhoud(""); setOpen(true); }}>
+                        {slot.bestand
+                          ? <RefreshCw className="h-3.5 w-3.5" />
+                          : <Plus className="h-3.5 w-3.5" />}
                       </Button>
+                      {slot.bestand && (
+                        <Button
+                          variant="ghost"
+                          onClick={async () => {
+                            const ja = await bevestig.vraag({
+                              titel: `${slot.pad} verwijderen?`,
+                              tekst: "Branch-labs krijgen dit bestand daarna niet meer; een lab "
+                                + "dat al draait houdt wat er staat tot de volgende start.",
+                              bevestig: "Verwijderen",
+                              variant: "danger",
+                            });
+                            if (!ja) return;
+                            await clusterApi.envBestandVerwijderen(clusterId, slot.bestand!.id);
+                            laad();
+                          }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
-                  {b.sleutels.length > 0 && (
+                  {slot.bestand && slot.bestand.sleutels.length > 0 && (
                     <p className="mt-1 break-words font-mono text-[11px] text-muted-foreground">
-                      {b.sleutels.join(", ")}
+                      {slot.bestand.sleutels.join(", ")}
                     </p>
                   )}
                 </li>

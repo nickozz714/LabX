@@ -25,7 +25,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import {
+import { FileKey,
   AlertTriangle, ArrowRight, Box, Check, FileText, HelpCircle, KeyRound,
   Layers, Loader2, MessageSquare, Network, Package, Search, Settings2, Sparkles,
   Terminal,
@@ -48,6 +48,7 @@ const SOORT_ICOON: Record<Vondst["soort"], typeof Box> = {
   lab_poorten: Network,
   startscript: Terminal,
   omgeving: Settings2,
+  envbestand: FileKey,
   extern: KeyRound,
   geheim: KeyRound,
 };
