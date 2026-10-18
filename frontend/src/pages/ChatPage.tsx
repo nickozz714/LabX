@@ -77,6 +77,10 @@ export function ChatPage() {
   const bevestig = useBevestiging();
   const melding = useMelding();
   const [threads, setThreads] = useState<Thread[]>([]);
+  // Een lege lijst en een lijst die nog moet komen zien er hetzelfde uit.
+  // Voor /chat?lab= is dat verschil beslissend: bij "nog niet binnen"
+  // zou hij een nieuw gesprek maken naast het gesprek dat er al is.
+  const [threadsGeladen, setThreadsGeladen] = useState(false);
   const [zoekterm, setZoekterm] = useState("");
   // Sessies achter agent-runs op een ticket. Standaard uit: op een bord met
   // tachtig tickets zou de lijst niet meer te lezen zijn. Aan als je erin wilt
@@ -190,7 +194,7 @@ export function ChatPage() {
   useEffect(() => {
     let leeft = true;
     const haal = () => chatApi.listThreads(toonBoard, toonArchief)
-      .then((r) => { if (leeft) setThreads(r); })
+      .then((r) => { if (leeft) { setThreads(r); setThreadsGeladen(true); } })
       .catch(() => {});
     haal();
     // Elke vijf seconden opnieuw. Zonder dat is "actief" een momentopname van
@@ -222,6 +226,23 @@ export function ChatPage() {
       .catch(() => setZoekParams({}, { replace: true }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoekParams]);
+
+  // Rechtstreekse link vanaf een branch-lab: /chat?lab=<id>. Zonder dit deed
+  // de chatknop in een cluster niets zichtbaars -- je belandde op de chat,
+  // maar zonder dat lab, en moest het alsnog zelf opzoeken. Een bestaand
+  // gesprek voor dat lab openen heeft de voorkeur boven een nieuw gesprek:
+  // anders staat er na drie klikken een rij lege chats.
+  useEffect(() => {
+    const gevraagd = zoekParams.get("lab");
+    if (!gevraagd || !threadsGeladen) return;
+    if (activeThread?.lab_id === gevraagd) { setZoekParams({}, { replace: true }); return; }
+    const bestaand = threads.find((t) => t.lab_id === gevraagd && !t.archived_at);
+    (bestaand ? openThread(bestaand) : createThreadForLab(gevraagd))
+      .catch(() => melding.fout("Chat openen lukte niet",
+                                "Draait dit lab nog?"))
+      .finally(() => setZoekParams({}, { replace: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoekParams, threadsGeladen]);
 
   const activeThreadIdRef = useRef<string | null>(null);
   useEffect(() => {
