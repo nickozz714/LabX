@@ -900,3 +900,82 @@ def test_niet_kunnen_kijken_verandert_niets(db, monkeypatch):
 
     monkeypatch.setattr(mod, "default_image", lambda: "labx/standaard:1")
     assert _a.run(mod.kloon_image(_RT(), "python:3.12-slim")) == "python:3.12-slim"
+
+
+# ── extra pakketten: jij kiest ze, of het model stelt ze voor ───────────────
+
+
+def test_git_zit_in_de_basis_en_niet_in_de_extras():
+    """Git hoort in ELK lab, ongeacht het image. Dat is geen keuze en dus geen
+    extra -- anders moet iemand het per cluster aanvinken en vergeet hij het."""
+    from services.lab.extras_catalog import BUILTIN_EXTRAS
+    from services.lab.lab_service import _BASE_STEPS
+
+    basis = {s["key"] for s in _BASE_STEPS}
+    assert "git" in basis
+    assert "git" not in {str(x["key"]) for x in BUILTIN_EXTRAS}
+
+
+def test_een_branch_lab_erft_de_extras_van_zijn_cluster(db, monkeypatch):
+    """Zonder dit kreeg een branch-lab er nooit een: `create` liet ze leeg en
+    er was geen andere weg naar binnen."""
+    import asyncio as _a
+
+    from services.lab import clusters as mod
+    from services.lab.lab_service import LabService
+
+    svc = mod.ClusterService(db)
+    c = svc.maak(naam="Slim")
+    c.repo_url = "https://x/slim.git"
+    c.lab_extras = ["node", "uv"]
+    db.commit()
+
+    gezien = {}
+
+    async def nep_create(zelf, **kw):
+        gezien.update(kw)
+        from models.lab import Lab
+        nu = "2026-10-18T10:00:00+00:00"
+        p = Lab(id="lab9", name="x", image="python:3.12-slim", volume_name="v",
+                status="stopped", cpu_limit=2, mem_limit_mb=4096, ttl_hours=24,
+                created_at=nu, updated_at=nu)
+        db.add(p); db.commit()
+        return {"id": p.id}
+
+    monkeypatch.setattr(LabService, "create", nep_create)
+    monkeypatch.setattr(mod.ClusterService, "controleer_toegang",
+                        lambda zelf, c: _klaar_dict())
+    monkeypatch.setattr(mod.ClusterService, "_kloon_branch",
+                        lambda zelf, c, p, **kw: _klaar_niets())
+
+    _a.run(svc.maak_branch_lab(c.id, branch="feature/x", basis="main"))
+    assert gezien.get("extras") == ["node", "uv"]
+
+
+async def _klaar_dict():
+    return {"gecontroleerd": False, "ok": True}
+
+
+async def _klaar_niets():
+    return None
+
+
+def test_een_verzonnen_extra_haalt_het_cluster_niet(db):
+    """Een sleutel die niet bestaat levert bij het inrichten een stille no-op
+    op, en dan zoek je naar een pakket dat nooit geinstalleerd werd."""
+    from services.lab.extras_catalog import BUILTIN_EXTRAS
+
+    bekend = {str(x["key"]) for x in BUILTIN_EXTRAS}
+    assert "node" in bekend
+    assert "verzonnen-pakket" not in bekend
+
+
+def test_de_catalogus_gaat_mee_naar_het_model():
+    """Uit de catalogus zelf, niet overgetypt: een pakket dat erbij komt hoort
+    het model te bereiken zonder dat iemand de prompttekst bijwerkt."""
+    from services.lab.extras_catalog import BUILTIN_EXTRAS
+    from services.lab.verkenner import _extras_lijst
+
+    lijst = _extras_lijst()
+    for spec in BUILTIN_EXTRAS:
+        assert str(spec["key"]) in lijst, f"{spec['key']} ontbreekt in de prompt"

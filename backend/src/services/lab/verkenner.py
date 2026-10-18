@@ -378,8 +378,8 @@ class Verkenner:
         _ontdubbel_geheimen(op_sleutel)
 
         volgorde = {"dienst": 0, "applicatie": 1, "lab_image": 2, "lab_poorten": 3,
-                    "startscript": 4, "omgeving": 5, "envbestand": 6, "extern": 7,
-                    "geheim": 8}
+                    "startscript": 4, "omgeving": 5, "envbestand": 6, "extra": 7,
+                    "extern": 8, "geheim": 9}
         return sorted(op_sleutel.values(),
                       key=lambda v: (volgorde.get(v.soort, 9),
                                      _image_voorkeur(v),
@@ -679,6 +679,20 @@ def _model_vondsten(uitslag: Dict[str, Any]) -> List[det.Vondst]:
             toelichting="Genoemd in de documentatie of de scripts, niet in de repo zelf.",
         ))
 
+    # Extra pakketten uit de catalogus. Git, curl, jq en unzip komen al in
+    # ELK lab (_BASE_STEPS), dus die hoort het model hier niet te noemen --
+    # en als het toch gebeurt, valt het weg omdat de sleutel niet bestaat.
+    for sleutel in (uitslag.get("lab_extras") or [])[:12]:
+        sleutel = str(sleutel or "").strip().lower()
+        if not sleutel:
+            continue
+        uit.append(det.Vondst(
+            soort="extra", sleutel=sleutel, waarde=None,
+            bewijs=_model_bewijs(uitslag.get("lab_extras_bewijs")),
+            zekerheid="laag", bron="model", bevestigd=False,
+            toelichting="Voorgesteld op grond van wat er in de repo staat.",
+        ))
+
     profiel = uitslag.get("env_profiel")
     if isinstance(profiel, dict) and profiel.get("keuzes"):
         uit.append(det.Vondst(
@@ -766,7 +780,15 @@ Harde regels:
 6. Noem een sleutel ÉÉN keer. Staat hij al bij een dienst onder `extern`, zet
    hem dan niet ook nog los in de lijst met losse geheimen -- dan wordt er
    twee keer om hetzelfde gevraagd.
-7. Moet er een datastore ingericht worden (databases, collections, tabellen,
+7. EXTRA PAKKETTEN: LabX richt elk lab in met git, bash, curl, jq en unzip --
+   ongeacht het image. Noem die dus niet. Heeft dit project meer nodig, kies
+   dan uit deze catalogus en zet de SLEUTELS in `"lab_extras": [...]`:
+{extras}
+   Alleen wat de repo aantoonbaar nodig heeft; een pakket dat niemand
+   gebruikt kost bij elke start installatietijd. Staat wat je nodig hebt er
+   niet bij, zeg dat dan in `samenvatting` -- verzin geen sleutel die niet
+   bestaat, want die valt stil weg.
+8. Moet er een datastore ingericht worden (databases, collections, tabellen,
    schema's), zoek dan de definitie die het project ZELF als waarheid
    gebruikt: infra-templates (bicep, terraform, ARM), migraties, een
    schema-map. Een `setup`- of `seed`-script in de repo maakt vaak maar een
@@ -774,7 +796,7 @@ Harde regels:
    de applicatie te laten draaien. Dat verschil merk je pas als een scherm
    een 500 geeft op een collection die niemand heeft aangemaakt, en dan is
    de oorzaak ver weg van het symptoom.
-8. Env-bestanden: LabX vindt zelf elk `.env*` dat IN de repo staat, en leidt
+9. Env-bestanden: LabX vindt zelf elk `.env*` dat IN de repo staat, en leidt
    uit `x/.env.example` af dat `x/.env` de plek is. Wat het NIET kan zien, is
    een bestand dat gitignored is en dus in een verse kloon ontbreekt terwijl
    de documentatie, een script of een skill het wel bij naam noemt --
@@ -874,6 +896,23 @@ Wil je een bestand zien dat wel in de boom staat maar niet in de inhoud, zet
 het pad dan in "lees_ook"."""
 
 
+def _extras_lijst() -> str:
+    """De extra-catalogus als regels voor de prompt.
+
+    Uit de catalogus zelf, niet overgetypt: een pakket dat erbij komt hoort
+    het model te bereiken zonder dat iemand deze tekst bijwerkt. Een sleutel
+    die het model verzint bestaat niet en valt stil weg, dus de echte lijst
+    meegeven is het verschil tussen een voorstel en een gok.
+    """
+    from services.lab.extras_catalog import BUILTIN_EXTRAS
+
+    regels = []
+    for spec in BUILTIN_EXTRAS:
+        omschrijving = str(spec.get("description") or spec.get("label") or "")
+        regels.append(f"     {spec['key']:<20} {omschrijving[:110]}")
+    return "\n".join(regels)
+
+
 def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
             inhoud: det.RepoBeeld, vondsten: List[det.Vondst],
             instructie: Optional[str] = None,
@@ -888,7 +927,10 @@ def _prompt(*, repo_url: str, branch: str, beeld: Dict[str, Any],
     antwoord. Dat scheelt het model het opzoekwerk dat al gedaan is, en het
     geeft hem meteen de vorm waarin hij zelf moet antwoorden.
     """
-    delen = [SYSTEEM, "", f"Repository: {repo_url}", f"Branch: {branch}", ""]
+    # `.replace` en niet `.format`: SYSTEEM staat vol accolades (JSON-voorbeelden)
+    # en die zou format als plaatshouders lezen.
+    delen = [SYSTEEM.replace("{extras}", _extras_lijst()), "",
+             f"Repository: {repo_url}", f"Branch: {branch}", ""]
 
     if azure_sessie:
         delen += [

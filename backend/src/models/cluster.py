@@ -118,6 +118,16 @@ class Cluster(Base):
     #: zijn alleen de plekken, zodat het scherm kan tonen wat nog ontbreekt.
     env_paden: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    #: Extra pakketten die elk branch-lab erbij krijgt, als lijst van sleutels
+    #: uit de extra-catalogus (zie services/lab/extras_catalog.py). Git en het
+    #: basisgereedschap zitten al in `_BASE_STEPS` en horen hier NIET in: die
+    #: komen in elk lab, ongeacht het image.
+    #:
+    #: Twee bronnen, allebei nodig: jij vinkt ze aan, en de verkenner mag ze
+    #: voorstellen op grond van wat er in de repo staat. Een voorstel komt
+    #: binnen als onbevestigd, zoals elke vondst.
+    lab_extras: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     # ── de proefbouw ─────────────────────────────────────────────────────────
     #
     # Een plan dat er goed uitziet maar waarvan het script omvalt, heeft zijn

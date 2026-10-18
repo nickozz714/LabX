@@ -756,6 +756,10 @@ class ClusterService:
             # Ruimer dan een gewoon lab: hier wordt gebouwd, niet rondgekeken.
             cpu_limit=float(c.lab_cpu or BRANCH_LAB_CPU),
             mem_limit_mb=int(c.lab_mem_mb or BRANCH_LAB_MEM_MB),
+            # De extra's van het cluster. Zonder dit kreeg een branch-lab er
+            # nooit een: `create` liet ze leeg en er was geen andere weg naar
+            # binnen. Git en het basisgereedschap komen sowieso, uit _BASE_STEPS.
+            extras=[str(x) for x in (c.lab_extras or [])],
             # Geen repos= : we klonen zelf, want we hebben een BASIS en een
             # nieuwe branch nodig en dat kan de gewone kloon niet.
             ttl_hours=24 * 7,
@@ -1030,6 +1034,7 @@ class ClusterService:
             "toegang_soort": "ssh" if c.ssh_prive_encrypted else ("https" if c.repo_token_geheim else "geen"),
             "lab_poorten": c.lab_poorten or [],
             "env_paden": c.env_paden or [],
+            "lab_extras": c.lab_extras or [],
             "geheimen_ontbreken": self._ontbrekende_geheimen(c.benodigde_geheimen or {}, c.id),
             "notitie": c.notitie,
             "diensten": [self.dienst_dict(d) for d in self.diensten(c.id)],
@@ -1276,11 +1281,25 @@ class ClusterService:
         #: zien wat er nog ontbreekt in plaats van te vragen of je een pad
         #: wilt intypen.
         env_paden: List[str] = []
+        #: Extra pakketten die elk branch-lab erbij krijgt. Git en het
+        #: basisgereedschap zitten al in _BASE_STEPS en horen hier niet in.
+        extras: List[str] = []
 
         for v in plan.get("vondsten") or []:
             if (v.get("soort"), v.get("sleutel")) not in wil:
                 continue
             soort, sleutel, waarde = v["soort"], v["sleutel"], (v.get("waarde") or {})
+
+            if soort == "extra":
+                from services.lab.extras_catalog import BUILTIN_EXTRAS
+
+                # Alleen sleutels die bestaan. Een verzonnen sleutel levert
+                # anders een stille no-op op bij het inrichten, en dan zoek je
+                # je scheel naar een pakket dat nooit geinstalleerd werd.
+                bekend = {str(x["key"]) for x in BUILTIN_EXTRAS}
+                if sleutel in bekend and sleutel not in extras:
+                    extras.append(sleutel)
+                continue
 
             if soort == "envbestand":
                 if sleutel not in env_paden:
@@ -1416,6 +1435,8 @@ class ClusterService:
         c.benodigde_geheimen = geheimen
         if env_paden:
             c.env_paden = sorted(env_paden)
+        if extras:
+            c.lab_extras = extras
         c.updated_at = _nu()
 
         rij.cluster_id = c.id
