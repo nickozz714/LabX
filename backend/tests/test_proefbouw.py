@@ -102,7 +102,7 @@ class NepLus:
             self.provisioned += 1
             return self.uitslagen.pop(0) if self.uitslagen else {"status": "ok", "steps": []}
 
-        async def nep_herstel(zelf, c, fout, ronde):
+        async def nep_herstel(zelf, c, fout, ronde, p=None):
             return self.scripts.pop(0) if self.scripts else {"script": None, "toelichting": "weet ik niet"}
 
         async def nep_proeflab(zelf, svc, c, branch):
@@ -685,3 +685,130 @@ def test_het_model_krijgt_de_bestandslijst(db):
 
     boom = Proefbouw(db)._boom(c)
     assert "seed-emulator.mjs" in boom
+
+
+# ── bijvragen: paden zijn geen inhoud ────────────────────────────────────────
+#
+# Het model kreeg wel de PADEN uit de repo mee, maar niet wat erin stond, en
+# zei dat ook met zoveel woorden: "Ik heb geen bestanden uit de repo kunnen
+# lezen, dus het is niet gecontroleerd of database-setup.ts de containers
+# aanmaakt." Het noemde het juiste bestand en moest vervolgens gokken wat
+# erin stond. Het proeflab heeft de repo uitgecheckt staan, dus die vraag is
+# te beantwoorden -- één keer per ronde.
+
+
+class _NepProvider:
+    """Antwoordt met wat je erin stopt en onthoudt wat het gevraagd kreeg."""
+
+    def __init__(self, antwoorden):
+        self.antwoorden = list(antwoorden)
+        self.prompts = []
+
+    async def chat(self, prompt, **_):
+        self.prompts.append(prompt)
+
+        class _Uit:
+            text = self.antwoorden.pop(0)
+
+        return _Uit()
+
+
+def _zet_nep_provider(monkeypatch, provider):
+    """Geen echte CLI: `_herstel` haalt de provider en de instellingen pas op
+    als hij ze nodig heeft, dus allebei op moduleniveau vervangen."""
+    import services.agent.claude_cli_provider as cli
+    import services.settings_service as ss
+
+    monkeypatch.setattr(cli, "ClaudeCliProvider", lambda *a, **k: provider)
+    monkeypatch.setattr(ss, "get_settings", lambda _db: type(
+        "S", (), {"oauth_token": "t", "cli_path": "claude"})())
+
+
+def test_het_model_mag_een_bestand_opvragen_en_krijgt_de_inhoud(db, monkeypatch):
+    """Vraagt het om bestanden, dan gaan die inhoud én de oude prompt mee
+    terug -- anders beantwoordt het de tweede keer een andere vraag."""
+    from services.lab.proefbouw import Proefbouw
+
+    c = _cluster(db)
+    p = _lab(db, c)
+    provider = _NepProvider([
+        '{"bestanden": ["utilities/database-setup.ts"]}',
+        '{"toelichting": "containers aanmaken", "startscript": "#!/bin/sh\\nexec node x"}',
+    ])
+    _zet_nep_provider(monkeypatch, provider)
+
+    pb = Proefbouw(db)
+
+    async def nep_lezen(_p, paden):
+        assert paden == ["utilities/database-setup.ts"]
+        return "=== utilities/database-setup.ts\nenum Container { CATALOG }\n"
+
+    monkeypatch.setattr(pb, "_lees_uit_lab", nep_lezen)
+
+    uit = asyncio.run(pb._herstel(c, "7071 luistert niet", 1, p))
+
+    assert uit["script"] == "#!/bin/sh\nexec node x"
+    assert len(provider.prompts) == 2, "er had een tweede vraag moeten komen"
+    assert "enum Container { CATALOG }" in provider.prompts[1]
+    assert "7071 luistert niet" in provider.prompts[1], "de fout moet mee terug"
+
+
+def test_bijvragen_mag_maar_een_keer(db, monkeypatch):
+    """Anders kan een model de hele ronde opsouperen met bladeren, en komt er
+    nooit een script."""
+    from services.lab.proefbouw import Proefbouw
+
+    c = _cluster(db)
+    p = _lab(db, c)
+    provider = _NepProvider(['{"bestanden": ["a.ts"]}', '{"bestanden": ["b.ts"]}'])
+    _zet_nep_provider(monkeypatch, provider)
+
+    pb = Proefbouw(db)
+    monkeypatch.setattr(pb, "_lees_uit_lab", lambda _p, _q: _klaar("=== a.ts\nx\n"))
+
+    uit = asyncio.run(pb._herstel(c, "stuk", 1, p))
+
+    assert uit["script"] is None
+    assert len(provider.prompts) == 2, "precies één keer bijvragen, niet meer"
+
+
+async def _klaar(waarde):
+    return waarde
+
+
+def test_een_opgevraagd_pad_komt_nooit_in_een_commando_terecht(db, monkeypatch):
+    """De paden komen van het model. Ze gaan via STDIN naar een lezertje in de
+    container; een pad met aanhalingstekens erin hoort een onleesbaar bestand
+    op te leveren, geen commando."""
+    from services.lab.proefbouw import Proefbouw, _LEZER
+
+    c = _cluster(db)
+    p = _lab(db, c)
+    gezien = {}
+
+    class _RT:
+        async def exec(self, cid, cmd, **kw):
+            gezien["cmd"] = cmd
+            gezien["stdin"] = kw.get("stdin")
+            return {"output": "=== ok"}
+
+    from services.lab.lab_service import LabService
+    monkeypatch.setattr(LabService, "runtime_voor", lambda self, _p: _RT())
+    monkeypatch.setattr(LabService, "ensure_workers",
+                        lambda self, _p: [type("W", (), {"container_id": "c1"})()])
+
+    stout = 'x.ts"; rm -rf /; echo "'
+    asyncio.run(Proefbouw(db)._lees_uit_lab(p, [stout]))
+
+    assert stout not in " ".join(gezien["cmd"]), "pad mag niet in het commando staan"
+    assert gezien["cmd"][2] == _LEZER
+    assert stout.encode() in gezien["stdin"], "het pad hoort via stdin te gaan"
+
+
+def test_bijvragen_weigert_buiten_de_repo():
+    """\"Lees een bestand\" mag niet stilletjes \"lees het bestandssysteem\"
+    worden: absolute paden en .. gaan er in het lezertje uit."""
+    from services.lab.proefbouw import _LEZER
+
+    assert "/*|*..*" in _LEZER
+    assert "geweigerd" in _LEZER

@@ -71,6 +71,28 @@ _NEGEER_POORTEN = {22, 53}
 #: op, en dat is erger dan niets zeggen.
 VLUCHTIG_VANAF = 32768
 
+#: Hoeveel bestanden het model in één herstelronde mag bijvragen, en hoeveel
+#: tekst dat samen mag opleveren. Ruim genoeg voor een setup-script plus wat
+#: context, krap genoeg dat een vraag om `node_modules` niets opblaast.
+MAX_BIJVRAAG = 12
+MAX_BIJVRAAG_TEKENS = 60_000
+
+#: Leest paden van STDIN en schrijft ze met een kopregel terug. Opzettelijk
+#: zonder enige uitbreiding van de paden: ze komen van een model.
+_LEZER = r"""while IFS= read -r pad; do
+  [ -n "$pad" ] || continue
+  case "$pad" in
+    /*|*..*) echo "=== $pad -- geweigerd: alleen paden binnen de repo"; continue;;
+  esac
+  if [ -f "$pad" ]; then
+    echo "=== $pad"
+    head -c 12000 -- "$pad"
+    echo
+  else
+    echo "=== $pad -- bestaat niet"
+  fi
+done"""
+
 
 def _gekozen_poorten(poorten) -> set:
     """Alleen poorten waar iemand een besluit over genomen heeft."""
@@ -175,7 +197,7 @@ class Proefbouw:
                 self._noteer(c, {"ronde": ronde, "fase": "opgegeven", "fout": fout})
                 break
 
-            nieuw_script = await self._herstel(c, fout, ronde)
+            nieuw_script = await self._herstel(c, fout, ronde, p)
             self._noteer(c, {"ronde": ronde, "fase": "bijgesteld", "fout": fout,
                              "toelichting": nieuw_script.get("toelichting"),
                              "gewijzigd": bool(nieuw_script.get("script"))})
@@ -428,8 +450,17 @@ class Proefbouw:
         except Exception:  # noqa: BLE001 — niet kunnen kijken is geen doodverklaring
             return True
 
-    async def _herstel(self, c: Cluster, fout: str, ronde: int) -> Dict[str, Any]:
-        """Het model het script laten bijstellen op grond van de echte fout."""
+    async def _herstel(self, c: Cluster, fout: str, ronde: int,
+                       p=None) -> Dict[str, Any]:
+        """Het model het script laten bijstellen op grond van de echte fout.
+
+        Het krijgt de PADEN uit de repo mee, maar niet de inhoud -- en dat is
+        precies waar het op vastliep: "Ik heb geen bestanden uit de repo
+        kunnen lezen, dus het is niet gecontroleerd of database-setup.ts de
+        containers aanmaakt." Het noemde het juiste bestand en moest daarna
+        alsnog gokken wat erin stond. Dus mag het er één keer om vragen; het
+        proeflab heeft de repo gewoon uitgecheckt staan.
+        """
         from services.lab.verkenner import VERKENNER_MODEL, _lees_json
 
         # De omgeving die het lab ECHT krijgt, niet alleen wat op het cluster
@@ -463,13 +494,56 @@ class Proefbouw:
                 # nadenken en dan is de hele poging weg.
                 max_turns=4, timeout=900.0, enable_tool_search=False)
             uit = await provider.chat(prompt)
+            antwoord = _lees_json(uit.text)
+
+            # Vraagt het om bestanden en heeft het nog geen script? Dan één
+            # keer aanvullen en opnieuw vragen. Eén keer, want anders kan een
+            # model de hele ronde opsouperen met bladeren.
+            gevraagd = antwoord.get("bestanden")
+            if p is not None and not (antwoord.get("startscript") or "").strip() and gevraagd:
+                inhoud = await self._lees_uit_lab(p, gevraagd)
+                if inhoud:
+                    uit = await provider.chat(
+                        prompt + "\n\nDE BESTANDEN DIE JE VROEG:\n" + inhoud
+                        + "\n\nNu het startscript, als UITSLUITEND JSON.")
+                    antwoord = _lees_json(uit.text)
         except Exception as exc:  # noqa: BLE001
             log.warningx("Herstelronde zonder model", error=str(exc)[:300])
             return {"script": None, "toelichting": f"Het model kon niet meekijken: {exc}"}
 
-        antwoord = _lees_json(uit.text)
         return {"script": (antwoord.get("startscript") or "").strip() or None,
                 "toelichting": str(antwoord.get("toelichting") or "")[:600]}
+
+    async def _lees_uit_lab(self, p, paden) -> str:
+        """De gevraagde bestanden uit het proeflab halen.
+
+        De paden komen van het model, dus ze gaan via STDIN naar een lezertje
+        in de container en worden nergens in een commando geplakt: een pad met
+        aanhalingstekens erin hoort een onleesbaar bestand op te leveren, geen
+        commando. Absolute paden en `..` weigeren we, zodat "lees een bestand"
+        niet stilletjes "lees het hele bestandssysteem" wordt.
+        """
+        from services.lab.lab_service import LabService
+
+        schoon = [str(q).strip() for q in (paden or []) if str(q).strip()][:MAX_BIJVRAAG]
+        if not schoon:
+            return ""
+        svc = LabService(self.db)
+        werkers = [w for w in svc.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return ""
+        from models.cluster import Cluster as _C
+
+        c = self.db.get(_C, p.cluster_id)
+        try:
+            uit = await svc.runtime_voor(p).exec(
+                werkers[0].container_id, ["sh", "-c", _LEZER],
+                workdir=svc._repomap(c) if c else "/workspace",
+                stdin="\n".join(schoon).encode(), timeout=60)
+        except Exception as exc:  # noqa: BLE001
+            log.warningx("Bijvragen mislukte", error=str(exc)[:200])
+            return ""
+        return str(uit.get("output") or "")[:MAX_BIJVRAAG_TEKENS]
 
     def _boom(self, c: Cluster) -> str:
         """De bestandslijst uit de laatste verkenning.
@@ -671,7 +745,14 @@ stap liever voorwaardelijk (`[ -f x ] && cp x y`) dan dat je gokt.
 Laat de applicatie op de voorgrond draaien en op 0.0.0.0 luisteren, anders is
 het lab van buiten onbereikbaar.
 
-Antwoord met UITSLUITEND JSON:
+Je ziet hierboven alleen de PADEN, niet wat er in die bestanden staat.
+Moet je de inhoud zien van een bestand uit die lijst voordat je iets kunt
+zeggen, vraag er dan om in plaats van te gokken -- dat mag één keer, en je
+krijgt de bestanden daarna in hetzelfde gesprek terug:
+
+{{"bestanden": ["pad/uit/de/lijst.ts", "nog/een.sh"]}}
+
+Antwoord anders met UITSLUITEND JSON:
 
 {{"toelichting": "één zin: wat er mis was en wat je veranderd hebt",
   "startscript": "#!/bin/sh\\nset -e\\n..."}}
