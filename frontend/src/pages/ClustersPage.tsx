@@ -68,6 +68,17 @@ export function ClustersPage() {
       .catch(() => { /* geen catalogus is geen fout */ });
   }, []);
 
+  // De sleutelNAMEN uit een env-bestand. Alleen namen: de waarden blijven in
+  // het bestand en gaan nergens anders heen.
+  function sleutelsVan(inhoud: string): string[] {
+    const uit: string[] = [];
+    for (const regel of inhoud.split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(regel);
+      if (m && !uit.includes(m[1])) uit.push(m[1]);
+    }
+    return uit;
+  }
+
   async function kiesEnv(bestanden: FileList) {
     const nieuw: { pad: string; inhoud: string }[] = [];
     for (const f of Array.from(bestanden).slice(0, 20)) {
@@ -314,24 +325,37 @@ export function ClustersPage() {
           />
           {envBestanden.length > 0 && (
             <ul className="mt-2 space-y-1">
-              {envBestanden.map((b, i) => (
-                <li key={i} className="flex items-center gap-2">
-                  <Input
-                    className={`flex-1 font-mono text-xs ${
-                      dubbelePaden.has(b.pad.trim()) ? "border-red-500" : ""}`}
-                    value={b.pad}
-                    onChange={(e) => setEnvBestanden((o) =>
-                      o.map((x, j) => (j === i ? { ...x, pad: e.target.value } : x)))}
-                  />
-                  <Badge tone="neutral">
-                    {(b.inhoud.match(/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=/gm) || []).length} sleutels
-                  </Badge>
-                  <Button variant="ghost"
-                          onClick={() => setEnvBestanden((o) => o.filter((_, j) => j !== i))}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </li>
-              ))}
+              {envBestanden.map((b, i) => {
+                const sleutels = sleutelsVan(b.inhoud);
+                return (
+                  <li key={i} className="rounded-md border border-border p-2">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className={`flex-1 font-mono text-xs ${
+                          dubbelePaden.has(b.pad.trim()) ? "border-red-500" : ""}`}
+                        value={b.pad}
+                        onChange={(e) => setEnvBestanden((o) =>
+                          o.map((x, j) => (j === i ? { ...x, pad: e.target.value } : x)))}
+                      />
+                      <Badge tone="neutral">{sleutels.length} sleutels</Badge>
+                      <Button variant="ghost"
+                              onClick={() => setEnvBestanden((o) => o.filter((_, j) => j !== i))}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    {/* De NAMEN erbij, want een telling zegt niet welk bestand
+                        waar hoort. In een monorepo heten ze allemaal `.env`;
+                        aan VITE_TENANT_ID versus COSMOS_KEY zie je meteen of
+                        dit de app of de api is. Namen alleen -- de waarden
+                        blijven waar ze zijn. */}
+                    {sleutels.length > 0 && (
+                      <p className="mt-1 break-words font-mono text-[11px] text-muted-foreground">
+                        {sleutels.join(", ")}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
           {dubbelePaden.size > 0 && (
