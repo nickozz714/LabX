@@ -53,6 +53,35 @@ def default_image() -> str:
     return settings.LAB_DEFAULT_IMAGE
 
 
+async def kloon_image(rt: Any, image: str) -> str:
+    """Een image waarin `git` bestaat, om in te klonen.
+
+    Klonen gebeurde altijd met het LAB-image, en dat gaat goed zolang dat
+    image git heeft. `python:3.12-slim` heeft het niet, en dan is het enige
+    spoor `sh: 1: git: not found` -- een melding die niets zegt over het
+    image dat je koos.
+
+    Eerst kijken of het lab-image git heeft, en alleen anders uitwijken naar
+    het standaard-image van LabX. Zo blijft het gedrag precies hetzelfde waar
+    het al werkte: de werkkopie ontstaat onder dezelfde gebruiker als die hem
+    straks gebruikt, en dat scheelt rechtenellende.
+    """
+    try:
+        uit = await rt.run_ephemeral(
+            image=image, cmd=["sh", "-c", "command -v git >/dev/null && echo ja || echo nee"],
+            timeout=120)
+    except Exception as exc:  # noqa: BLE001 — niet kunnen kijken is geen oordeel
+        log.warningx("Kon niet vaststellen of het image git heeft",
+                     image=image, error=str(exc)[:200])
+        return image
+    if "ja" in str(uit):
+        return image
+    val_terug = default_image()
+    log.infox("Lab-image heeft geen git; klonen met het standaard-image",
+              image=image, kloon_image=val_terug)
+    return val_terug
+
+
 IMAGE_PRESETS: List[Dict[str, str]] = [
     {"key": "python", "label": "Python (nieuwste 3.x)", "image": "python:3-bookworm",
      "description": "Python + pip — algemeen ontwikkelwerk, data en scripts. git + Azure CLI standaard."},
@@ -570,8 +599,10 @@ class LabService:
                '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
                'fi; '
                'git clone --depth 1 "$REPO_URL" "$DEST"']
-        await self.runtime_voor(p).run_ephemeral(
-            image=p.image, volume=p.volume_name, cmd=cmd, env=env)
+        rt = self.runtime_voor(p)
+        await rt.run_ephemeral(
+            image=await kloon_image(rt, p.image), volume=p.volume_name,
+            cmd=cmd, env=env)
 
     # ── inrichten: basis + aangevinkte extra's + eigen setup-script ─────────
 

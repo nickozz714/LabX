@@ -829,9 +829,12 @@ class ClusterService:
             'fi;',
             'git rev-parse --abbrev-ref HEAD',
         )
-        await LabService(self.db).runtime_voor(p).run_ephemeral(
-            image=p.image, volume=p.volume_name, cmd=["sh", "-c", script],
-            env=env, timeout=1800)
+        from services.lab.lab_service import kloon_image
+
+        rt = LabService(self.db).runtime_voor(p)
+        await rt.run_ephemeral(
+            image=await kloon_image(rt, p.image), volume=p.volume_name,
+            cmd=["sh", "-c", script], env=env, timeout=1800)
 
     async def start_branch_lab(self, lab_id: str) -> Dict[str, Any]:
         """Een branch-lab aanzetten op het netwerk van zijn cluster.

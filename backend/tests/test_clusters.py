@@ -845,3 +845,58 @@ def test_een_dienst_zonder_prefix_krijgt_geen_dubbele_alias(db):
         naam = "IntelligentHive"
 
     assert _kale_naam(NepCluster(), NepDienst()) == "mailpit"
+
+
+# ── klonen vraagt om git, niet om het lab-image ──────────────────────────────
+
+
+def test_een_lab_image_zonder_git_kloont_met_het_standaard_image(db, monkeypatch):
+    """`python:3.12-slim` heeft geen git. Het enige spoor was
+    `sh: 1: git: not found` -- een melding die niets zegt over het image dat
+    je koos, en die je laat zoeken in de verkeerde hoek."""
+    import asyncio as _a
+
+    from services.lab import lab_service as mod
+
+    gevraagd = []
+
+    class _RT:
+        async def run_ephemeral(self, *, image, cmd, **kw):
+            gevraagd.append(image)
+            return "nee" if image == "python:3.12-slim" else "ja"
+
+    monkeypatch.setattr(mod, "default_image", lambda: "labx/standaard:1")
+
+    uit = _a.run(mod.kloon_image(_RT(), "python:3.12-slim"))
+    assert uit == "labx/standaard:1"
+    assert gevraagd == ["python:3.12-slim"], "eerst het lab-image zelf vragen"
+
+
+def test_een_lab_image_MET_git_kloont_met_zichzelf(db, monkeypatch):
+    """Zo blijft het gedrag hetzelfde waar het al werkte: de werkkopie
+    ontstaat onder dezelfde gebruiker die hem straks gebruikt."""
+    import asyncio as _a
+
+    from services.lab import lab_service as mod
+
+    class _RT:
+        async def run_ephemeral(self, **kw):
+            return "ja\n"
+
+    monkeypatch.setattr(mod, "default_image", lambda: "labx/standaard:1")
+    assert _a.run(mod.kloon_image(_RT(), "node:lts-bookworm")) == "node:lts-bookworm"
+
+
+def test_niet_kunnen_kijken_verandert_niets(db, monkeypatch):
+    """Een probe die omvalt is geen oordeel over het image. Dan maar klonen
+    zoals voorheen; dat faalt hooguit met de oude melding."""
+    import asyncio as _a
+
+    from services.lab import lab_service as mod
+
+    class _RT:
+        async def run_ephemeral(self, **kw):
+            raise RuntimeError("docker weg")
+
+    monkeypatch.setattr(mod, "default_image", lambda: "labx/standaard:1")
+    assert _a.run(mod.kloon_image(_RT(), "python:3.12-slim")) == "python:3.12-slim"
