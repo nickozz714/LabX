@@ -101,6 +101,29 @@ IMAGE_PRESETS: List[Dict[str, str]] = [
 # check-commando dat "staat er al" betekent, plus een installatie — zodat één
 # runner beide afhandelt en alles idempotent blijft.
 _BASE_STEPS: List[Dict[str, Any]] = [
+    # EERST. Zonder dit valt apt om zodra iets anders in dezelfde container
+    # net ook installeert -- en dat gebeurt: het startscript van een cluster
+    # installeert vaak zijn eigen pakketten, en dat loopt naast het inrichten.
+    # De melding is dan "Could not get lock /var/lib/apt/lists/lock. It is
+    # held by process N", en het inrichten faalt terwijl er niets stuk is.
+    #
+    # Waarom Debian je hier niet tegen beschermt, gemeten met `apt-config dump`:
+    #
+    #     Binary::apt::DPkg::Lock::Timeout "120"     <- standaard
+    #
+    # Dat geduld geldt alleen voor het `apt`-commando. `apt-get` krijgt niets
+    # en faalt dus meteen -- en alles wat LabX en de meeste startscripts
+    # draaien is `apt-get`.
+    #
+    # Als CONFIGBESTAND en niet als optie per aanroep: zo geldt het ook voor
+    # apt-aanroepen die wij niet schrijven -- die in een startscript, in een
+    # extra uit de catalogus, of in iets dat de gebruiker zelf draait.
+    {"key": "apt-wacht", "label": "apt laten wachten op de pakketlock",
+     "check": "test -f /etc/apt/apt.conf.d/99labx-wait",
+     "script": "mkdir -p /etc/apt/apt.conf.d && "
+               "printf 'DPkg::Lock::Timeout \"600\";\\n' "
+               "> /etc/apt/apt.conf.d/99labx-wait",
+     "timeout_s": 60},
     {"key": "git", "label": "git",
      "check": "command -v git >/dev/null 2>&1",
      "script": "apt-get update -qq && "

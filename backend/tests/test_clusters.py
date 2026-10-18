@@ -979,3 +979,24 @@ def test_de_catalogus_gaat_mee_naar_het_model():
     lijst = _extras_lijst()
     for spec in BUILTIN_EXTRAS:
         assert str(spec["key"]) in lijst, f"{spec['key']} ontbreekt in de prompt"
+
+
+def test_apt_krijgt_geduld_voordat_er_iets_geinstalleerd_wordt():
+    """Debian geeft alleen het `apt`-commando een lock-timeout (120s);
+    `apt-get` krijgt niets en faalt meteen met "Could not get lock". Alles wat
+    LabX en de meeste startscripts draaien is `apt-get`, en die twee lopen
+    naast elkaar in dezelfde container.
+
+    De stap moet VOOR elke installatie komen, anders is hij zinloos.
+    """
+    from services.lab.lab_service import _BASE_STEPS
+
+    sleutels = [s["key"] for s in _BASE_STEPS]
+    assert sleutels[0] == "apt-wacht", "de wachtstap hoort als eerste"
+    assert sleutels.index("apt-wacht") < sleutels.index("git")
+
+    stap = _BASE_STEPS[0]
+    assert "DPkg::Lock::Timeout" in stap["script"]
+    assert "/etc/apt/apt.conf.d/" in stap["script"], "als config, niet per aanroep"
+    # Idempotent: een lab dat al ingericht is, doet dit niet opnieuw.
+    assert stap["check"].startswith("test -f")
