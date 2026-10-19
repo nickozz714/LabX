@@ -1042,3 +1042,102 @@ def test_een_afgebroken_installatie_wordt_eerst_afgemaakt():
     # Kosteloos als er niets half staat: `apt-get check` slaagt alleen bij
     # een consistente dpkg-staat.
     assert stap["check"].startswith("apt-get check")
+
+
+# ── een branch-lab hoort te DRAAIEN waar het hoort ───────────────────────────
+
+def test_een_nieuw_branch_lab_wordt_op_het_clusternetwerk_gestart(db, monkeypatch):
+    """Zonder deze stap stond het lab op 'running' met een groene stip, maar
+    zonder gepubliceerde poort en zonder de vaste diensten op naam te kunnen
+    vinden. Er was geen adres om te openen en geen aanwijzing waarom niet."""
+    import asyncio
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+    gezien = {}
+
+    async def nep_kloon(_c, _p, *, branch, basis):
+        gezien["gekloond"] = branch
+
+    async def nep_start(lab_id):
+        gezien["gestart"] = lab_id
+        return {"id": lab_id, "branch": "feature/x"}
+
+    async def nep_toegang(_c):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(svc, "_kloon_branch", nep_kloon)
+    monkeypatch.setattr(svc, "start_branch_lab", nep_start)
+    monkeypatch.setattr(svc, "controleer_toegang", nep_toegang)
+
+    uit = asyncio.run(svc.maak_branch_lab(c.id, titel="Zoek filter"))
+
+    assert gezien["gekloond"] == "feature/zoek-filter"
+    assert gezien["gestart"] == uit["id"]
+
+
+def test_een_lab_dat_niet_start_blijft_staan(db, monkeypatch):
+    """De werkkopie staat er al; weggooien zou het klonen vernietigen voor
+    iets wat je met één druk op Start herstelt."""
+    import asyncio
+
+    from models.lab import Lab
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+
+    async def nep_kloon(_c, _p, *, branch, basis):
+        return None
+
+    async def stuk(_lab_id):
+        raise RuntimeError("daemon weg")
+
+    async def nep_toegang(_c):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(svc, "_kloon_branch", nep_kloon)
+    monkeypatch.setattr(svc, "start_branch_lab", stuk)
+    monkeypatch.setattr(svc, "controleer_toegang", nep_toegang)
+
+    uit = asyncio.run(svc.maak_branch_lab(c.id, titel="Zoek filter"))
+
+    assert db.get(Lab, uit["id"]) is not None
+
+
+# ── een weggegooid proeflab laat geen knop achter ────────────────────────────
+
+def test_een_weggegooid_proeflab_verdwijnt_uit_het_cluster(db):
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+    nu = "2026-10-19T16:00:00+00:00"
+    lab = Lab(id="proef-1", name="Hive · proef", status="running", image="x",
+              volume_name="v", cluster_id=c.id, created_at=nu, updated_at=nu)
+    db.add(lab)
+    c.proef_lab_id = "proef-1"
+    c.proef_status = "goedgekeurd"
+    db.commit()
+
+    LabService(db)._vergeet_als_proeflab("proef-1")
+    # Hij commit zelf niet: hij hoort bij de transactie van het verwijderen.
+    db.commit()
+
+    db.refresh(c)
+    assert c.proef_lab_id is None
+    assert c.proef_status == "geen"
+
+
+def test_het_cluster_toont_geen_link_naar_een_lab_dat_er_niet_meer_is(db):
+    """Vangt wat er al stond: een cluster dat nog naar een verdwenen lab wees."""
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+    c.proef_lab_id = "weg-en-nooit-bestaan"
+    c.proef_status = "goedgekeurd"
+    db.commit()
+
+    uit = svc.to_dict(c)
+
+    assert uit["proef_lab_id"] is None
+    assert uit["proef_status"] == "geen"

@@ -779,6 +779,11 @@ class ClusterService:
             # nieuwe branch nodig en dat kan de gewone kloon niet.
             ttl_hours=24 * 7,
             allow_network=True,
+            # En niet zelf inrichten: hieronder wordt de container opnieuw
+            # opgebouwd op het netwerk van het cluster, en een ronde die
+            # tegen een verdwijnende container praat laat een halve
+            # installatie achter.
+            richt_in=False,
         )
         p = self.db.get(Lab, uit["id"])
         p.cluster_id = c.id
@@ -823,10 +828,28 @@ class ClusterService:
                 status_code=502,
                 detail=f"Klonen van '{branch}' mislukte: {reden[:400]}") from exc
 
+        # En nu pas echt starten: op het netwerk van het cluster, met de
+        # poorten van het cluster erbij.
+        #
+        # Dit ontbrak, en het zag eruit alsof alles goed ging: `create` had de
+        # container al op het gedeelde labnetwerk gezet, dus het lab stond op
+        # "running" met een groene stip -- maar zonder gepubliceerde poort, en
+        # zonder de vaste diensten op naam te kunnen vinden. Er was geen adres
+        # om te openen en geen enkele aanwijzing waarom niet.
+        try:
+            uit = await self.start_branch_lab(p.id)
+        except Exception as exc:  # noqa: BLE001
+            # Het lab bestaat en de werkkopie staat erin; alleen het starten
+            # ging mis. Weggooien zou het werk van de kloon vernietigen voor
+            # iets wat je met één druk op Start kunt herstellen.
+            log.warningx("Branch-lab aangemaakt maar niet gestart",
+                         lab_id=p.id, error=str(exc)[:300])
+            self.db.refresh(p)
+            uit = lab_svc._to_dict(p)
+
         log.infox("Branch-lab aangemaakt", cluster=c.naam, branch=branch,
                   basis=basis, lab_id=p.id)
-        self.db.refresh(p)
-        return lab_svc._to_dict(p)
+        return uit
 
     async def _init_branch(self, c: Cluster, p: Any, *, branch: str) -> None:
         """Een verse werkkopie voor een cluster dat leeg begonnen is.
@@ -1083,8 +1106,14 @@ class ClusterService:
             "azure_profiel_nodig": bool(c.geheimen_zelf or c.lab_azure) and not c.azure_profiel_id,
             # De proefbouw: een plan is pas af als het script echt gedraaid
             # heeft en JIJ zegt dat de branch goed is.
-            "proef_status": c.proef_status or "geen",
-            "proef_lab_id": c.proef_lab_id,
+            # Idem: zonder lab valt er niets te bevestigen of af te keuren,
+            # dus is de proefbouw terug bij af in plaats van "goedgekeurd".
+            "proef_status": (c.proef_status or "geen") if self._proeflab_bestaat(c) else "geen",
+            # Alleen als dat lab er ook nog IS. Een weggegooid proeflab liet
+            # hier een knop achter naar een lab dat niet meer bestond; de
+            # opruiming bij het verwijderen zet dit voortaan recht, en deze
+            # regel vangt wat er al stond.
+            "proef_lab_id": c.proef_lab_id if self._proeflab_bestaat(c) else None,
             "proef_log": c.proef_log or [],
             "env_profiel": c.env_profiel, "omgeving": c.omgeving or {},
             # Wat er in de kluis moet staan voordat een branch-lab kan
@@ -1601,6 +1630,13 @@ class ClusterService:
             "diensten_toegevoegd": toegevoegd,
             "geheimen_ontbreken": ontbreekt,
         }
+
+    def _proeflab_bestaat(self, c: Cluster) -> bool:
+        from models.lab import Lab
+
+        if not c.proef_lab_id:
+            return False
+        return self.db.get(Lab, c.proef_lab_id) is not None
 
     def _ontbrekende_geheimen(self, benodigd: Dict[str, Any],
                               cluster_id: Optional[int] = None) -> List[str]:

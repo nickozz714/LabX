@@ -1618,6 +1618,12 @@ exec ssh -N \\
         host_project_dir: Optional[str] = None,
         host_agent_token: Optional[str] = None,
         host_id: Optional[int] = None,
+        #: Zelf het inrichten inplannen? Standaard ja. Een branch-lab zegt
+        #: NEE: dat wordt meteen daarna opnieuw opgebouwd op het netwerk van
+        #: zijn cluster, en een ronde die tegen een container praat die
+        #: verdwijnt levert een halve installatie op -- precies de
+        #: apt-botsing die een proefbouw eerder al liet stranden.
+        richt_in: bool = True,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -1740,7 +1746,7 @@ exec ssh -N \\
         # Het inrichten loopt erachteraan (zie provision_in_background): een
         # browser binnenhalen duurt minuten en dit antwoord mag daar niet op
         # wachten — het lab bestaat en draait al.
-        if p.status == "running" and p.allow_network:
+        if richt_in and p.status == "running" and p.allow_network:
             provision_in_background(p.id)
         return self._to_dict(p)
 
@@ -2505,9 +2511,27 @@ exec ssh -N \\
         # A thread's lab_id is NOT NULL by design (chat requires a lab) — so
         # deleting a bound lab cascades to its threads rather than orphaning them.
         self.db.query(Thread).filter(Thread.lab_id == p.id).delete(synchronize_session=False)
+        self._vergeet_als_proeflab(p.id)
         self.db.delete(p)
         self.db.commit()
         return {"ok": True}
+
+    def _vergeet_als_proeflab(self, lab_id: str) -> None:
+        """Een cluster dat naar DIT lab wees, wijst nergens meer heen.
+
+        Zonder dit blijft `proef_lab_id` staan nadat je het proeflab hebt
+        weggegooid, en biedt het clusterscherm een knop naar een lab dat niet
+        meer bestaat. De proefbouw is daarmee ook niet meer "goedgekeurd":
+        waar dat oordeel over ging, is weg.
+        """
+        from models.cluster import Cluster
+
+        for c in self.db.query(Cluster).filter(Cluster.proef_lab_id == lab_id).all():
+            c.proef_lab_id = None
+            c.proef_status = "geen"
+            c.updated_at = _now_iso()
+            log.infox("Proeflab weggegooid; cluster teruggezet op 'geen'",
+                      cluster=c.naam, lab_id=lab_id)
 
     async def expire_due(self) -> int:
         now = _now_iso()
