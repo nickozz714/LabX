@@ -134,6 +134,42 @@ export type ClusterDienst = {
   draait: boolean;
 };
 
+export type DienstActie = {
+  id: number;
+  dienst_id: number;
+  label: string;
+  uitleg: string;
+  /** `in` = docker exec in de dienst zelf. `naast` = een wegwerpcontainer op
+   *  het clusternetwerk, die de dienst op naam bereikt. Nodig zodra je een
+   *  client nodig hebt die niet in het image van de dienst zit. */
+  plek: "in" | "naast";
+  image: string;
+  script: string;
+  gevaarlijk: boolean;
+  bron: "model" | "zelf" | "chat";
+  laatst_gedraaid: string | null;
+  laatste_exitcode: number | null;
+  laatste_uitvoer: string;
+};
+
+export type ActieUitslag = {
+  actie: DienstActie;
+  exit_code: number;
+  output: string;
+  truncated: boolean;
+};
+
+export type DienstChatAntwoord = {
+  antwoord: string;
+  script: string;
+  plek?: "in" | "naast";
+  image?: string;
+  label?: string;
+  gevaarlijk?: boolean;
+  uitvoer: string;
+  exit_code: number | null;
+};
+
 export type Cluster = {
   id: number;
   naam: string;
@@ -341,6 +377,24 @@ export const clusterApi = {
   dienstStart: (dienstId: number) => api.post<ClusterDienst>(`/clusters/diensten/${dienstId}/start`),
   dienstStop: (dienstId: number) => api.post<ClusterDienst>(`/clusters/diensten/${dienstId}/stop`),
   dienstWeg: (dienstId: number) => api.delete<{ ok: boolean }>(`/clusters/diensten/${dienstId}`),
+
+  // ── knoppen bij een vaste dienst ───────────────────────────────────────
+  //
+  // Een vaste dienst is geen lab: er staat geen agent in. Het model schrijft
+  // de knoppen en het script eronder; LabX voert ze uit tegen de dienst.
+  dienstActies: (dienstId: number) =>
+    api.get<DienstActie[]>(`/clusters/diensten/${dienstId}/acties`),
+  dienstActiesVoorstellen: (dienstId: number, opdracht?: string) =>
+    api.post<{ toegevoegd: number; toelichting: string; acties: DienstActie[] }>(
+      `/clusters/diensten/${dienstId}/acties/voorstellen`, { opdracht: opdracht || "" }),
+  dienstActieZetten: (dienstId: number, body: Partial<DienstActie> & { label: string; script: string }) =>
+    api.post<DienstActie>(`/clusters/diensten/${dienstId}/acties`, body),
+  dienstActieDraaien: (actieId: number) =>
+    api.post<ActieUitslag>(`/clusters/diensten/acties/${actieId}/draaien`),
+  dienstActieWeg: (actieId: number) =>
+    api.delete<{ ok: boolean }>(`/clusters/diensten/acties/${actieId}`),
+  dienstChat: (dienstId: number, vraag: string, geschiedenis: { rol: string; tekst: string }[]) =>
+    api.post<DienstChatAntwoord>(`/clusters/diensten/${dienstId}/chat`, { vraag, geschiedenis }),
 
   branchLab: (id: number, body: { branch: string; basis?: string; naam?: string }) =>
     api.post<{ id: string; name: string }>(`/clusters/${id}/branches`, body),

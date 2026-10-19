@@ -540,6 +540,40 @@ class DockerRuntime:
         args += [image, *cmd]
         return await self._cli_ok(*args, timeout=timeout)
 
+    async def run_wegwerp(
+        self,
+        *,
+        image: str,
+        cmd: List[str],
+        netwerk: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout: float = 300.0,
+        max_chars: int = _MAX_OUTPUT_CHARS,
+    ) -> Dict[str, Any]:
+        """Een wegwerpcontainer NAAST een vaste dienst, op diens netwerk.
+
+        Twee verschillen met `run_ephemeral`, allebei nodig voor dienstacties:
+
+        - **Het netwerk is te kiezen.** Een actie tegen de Cosmos-emulator
+          moet `ih-cosmos` op naam kunnen vinden, en dat kan alleen op het
+          netwerk van het cluster.
+        - **Een exitcode is geen uitzondering.** De uitslag ÍS het antwoord:
+          "leegmaken mislukte en dit zei hij" is wat je wilt zien, niet een
+          stacktrace in de log.
+        """
+        args = ["run", "--rm", "--label", _LABEL,
+                "--security-opt", "no-new-privileges",
+                "--network", netwerk or self._network, "-w", "/tmp"]
+        for key, value in (env or {}).items():
+            args += ["-e", f"{key}={value}"]
+        args += [image, *cmd]
+        code, out, err = await self._run_cli(*args, timeout=timeout)
+        samen = out if not err else (out + ("\n" if out else "") + err)
+        afgekapt = len(samen) > max_chars
+        if afgekapt:
+            samen = samen[:max_chars] + "\n… [uitvoer afgekapt]"
+        return {"exit_code": code, "output": samen, "truncated": afgekapt}
+
     async def start(self, container_id: str) -> None:
         await self._cli_ok("start", container_id)
 

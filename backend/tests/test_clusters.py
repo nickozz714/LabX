@@ -382,16 +382,36 @@ def test_twee_labs_voor_dezelfde_branch_kan_niet(db):
     assert fout.value.status_code == 409
 
 
-def test_een_cluster_zonder_repo_maakt_geen_branch_lab(db):
+def test_een_cluster_zonder_repo_begint_leeg_in_plaats_van_te_klonen(db, monkeypatch):
+    """Geen repo-URL is geen fout meer: dan begin je een nieuw project.
+
+    Eerder was dit een harde 400 ("zonder repo valt er niets uit te checken"),
+    en daarmee was er geen enkele weg om in LabX iets nieuws te BEGINNEN --
+    je moest eerst elders een repo maken. Nu krijgt het lab een verse
+    `git init` met een eerste commit, want zonder commit heeft `git log`,
+    `git checkout -b` en elke agent die iets wil vastleggen geen grond onder
+    de voeten.
+    """
     import asyncio
 
-    from fastapi import HTTPException
-
-    svc = _svc(db)
+    svc = _svc(db, NepDocker())
     c = svc.maak(naam="Leeg")
-    with pytest.raises(HTTPException) as fout:
-        asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
-    assert "repo" in str(fout.value.detail).lower()
+
+    gezien = {}
+
+    async def nep_init(_c, _p, *, branch):
+        gezien["branch"] = branch
+
+    async def nep_kloon(*_a, **_k):
+        gezien["kloonde"] = True
+
+    monkeypatch.setattr(svc, "_init_branch", nep_init)
+    monkeypatch.setattr(svc, "_kloon_branch", nep_kloon)
+    uit = asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
+
+    assert gezien["branch"] == "feature/x"
+    assert "kloonde" not in gezien
+    assert uit["branch"] == "feature/x"
 
 
 def test_diensten_en_branch_labs_delen_een_poortbereik(db):

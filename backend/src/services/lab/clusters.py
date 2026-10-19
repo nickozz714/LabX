@@ -726,10 +726,11 @@ class ClusterService:
         branch = (branch or "").strip()
         if not branch:
             raise HTTPException(status_code=400, detail="Geef een branchnaam op.")
-        if not c.repo_url:
-            raise HTTPException(
-                status_code=400,
-                detail="Dit cluster heeft nog geen repo-URL; zonder repo valt er niets uit te checken.")
+        # Geen repo-URL is niet per se een fout. Een cluster dat LEEG begonnen
+        # is heeft er nog geen: er valt niets uit te checken, dus begint het
+        # lab met een verse `git init`. Pas als er later een remote bij komt,
+        # wordt dit weer een kloon.
+        leeg_beginnen = not c.repo_url
 
         from models.lab import Lab
 
@@ -744,9 +745,10 @@ class ClusterService:
         # Eerst kijken of we er überhaupt bij kunnen. Een lab aanmaken en
         # het daarna weer opruimen omdat het token niet mag, is werk en
         # verwarring voor niets.
-        toegang = await self.controleer_toegang(c)
-        if toegang.get("gecontroleerd") and not toegang.get("ok"):
-            raise HTTPException(status_code=400, detail=toegang["hint"])
+        if not leeg_beginnen:
+            toegang = await self.controleer_toegang(c)
+            if toegang.get("gecontroleerd") and not toegang.get("ok"):
+                raise HTTPException(status_code=400, detail=toegang["hint"])
 
         lab_svc = LabService(self.db)
         uit = await lab_svc.create(
@@ -783,7 +785,10 @@ class ClusterService:
         self.db.commit()
 
         try:
-            await self._kloon_branch(c, p, branch=branch, basis=basis)
+            if leeg_beginnen:
+                await self._init_branch(c, p, branch=branch)
+            else:
+                await self._kloon_branch(c, p, branch=branch, basis=basis)
         except Exception as exc:  # noqa: BLE001
             # Het lab dat WIJ net maakten weer opruimen. Laten staan lijkt
             # behulpzaam ("dan zie je wat er misging") maar is het niet: er
@@ -804,6 +809,40 @@ class ClusterService:
                   basis=basis, lab_id=p.id)
         self.db.refresh(p)
         return lab_svc._to_dict(p)
+
+    async def _init_branch(self, c: Cluster, p: Any, *, branch: str) -> None:
+        """Een verse werkkopie voor een cluster dat leeg begonnen is.
+
+        Niet "een lege map": een git-repo met een eerste commit erin. Zonder
+        die commit heeft `git checkout -b`, `git log` en elke agent die iets
+        wil vastleggen geen grond onder de voeten, en dat merk je pas als je
+        al een uur aan het bouwen bent.
+
+        Er is hier geen remote. Die komt er later bij -- zet de repo-URL op
+        het cluster zodra hij bestaat, en vanaf dan kloont een volgend
+        branch-lab gewoon.
+        """
+        from services.lab.lab_service import LabService, kloon_image
+
+        naam = _veilige_naam(c.naam) or "project"
+        script = (
+            'set -e; '
+            'mkdir -p "$DEST"; cd "$DEST"; '
+            'if [ ! -d .git ]; then '
+            '  git init -q -b "$TAK"; '
+            '  git config user.email "labx@localhost"; '
+            '  git config user.name "LabX"; '
+            '  printf "# %s\n\nNieuw project, opgezet vanuit LabX.\n" "$NAAM" > README.md; '
+            '  git add -A; git commit -qm "Eerste commit"; '
+            'fi; '
+            'git rev-parse --abbrev-ref HEAD'
+        )
+        rt = LabService(self.db).runtime_voor(p)
+        await rt.run_ephemeral(
+            image=await kloon_image(rt, p.image), volume=p.volume_name,
+            cmd=["sh", "-c", script],
+            env={"DEST": naam, "TAK": branch, "NAAM": c.naam},
+            timeout=300)
 
     async def _kloon_branch(self, c: Cluster, p: Any, *, branch: str,
                             basis: str) -> None:

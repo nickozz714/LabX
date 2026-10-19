@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from authentication import require_user
 from db.database import get_db
 from services.lab.clusters import ClusterService
+from services.lab.dienst_acties import DienstActieService
 
 router = APIRouter(prefix="/clusters", tags=["clusters"],
                    dependencies=[Depends(require_user)])
@@ -211,6 +212,66 @@ async def stop_dienst(dienst_id: int, db: Session = Depends(get_db)):
 async def verwijder_dienst(dienst_id: int, db: Session = Depends(get_db)):
     await _svc(db).verwijder_dienst(dienst_id)
     return {"ok": True}
+
+
+# ── knoppen bij een vaste dienst ─────────────────────────────────────────────
+#
+# Een vaste dienst is geen lab: er staat geen agent in en je kunt er niet in
+# chatten. Toch is hij juist het ding waar je wat MEE moet -- Cosmos leegmaken,
+# opnieuw seeden, even kijken wat erin zit. Het model schrijft die knoppen en
+# het script eronder; LabX voert ze uit en bewaart de uitslag.
+
+
+def _acties(db: Session) -> DienstActieService:
+    return DienstActieService(db)
+
+
+@router.get("/diensten/{dienst_id}/acties")
+def dienst_acties(dienst_id: int, db: Session = Depends(get_db)):
+    svc = _acties(db)
+    return [svc.dict(a) for a in svc.lijst(dienst_id)]
+
+
+@router.post("/diensten/{dienst_id}/acties/voorstellen")
+async def dienst_acties_voorstellen(dienst_id: int, body: Dict[str, Any] | None = None,
+                                    db: Session = Depends(get_db)):
+    return await _acties(db).voorstellen(
+        dienst_id, opdracht=str((body or {}).get("opdracht") or ""))
+
+
+@router.post("/diensten/{dienst_id}/acties")
+def dienst_actie_zetten(dienst_id: int, body: Dict[str, Any],
+                        db: Session = Depends(get_db)):
+    svc = _acties(db)
+    a = svc.zet(dienst_id,
+                actie_id=body.get("id"),
+                label=str(body.get("label") or ""),
+                script=str(body.get("script") or ""),
+                uitleg=str(body.get("uitleg") or ""),
+                plek=str(body.get("plek") or "in"),
+                image=str(body.get("image") or ""),
+                gevaarlijk=bool(body.get("gevaarlijk")),
+                bron=str(body.get("bron") or "zelf"))
+    return svc.dict(a)
+
+
+@router.post("/diensten/acties/{actie_id}/draaien")
+async def dienst_actie_draaien(actie_id: int, db: Session = Depends(get_db)):
+    return await _acties(db).draai(actie_id)
+
+
+@router.delete("/diensten/acties/{actie_id}")
+def dienst_actie_weg(actie_id: int, db: Session = Depends(get_db)):
+    _acties(db).verwijder(actie_id)
+    return {"ok": True}
+
+
+@router.post("/diensten/{dienst_id}/chat")
+async def dienst_chat(dienst_id: int, body: Dict[str, Any],
+                      db: Session = Depends(get_db)):
+    return await _acties(db).chat(
+        dienst_id, str(body.get("vraag") or ""),
+        geschiedenis=list(body.get("geschiedenis") or []))
 
 
 # ── de proefbouw ─────────────────────────────────────────────────────────────

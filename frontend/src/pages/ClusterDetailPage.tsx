@@ -18,12 +18,14 @@
  *   dan het meteen goed doen.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch, KanbanSquare,
-  KeyRound, Loader2, MessageSquare, Network, Package, Play, PlayCircle, Plus, RefreshCw, Search,
-  Server, Square, Terminal, Trash2, TriangleAlert,
+  KeyRound, LayoutDashboard, Loader2, MessageSquare, Network, Package, Play, PlayCircle, Plus,
+  RefreshCw, Search, Server, SlidersHorizontal, Square, Terminal, Trash2, TriangleAlert,
+  Wand2,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
 import { boardApi } from "@/lib/boards";
 import { labsApi } from "@/lib/labs";
@@ -38,12 +40,17 @@ import {
   Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea,
 } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { DienstActies } from "@/components/DienstActies";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
 
 function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) {
   const melding = useMelding();
   const bevestig = useBevestiging();
+  // Dicht tot je hem openklapt: de meeste keren kom je hier kijken of hij
+  // draait, niet om er iets mee te doen. Pas bij het openklappen worden de
+  // knoppen opgehaald.
+  const [bedienen, setBedienen] = useState(false);
 
   async function doe(wat: "start" | "stop" | "weg") {
     try {
@@ -94,6 +101,10 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
           )}
         </div>
         <div className="flex shrink-0 gap-1">
+          <Button variant={bedienen ? "primary" : "secondary"}
+                  onClick={() => setBedienen((x) => !x)}>
+            <Wand2 className="h-3.5 w-3.5" /> Bedienen
+          </Button>
           {d.draait
             ? <Button variant="secondary" onClick={() => doe("stop")}><Square className="h-3.5 w-3.5" /> Stop</Button>
             : <Button variant="secondary" onClick={() => doe("start")}><Play className="h-3.5 w-3.5" /> Start</Button>}
@@ -102,6 +113,12 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
           </Button>
         </div>
       </div>
+
+      {bedienen && (
+        <div className="mt-3 border-t border-border pt-3">
+          <DienstActies dienst={d} />
+        </div>
+      )}
     </li>
   );
 }
@@ -281,7 +298,11 @@ function ProefKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void })
   );
 }
 
-function SleutelKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void }) {
+function SleutelKaart(
+  { c, onWijziging, toegang, onTesten }: {
+    c: Cluster; onWijziging: () => void; toegang: Toegang | null; onTesten: () => void;
+  },
+) {
   const melding = useMelding();
   const bevestig = useBevestiging();
   const [bezig, setBezig] = useState(false);
@@ -384,6 +405,24 @@ function SleutelKaart({ c, onWijziging }: { c: Cluster; onWijziging: () => void 
           </Button>
         </div>
       )}
+
+      {/* De uitslag hoort bij de kaart die over toegang gaat, niet bij een
+          knop in de kop van de pagina waar hij losstaand bleef hangen. */}
+      <div className="mt-3 border-t border-border pt-3">
+        <Button variant="secondary" onClick={onTesten}>
+          <KeyRound className="h-4 w-4" /> Toegang testen
+        </Button>
+        {toegang && (
+          <p className={`mt-2 text-xs ${toegang.ok === false ? "text-destructive" : "text-muted-foreground"}`}>
+            {!toegang.gecontroleerd
+              ? "Niet te controleren — dit is geen GitHub-repo of er is geen token ingesteld."
+              : toegang.ok
+                ? `Het token kan bij de repo${toegang.mag_pushen ? " en mag pushen." : "."}`
+                : "Het token komt er niet bij."}
+            {toegang.hint && <> {toegang.hint}</>}
+          </p>
+        )}
+      </div>
     </Card>
   );
 }
@@ -581,10 +620,44 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
   );
 }
 
+/**
+ * De tabs van dit scherm.
+ *
+ * Twaalf kaarten onder elkaar las niemand meer: wie een poort kwam aanpassen
+ * scrolde langs de kluis, en wie een branch zocht langs het startscript. De
+ * indeling volgt wat je kómt doen, niet hoe het model het cluster beschrijft.
+ */
+type TabSleutel = "overzicht" | "diensten" | "branches" | "toegang" | "instellingen";
+
+const TABS: { key: TabSleutel; label: string; icon: LucideIcon }[] = [
+  { key: "overzicht", label: "Overzicht", icon: LayoutDashboard },
+  { key: "diensten", label: "Diensten", icon: Box },
+  { key: "branches", label: "Branch-labs", icon: GitBranch },
+  { key: "toegang", label: "Toegang & geheimen", icon: KeyRound },
+  { key: "instellingen", label: "Instellingen", icon: SlidersHorizontal },
+];
+
+function TabTelling({ n }: { n: number }) {
+  return (
+    <span className="rounded-full bg-muted px-1.5 text-[10px] leading-4 text-muted-foreground">{n}</span>
+  );
+}
+
 export function ClusterDetailPage() {
   const { clusterId } = useParams<{ clusterId: string }>();
   const navigate = useNavigate();
   const melding = useMelding();
+  const [zoek, zetZoek] = useSearchParams();
+
+  // De tab in de URL: terugkomen op dit scherm komt uit waar je was, en een
+  // tab is door te sturen ("kijk bij toegang & geheimen").
+  const gevraagd = zoek.get("tab") as TabSleutel | null;
+  const tab: TabSleutel = TABS.some((t) => t.key === gevraagd) ? (gevraagd as TabSleutel) : "overzicht";
+  const zetTab = useCallback((t: TabSleutel) => {
+    const volgende = new URLSearchParams(zoek);
+    volgende.set("tab", t);
+    zetZoek(volgende, { replace: true });
+  }, [zoek, zetZoek]);
 
   const [c, setC] = useState<Cluster | null>(null);
   const [plannen, setPlannen] = useState<ClusterPlan[]>([]);
@@ -663,6 +736,21 @@ export function ClusterDetailPage() {
     }
   }
 
+  async function naarBord() {
+    if (!c) return;
+    if (bordId) { navigate(`/boards/${bordId}`); return; }
+    try {
+      const b = await boardApi.create({
+        name: c.naam, cluster_id: c.id,
+        key_prefix: c.naam.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase() || "CLU",
+      });
+      melding.ok("Bord aangemaakt voor dit cluster");
+      navigate(`/boards/${b.id}`);
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Bord maken mislukte");
+    }
+  }
+
   async function maakBranch() {
     if (!c || !branch.trim()) return;
     setMaakt(true);
@@ -697,7 +785,7 @@ export function ClusterDetailPage() {
       </Link>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold">{c.naam}</h1>
             <Badge tone={c.status === "draait" ? "green" : c.status === "fout" ? "red" : "neutral"}>
@@ -711,25 +799,7 @@ export function ClusterDetailPage() {
           {c.repo_url && <p className="truncate font-mono text-xs text-muted-foreground">{c.repo_url}</p>}
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={controleerToegang}>
-            <KeyRound className="h-4 w-4" /> Toegang testen
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={async () => {
-              if (bordId) { navigate(`/boards/${bordId}`); return; }
-              try {
-                const b = await boardApi.create({
-                  name: c.naam, cluster_id: c.id,
-                  key_prefix: c.naam.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase() || "CLU",
-                });
-                melding.ok("Bord aangemaakt voor dit cluster");
-                navigate(`/boards/${b.id}`);
-              } catch (e) {
-                melding.fout(e instanceof ApiError ? e.message : "Bord maken mislukte");
-              }
-            }}
-          >
+          <Button variant="secondary" onClick={naarBord}>
             <KanbanSquare className="h-4 w-4" /> {bordId ? "Naar het bord" : "Bord maken"}
           </Button>
           <Button variant="secondary" onClick={() => setVerkenOpen(true)} disabled={!c.repo_url}>
@@ -738,248 +808,291 @@ export function ClusterDetailPage() {
         </div>
       </div>
 
-      {toegang && (
-        <Card className={`p-3 text-sm ${toegang.ok === false ? "border-destructive/50 bg-destructive/5" : ""}`}>
-          {!toegang.gecontroleerd
-            ? "Niet te controleren — dit is geen GitHub-repo of er is geen token ingesteld."
-            : toegang.ok
-              ? `Het token kan bij de repo${toegang.mag_pushen ? " en mag pushen." : "."}`
-              : "Het token komt er niet bij."}
-          {toegang.hint && <p className="mt-1 text-xs text-muted-foreground">{toegang.hint}</p>}
-        </Card>
+      {/* Eén strip in plaats van twaalf kaarten onder elkaar. De tab staat in
+          de URL, zodat terugkomen op dezelfde plek uitkomt en je een tab kunt
+          doorsturen. */}
+      <div className="flex flex-wrap gap-1 border-b border-border text-sm">
+        {TABS.map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => zetTab(key)}
+            className={"flex items-center gap-1.5 px-3 py-1.5 "
+              + (tab === key ? "border-b-2 border-primary font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+            {key === "diensten" && c.diensten.length > 0 && <TabTelling n={c.diensten.length} />}
+            {key === "branches" && c.labs.length > 0 && <TabTelling n={c.labs.length} />}
+            {key === "toegang" && c.azure_profiel_nodig && (
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" title="Er mist nog een Azure-profiel" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Een ontbrekend Azure-profiel laat de helft van de applicatie omvallen
+          terwijl de rest doordraait. Dat mag je niet pas zien als je toevallig
+          op de goede tab komt. */}
+      {c.azure_profiel_nodig && tab !== "toegang" && (
+        <button
+          onClick={() => zetTab("toegang")}
+          className="flex w-full items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-left text-sm"
+        >
+          <TriangleAlert className="h-4 w-4 shrink-0 text-amber-500" />
+          <span>Deze applicatie heeft een Azure-aanmelding nodig, maar er is nog geen profiel gekoppeld.</span>
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground">Toegang & geheimen →</span>
+        </button>
       )}
 
-      {/* Een project dat zijn geheimen zelf ophaalt, heeft een aanmelding
-          nodig. In het lab kan niemand `az login` doen, dus die sessie moet
-          van een profiel komen -- anders valt de helft van de applicatie om
-          terwijl de rest gewoon draait, en dat ziet eruit als een half
-          geslaagd lab. */}
-      {(c.azure_profiel_nodig || c.azure_profiel_id) && (
-        <Card className={`p-4 ${c.azure_profiel_nodig ? "border-amber-500/40 bg-amber-500/5" : ""}`}>
-          <div className="flex flex-wrap items-center gap-2">
-            <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="text-sm font-semibold">Azure-aanmelding</span>
-            {c.azure_profiel_id
-              ? <Badge tone="green">profiel gekoppeld</Badge>
-              : <Badge tone="yellow">nog geen profiel</Badge>}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {c.geheimen_zelf
-              ? "Deze applicatie haalt haar instellingen zelf uit een vault. Daarvoor moet er iemand aangemeld zijn, en in het lab kan dat niet — de sessie komt van dit profiel."
-              : "Deze applicatie gebruikt de Azure CLI. Zonder aanmelding werkt die niet in het lab."}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Select
-              className="max-w-xs"
-              value={c.azure_profiel_id ?? ""}
-              onChange={async (e: React.ChangeEvent<HTMLSelectElement>) => {
-                try {
-                  await clusterApi.wijzig(c.id, {
-                    azure_profiel_id: e.target.value ? Number(e.target.value) : null,
-                  } as Partial<Cluster>);
-                  melding.ok("Azure-profiel gekoppeld");
-                  laad();
-                } catch (err) {
-                  melding.fout(err instanceof ApiError ? err.message : "Koppelen mislukte");
-                }
-              }}
-            >
-              <option value="">Geen profiel</option>
-              {azureProfielen.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </Select>
-            <span className="text-xs text-muted-foreground">
-              Elk branch-lab krijgt dit profiel mee.
-            </span>
-          </div>
-        </Card>
+      {/* ── overzicht: de proefbouw en wat er verkend is ─────────────────── */}
+      {tab === "overzicht" && (
+        <div className="space-y-4">
+          <ProefKaart c={c} onWijziging={laad} />
+
+          <Card className="p-4">
+            <h2 className="mb-2 text-sm font-semibold">Verkenningen</h2>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Elk plan hoort bij een commit en blijft staan. Zo zie je wat er veranderd is in
+              plaats van dat de nieuwste de vorige overschrijft.
+            </p>
+            {plannen.length === 0
+              ? <EmptyState>Nog geen verkenning. Begin met “Opnieuw verkennen” hierboven.</EmptyState>
+              : <ul className="space-y-2">
+                  {plannen.map((p) => (
+                    <li key={p.id} className="flex items-center justify-between gap-2 rounded-lg border border-border p-3">
+                      <Link to={`/clusters/plannen/${p.id}`} className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs">{p.commit?.slice(0, 8) || "—"}</span>
+                          <span className="text-xs text-muted-foreground">{p.branch}</span>
+                          <Badge tone={p.status === "goedgekeurd" ? "green" : "neutral"}>{p.status}</Badge>
+                          {!p.model_gebruikt && <Badge tone="yellow">zonder model</Badge>}
+                        </div>
+                        {p.samenvatting && (
+                          <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{p.samenvatting}</p>
+                        )}
+                      </Link>
+                      <RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    </li>
+                  ))}
+                </ul>}
+          </Card>
+        </div>
       )}
-
-      {/* ── de proefbouw ────────────────────────────────────────────────── */}
-      <ProefKaart c={c} onWijziging={laad} />
-
-      {/* ── toegang en geheimen ─────────────────────────────────────────── */}
-      <SleutelKaart c={c} onWijziging={laad} />
-
-      {/* ── de kluis ────────────────────────────────────────────────────── */}
-      <KluisKaart clusterId={c.id} benodigd={c.benodigde_geheimen || {}} />
 
       {/* ── de vaste laag ────────────────────────────────────────────────── */}
-      <PoortenKaart cluster={c} onWijzig={laad} />
-
-      <EnvBestandenKaart clusterId={c.id} paden={c.env_paden || []} />
-
-      <ExtrasKaart clusterId={c.id} gekozen={c.lab_extras || []} onWijzig={laad} />
-
-      <Card className="p-4">
-        <div className="mb-3 flex items-start gap-2">
-          <Box className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div>
-            <h2 className="text-sm font-semibold">Vaste diensten</h2>
-            <p className="text-xs text-muted-foreground">
-              Blijven staan terwijl branch-labs komen en gaan. Een branch-lab bereikt ze op
-              naam, zonder poort of adres.
-            </p>
-          </div>
-        </div>
-        {c.diensten.length === 0
-          ? <EmptyState>Nog geen vaste diensten. Verken de repo opnieuw als er een bij hoort.</EmptyState>
-          : <ul className="space-y-2">
-              {c.diensten.map((d) => <DienstRegel key={d.id} d={d} onActie={laad} />)}
-            </ul>}
-      </Card>
-
-      {/* ── de branches ──────────────────────────────────────────────────── */}
-      <Card className="p-4">
-        <div className="mb-3 flex items-start justify-between gap-2">
-          <div className="flex items-start gap-2">
-            <GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      {tab === "diensten" && (
+        <Card className="p-4">
+          <div className="mb-3 flex items-start gap-2">
+            <Box className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             <div>
-              <h2 className="text-sm font-semibold">Branch-labs</h2>
+              <h2 className="text-sm font-semibold">Vaste diensten</h2>
               <p className="text-xs text-muted-foreground">
-                Eén lab per branch, met de code van díé branch. Wegwerpbaar.
+                Blijven staan terwijl branch-labs komen en gaan. Een branch-lab bereikt ze op
+                naam, zonder poort of adres.
               </p>
             </div>
           </div>
-          <Button variant="secondary" onClick={() => setBranchOpen(true)} disabled={!c.repo_url}>
-            <Plus className="h-4 w-4" /> Branch
-          </Button>
-        </div>
-        {c.labs.length === 0
-          ? <EmptyState>Nog geen branch-labs.</EmptyState>
-          : <ul className="space-y-2">
-              {c.labs.map((l) => (
-                <li key={l.id} className="rounded-lg border border-border p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Link to={`/labs/${l.id}`} className="min-w-0">
-                      <span className="font-medium">{l.name}</span>
-                      {l.branch && <span className="ml-2 font-mono text-xs text-muted-foreground">{l.branch}</span>}
-                    </Link>
-                    <div className="flex flex-wrap gap-1">
-                      {/* Chatten en het bord staan hier omdat dit de plek is
-                          waar je een branch uitkiest. Anders moet je de naam
-                          van het lab onthouden en hem elders terugzoeken. */}
-                      <Button variant="secondary" onClick={() => navigate(`/chat?lab=${l.id}`)}>
-                        <MessageSquare className="h-3.5 w-3.5" /> Chat
-                      </Button>
-                      <TunnelKnop lab={l} />
-                      {bordId && (
-                        <Button variant="secondary"
-                                onClick={() => navigate(`/boards/${bordId}?branch=${encodeURIComponent(l.branch || "")}`)}>
-                          <KanbanSquare className="h-3.5 w-3.5" /> Bord
-                        </Button>
-                      )}
-                      <Button
-                        variant="secondary"
-                        onClick={async () => {
-                          try {
-                            await clusterApi.branchStart(l.id);
-                            melding.ok("Branch-lab gestart");
-                            void laad();
-                          } catch (e) {
-                            melding.fout(e instanceof ApiError ? e.message : "Starten mislukte");
-                          }
-                        }}
-                      >
-                        <Play className="h-3.5 w-3.5" /> Start
-                      </Button>
-                      {/* Opnieuw starten van de APPLICATIE, niet van het lab.
-                          Meestal niet nodig: draait het startscript een
-                          devserver die meekijkt (Vite, nodemon), dan is een
-                          wijziging van de agent meteen te zien -- gemeten op
-                          dit cluster: index.html aanpassen en de pagina
-                          serveert het direct.
-
-                          Wel nodig als het script BOUWT in plaats van kijkt,
-                          of als de applicatie is omgevallen. Vandaar een
-                          stil knopje en geen prominente knop. */}
-                      <Button
-                        variant="ghost"
-                        title="Applicatie opnieuw starten — meestal niet nodig: een devserver pikt wijzigingen zelf op"
-                        onClick={async () => {
-                          try {
-                            await clusterApi.branchAppHerstarten(l.id);
-                            melding.ok("Applicatie opnieuw gestart");
-                          } catch (e) {
-                            melding.fout(e instanceof ApiError ? e.message : "Herstarten mislukte");
-                          }
-                        }}
-                      >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>}
-      </Card>
-
-      {/* ── hoe het is ingericht ─────────────────────────────────────────── */}
-      <Card className="p-4">
-        <div className="mb-2 flex items-start gap-2">
-          <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div>
-            <h2 className="text-sm font-semibold">Inrichting</h2>
-            <p className="text-xs text-muted-foreground">
-              Geldt voor elk branch-lab. Eén keer opgeschreven, op één plek aan te passen.
-            </p>
-          </div>
-        </div>
-        <dl className="space-y-2 text-sm">
-          <div className="flex gap-2">
-            <dt className="w-32 shrink-0 text-muted-foreground">Lab-image</dt>
-            <dd className="font-mono text-xs">{c.lab_image || "—"}</dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="w-32 shrink-0 text-muted-foreground">Env-profiel</dt>
-            <dd>{c.env_profiel || "—"}</dd>
-          </div>
-          {Object.keys(c.omgeving).length > 0 && (
-            <div className="flex gap-2">
-              <dt className="w-32 shrink-0 text-muted-foreground">Omgeving</dt>
-              <dd className="min-w-0 font-mono text-xs">
-                {Object.entries(c.omgeving).map(([k, v]) => (
-                  <div key={k} className="truncate">{k}={v}</div>
-                ))}
-              </dd>
-            </div>
-          )}
-        </dl>
-        {c.start_script && (
-          <pre className="mt-3 max-h-56 overflow-auto rounded-lg bg-muted/40 p-3 font-mono text-xs leading-relaxed">
-            {c.start_script}
-          </pre>
-        )}
-      </Card>
-
-      {/* ── wat er verkend is ────────────────────────────────────────────── */}
-      {plannen.length > 0 && (
-        <Card className="p-4">
-          <h2 className="mb-2 text-sm font-semibold">Verkenningen</h2>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Elk plan hoort bij een commit en blijft staan. Zo zie je wat er veranderd is in
-            plaats van dat de nieuwste de vorige overschrijft.
-          </p>
-          <ul className="space-y-2">
-            {plannen.map((p) => (
-              <li key={p.id} className="flex items-center justify-between gap-2 rounded-lg border border-border p-3">
-                <Link to={`/clusters/plannen/${p.id}`} className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs">{p.commit?.slice(0, 8) || "—"}</span>
-                    <span className="text-xs text-muted-foreground">{p.branch}</span>
-                    <Badge tone={p.status === "goedgekeurd" ? "green" : "neutral"}>{p.status}</Badge>
-                    {!p.model_gebruikt && <Badge tone="yellow">zonder model</Badge>}
-                  </div>
-                  {p.samenvatting && (
-                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{p.samenvatting}</p>
-                  )}
-                </Link>
-                <RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              </li>
-            ))}
-          </ul>
+          {c.diensten.length === 0
+            ? <EmptyState>Nog geen vaste diensten. Verken de repo opnieuw als er een bij hoort.</EmptyState>
+            : <ul className="space-y-2">
+                {c.diensten.map((d) => <DienstRegel key={d.id} d={d} onActie={laad} />)}
+              </ul>}
         </Card>
+      )}
+
+      {/* ── de branches ──────────────────────────────────────────────────── */}
+      {tab === "branches" && (
+        <Card className="p-4">
+          <div className="mb-3 flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2">
+              <GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <div>
+                <h2 className="text-sm font-semibold">Branch-labs</h2>
+                <p className="text-xs text-muted-foreground">
+                  {c.repo_url
+                    ? "Eén lab per branch, met de code van díé branch. Wegwerpbaar."
+                    : "Dit cluster heeft nog geen repo. Het eerste lab begint leeg, met een verse git init en een eerste commit."}
+                </p>
+              </div>
+            </div>
+            <Button variant="secondary" onClick={() => setBranchOpen(true)}>
+              <Plus className="h-4 w-4" /> Branch
+            </Button>
+          </div>
+          {c.labs.length === 0
+            ? <EmptyState>Nog geen branch-labs.</EmptyState>
+            : <ul className="space-y-2">
+                {c.labs.map((l) => (
+                  <li key={l.id} className="rounded-lg border border-border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Link to={`/labs/${l.id}`} className="min-w-0">
+                        <span className="font-medium">{l.name}</span>
+                        {l.branch && <span className="ml-2 font-mono text-xs text-muted-foreground">{l.branch}</span>}
+                      </Link>
+                      <div className="flex flex-wrap gap-1">
+                        {/* Chatten en het bord staan hier omdat dit de plek is
+                            waar je een branch uitkiest. Anders moet je de naam
+                            van het lab onthouden en hem elders terugzoeken. */}
+                        <Button variant="secondary" onClick={() => navigate(`/chat?lab=${l.id}`)}>
+                          <MessageSquare className="h-3.5 w-3.5" /> Chat
+                        </Button>
+                        <TunnelKnop lab={l} />
+                        {bordId && (
+                          <Button variant="secondary"
+                                  onClick={() => navigate(`/boards/${bordId}?branch=${encodeURIComponent(l.branch || "")}`)}>
+                            <KanbanSquare className="h-3.5 w-3.5" /> Bord
+                          </Button>
+                        )}
+                        <Button
+                          variant="secondary"
+                          onClick={async () => {
+                            try {
+                              await clusterApi.branchStart(l.id);
+                              melding.ok("Branch-lab gestart");
+                              void laad();
+                            } catch (e) {
+                              melding.fout(e instanceof ApiError ? e.message : "Starten mislukte");
+                            }
+                          }}
+                        >
+                          <Play className="h-3.5 w-3.5" /> Start
+                        </Button>
+                        {/* Opnieuw starten van de APPLICATIE, niet van het lab.
+                            Meestal niet nodig: draait het startscript een
+                            devserver die meekijkt (Vite, nodemon), dan is een
+                            wijziging van de agent meteen te zien -- gemeten op
+                            dit cluster: index.html aanpassen en de pagina
+                            serveert het direct.
+
+                            Wel nodig als het script BOUWT in plaats van kijkt,
+                            of als de applicatie is omgevallen. Vandaar een
+                            stil knopje en geen prominente knop. */}
+                        <Button
+                          variant="ghost"
+                          title="Applicatie opnieuw starten — meestal niet nodig: een devserver pikt wijzigingen zelf op"
+                          onClick={async () => {
+                            try {
+                              await clusterApi.branchAppHerstarten(l.id);
+                              melding.ok("Applicatie opnieuw gestart");
+                            } catch (e) {
+                              melding.fout(e instanceof ApiError ? e.message : "Herstarten mislukte");
+                            }
+                          }}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>}
+        </Card>
+      )}
+
+      {/* ── toegang en geheimen ─────────────────────────────────────────── */}
+      {tab === "toegang" && (
+        <div className="space-y-4">
+          {/* Een project dat zijn geheimen zelf ophaalt, heeft een aanmelding
+              nodig. In het lab kan niemand `az login` doen, dus die sessie moet
+              van een profiel komen -- anders valt de helft van de applicatie om
+              terwijl de rest gewoon draait, en dat ziet eruit als een half
+              geslaagd lab. */}
+          {(c.azure_profiel_nodig || c.azure_profiel_id) && (
+            <Card className={`p-4 ${c.azure_profiel_nodig ? "border-amber-500/40 bg-amber-500/5" : ""}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="text-sm font-semibold">Azure-aanmelding</span>
+                {c.azure_profiel_id
+                  ? <Badge tone="green">profiel gekoppeld</Badge>
+                  : <Badge tone="yellow">nog geen profiel</Badge>}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {c.geheimen_zelf
+                  ? "Deze applicatie haalt haar instellingen zelf uit een vault. Daarvoor moet er iemand aangemeld zijn, en in het lab kan dat niet — de sessie komt van dit profiel."
+                  : "Deze applicatie gebruikt de Azure CLI. Zonder aanmelding werkt die niet in het lab."}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Select
+                  className="max-w-xs"
+                  value={c.azure_profiel_id ?? ""}
+                  onChange={async (e: React.ChangeEvent<HTMLSelectElement>) => {
+                    try {
+                      await clusterApi.wijzig(c.id, {
+                        azure_profiel_id: e.target.value ? Number(e.target.value) : null,
+                      } as Partial<Cluster>);
+                      melding.ok("Azure-profiel gekoppeld");
+                      laad();
+                    } catch (err) {
+                      melding.fout(err instanceof ApiError ? err.message : "Koppelen mislukte");
+                    }
+                  }}
+                >
+                  <option value="">Geen profiel</option>
+                  {azureProfielen.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </Select>
+                <span className="text-xs text-muted-foreground">
+                  Elk branch-lab krijgt dit profiel mee.
+                </span>
+              </div>
+            </Card>
+          )}
+
+          <SleutelKaart c={c} onWijziging={laad} toegang={toegang} onTesten={controleerToegang} />
+
+          <EnvBestandenKaart clusterId={c.id} paden={c.env_paden || []} />
+
+          <KluisKaart clusterId={c.id} benodigd={c.benodigde_geheimen || {}} />
+        </div>
+      )}
+
+      {/* ── hoe het lab eruitziet ────────────────────────────────────────── */}
+      {tab === "instellingen" && (
+        <div className="space-y-4">
+          <RepoKaart cluster={c} onWijzig={laad} />
+
+          <PoortenKaart cluster={c} onWijzig={laad} />
+
+          <ExtrasKaart clusterId={c.id} gekozen={c.lab_extras || []} onWijzig={laad} />
+
+          <Card className="p-4">
+            <div className="mb-2 flex items-start gap-2">
+              <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <div>
+                <h2 className="text-sm font-semibold">Inrichting</h2>
+                <p className="text-xs text-muted-foreground">
+                  Geldt voor elk branch-lab. Eén keer opgeschreven, op één plek aan te passen.
+                </p>
+              </div>
+            </div>
+            <dl className="space-y-2 text-sm">
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-muted-foreground">Lab-image</dt>
+                <dd className="font-mono text-xs">{c.lab_image || "—"}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 shrink-0 text-muted-foreground">Env-profiel</dt>
+                <dd>{c.env_profiel || "—"}</dd>
+              </div>
+              {Object.keys(c.omgeving).length > 0 && (
+                <div className="flex gap-2">
+                  <dt className="w-32 shrink-0 text-muted-foreground">Omgeving</dt>
+                  <dd className="min-w-0 font-mono text-xs">
+                    {Object.entries(c.omgeving).map(([k, v]) => (
+                      <div key={k} className="truncate">{k}={v}</div>
+                    ))}
+                  </dd>
+                </div>
+              )}
+            </dl>
+            {c.start_script && (
+              <pre className="mt-3 max-h-56 overflow-auto rounded-lg bg-muted/40 p-3 font-mono text-xs leading-relaxed">
+                {c.start_script}
+              </pre>
+            )}
+          </Card>
+        </div>
       )}
 
       <Modal open={verkenOpen} onClose={() => setVerkenOpen(false)} title="Opnieuw verkennen">
@@ -1028,11 +1141,12 @@ export function ClusterDetailPage() {
             <Input value={branch} onChange={(e) => setBranch(e.target.value)}
                    placeholder="feature/zoek-filter" autoFocus />
             <p className="mt-1 text-xs text-muted-foreground">
-              Bestaat hij al op de remote, dan wordt hij uitgecheckt. Zo niet, dan wordt hij
-              afgetakt van de basis hieronder.
+              {c.repo_url
+                ? "Bestaat hij al op de remote, dan wordt hij uitgecheckt. Zo niet, dan wordt hij afgetakt van de basis hieronder."
+                : "Er is nog geen repo, dus er valt niets uit te checken: dit wordt de branch van een verse git init."}
             </p>
           </div>
-          <div>
+          <div className={c.repo_url ? "" : "hidden"}>
             <Label>Aftakken van</Label>
             <Input value={basis} onChange={(e) => setBasis(e.target.value)} placeholder="main" />
             <p className="mt-1 text-xs text-muted-foreground">
@@ -1420,6 +1534,68 @@ function ExtrasKaart(
  * LabX wachtte dan tot de tijd om was en noemde het mislukt, en het model
  * ging een tweede server op 80 zetten om eraan te voldoen.
  */
+/** De repo van dit cluster — ook als die er nog niet is.
+ *
+ * Een cluster dat LEEG begon heeft geen URL: het eerste branch-lab kreeg een
+ * verse `git init` en er is geen remote om naartoe te pushen. Zodra die er
+ * wel is hoort hij hier, want vanaf dat moment hoort een volgend branch-lab
+ * te KLONEN in plaats van opnieuw leeg te beginnen -- en zonder deze kaart
+ * was daar geen weg naartoe behalve een nieuw cluster maken.
+ */
+function RepoKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => void }) {
+  const melding = useMelding();
+  const [url, setUrl] = useState(cluster.repo_url || "");
+  const [bezig, setBezig] = useState(false);
+
+  async function bewaar() {
+    setBezig(true);
+    try {
+      await clusterApi.wijzig(cluster.id, { repo_url: url.trim() } as Partial<Cluster>);
+      melding.ok(url.trim() ? "Repo gekoppeld." : "Repo losgekoppeld.");
+      onWijzig();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Opslaan mislukte");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h2 className="text-sm font-semibold">Repo</h2>
+          <p className="text-xs text-muted-foreground">
+            {cluster.repo_url
+              ? "Elk branch-lab kloont hieruit."
+              : "Dit cluster begon leeg. Zet hier de URL zodra er een remote is — vanaf dan kloont een nieuw branch-lab in plaats van leeg te beginnen."}
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-0 flex-1">
+          <Label>URL</Label>
+          <Input value={url} onChange={(e) => setUrl(e.target.value)}
+                 placeholder="https://github.com/jij/nieuw-project.git" />
+        </div>
+        <Button onClick={bewaar} disabled={bezig || url.trim() === (cluster.repo_url || "")}>
+          {bezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+          Bewaren
+        </Button>
+      </div>
+      {!cluster.repo_url && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Een nieuwe repo maak je bij je git-hoster; LabX doet dat niet voor je. Push vanuit
+          het lab (<span className="font-mono">git remote add origin …</span>) en zet de URL
+          daarna hier neer. Is hij privé, dan hoort er ook een deploy key of token bij —
+          zie <span className="font-medium">Toegang &amp; geheimen</span>.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function PoortenKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => void }) {
   const melding = useMelding();
   const [poorten, setPoorten] = useState<number[]>(cluster.lab_poorten || []);

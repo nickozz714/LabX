@@ -17,7 +17,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Boxes, GitBranch, KeyRound, Loader2, Play, Search, Server, Trash2, TriangleAlert,
+  Boxes, FilePlus, GitBranch, KeyRound, Loader2, Play, Search, Server, Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { clusterApi } from "@/lib/clusters";
 import type { Cluster } from "@/lib/clusters";
@@ -45,6 +46,13 @@ export function ClustersPage() {
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [bezig, setBezig] = useState(true);
   const [open, setOpen] = useState(false);
+  // Leeg beginnen is een EIGEN venster en geen vinkje in het verkenvenster:
+  // daar gaat alles over een repo die er al is (URL, branch, token, env-
+  // bestanden), en dat is precies wat hier niet bestaat.
+  const [leegOpen, setLeegOpen] = useState(false);
+  const [leegNaam, setLeegNaam] = useState("");
+  const [leegImage, setLeegImage] = useState("");
+  const [leegBezig, setLeegBezig] = useState(false);
   const [verkent, setVerkent] = useState(false);
 
   // Een verkenning begin je vaak met een URL die je ergens vandaan moet
@@ -149,6 +157,26 @@ export function ClustersPage() {
     }
   }
 
+  async function maakLeeg() {
+    const naam = leegNaam.trim();
+    if (!naam) return;
+    setLeegBezig(true);
+    try {
+      const c = await clusterApi.maak({
+        naam,
+        host_id: hostId ? Number(hostId) : null,
+        ...(leegImage.trim() ? { lab_image: leegImage.trim() } : {}),
+      } as { naam: string; host_id?: number | null });
+      setLeegOpen(false);
+      setLeegNaam("");
+      navigate(`/clusters/${c.id}`);
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Cluster aanmaken mislukte");
+    } finally {
+      setLeegBezig(false);
+    }
+  }
+
   async function weg(c: Cluster) {
     const ja = await bevestig.vraag({
       titel: `Cluster '${c.naam}' verwijderen?`,
@@ -185,9 +213,14 @@ export function ClustersPage() {
             Een repo met een vaste laag eronder en een lab per branch erboven.
           </p>
         </div>
-        <Button onClick={() => setOpen(true)}>
-          <Search className="h-4 w-4" /> Repo verkennen
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setLeegOpen(true)}>
+            <FilePlus className="h-4 w-4" /> Leeg beginnen
+          </Button>
+          <Button onClick={() => setOpen(true)}>
+            <Search className="h-4 w-4" /> Repo verkennen
+          </Button>
+        </div>
       </div>
 
       {bezig && (
@@ -202,6 +235,8 @@ export function ClustersPage() {
           hoort te zien — welke vaste diensten erbij horen, waarin een branch-lab draait,
           en wat er uit de kluis moet komen. Er wordt niets aangemaakt tot je dat voorstel
           goedkeurt.
+          {" "}Nog geen repo? Begin leeg — dan maakt LabX het cluster zonder verkenning, en
+          krijgt het eerste branch-lab een verse <span className="font-mono">git init</span>.
         </EmptyState>
       )}
 
@@ -250,6 +285,54 @@ export function ClustersPage() {
           </Card>
         ))}
       </div>
+
+      <Modal open={leegOpen} onClose={() => setLeegOpen(false)} title="Leeg beginnen">
+        <p className="text-sm text-muted-foreground">
+          Een cluster zonder repo. Er valt niets te verkennen, dus LabX maakt hem direct aan:
+          een eigen netwerk, nog geen vaste diensten, en een lege vaste laag die je er zelf bij
+          zet. Het eerste branch-lab krijgt een verse{" "}
+          <span className="font-mono">git init</span> met een eerste commit, zodat er grond
+          onder je voeten staat.
+        </p>
+        <div className="mt-4 space-y-3">
+          <div>
+            <Label>Naam</Label>
+            <Input value={leegNaam} onChange={(e) => setLeegNaam(e.target.value)}
+                   placeholder="nieuw-project" autoFocus />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Ook de naam van het docker-netwerk en van de werkmap in het lab.
+            </p>
+          </div>
+          <div>
+            <Label>Machine</Label>
+            <Select value={hostId} onChange={(e) => setHostId(e.target.value)}>
+              <option value="">deze server</option>
+              {hosts.map((h) => <option key={h.id} value={h.id}>{h.naam}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label>Lab-image (optioneel)</Label>
+            <Input value={leegImage} onChange={(e) => setLeegImage(e.target.value)}
+                   placeholder="node:22-bookworm" />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Leeg = de standaard van LabX. Later aan te passen bij Instellingen, net als de
+              poorten en de extra pakketten.
+            </p>
+          </div>
+        </div>
+        <p className="mt-4 rounded-lg border border-border p-3 text-xs text-muted-foreground">
+          Komt er later een repo bij? Zet de URL op het cluster onder{" "}
+          <span className="font-medium">Instellingen</span> — vanaf dan kloont een volgend
+          branch-lab gewoon, in plaats van leeg te beginnen.
+        </p>
+        <div className="mt-5 flex gap-2">
+          <Button onClick={maakLeeg} disabled={leegBezig || !leegNaam.trim()}>
+            {leegBezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus className="h-4 w-4" />}
+            Cluster aanmaken
+          </Button>
+          <Button variant="secondary" onClick={() => setLeegOpen(false)}>Annuleren</Button>
+        </div>
+      </Modal>
 
       <Modal open={open} onClose={() => setOpen(false)} title="Repo verkennen">
         <p className="text-sm text-muted-foreground">
