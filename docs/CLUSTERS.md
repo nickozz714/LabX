@@ -138,6 +138,87 @@ Workflows werken op clusterniveau: "maak een branch-lab voor dit ticket",
 
 ---
 
+## Een vaste dienst bedienen
+
+Een vaste dienst is geen lab. Er staat geen agent in, je kunt er niet in
+chatten, en toch is hij juist het ding waar je wat MEE moet: Cosmos
+leegmaken, opnieuw seeden, even kijken wat erin zit. Dat deed je tot nu toe
+in een terminal naast LabX, met een commando dat je elke keer opzocht.
+
+Onder **Diensten → Bedienen** staan knoppen bij elke dienst. Het model
+bedenkt ze én schrijft het script eronder, want welke handelingen zinnig zijn
+volgt uit het IMAGE — een Cosmos-emulator heeft andere knoppen dan een Redis,
+en een vaste lijst in LabX zou voor allebei verkeerd zijn.
+
+**Twee plekken om te draaien, allebei nodig.**
+
+| | waar | waarvoor |
+|---|---|---|
+| `in` | `docker exec` in de dienst zelf | gereedschap dat in het image zit (`redis-cli`, `psql`) |
+| `naast` | wegwerpcontainer op het clusternetwerk | alles wat een client nodig heeft die er NIET in zit |
+
+De Cosmos-emulator heeft geen curl, laat staan een SDK, en leegmaken is juist
+dáár wat je wilt. Zonder die tweede plek was de hele functie voor die dienst
+onbruikbaar. Een `naast`-script krijgt `$DIENST_HOST`, `$DIENST_POORT` en
+`$DIENST_POORTEN` mee, zodat de naam van de dienst er niet hard in staat.
+
+**Het script staat in het volle zicht.** Een knop waarvan je niet kunt zien
+wat hij doet, druk je niet in — zeker niet als een model hem heeft
+geschreven. Stel je hem bij, dan laat een volgende modelronde hem met rust:
+anders is je correctie één klik later weer weg.
+
+Daarnaast een chat die niet adviseert maar doet. Een antwoord van de vorm
+"voer dit even uit in je terminal" lost niets op — dan had je die terminal
+net zo goed meteen kunnen openen. Komt het model met een script, dan draait
+het, en de uitvoer staat eronder. Werkte het? Eén klik maakt er een knop van.
+
+Wat er NIET naar het model gaat: de WAARDEN van de omgevingsvariabelen van de
+dienst. Alleen de namen.
+
+---
+
+## Bestanden van buiten: bundels
+
+Een vaste dienst begint leeg, en de bron waaruit hij gevuld hoort te worden
+is niet altijd bereikbaar. De Cosmos van IntelligentHive zit achter een
+accountfirewall; gemeten vanuit het lab:
+
+```
+403  Request originated from IP 86.80.134.69 through public internet.
+     This is blocked by your Cosmos DB account firewall settings.
+```
+
+`.devcontainer/sync.sh` komt daar dus niet bij, en `bootstrap.sh` kent geen
+tweede weg — die seedt met `sync.sh --if-empty` of helemaal niet. De export
+staat dan gewoon op iemands schijf, en tot nu toe was er geen weg om die het
+cluster in te krijgen: de bestandsbrowser hoort bij een LAB.
+
+Onder **Diensten → Bestanden van buiten** upload je een `.zip` of `.tar.gz`
+met één zin erbij over wat ermee moet ("zet deze dump in de Cosmos-emulator,
+met de partition keys uit het manifest"). Het model schrijft het script; LabX
+draait het in een wegwerpcontainer op het clusternetwerk, naast de dienst die
+je kiest, met de bundel **alleen-lezen** op `/bundel`.
+
+Vier dingen liggen vast:
+
+- **De inhoud gaat nooit naar het model.** Het ziet de bestandsnamen en hun
+  omvang, en krijgt de opdracht om een manifest in zijn SCRIPT te lezen in
+  plaats van te raden. Een dump van een klant hoort in een container, niet in
+  de context van een taalmodel.
+- **Alleen-lezen aangekoppeld.** Een script dat een dump inleest hoort die
+  dump niet te kunnen veranderen — anders is de tweede keer niet meer
+  dezelfde als de eerste.
+- **Uitpakken gebeurt in Python, per ingang.** `../../etc/passwd`, een
+  absoluut pad en een symlink worden geweigerd, niet opgeschoond.
+- **Een script dat werkte is ongewijzigd te herhalen**, zonder het model.
+  Anders raadt het de volgende keer net iets anders.
+
+De bundel staat in een eigen docker-volume van het cluster, niet in een map
+op de server: het cluster kan op een andere machine draaien, en een volume is
+het enige dat daar ook werkt.
+
+---
+
 ## Wat er bewust NIET in zit
 
 - **Geen tweede soort lab.** Een branch-lab is een gewoon lab met een branch
