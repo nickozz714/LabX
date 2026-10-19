@@ -217,13 +217,30 @@ class ChatAgent:
         lab = self.db.get(Lab, lab_id)
         return (getattr(lab, "model", None) or None) if lab else None
 
-    def _build_provider(self, model: Optional[str], mcp_config_path: Optional[str], settings) -> ClaudeCliProvider:
+    def _lab_max_turns(self, lab_id: Optional[str]) -> Optional[int]:
+        """Het beurtenplafond van dit lab, als er een gezet is.
+
+        Clusterwerk is iets anders dan rondkijken in een lab. Gemeten op het
+        IntelligentHive-cluster: een ticket in die monorepo liep stuk op
+        `error_max_turns` bij de standaard van 250 -- honderd shell-stappen
+        alleen om de code te vinden, en dan moet het bouwen nog beginnen. De
+        run eindigt dan halverwege, met een ticket dat er afgehandeld uitziet.
+        """
+        if not lab_id:
+            return None
+        from models.lab import Lab
+        lab = self.db.get(Lab, lab_id)
+        waarde = getattr(lab, "max_turns", None) if lab else None
+        return int(waarde) if waarde else None
+
+    def _build_provider(self, model: Optional[str], mcp_config_path: Optional[str],
+                        settings, max_turns: Optional[int] = None) -> ClaudeCliProvider:
         cc_model = claude_code_model(model or settings.default_model, default=settings.default_model)
         return ClaudeCliProvider(
             default_model=cc_model,
             oauth_token=settings.oauth_token,
             cli_path=settings.cli_path,
-            max_turns=settings.max_turns,
+            max_turns=max_turns or settings.max_turns,
             timeout=settings.timeout_seconds,
             extra_args=settings.extra_args,
             enable_tool_search=settings.enable_tool_search,
@@ -331,7 +348,8 @@ class ChatAgent:
         from services.settings_service import get_settings
         settings = get_settings(self.db)
         provider, cc_model = self._build_provider(model or self._lab_model(lab_id),
-                                                  mcp_config_path, settings)
+                                                  mcp_config_path, settings,
+                                                  max_turns=self._lab_max_turns(lab_id))
         effort = settings.default_effort
         instructions = AGENT_PREAMBLE
         from services.lab.governed_policy import PLANNER_POLICY

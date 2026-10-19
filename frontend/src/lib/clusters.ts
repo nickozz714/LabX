@@ -247,6 +247,12 @@ export type Cluster = {
   /** Hoe dit cluster bij zijn repo komt. Een sleutel wint van een token. */
   toegang_soort: "ssh" | "https" | "geen";
   /** Waarop de applicatie IN een branch-lab luistert; LabX publiceert die. */
+  /** Het model waarop ELK lab van dit cluster draait. Leeg = de instelling
+   *  van de installatie. Wijzigen zet het ook op de bestaande labs. */
+  lab_model?: string | null;
+  /** Hoeveel beurten een agent-run in een lab van dit cluster mag doen.
+   *  Leeg = de instelling van de installatie. */
+  lab_max_turns?: number | null;
   /** Krijgt een NIEUW branch-lab de guards aan? Bestaande labs houden wat ze
    *  hebben; dat staat per lab in de instellingen. */
   lab_data_guard?: boolean;

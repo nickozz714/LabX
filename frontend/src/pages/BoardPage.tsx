@@ -323,7 +323,7 @@ export function BoardPage() {
               lab: {board.lab_name} ({board.lab_status})
             </Badge>
           ) : (
-            <Badge tone="red">geen lab</Badge>
+            <Badge tone="red">geen lab of cluster</Badge>
           )}
           {board.provider !== "local" && (
             <Badge tone="violet">

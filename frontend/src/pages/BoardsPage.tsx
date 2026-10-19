@@ -87,10 +87,19 @@ export function BoardsPage() {
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <Boxes size={12} />
+                  {/* Een clusterbord HOORT geen lab te hebben: elk ticket wijst
+                      naar een branch en draait in het lab van díé branch.
+                      "Geen lab gekoppeld" was feitelijk waar en volstrekt
+                      misleidend — het las als een tekortkoming. */}
                   {b.lab_id ? (
                     <>
                       {b.lab_name || b.lab_id.slice(0, 8)}
                       <Badge tone={b.lab_status === "running" ? "green" : "yellow"}>{b.lab_status}</Badge>
+                    </>
+                  ) : b.cluster_id ? (
+                    <>
+                      cluster {b.cluster_naam || b.cluster_id}
+                      <Badge tone="violet">een lab per branch</Badge>
                     </>
                   ) : (
                     "geen lab gekoppeld"

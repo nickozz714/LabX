@@ -43,12 +43,46 @@ class BoardService:
             raise HTTPException(status_code=404, detail="Board niet gevonden")
         return b
 
+    def _clusternaam(self, cluster_id: Optional[int]) -> Optional[str]:
+        if not cluster_id:
+            return None
+        from models.cluster import Cluster
+
+        c = self.db.get(Cluster, int(cluster_id))
+        return c.naam if c else None
+
     def board_for_lab(self, lab_id: str) -> Optional[Board]:
-        """Het bord dat aan dit lab hangt (het eerste, als er meerdere zijn) —
-        de ingang voor de agent-tools in de MCP-gateway."""
+        """Het bord dat bij dit lab hoort — de ingang voor de agent-tools in
+        de MCP-gateway.
+
+        Twee manieren, en de tweede ontbrak:
+
+        - Een GEWOON lab heeft een bord dat er rechtstreeks aan hangt
+          (`Board.lab_id`).
+        - Een BRANCH-LAB van een cluster niet. Daar hangt het bord aan het
+          CLUSTER, en het lab is er één van de vele. Zonder deze tak vond de
+          gateway geen bord en kreeg de agent dus geen enkele `board__*`-tool.
+
+        Dat laatste is precies wat er misging, en het was aan niets te zien:
+        de opdracht vertelde de agent om `board__claim` en
+        `board__comment_ticket` te gebruiken, en in het lab bestonden die
+        tools niet. Hij schreef het braaf op in zijn eindantwoord -- "de
+        board-tools bestaan niet in dit lab-toolset" -- en deed de rest van
+        het ticket zonder te kunnen claimen of tussentijds te melden.
+        """
         if not lab_id:
             return None
-        return (self.db.query(Board).filter(Board.lab_id == lab_id)
+        rechtstreeks = (self.db.query(Board).filter(Board.lab_id == lab_id)
+                        .order_by(Board.id.asc()).first())
+        if rechtstreeks is not None:
+            return rechtstreeks
+
+        from models.lab import Lab
+
+        lab = self.db.get(Lab, lab_id)
+        if lab is None or not lab.cluster_id:
+            return None
+        return (self.db.query(Board).filter(Board.cluster_id == lab.cluster_id)
                 .order_by(Board.id.asc()).first())
 
     def create_board(self, payload: Dict[str, Any]) -> Board:
@@ -510,6 +544,11 @@ class BoardService:
             # moment een lab hebben. Dat laatste is wat een "labbord" tot een
             # filter maakt in plaats van een apart bord.
             "cluster_id": getattr(b, "cluster_id", None),
+            # De NAAM erbij, niet alleen het nummer. In het overzicht stond
+            # "geen lab gekoppeld" bij een clusterbord -- feitelijk waar en
+            # volstrekt misleidend: het hoort geen lab te hebben, het hoort
+            # bij een cluster. Zonder de naam kan het scherm dat niet zeggen.
+            "cluster_naam": self._clusternaam(getattr(b, "cluster_id", None)),
             "agent_column": b.agent_column,
             "archive_column": b.archive_column,
             "archive_days": b.archive_days,

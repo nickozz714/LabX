@@ -33,6 +33,8 @@ _ADDITIVE_COLUMNS = {
         ("env_paden", "TEXT"),
         # Of een nieuw branch-lab de guards aan krijgt. Bestaande clusters
         # staan op aan -- dat was tot nu toe de enige stand.
+        ("lab_model", "VARCHAR(128)"),
+        ("lab_max_turns", "INTEGER"),
         ("lab_data_guard", "BOOLEAN NOT NULL DEFAULT 1"),
         ("lab_llm_guard", "BOOLEAN NOT NULL DEFAULT 1"),
         ("lab_extras", "TEXT"),
@@ -179,6 +181,7 @@ _ADDITIVE_COLUMNS = {
         # reist dus mee naar git; de beschrijving blijft hier en komt nergens
         # in een commit terecht.
         ("feature_titel", "VARCHAR(200)"),
+        ("max_turns", "INTEGER"),
         ("feature_beschrijving", "TEXT"),
         ("chat_deelt_werker", "BOOLEAN NOT NULL DEFAULT 1"),
         ("azure_profile_id", "INTEGER"),

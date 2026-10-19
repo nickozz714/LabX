@@ -20,8 +20,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch, KanbanSquare,
-  KeyRound, LayoutDashboard, Loader2, MessageSquare, Network, Package, Play, PlayCircle, Plus,
+  ArrowLeft, Bot, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch,
+  KanbanSquare,
+  KeyRound, LayoutDashboard, Loader2, MessageSquare, Network, Package, Play, PlayCircle,
+  Plus,
   RefreshCw, Search, Server, ShieldCheck, SlidersHorizontal, Square, Terminal, Trash2,
   TriangleAlert, Wand2,
 } from "lucide-react";
@@ -41,6 +43,7 @@ import {
   Toggle,
 } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
+import { MODEL_OPTIONS } from "@/lib/modellen";
 import { DienstActies } from "@/components/DienstActies";
 import { ClusterBundels } from "@/components/ClusterBundels";
 import { BranchGit } from "@/components/BranchGit";
@@ -1168,6 +1171,8 @@ export function ClusterDetailPage() {
 
           <PoortenKaart cluster={c} onWijzig={laad} />
 
+          <AgentKaart cluster={c} onWijzig={laad} />
+
           <GuardKaart cluster={c} onWijzig={laad} />
 
           <ExtrasKaart clusterId={c.id} gekozen={c.lab_extras || []} onWijzig={laad} />
@@ -1741,6 +1746,88 @@ function RepoKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => vo
           zie <span className="font-medium">Toegang &amp; geheimen</span>.
         </p>
       )}
+    </Card>
+  );
+}
+
+/** Het model en het beurtenplafond voor élk lab van dit cluster.
+ *
+ * Per CLUSTER en niet per lab, omdat het bij het WERK hoort en niet bij een
+ * wegwerpcontainer: zet je Opus op dit cluster, dan hoort elke branch
+ * eronder op Opus te draaien zonder dat je dat per lab herhaalt. Eén vergeten
+ * lab is genoeg om een run op een ander model te laten lopen dan je dacht —
+ * vandaar dat wijzigen hier ook de BESTAANDE labs omzet.
+ *
+ * Het beurtenplafond staat erbij omdat clusterwerk anders is dan rondkijken.
+ * Gemeten op dit cluster: een ticket in een monorepo liep stuk op
+ * `error_max_turns` bij de standaard van 250 — honderd shell-stappen alleen
+ * om de code te vinden, en dan moest het bouwen nog beginnen.
+ */
+function AgentKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => void }) {
+  const melding = useMelding();
+  const [model, setModel] = useState(cluster.lab_model || "");
+  const [turns, setTurns] = useState(String(cluster.lab_max_turns || ""));
+  const [bezig, setBezig] = useState(false);
+
+  async function bewaar() {
+    setBezig(true);
+    try {
+      await clusterApi.wijzig(cluster.id, {
+        lab_model: model || null,
+        lab_max_turns: turns.trim() ? Number(turns) : null,
+      } as Partial<Cluster>);
+      melding.ok("Opgeslagen. Dit geldt ook voor de labs die er al staan.");
+      onWijzig();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Opslaan mislukte");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  const gewijzigd = model !== (cluster.lab_model || "")
+    || turns.trim() !== String(cluster.lab_max_turns || "");
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h2 className="text-sm font-semibold">De agent in dit cluster</h2>
+          <p className="text-xs text-muted-foreground">
+            Geldt voor élk lab van dit cluster, ook de labs die er al staan. Een run die
+            nu loopt houdt wat hij had.
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <Label>Model</Label>
+          <Select value={model} onChange={(e) => setModel(e.target.value)}>
+            {MODEL_OPTIONS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </Select>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Leeg = het model uit Instellingen.
+          </p>
+        </div>
+        <div>
+          <Label>Beurten per run</Label>
+          <Input value={turns} onChange={(e) => setTurns(e.target.value.replace(/[^0-9]/g, ""))}
+                 placeholder="bijv. 600" inputMode="numeric" />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Leeg = de standaard. Werk in een monorepo loopt daar makkelijk overheen: het
+            zoeken naar de juiste code kost al tientallen beurten.
+          </p>
+        </div>
+      </div>
+      <div className="mt-3">
+        <Button onClick={bewaar} disabled={bezig || !gewijzigd}>
+          {bezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+          Bewaren
+        </Button>
+      </div>
     </Card>
   );
 }

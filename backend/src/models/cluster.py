@@ -78,6 +78,21 @@ class Cluster(Base):
     #: profiel. Zonder dat valt de API om op "Missing API_KEY" terwijl de
     #: front-end gewoon draait, en dat ziet eruit als een half geslaagd lab.
     azure_profiel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Het model waarop ELK lab van dit cluster draait, en hoeveel beurten een
+    #: agent-run daar mag doen.
+    #:
+    #: Allebei per CLUSTER en niet per lab, omdat het bij het WERK hoort en
+    #: niet bij een wegwerpcontainer: zet je Opus op dit cluster, dan hoort
+    #: elke branch eronder op Opus te draaien zonder dat je dat per lab
+    #: herhaalt. Anders is één vergeten lab genoeg om een run op een ander
+    #: model te laten lopen dan je dacht.
+    #:
+    #: `lab_max_turns` bestaat omdat clusterwerk ánders is dan rondkijken in
+    #: een lab. Gemeten op dit cluster: een ticket in een monorepo liep stuk
+    #: op `error_max_turns` bij de standaard van 250 -- honderd shell-stappen
+    #: alleen al om de code te vinden, en dan moet het werk nog beginnen.
+    lab_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lab_max_turns: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: Krijgt elk branch-lab de data-egress-guard aan, en het lokale model
     #: als tweede controle?
     #:

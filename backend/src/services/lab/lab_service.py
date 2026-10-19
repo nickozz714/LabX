@@ -1827,6 +1827,22 @@ exec ssh -N \\
         """
         p = self.get(lab_id)
         self._weiger_bij_host(p, "Verplaatsen")
+        # Een BRANCH-LAB verhuist niet los. Het hoort bij een cluster, en een
+        # cluster is één machine: de vaste diensten staan daar, het
+        # clusternetwerk bestaat alleen daar, en de poorten komen daar naar
+        # buiten. Een branch-lab elders is geen spreiding maar een storing --
+        # de emulator is niet meer op naam te vinden en niets zegt waarom.
+        if getattr(p, "cluster_id", None):
+            from models.cluster import Cluster
+
+            c = self.db.get(Cluster, p.cluster_id)
+            raise HTTPException(
+                status_code=409,
+                detail=(f"'{p.name}' hoort bij het cluster "
+                        f"'{c.naam if c else p.cluster_id}' en draait op dezelfde "
+                        f"machine als de vaste diensten daarvan. Een branch-lab "
+                        f"verhuist niet apart; verplaats het hele cluster, of maak "
+                        f"er een op de andere machine."))
         if (p.host_id or None) == (host_id or None):
             return self._to_dict(p)
 

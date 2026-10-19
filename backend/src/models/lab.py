@@ -58,6 +58,9 @@ class Lab(Base):
     #: intern: hij staat in LabX, bij het lab, en komt niet in een commit of
     #: een branchnaam terecht. Dat onderscheid is de hele reden dat het twee
     #: velden zijn en niet één.
+    #: Hoeveel beurten een agent-run in dit lab mag doen. Leeg = de
+    #: instelling van de installatie. Komt bij een branch-lab van het cluster.
+    max_turns: Mapped[int | None] = mapped_column(Integer, nullable=True)
     feature_titel: Mapped[str | None] = mapped_column(String(200), nullable=True)
     feature_beschrijving: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: {containerpoort: machinepoort} voor een branch-lab. Vast, zodat het

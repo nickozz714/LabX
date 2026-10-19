@@ -290,9 +290,33 @@ class ClusterService:
         rij = self.get_or_404(cluster_id)
         self._zet_velden(rij, velden)
         rij.updated_at = _nu()
+        if "lab_model" in velden or "lab_max_turns" in velden:
+            self._zet_door_naar_labs(rij)
         self.db.commit()
         self.db.refresh(rij)
         return rij
+
+    def _zet_door_naar_labs(self, c: Cluster) -> int:
+        """Model en turnlimiet gelden voor ÉLK lab van dit cluster, ook de
+        bestaande.
+
+        Anders dan bij de guards, en met opzet. Een guard omzetten terwijl er
+        een run draait verandert wat er mág; dit verandert alleen waarop de
+        VOLGENDE run draait. En "zet Opus op dit cluster" betekent nu eenmaal
+        alle branches -- één vergeten lab is genoeg om een run op een ander
+        model te laten lopen dan je dacht.
+        """
+        from models.lab import Lab
+
+        labs = self.db.query(Lab).filter(Lab.cluster_id == c.id).all()
+        for lab in labs:
+            lab.model = c.lab_model
+            lab.max_turns = c.lab_max_turns
+            lab.updated_at = _nu()
+        if labs:
+            log.infox("Clusterinstelling doorgezet naar de labs", cluster=c.naam,
+                      labs=len(labs), model=c.lab_model, max_turns=c.lab_max_turns)
+        return len(labs)
 
     @staticmethod
     def _zet_velden(rij: Cluster, velden: Dict[str, Any]) -> None:
@@ -319,8 +343,20 @@ class ClusterService:
         for vlag in ("lab_data_guard", "lab_llm_guard"):
             if vlag in velden:
                 setattr(rij, vlag, bool(velden[vlag]))
+        if "lab_model" in velden:
+            rij.lab_model = (str(velden["lab_model"]).strip() or None)
+        if "lab_max_turns" in velden:
+            waarde = velden["lab_max_turns"]
+            rij.lab_max_turns = max(1, int(waarde)) if waarde else None
         if "geheimen_zelf" in velden:
             rij.geheimen_zelf = bool(velden["geheimen_zelf"])
+        if "host_id" in velden:
+            raise HTTPException(
+                status_code=400,
+                detail=("De machine van een cluster is niet achteraf te wijzigen. "
+                        "Vaste diensten, hun volumes en de branch-labs staan daar "
+                        "samen; ze verhuizen alleen als geheel, en dat is een nieuw "
+                        "cluster."))
         if "azure_profiel_id" in velden:
             waarde = velden["azure_profiel_id"]
             rij.azure_profiel_id = int(waarde) if waarde else None
@@ -784,6 +820,11 @@ class ClusterService:
         uit = await lab_svc.create(
             name=(naam or (f"{c.naam} · {titel}" if titel else f"{c.naam} · {branch}"))[:255],
             image=c.lab_image or None,
+            # ALTIJD de machine van het cluster. Een branch-lab op een andere
+            # server dan de vaste diensten is geen verdeling maar een
+            # storing: de emulator is dan niet op naam bereikbaar, het
+            # clusternetwerk bestaat daar niet, en de poorten komen op de
+            # verkeerde machine naar buiten. Een cluster is één machine.
             host_id=c.host_id,
             # Ruimer dan een gewoon lab: hier wordt gebouwd, niet rondgekeken.
             cpu_limit=float(c.lab_cpu or BRANCH_LAB_CPU),
@@ -802,6 +843,7 @@ class ClusterService:
             # elke tool-aanroep voor een controle zonder onderwerp.
             data_guard=bool(getattr(c, "lab_data_guard", True)),
             llm_guard=bool(getattr(c, "lab_llm_guard", True)),
+            model=getattr(c, "lab_model", None) or None,
             # En niet zelf inrichten: hieronder wordt de container opnieuw
             # opgebouwd op het netwerk van het cluster, en een ronde die
             # tegen een verdwijnende container praat laat een halve
@@ -814,6 +856,7 @@ class ClusterService:
         # De titel reist mee naar git (hij ÍS de branchnaam); de beschrijving
         # blijft hier. Daarom twee velden en niet één: wat je intern opschrijft
         # over een halve gedachte hoort niet in andermans repo.
+        p.max_turns = getattr(c, "lab_max_turns", None)
         p.feature_titel = titel[:200] or None
         p.feature_beschrijving = (beschrijving or "").strip() or None
         # Het Azure-profiel van het cluster. Zonder dit kan niets in het lab
@@ -1156,6 +1199,8 @@ class ClusterService:
             # worden. De privéhelft komt hier nooit in.
             "ssh_publiek": c.ssh_publiek,
             "toegang_soort": "ssh" if c.ssh_prive_encrypted else ("https" if c.repo_token_geheim else "geen"),
+            "lab_model": getattr(c, "lab_model", None),
+            "lab_max_turns": getattr(c, "lab_max_turns", None),
             "lab_data_guard": bool(getattr(c, "lab_data_guard", True)),
             "lab_llm_guard": bool(getattr(c, "lab_llm_guard", True)),
             "lab_poorten": c.lab_poorten or [],

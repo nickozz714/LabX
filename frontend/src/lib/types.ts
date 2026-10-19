@@ -19,6 +19,9 @@ export interface Lab {
   image: string;
   /** Bij welk cluster en welke branch dit lab hoort. null = een gewoon lab. */
   cluster_id?: number | null;
+  /** De naam van dat cluster — zodat een scherm kan zeggen WAAR het bij hoort
+   *  in plaats van dat er geen lab is. */
+  cluster_naam?: string | null;
   branch?: string | null;
   /** Waar je dit lab van buiten bereikt: {containerpoort: machinepoort}.
    *  Zonder dit staat er een lab dat je nergens kunt openen. */
