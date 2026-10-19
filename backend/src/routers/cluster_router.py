@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from authentication import require_user
 from db.database import get_db
 from services.lab.clusters import ClusterService
+from services.lab.branch_git import BranchGit
 from services.lab.bundels import MAX_ARCHIEF_BYTES, BundelService
 from services.lab.dienst_acties import DienstActieService
 
@@ -74,6 +75,8 @@ async def maak_branch_lab(cluster_id: int, body: Dict[str, Any],
         cluster_id,
         branch=str(body.get("branch") or ""),
         basis=str(body.get("basis") or "main"),
+        titel=str(body.get("titel") or ""),
+        beschrijving=str(body.get("beschrijving") or ""),
         naam=(str(body["naam"]) if body.get("naam") else None))
 
 
@@ -168,6 +171,57 @@ def branch_tunnel(lab_id: str, os: str = "mac", poort: int | None = None,
                  # waar je terechtkomt.
                  "X-Labx-Tunnel-Url": uit["url"],
                  "Access-Control-Expose-Headers": "X-Labx-Tunnel-Url"})
+
+
+# ── git aan een branch-lab ───────────────────────────────────────────────────
+#
+# Een branch-lab IS een werkkopie van een echte branch, maar je kon er alles
+# mee behalve het enige waar het om gaat: je werk eruit krijgen. Dat moest via
+# de terminal in het lab, met een token dat daar niet hoort te staan.
+
+
+def _git(db: Session) -> BranchGit:
+    return BranchGit(db)
+
+
+@router.get("/branches/{lab_id}/git")
+async def branch_git_status(lab_id: str, db: Session = Depends(get_db)):
+    return await _git(db).status(lab_id)
+
+
+@router.post("/branches/{lab_id}/git/push")
+async def branch_git_push(lab_id: str, body: Dict[str, Any],
+                          db: Session = Depends(get_db)):
+    return await _git(db).push(
+        lab_id,
+        bericht=str(body.get("bericht") or ""),
+        bestanden=[str(x) for x in (body.get("bestanden") or [])],
+        alles=bool(body.get("alles")))
+
+
+@router.patch("/branches/{lab_id}")
+def branch_wijzigen(lab_id: str, body: Dict[str, Any],
+                    db: Session = Depends(get_db)):
+    """Titel en beschrijving bijstellen.
+
+    De BRANCHNAAM staat hier bewust niet bij: die is na het aanmaken een feit
+    in de werkkopie en op de remote, en hem in LabX hernoemen zou alleen de
+    naam in dit scherm veranderen -- met een push die daarna naar een branch
+    gaat die niemand kent.
+    """
+    from models.lab import Lab
+
+    lab = db.get(Lab, lab_id)
+    if lab is None or not lab.cluster_id:
+        raise HTTPException(status_code=404,
+                            detail="Dit is geen branch-lab van een cluster.")
+    if "titel" in body:
+        lab.feature_titel = str(body["titel"]).strip()[:200] or None
+    if "beschrijving" in body:
+        lab.feature_beschrijving = str(body["beschrijving"]).strip() or None
+    db.commit()
+    return {"ok": True, "titel": lab.feature_titel or "",
+            "beschrijving": lab.feature_beschrijving or ""}
 
 
 @router.get("/branches/{lab_id}/start-log")

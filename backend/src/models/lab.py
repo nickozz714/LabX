@@ -51,6 +51,15 @@ class Lab(Base):
     #: machine -- geldt hier ook, en blijft op één plek geregeld.
     cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Waar deze branch over gaat, in jouw woorden.
+    #:
+    #: De TITEL wordt de naam van de feature-branch en reist dus mee naar
+    #: git -- daar kijkt straks iemand anders naar. De BESCHRIJVING is voor
+    #: intern: hij staat in LabX, bij het lab, en komt niet in een commit of
+    #: een branchnaam terecht. Dat onderscheid is de hele reden dat het twee
+    #: velden zijn en niet één.
+    feature_titel: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    feature_beschrijving: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: {containerpoort: machinepoort} voor een branch-lab. Vast, zodat het
     #: adres waarop jij die branch opent niet bij elke herstart verandert.
     poort_map: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

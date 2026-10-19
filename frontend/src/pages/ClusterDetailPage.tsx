@@ -42,6 +42,8 @@ import {
 import { useMelding } from "@/components/Meldingen";
 import { DienstActies } from "@/components/DienstActies";
 import { ClusterBundels } from "@/components/ClusterBundels";
+import { BranchGit } from "@/components/BranchGit";
+import { uitTitel } from "@/lib/branchNaam";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
 
@@ -622,6 +624,104 @@ function KluisKaart({ clusterId, benodigd }: { clusterId: number; benodigd: Reco
 }
 
 /**
+ * Eén branch-lab in de lijst.
+ *
+ * Eigen component omdat het git-paneel open en dicht moet kunnen: dat haalt
+ * de status op uit een wegwerpcontainer, en dat wil je niet voor elk lab
+ * tegelijk doen zodra je de tab opent.
+ *
+ * De TITEL staat vooraan en de branchnaam eronder, niet andersom. Je zoekt
+ * hier op waar iets over ging; de branchnaam is de vertaling daarvan voor
+ * git. De beschrijving staat erbij omdat dat de enige plek is waar hij
+ * bestaat -- hij gaat met opzet niet mee naar de repo.
+ */
+function BranchRegel({ lab, bordId, onActie }: {
+  lab: Cluster["labs"][number];
+  bordId: number | null;
+  onActie: () => void;
+}) {
+  const navigate = useNavigate();
+  const melding = useMelding();
+  const [gitOpen, setGitOpen] = useState(false);
+
+  return (
+    <li className="rounded-lg border border-border p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <Link to={`/labs/${lab.id}`} className="min-w-0">
+          <span className="font-medium">{lab.titel || lab.name}</span>
+          {lab.branch && (
+            <span className="ml-2 font-mono text-xs text-muted-foreground">{lab.branch}</span>
+          )}
+          {lab.beschrijving && (
+            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{lab.beschrijving}</p>
+          )}
+        </Link>
+        <div className="flex flex-wrap gap-1">
+          {/* Chatten en het bord staan hier omdat dit de plek is waar je een
+              branch uitkiest. Anders moet je de naam van het lab onthouden en
+              hem elders terugzoeken. */}
+          <Button variant={gitOpen ? "primary" : "secondary"} onClick={() => setGitOpen((x) => !x)}>
+            <GitBranch className="h-3.5 w-3.5" /> Git
+          </Button>
+          <Button variant="secondary" onClick={() => navigate(`/chat?lab=${lab.id}`)}>
+            <MessageSquare className="h-3.5 w-3.5" /> Chat
+          </Button>
+          <TunnelKnop lab={lab} />
+          {bordId && (
+            <Button variant="secondary"
+                    onClick={() => navigate(`/boards/${bordId}?branch=${encodeURIComponent(lab.branch || "")}`)}>
+              <KanbanSquare className="h-3.5 w-3.5" /> Bord
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              try {
+                await clusterApi.branchStart(lab.id);
+                melding.ok("Branch-lab gestart");
+                onActie();
+              } catch (e) {
+                melding.fout(e instanceof ApiError ? e.message : "Starten mislukte");
+              }
+            }}
+          >
+            <Play className="h-3.5 w-3.5" /> Start
+          </Button>
+          {/* Opnieuw starten van de APPLICATIE, niet van het lab. Meestal
+              niet nodig: draait het startscript een devserver die meekijkt
+              (Vite, nodemon), dan is een wijziging van de agent meteen te
+              zien -- gemeten op dit cluster: index.html aanpassen en de
+              pagina serveert het direct.
+
+              Wel nodig als het script BOUWT in plaats van kijkt, of als de
+              applicatie is omgevallen. Vandaar een stil knopje. */}
+          <Button
+            variant="ghost"
+            title="Applicatie opnieuw starten — meestal niet nodig: een devserver pikt wijzigingen zelf op"
+            onClick={async () => {
+              try {
+                await clusterApi.branchAppHerstarten(lab.id);
+                melding.ok("Applicatie opnieuw gestart");
+              } catch (e) {
+                melding.fout(e instanceof ApiError ? e.message : "Herstarten mislukte");
+              }
+            }}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {gitOpen && (
+        <div className="mt-3 border-t border-border pt-3">
+          <BranchGit labId={lab.id} titel={lab.titel} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+/**
  * De tabs van dit scherm.
  *
  * Twaalf kaarten onder elkaar las niemand meer: wie een poort kwam aanpassen
@@ -671,7 +771,14 @@ export function ClusterDetailPage() {
   const [verkent, setVerkent] = useState(false);
   const [bordId, setBordId] = useState<number | null>(null);
   const [azureProfielen, setAzureProfielen] = useState<{ id: number; name: string }[]>([]);
+  const [titel, setTitel] = useState("");
+  const [beschrijving, setBeschrijving] = useState("");
+  // De branchnaam volgt de titel zolang je hem niet zelf aanraakt. Daarna
+  // niet meer: een naam die onder je handen verandert omdat je de titel nog
+  // even bijschaafde, is precies het soort verrassing dat je bij een push
+  // niet wilt.
   const [branch, setBranch] = useState("");
+  const [branchZelf, setBranchZelf] = useState(false);
   const [basis, setBasis] = useState("main");
   const [maakt, setMaakt] = useState(false);
 
@@ -752,16 +859,24 @@ export function ClusterDetailPage() {
     }
   }
 
+  const branchNaam = branchZelf ? branch.trim() : uitTitel(titel);
+
   async function maakBranch() {
-    if (!c || !branch.trim()) return;
+    if (!c || !branchNaam) return;
     setMaakt(true);
     try {
       const lab = await clusterApi.branchLab(c.id, {
-        branch: branch.trim(), basis: basis.trim() || "main",
+        titel: titel.trim(),
+        beschrijving: beschrijving.trim(),
+        branch: branchNaam,
+        basis: basis.trim() || "main",
       });
       melding.ok(`Branch-lab '${lab.name}' aangemaakt. Het inrichten loopt door op de achtergrond.`);
       setBranchOpen(false);
+      setTitel("");
+      setBeschrijving("");
       setBranch("");
+      setBranchZelf(false);
       void laad();
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Branch-lab aanmaken mislukte");
@@ -930,67 +1045,7 @@ export function ClusterDetailPage() {
             ? <EmptyState>Nog geen branch-labs.</EmptyState>
             : <ul className="space-y-2">
                 {c.labs.map((l) => (
-                  <li key={l.id} className="rounded-lg border border-border p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <Link to={`/labs/${l.id}`} className="min-w-0">
-                        <span className="font-medium">{l.name}</span>
-                        {l.branch && <span className="ml-2 font-mono text-xs text-muted-foreground">{l.branch}</span>}
-                      </Link>
-                      <div className="flex flex-wrap gap-1">
-                        {/* Chatten en het bord staan hier omdat dit de plek is
-                            waar je een branch uitkiest. Anders moet je de naam
-                            van het lab onthouden en hem elders terugzoeken. */}
-                        <Button variant="secondary" onClick={() => navigate(`/chat?lab=${l.id}`)}>
-                          <MessageSquare className="h-3.5 w-3.5" /> Chat
-                        </Button>
-                        <TunnelKnop lab={l} />
-                        {bordId && (
-                          <Button variant="secondary"
-                                  onClick={() => navigate(`/boards/${bordId}?branch=${encodeURIComponent(l.branch || "")}`)}>
-                            <KanbanSquare className="h-3.5 w-3.5" /> Bord
-                          </Button>
-                        )}
-                        <Button
-                          variant="secondary"
-                          onClick={async () => {
-                            try {
-                              await clusterApi.branchStart(l.id);
-                              melding.ok("Branch-lab gestart");
-                              void laad();
-                            } catch (e) {
-                              melding.fout(e instanceof ApiError ? e.message : "Starten mislukte");
-                            }
-                          }}
-                        >
-                          <Play className="h-3.5 w-3.5" /> Start
-                        </Button>
-                        {/* Opnieuw starten van de APPLICATIE, niet van het lab.
-                            Meestal niet nodig: draait het startscript een
-                            devserver die meekijkt (Vite, nodemon), dan is een
-                            wijziging van de agent meteen te zien -- gemeten op
-                            dit cluster: index.html aanpassen en de pagina
-                            serveert het direct.
-
-                            Wel nodig als het script BOUWT in plaats van kijkt,
-                            of als de applicatie is omgevallen. Vandaar een
-                            stil knopje en geen prominente knop. */}
-                        <Button
-                          variant="ghost"
-                          title="Applicatie opnieuw starten — meestal niet nodig: een devserver pikt wijzigingen zelf op"
-                          onClick={async () => {
-                            try {
-                              await clusterApi.branchAppHerstarten(l.id);
-                              melding.ok("Applicatie opnieuw gestart");
-                            } catch (e) {
-                              melding.fout(e instanceof ApiError ? e.message : "Herstarten mislukte");
-                            }
-                          }}
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  </li>
+                  <BranchRegel key={l.id} lab={l} bordId={bordId} onActie={laad} />
                 ))}
               </ul>}
         </Card>
@@ -1141,29 +1196,61 @@ export function ClusterDetailPage() {
         )}
       </Modal>
 
-      <Modal open={branchOpen} onClose={() => setBranchOpen(false)} title="Branch-lab aanmaken">
+      <Modal open={branchOpen} onClose={() => setBranchOpen(false)} title="Nieuwe feature">
         <div className="space-y-3">
           <div>
-            <Label>Branch</Label>
-            <Input value={branch} onChange={(e) => setBranch(e.target.value)}
-                   placeholder="feature/zoek-filter" autoFocus />
+            <Label>Titel</Label>
+            <Input value={titel} onChange={(e) => setTitel(e.target.value)}
+                   placeholder="Zoekfilter op het overzicht" autoFocus />
+            {/* De branchnaam vóóraf laten zien en niet achteraf: hij gaat naar
+                git, daar kijkt straks iemand anders naar, en hernoemen kan
+                dan niet meer stilletjes. */}
             <p className="mt-1 text-xs text-muted-foreground">
-              {c.repo_url
-                ? "Bestaat hij al op de remote, dan wordt hij uitgecheckt. Zo niet, dan wordt hij afgetakt van de basis hieronder."
-                : "Er is nog geen repo, dus er valt niets uit te checken: dit wordt de branch van een verse git init."}
+              Dit wordt de naam van de branch:{" "}
+              {branchNaam
+                ? <span className="font-mono text-foreground">{branchNaam}</span>
+                : <span className="italic">nog niets bruikbaars om een branchnaam van te maken</span>}
             </p>
           </div>
-          <div className={c.repo_url ? "" : "hidden"}>
-            <Label>Aftakken van</Label>
-            <Input value={basis} onChange={(e) => setBasis(e.target.value)} placeholder="main" />
+          <div>
+            <Label>Beschrijving (intern)</Label>
+            <TextArea rows={3} value={beschrijving}
+                      onChange={(e) => setBeschrijving(e.target.value)}
+                      placeholder="Waar gaat dit over, wat is er nog onzeker, waar moet je aan denken." />
             <p className="mt-1 text-xs text-muted-foreground">
-              Hoeft geen <span className="font-mono">main</span> te zijn — van{" "}
-              <span className="font-mono">release/2026.09</span> aftakken gaat net zo goed.
+              Blijft in LabX. Dit komt niet in de branchnaam en niet in een commit.
             </p>
           </div>
+          <details open={branchZelf}>
+            <summary className="cursor-pointer text-xs text-muted-foreground">
+              Branchnaam en basis zelf bepalen
+            </summary>
+            <div className="mt-2 space-y-3">
+              <div>
+                <Label>Branchnaam</Label>
+                <Input
+                  value={branchZelf ? branch : branchNaam}
+                  onChange={(e) => { setBranchZelf(true); setBranch(e.target.value); }}
+                  placeholder="feature/zoek-filter" />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {c.repo_url
+                    ? "Bestaat hij al op de remote, dan wordt hij uitgecheckt. Zo niet, dan wordt hij afgetakt van de basis hieronder."
+                    : "Er is nog geen repo, dus er valt niets uit te checken: dit wordt de branch van een verse git init."}
+                </p>
+              </div>
+              <div className={c.repo_url ? "" : "hidden"}>
+                <Label>Aftakken van</Label>
+                <Input value={basis} onChange={(e) => setBasis(e.target.value)} placeholder="main" />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Hoeft geen <span className="font-mono">main</span> te zijn — van{" "}
+                  <span className="font-mono">release/2026.09</span> aftakken gaat net zo goed.
+                </p>
+              </div>
+            </div>
+          </details>
         </div>
         <div className="mt-5 flex gap-2">
-          <Button onClick={maakBranch} disabled={maakt || !branch.trim()}>
+          <Button onClick={maakBranch} disabled={maakt || !branchNaam}>
             {maakt ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitBranch className="h-4 w-4" />}
             Aanmaken
           </Button>

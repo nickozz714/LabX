@@ -707,9 +707,11 @@ class ClusterService:
             log.warningx("Toegangscontrole overgeslagen", error=str(exc)[:200])
             return {"gecontroleerd": False}
 
-    async def maak_branch_lab(self, cluster_id: int, *, branch: str,
+    async def maak_branch_lab(self, cluster_id: int, *, branch: str = "",
                               basis: str = "main",
-                              naam: Optional[str] = None) -> Dict[str, Any]:
+                              naam: Optional[str] = None,
+                              titel: str = "",
+                              beschrijving: str = "") -> Dict[str, Any]:
         """Een lab voor één branch, afgetakt van een basis naar keuze.
 
         `basis` is met opzet geen vast "main": je wilt net zo goed van
@@ -722,10 +724,21 @@ class ClusterService:
         """
         from services.lab.lab_service import LabService
 
+        from services.lab.branch_naam import geldig, uit_titel
+
         c = self.get_or_404(cluster_id)
-        branch = (branch or "").strip()
+        titel = (titel or "").strip()
+        branch = (branch or "").strip() or uit_titel(titel)
         if not branch:
-            raise HTTPException(status_code=400, detail="Geef een branchnaam op.")
+            raise HTTPException(
+                status_code=400,
+                detail=("Geef een titel op waar een branchnaam van te maken is, of "
+                        "typ de branchnaam zelf."))
+        if not geldig(branch):
+            raise HTTPException(
+                status_code=400,
+                detail=(f"'{branch}' kan niet als branchnaam. Git staat geen spaties, "
+                        f"dubbele punten of `..` toe."))
         # Geen repo-URL is niet per se een fout. Een cluster dat LEEG begonnen
         # is heeft er nog geen: er valt niets uit te checken, dus begint het
         # lab met een verse `git init`. Pas als er later een remote bij komt,
@@ -752,7 +765,7 @@ class ClusterService:
 
         lab_svc = LabService(self.db)
         uit = await lab_svc.create(
-            name=(naam or f"{c.naam} · {branch}")[:255],
+            name=(naam or (f"{c.naam} · {titel}" if titel else f"{c.naam} · {branch}"))[:255],
             image=c.lab_image or None,
             host_id=c.host_id,
             # Ruimer dan een gewoon lab: hier wordt gebouwd, niet rondgekeken.
@@ -770,6 +783,11 @@ class ClusterService:
         p = self.db.get(Lab, uit["id"])
         p.cluster_id = c.id
         p.branch = branch
+        # De titel reist mee naar git (hij ÍS de branchnaam); de beschrijving
+        # blijft hier. Daarom twee velden en niet één: wat je intern opschrijft
+        # over een halve gedachte hoort niet in andermans repo.
+        p.feature_titel = titel[:200] or None
+        p.feature_beschrijving = (beschrijving or "").strip() or None
         # Het Azure-profiel van het cluster. Zonder dit kan niets in het lab
         # bij Azure -- en een project dat zijn geheimen zelf ophaalt, haalt
         # dan niets op.
@@ -1037,9 +1055,11 @@ class ClusterService:
         # poort van dit lab je op een vast nummer wilt, en een cluster met een
         # front-end en een API heeft er twee. Zonder dit kan het scherm die
         # keuze niet tonen en kiest de server altijd de eerste.
-        labs = [{"id": i, "name": n, "branch": b, "poort_map": pm or {}}
-                for i, n, b, pm in
-                self.db.query(Lab.id, Lab.name, Lab.branch, Lab.poort_map)
+        labs = [{"id": i, "name": n, "branch": b, "poort_map": pm or {},
+                  "titel": t or "", "beschrijving": d or ""}
+                for i, n, b, pm, t, d in
+                self.db.query(Lab.id, Lab.name, Lab.branch, Lab.poort_map,
+                              Lab.feature_titel, Lab.feature_beschrijving)
                 .filter(Lab.cluster_id == c.id).all()]
         return {
             "id": c.id, "naam": c.naam, "status": c.status, "fout": c.fout,

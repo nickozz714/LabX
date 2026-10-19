@@ -134,6 +134,37 @@ export type ClusterDienst = {
   draait: boolean;
 };
 
+export type GitBestand = {
+  pad: string;
+  /** De twee tekens van `git status --porcelain`, voor wie ze kent. */
+  code: string;
+  soort: "nieuw" | "gewijzigd" | "verwijderd" | "toegevoegd" | "hernoemd";
+  /** Of het vinkje standaard aan staat. Een .env staat uit. */
+  standaard_aan: boolean;
+  gevoelig: boolean;
+};
+
+export type BranchGitStatus = {
+  lab_id: string;
+  branch: string;
+  titel: string;
+  beschrijving: string;
+  laatste_commit: string;
+  vooruit: number;
+  achter: number;
+  op_remote: boolean;
+  bestanden: GitBestand[];
+  schoon: boolean;
+  afgekapt: boolean;
+};
+
+export type PushUitslag = {
+  ok: boolean;
+  exit_code: number | null;
+  branch: string;
+  uitvoer: string;
+};
+
 export type ClusterBundel = {
   id: number;
   cluster_id: number;
@@ -245,8 +276,13 @@ export type Cluster = {
   diensten: ClusterDienst[];
   /** poort_map = {containerpoort: machinepoort} — nodig voor het
    *  tunnelvenster, dat je laat kiezen welke poort een vast nummer krijgt. */
-  labs: { id: string; name: string; branch: string | null;
-          poort_map?: Record<string, number> }[];
+  labs: {
+    id: string; name: string; branch: string | null;
+    poort_map?: Record<string, number>;
+    /** Waar deze branch over gaat. De titel is ook de branchnaam en reist
+     *  mee naar git; de beschrijving blijft in LabX. */
+    titel?: string; beschrijving?: string;
+  }[];
   created_at: string;
   updated_at: string;
 };
@@ -437,8 +473,21 @@ export const clusterApi = {
     dienst_id: number; instructie?: string; script?: string; image?: string;
   }) => api.post<BundelUitslag>(`/clusters/bundels/${bundelId}/toepassen`, body),
 
-  branchLab: (id: number, body: { branch: string; basis?: string; naam?: string }) =>
-    api.post<{ id: string; name: string }>(`/clusters/${id}/branches`, body),
+  branchLab: (id: number, body: {
+    titel?: string; beschrijving?: string; branch?: string; basis?: string; naam?: string;
+  }) => api.post<{ id: string; name: string; branch?: string }>(`/clusters/${id}/branches`, body),
+  // ── git aan een branch-lab ─────────────────────────────────────────────
+  //
+  // Alles draait naast de lab-container, nooit erin: zo komt de sleutel of
+  // het token niet in de omgeving van de agent terecht.
+  branchGit: (labId: string) => api.get<BranchGitStatus>(`/clusters/branches/${labId}/git`),
+  branchGitPush: (labId: string, body: {
+    bericht: string; bestanden?: string[]; alles?: boolean;
+  }) => api.post<PushUitslag>(`/clusters/branches/${labId}/git/push`, body),
+  branchWijzigen: (labId: string, body: { titel?: string; beschrijving?: string }) =>
+    api.patch<{ ok: boolean; titel: string; beschrijving: string }>(
+      `/clusters/branches/${labId}`, body),
+
   branchStart: (labId: string) => api.post<unknown>(`/clusters/branches/${labId}/start`),
   /** De applicatie opnieuw starten zonder het lab te herstarten. Nodig zodra
    *  het startscript BOUWT in plaats van een devserver te draaien: dan is een

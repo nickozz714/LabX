@@ -171,6 +171,11 @@ _ADDITIVE_COLUMNS = {
         ("cluster_id", "INTEGER"),
         ("branch", "VARCHAR(255)"),
         ("poort_map", "TEXT"),
+        # Waar dit branch-lab over GAAT. De titel wordt de branchnaam en
+        # reist dus mee naar git; de beschrijving blijft hier en komt nergens
+        # in een commit terecht.
+        ("feature_titel", "VARCHAR(200)"),
+        ("feature_beschrijving", "TEXT"),
         ("chat_deelt_werker", "BOOLEAN NOT NULL DEFAULT 1"),
         ("azure_profile_id", "INTEGER"),
         ("extras", "TEXT"),

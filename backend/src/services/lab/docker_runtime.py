@@ -581,6 +581,7 @@ class DockerRuntime:
         cmd: List[str],
         netwerk: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
+        volume: Optional[str] = None,
         volumes: Optional[Dict[str, str]] = None,
         timeout: float = 300.0,
         max_chars: int = _MAX_OUTPUT_CHARS,
@@ -596,14 +597,23 @@ class DockerRuntime:
           "leegmaken mislukte en dit zei hij" is wat je wilt zien, niet een
           stacktrace in de log.
 
-        `volumes` hangt bundels erin, altijd alleen-lezen: een script dat een
-        dump inleest hoort die dump niet te kunnen veranderen.
+        `volume` is de werkkopie en hangt op /workspace, schrijfbaar -- daar
+        committeert het git-werk in. `volumes` hangt bundels erin, altijd
+        alleen-lezen: een script dat een dump inleest hoort die dump niet te
+        kunnen veranderen.
         """
+        if netwerk is None:
+            # Zonder netwerk van een cluster valt hij terug op het gedeelde
+            # labnetwerk, en dat moet dan wel bestaan -- anders faalt `docker
+            # run` op iets waar de aanroeper niets mee te maken heeft.
+            await self.ensure_network()
         args = ["run", "--rm", "--label", _LABEL,
                 "--security-opt", "no-new-privileges",
-                "--network", netwerk or self._network, "-w", "/tmp"]
-        for volume, pad in (volumes or {}).items():
-            args += ["-v", f"{volume}:{pad}:ro"]
+                "--network", netwerk or self._network]
+        args += (["-v", f"{volume}:/workspace", "-w", "/workspace"]
+                 if volume else ["-w", "/tmp"])
+        for extra, pad in (volumes or {}).items():
+            args += ["-v", f"{extra}:{pad}:ro"]
         for key, value in (env or {}).items():
             args += ["-e", f"{key}={value}"]
         args += [image, *cmd]
