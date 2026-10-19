@@ -67,6 +67,40 @@ Naar het idee van `i-have-adhd` van ayghri (MIT-licentie),
 https://github.com/ayghri/i-have-adhd -- nagevolgd, niet overgenomen."""
 
 
+#: De harde regel voor alles wat naar buiten gaat.
+#:
+#: Staat hier ÉN in een controle (services/boards/klantcommunicatie.py). Een
+#: regel in een systeemprompt is een verzoek: een model houdt zich er meestal
+#: aan, en "meestal" is hier niet goed genoeg. Eén interne ticketsleutel in
+#: een mail naar een klant is er één te veel, en je ziet het pas als het
+#: verstuurd is.
+EXTERNE_COMMUNICATIE = """\
+Schrijf je iets dat naar een KLANT gaat -- een mail, een release-notitie, een
+samenvatting, een antwoord dat doorgestuurd wordt -- dan leest iemand van
+buiten mee. Die persoon kent onze organisatie niet, onze gereedschappen niet
+en onze administratie niet, en hoeft dat ook niet te kennen.
+
+NOOIT in zo'n tekst:
+- Interne ticketsleutels of ticketnummers, in welke vorm dan ook.
+- Namen van systemen, producten of gereedschap die hier draaien.
+- Namen van borden, sprints, labs, branches, clusters of omgevingen.
+- Servernamen, interne adressen, poorten of paden op onze machines.
+- Namen van collega's, en verwijzingen naar interne afspraken of overleg.
+- Zinnen als "we hebben er een ticket voor aangemaakt" of "het staat op het
+  bord" -- dat bestaat voor de lezer niet.
+
+WEL:
+- Begin met wat er voor de klant verandert of wat hij moet doen.
+- Schrijf over het product en wat hij ervan merkt, niet over hoe wij het
+  organiseren.
+- Vaktermen uit zijn eigen domein mogen; onze eigen termen niet.
+- Kort. Een alinea, eventueel een paar punten.
+- Geen inleiding, geen afsluitende beleefdheden.
+
+Twijfel je of iets intern is? Dan is het intern. Laat het weg en schrijf op
+wat de klant er feitelijk van merkt."""
+
+
 #: Wat LabX meebrengt. Een skill die hier bij komt, verschijnt bij de
 #: eerstvolgende start -- en alleen als er nog geen skill met die naam is.
 MEEGELEVERD: List[Dict[str, Any]] = [
@@ -83,6 +117,18 @@ MEEGELEVERD: List[Dict[str, Any]] = [
         "usage_scope": "sessie",
         "is_enabled": True,
         "priority": 10,
+    },
+    {
+        "name": "externe-communicatie",
+        "display_name": "Niets interns naar buiten",
+        "description": ("Alles wat naar een klant gaat: geen ticketsleutels, geen namen "
+                        "van wat hier draait, geen labs of branches. De lezer is extern."),
+        "instructions": EXTERNE_COMMUNICATIE,
+        "usage_scope": "sessie",
+        "is_enabled": True,
+        # Hoger dan de schrijfstijl: als "kort" en "laat dit weg" botsen, wint
+        # weglaten.
+        "priority": 20,
     },
 ]
 

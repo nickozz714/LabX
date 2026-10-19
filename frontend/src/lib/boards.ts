@@ -35,7 +35,41 @@ export type ItemSoort = {
   }[];
 };
 
+export type GrillBeurt = {
+  modus: "grillen" | "voorstel" | "klantversie";
+  antwoord: string;
+  vragen: string[];
+  gaten: string[];
+  voorstel: { titel: string; description: string; acceptance_criteria: string } | null;
+  klanttekst: string;
+  /** Alleen gevuld bij een klantversie: wat er aan interne verwijzingen in
+   *  stond. `schoon` betekent dat de tekst de deur uit mag. */
+  controle: { schoon: boolean; bevindingen: { soort: string; gevonden: string; waar: string }[] } | null;
+};
+
+export type Klantcheck = {
+  schoon: boolean;
+  bevindingen: { soort: string; gevonden: string; waar: string }[];
+  uitleg: string;
+};
+
 export const boardApi = {
+  // ── de grillmeister ────────────────────────────────────────────────────
+  //
+  // Hij stelt de vragen, jij beslist. Er wordt nooit stilletjes naar een
+  // ticket geschreven: een voorstel komt terug en pas `grillOvernemen` zet
+  // het erop.
+  grill: (boardId: number, ticketId: number, body: {
+    bericht?: string;
+    modus?: "grillen" | "voorstel" | "klantversie";
+    geschiedenis?: { rol: string; tekst: string }[];
+  }) => api.post<GrillBeurt>(`/boards/${boardId}/tickets/${ticketId}/grill`, body),
+  grillOvernemen: (boardId: number, ticketId: number, body: {
+    titel?: string; description?: string; acceptance_criteria?: string;
+  }) => api.post<TicketDto>(`/boards/${boardId}/tickets/${ticketId}/grill/overnemen`, body),
+  /** Staat er iets in deze tekst dat een klant niet hoort te zien? */
+  klantcheck: (tekst: string) => api.post<Klantcheck>("/boards/klantcheck", { tekst }),
+
   /** Welke soorten werkitems de bron van dit bord kent. */
   /** Dit ene ticket naar de bron, nu. Een hele bordsynchronisatie is grof
    *  gereedschap als je net één ticket hebt aangepast. */

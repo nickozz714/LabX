@@ -41,16 +41,37 @@ def db():
         s.close()
 
 
-def test_de_skill_wordt_aangemaakt(db):
+def test_de_skills_worden_aangemaakt(db):
+    from models.skill import Skill
+    from services.skills.meegeleverd import MEEGELEVERD, zorg_voor_meegeleverde_skills
+
+    assert zorg_voor_meegeleverde_skills(db) == len(MEEGELEVERD)
+
+    for sjabloon in MEEGELEVERD:
+        rij = db.query(Skill).filter(Skill.name == sjabloon["name"]).one()
+        assert rij.is_enabled is True
+        assert rij.usage_scope == "sessie"
+        assert rij.is_system is False
+
+
+def test_weglaten_wint_van_kort(db):
+    """Botsen 'hou het kort' en 'laat dit weg', dan wint weglaten."""
     from models.skill import Skill
     from services.skills.meegeleverd import zorg_voor_meegeleverde_skills
 
-    assert zorg_voor_meegeleverde_skills(db) == 1
+    zorg_voor_meegeleverde_skills(db)
+    kort = db.query(Skill).filter(Skill.name == "to-the-point").one()
+    extern = db.query(Skill).filter(Skill.name == "externe-communicatie").one()
+    assert extern.priority > kort.priority
 
-    rij = db.query(Skill).filter(Skill.name == "to-the-point").one()
-    assert rij.is_enabled is True
-    assert rij.usage_scope == "sessie"
-    assert rij.is_system is False
+
+def test_de_externe_regel_noemt_wat_er_niet_in_mag(db):
+    from services.skills.meegeleverd import EXTERNE_COMMUNICATIE
+
+    tekst = EXTERNE_COMMUNICATIE.lower()
+    for moet in ("ticketsleutels", "labs", "branches", "servernamen",
+                 "collega", "bord"):
+        assert moet in tekst, moet
 
 
 def test_een_tweede_start_verandert_niets(db):

@@ -26,6 +26,7 @@ import { Badge, Button, Card, Input, Label, Select, TextArea } from "@/component
 import { SoortKiezer } from "@/components/SoortKiezer";
 import { ticketVerwijzingen } from "@/components/TicketVerwijzingen";
 import { useMelding } from "@/components/Meldingen";
+import { GrillMeister } from "@/components/GrillMeister";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
 import { Bot, ExternalLink, MessageSquare, Pencil, Trash2, X } from "lucide-react";
@@ -605,6 +606,20 @@ export function TicketDrawer({
           placeholder="Toetsbare criteria, bv. een lijstje met '- [ ] …'. De agent meet zijn werk hieraan af."
           onSave={(next) => save({ acceptance_criteria: next })}
         />
+
+        {/* De grillmeister staat ONDER de twee velden die hij bevraagt, en
+            niet in een eigen tabblad: zijn vragen gaan over wat je hierboven
+            net hebt getypt, en die twee naast elkaar kunnen zien is het hele
+            punt. Dicht tot je hem opent -- hij kost een modelaanroep. */}
+        <details className="rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            🔥 Grillmeister — vragen, aanscherpen, en een versie voor de klant
+          </summary>
+          <div className="mt-3">
+            <GrillMeister boardId={board.id} ticket={ticket}
+                          onBijgewerkt={() => { void load(); onChanged(); }} />
+          </div>
+        </details>
 
         {ticket.external_url && (
           <a
