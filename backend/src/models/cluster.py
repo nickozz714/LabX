@@ -78,6 +78,21 @@ class Cluster(Base):
     #: profiel. Zonder dat valt de API om op "Missing API_KEY" terwijl de
     #: front-end gewoon draait, en dat ziet eruit als een half geslaagd lab.
     azure_profiel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Krijgt elk branch-lab de data-egress-guard aan, en het lokale model
+    #: als tweede controle?
+    #:
+    #: Standaard allebei AAN -- dat hoort de veilige kant te zijn. Maar een
+    #: cluster waarvan de repo's geen klantdata bevatten betaalt daar elke
+    #: tool-aanroep voor, en dan is het een rem zonder dat er iets te remmen
+    #: valt. Die keuze hoort bij het CLUSTER en niet per lab: je weet het van
+    #: de repo, en een branch-lab erft hem dus in plaats van dat je het bij
+    #: elk nieuw lab opnieuw uitzet (en één keer vergeet).
+    #:
+    #: Dit zet hem alleen voor NIEUWE branch-labs. Bestaande labs houden wat
+    #: ze hebben; dat staat per lab in de instellingen en werkt daar direct,
+    #: zonder herstart.
+    lab_data_guard: Mapped[bool] = mapped_column(Integer, nullable=False, default=1)
+    lab_llm_guard: Mapped[bool] = mapped_column(Integer, nullable=False, default=1)
     #: Haalt deze applicatie haar geheimen zelf op uit een vault?
     #:
     #: Dan is "deze tien sleutels ontbreken in de kluis" een verkeerde

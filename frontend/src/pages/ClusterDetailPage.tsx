@@ -22,8 +22,8 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
   ArrowLeft, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch, KanbanSquare,
   KeyRound, LayoutDashboard, Loader2, MessageSquare, Network, Package, Play, PlayCircle, Plus,
-  RefreshCw, Search, Server, SlidersHorizontal, Square, Terminal, Trash2, TriangleAlert,
-  Wand2,
+  RefreshCw, Search, Server, ShieldCheck, SlidersHorizontal, Square, Terminal, Trash2,
+  TriangleAlert, Wand2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
@@ -38,6 +38,7 @@ import type {
 import { TUNNEL_OS } from "@/lib/clusters";
 import {
   Badge, Button, Card, EmptyState, Input, Label, MenuKnop, Modal, Select, TextArea,
+  Toggle,
 } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { DienstActies } from "@/components/DienstActies";
@@ -1167,6 +1168,8 @@ export function ClusterDetailPage() {
 
           <PoortenKaart cluster={c} onWijzig={laad} />
 
+          <GuardKaart cluster={c} onWijzig={laad} />
+
           <ExtrasKaart clusterId={c.id} gekozen={c.lab_extras || []} onWijzig={laad} />
 
           <Card className="p-4">
@@ -1736,6 +1739,84 @@ function RepoKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => vo
           het lab (<span className="font-mono">git remote add origin …</span>) en zet de URL
           daarna hier neer. Is hij privé, dan hoort er ook een deploy key of token bij —
           zie <span className="font-medium">Toegang &amp; geheimen</span>.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/** Of een nieuw branch-lab de guards aan krijgt.
+ *
+ * Standaard allebei aan — dat hoort de veilige kant te zijn. Maar een cluster
+ * waarvan de repo's geen klantdata bevatten betaalt er elke tool-aanroep
+ * voor, en dan remt hij zonder dat er iets te remmen valt.
+ *
+ * Bewust een CLUSTER-instelling. Je weet dit van de repo, niet van een lab,
+ * en per lab uitzetten betekent dat je het bij elk nieuw branch-lab opnieuw
+ * moet doen — en één keer vergeet.
+ */
+function GuardKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => void }) {
+  const melding = useMelding();
+  const bevestig = useBevestiging();
+
+  async function zet(veld: "lab_data_guard" | "lab_llm_guard", waarde: boolean) {
+    if (!waarde && veld === "lab_data_guard") {
+      const ja = await bevestig.vraag({
+        titel: "De data-guard uitzetten voor nieuwe labs?",
+        tekst: "Doe dit alleen als je zeker weet dat er geen klantdata in deze repo's zit. "
+          + "Zonder guard kan een agent gegevens naar buiten sturen zonder dat iets meekijkt.",
+        variant: "danger",
+        bevestig: "Uitzetten",
+      });
+      if (!ja) return;
+    }
+    try {
+      await clusterApi.wijzig(cluster.id, { [veld]: waarde } as Partial<Cluster>);
+      melding.ok("Opgeslagen. Dit geldt voor branch-labs die je hierna aanmaakt.");
+      onWijzig();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Opslaan mislukte");
+    }
+  }
+
+  const dataAan = cluster.lab_data_guard !== false;
+  const llmAan = cluster.lab_llm_guard !== false;
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h2 className="text-sm font-semibold">Guards voor nieuwe branch-labs</h2>
+          <p className="text-xs text-muted-foreground">
+            Geldt voor labs die je hierna aanmaakt. Labs die er al staan houden hun eigen
+            stand — die zet je om bij het lab zelf, en dat werkt meteen.
+          </p>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <div>
+          <Toggle checked={dataAan} onChange={(v) => zet("lab_data_guard", v)}
+                  label="Data-egress-guard (regels)" />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Kijkt bij elke tool-aanroep mee of er gegevens naar buiten gaan. Uit is sneller,
+            en alleen verantwoord als er geen klantdata in deze repo's zit.
+          </p>
+        </div>
+        <div>
+          <Toggle checked={llmAan} onChange={(v) => zet("lab_llm_guard", v)}
+                  label="Lokaal model als extra check" />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Een tweede oordeel van een klein model bovenop de regels. Dit is het duurste
+            deel: elke aanroep wacht erop.
+          </p>
+        </div>
+      </div>
+      {!dataAan && !llmAan && (
+        <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+          Nieuwe branch-labs van dit cluster draaien zonder enige controle op wat er naar
+          buiten gaat.
         </p>
       )}
     </Card>

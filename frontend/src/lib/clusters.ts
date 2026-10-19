@@ -247,6 +247,10 @@ export type Cluster = {
   /** Hoe dit cluster bij zijn repo komt. Een sleutel wint van een token. */
   toegang_soort: "ssh" | "https" | "geen";
   /** Waarop de applicatie IN een branch-lab luistert; LabX publiceert die. */
+  /** Krijgt een NIEUW branch-lab de guards aan? Bestaande labs houden wat ze
+   *  hebben; dat staat per lab in de instellingen. */
+  lab_data_guard?: boolean;
+  lab_llm_guard?: boolean;
   lab_poorten: number[];
   /** Waar dit project env-bestanden verwacht. Uit de verkenning: afgeleid uit
    *  de `.env.example`-bestanden in de repo, aangevuld door het model met wat

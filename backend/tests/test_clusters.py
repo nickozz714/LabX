@@ -1285,3 +1285,105 @@ def test_een_kapotte_daemon_levert_geen_valse_geheugenmelding(db):
     assert asyncio.run(svc.meld_geheugentekort("l-stuk")) is False
     db.refresh(lab)
     assert lab.error is None
+
+
+# ── guards per cluster ───────────────────────────────────────────────────────
+
+def test_een_nieuw_cluster_heeft_de_guards_aan(db):
+    """Aan is de veilige kant; uitzetten is een bewuste keuze."""
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+
+    uit = svc.to_dict(c)
+    assert uit["lab_data_guard"] is True
+    assert uit["lab_llm_guard"] is True
+
+
+def test_de_guardstand_van_het_cluster_gaat_mee_naar_een_nieuw_branch_lab(db, monkeypatch):
+    """Zonder dit kreeg elk nieuw branch-lab ze weer aan, ook op een cluster
+    waarvan je al had vastgesteld dat er geen klantdata in zit."""
+    import asyncio
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+    svc.wijzig(c.id, lab_data_guard=False, lab_llm_guard=False)
+
+    meegegeven = {}
+    import services.lab.lab_service as ls
+
+    async def nep_create(self, **kw):
+        from models.lab import Lab
+
+        meegegeven.update(kw)
+        rij = Lab(id="nieuw", name=kw["name"], status="running",
+                  image=kw.get("image") or "x", volume_name="v",
+                  created_at="x", updated_at="x")
+        db.add(rij)
+        db.commit()
+        return {"id": "nieuw"}
+
+    async def niets(*a, **k):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(ls.LabService, "create", nep_create)
+    monkeypatch.setattr(svc, "_kloon_branch", niets)
+    monkeypatch.setattr(svc, "start_branch_lab", niets)
+    monkeypatch.setattr(svc, "controleer_toegang", niets)
+
+    asyncio.run(svc.maak_branch_lab(c.id, titel="Zoek filter"))
+
+    assert meegegeven["data_guard"] is False
+    assert meegegeven["llm_guard"] is False
+
+
+def test_een_cluster_dat_de_guards_aan_heeft_geeft_ze_ook_door(db, monkeypatch):
+    import asyncio
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+
+    meegegeven = {}
+    import services.lab.lab_service as ls
+
+    async def nep_create(self, **kw):
+        from models.lab import Lab
+
+        meegegeven.update(kw)
+        db.add(Lab(id="nieuw2", name=kw["name"], status="running", image="x",
+                   volume_name="v", created_at="x", updated_at="x"))
+        db.commit()
+        return {"id": "nieuw2"}
+
+    async def niets(*a, **k):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(ls.LabService, "create", nep_create)
+    monkeypatch.setattr(svc, "_kloon_branch", niets)
+    monkeypatch.setattr(svc, "start_branch_lab", niets)
+    monkeypatch.setattr(svc, "controleer_toegang", niets)
+
+    asyncio.run(svc.maak_branch_lab(c.id, titel="Iets"))
+
+    assert meegegeven["data_guard"] is True
+    assert meegegeven["llm_guard"] is True
+
+
+def test_bestaande_labs_veranderen_niet_mee(db):
+    """De clusterstand geldt voor NIEUWE labs. Een lopend lab omzetten achter
+    iemands rug is precies wat je niet wilt terwijl er een run draait."""
+    from models.lab import Lab
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+    nu = "2026-10-19T20:00:00+00:00"
+    lab = Lab(id="bestaand", name="Hive · x", status="running", image="x",
+              volume_name="v", cluster_id=c.id, data_guard=True, llm_guard=True,
+              created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc.wijzig(c.id, lab_data_guard=False, lab_llm_guard=False)
+
+    db.refresh(lab)
+    assert lab.data_guard is True
+    assert lab.llm_guard is True

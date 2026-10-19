@@ -316,6 +316,9 @@ class ClusterService:
             rij.lab_mem_mb = int(velden["lab_mem_mb"]) if velden["lab_mem_mb"] else None
         if "lab_azure" in velden:
             rij.lab_azure = bool(velden["lab_azure"])
+        for vlag in ("lab_data_guard", "lab_llm_guard"):
+            if vlag in velden:
+                setattr(rij, vlag, bool(velden[vlag]))
         if "geheimen_zelf" in velden:
             rij.geheimen_zelf = bool(velden["geheimen_zelf"])
         if "azure_profiel_id" in velden:
@@ -793,6 +796,12 @@ class ClusterService:
             # nieuwe branch nodig en dat kan de gewone kloon niet.
             ttl_hours=24 * 7,
             allow_network=True,
+            # De guardstand van het cluster. Zonder dit kreeg elk nieuw
+            # branch-lab ze weer aan, ook op een cluster waarvan je al had
+            # vastgesteld dat er geen klantdata in zit -- en dan betaal je
+            # elke tool-aanroep voor een controle zonder onderwerp.
+            data_guard=bool(getattr(c, "lab_data_guard", True)),
+            llm_guard=bool(getattr(c, "lab_llm_guard", True)),
             # En niet zelf inrichten: hieronder wordt de container opnieuw
             # opgebouwd op het netwerk van het cluster, en een ronde die
             # tegen een verdwijnende container praat laat een halve
@@ -1147,6 +1156,8 @@ class ClusterService:
             # worden. De privéhelft komt hier nooit in.
             "ssh_publiek": c.ssh_publiek,
             "toegang_soort": "ssh" if c.ssh_prive_encrypted else ("https" if c.repo_token_geheim else "geen"),
+            "lab_data_guard": bool(getattr(c, "lab_data_guard", True)),
+            "lab_llm_guard": bool(getattr(c, "lab_llm_guard", True)),
             "lab_poorten": c.lab_poorten or [],
             "env_paden": c.env_paden or [],
             "lab_extras": c.lab_extras or [],

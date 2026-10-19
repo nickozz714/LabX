@@ -31,6 +31,10 @@ _ADDITIVE_COLUMNS = {
         # hebben dit niet en vallen terug op de oude standaard.
         ("lab_poorten", "TEXT"),
         ("env_paden", "TEXT"),
+        # Of een nieuw branch-lab de guards aan krijgt. Bestaande clusters
+        # staan op aan -- dat was tot nu toe de enige stand.
+        ("lab_data_guard", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("lab_llm_guard", "BOOLEAN NOT NULL DEFAULT 1"),
         ("lab_extras", "TEXT"),
         # De deploy key van dit cluster. Erbij gekomen omdat een organisatie
         # met goedkeuringsbeleid een token kan tegenhouden, en een deploy key
