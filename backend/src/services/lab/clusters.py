@@ -24,6 +24,7 @@ DRIE DINGEN DIE DE REST VERKLAREN:
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -217,6 +218,19 @@ def _voorvoegsel(clusternaam: str) -> str:
 #: eindeloos, en dat ziet eruit als een hangend lab.
 BRANCH_LAB_CPU = 2.0
 BRANCH_LAB_MEM_MB = 4096
+
+
+#: Eén startend branch-lab tegelijk per cluster. Zie de toelichting bij het
+#: gebruik: dit gaat niet over botsende containers maar over het geheugen van
+#: de machine, en dat bewaakt verder niemand.
+_START_SLOTEN: Dict[int, Any] = {}
+
+
+def _startslot(cluster_id: int) -> Any:
+    slot = _START_SLOTEN.get(int(cluster_id))
+    if slot is None:
+        slot = _START_SLOTEN[int(cluster_id)] = asyncio.Lock()
+    return slot
 
 
 class ClusterService:
@@ -1006,7 +1020,15 @@ class ClusterService:
         if c.start_script:
             # Inrichten EN daarna de applicatie starten. Het startscript is
             # geen inrichtingsstap: het keert niet terug als het goed gaat.
-            _na_inrichten_starten(p.id)
+            #
+            # Eén tegelijk per CLUSTER. Een cluster hoort bij één machine, en
+            # die machine heeft één keer geheugen. Drie branch-labs van
+            # dezelfde monorepo die tegelijk `yarn install` draaien passen
+            # daar niet in: gemeten op deze machine kreeg er één 2,5 GB en
+            # werden de andere twee door de OOM-killer afgeschoten --
+            # `OOMKilled=true`, een `Killed` halverwege de installatie, en
+            # twee labs die op "running" stonden zonder iets te doen.
+            _na_inrichten_starten(p.id, slot=_startslot(c.id))
         log.infox("Branch-lab gestart", cluster=c.naam, branch=p.branch,
                   poorten=p.poort_map)
         self.db.refresh(p)

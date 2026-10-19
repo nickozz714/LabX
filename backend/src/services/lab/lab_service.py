@@ -3642,7 +3642,7 @@ exec sh /workspace/.labx-start.sh < .labx-stdin
 """
 
 
-def _na_inrichten_starten(lab_id: str) -> bool:
+def _na_inrichten_starten(lab_id: str, *, slot: Optional[Any] = None) -> bool:
     """Inrichten, en als dat klaar is de applicatie starten.
 
     Twee handelingen die niet samen in één stap kunnen: inrichten moet
@@ -3652,6 +3652,14 @@ def _na_inrichten_starten(lab_id: str) -> bool:
 
     Zelfde boekhouding als het gewone inrichten, zodat twee rondes niet
     tegelijk in dezelfde container aan apt gaan zitten.
+
+    `slot` zet dit werk achter een slot dat je zélf meebrengt -- bedoeld voor
+    labs die een MACHINE delen. De boekhouding hierboven bewaakt één
+    container; het geheugen van de machine bewaakt niemand. Drie branch-labs
+    van dezelfde monorepo die tegelijk `yarn install` draaien passen niet in
+    8 GB, en dan wint er één en worden de andere twee doodgeschoten met een
+    `Killed` halverwege de installatie -- een lab dat op "running" staat en
+    niets doet, zonder uitleg.
     """
     import asyncio
 
@@ -3665,7 +3673,7 @@ def _na_inrichten_starten(lab_id: str) -> bool:
         log.warningx("Inrichten niet gestart: geen event loop", lab_id=lab_id)
         return False
 
-    async def _beide() -> None:
+    async def _werk() -> None:
         from db.database import SessionLocal
 
         await _provision_worker(lab_id, force=True)
@@ -3674,6 +3682,15 @@ def _na_inrichten_starten(lab_id: str) -> bool:
                 await LabService(db).start_applicatie(lab_id)
         except Exception as exc:  # noqa: BLE001 — starten mag het inrichten niet omverhalen
             log.warningx("Applicatie starten mislukt", lab_id=lab_id, error=str(exc)[:300])
+
+    async def _beide() -> None:
+        if slot is None:
+            await _werk()
+            return
+        if slot.locked():
+            log.infox("Lab wacht op een ander lab van hetzelfde cluster", lab_id=lab_id)
+        async with slot:
+            await _werk()
 
     _PROVISION_NOGMAALS.discard(lab_id)
     task = loop.create_task(_beide())

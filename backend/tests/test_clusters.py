@@ -1141,3 +1141,61 @@ def test_het_cluster_toont_geen_link_naar_een_lab_dat_er_niet_meer_is(db):
 
     assert uit["proef_lab_id"] is None
     assert uit["proef_status"] == "geen"
+
+
+# ── één startend branch-lab tegelijk per cluster ─────────────────────────────
+
+def test_branch_labs_van_een_cluster_starten_na_elkaar(monkeypatch):
+    """Gemeten op deze machine: drie branch-labs van dezelfde monorepo die
+    tegelijk `yarn install` draaien passen niet in 8 GB. Eén kreeg 2,5 GB, de
+    andere twee werden afgeschoten (`OOMKilled=true`) en stonden daarna op
+    'running' zonder iets te doen. Dus: op een rij."""
+    import asyncio
+
+    from services.lab.clusters import _startslot
+
+    slot = _startslot(99)
+    tegelijk, hoogste = 0, 0
+
+    async def werk():
+        nonlocal tegelijk, hoogste
+        async with slot:
+            tegelijk += 1
+            hoogste = max(hoogste, tegelijk)
+            await asyncio.sleep(0.01)
+            tegelijk -= 1
+
+    asyncio.run(_drie(werk))
+    assert hoogste == 1
+
+
+async def _drie(werk):
+    import asyncio
+
+    await asyncio.gather(werk(), werk(), werk())
+
+
+def test_elk_cluster_heeft_zijn_eigen_slot():
+    """Twee clusters kunnen op twee machines staan; die hoeven niet op
+    elkaar te wachten."""
+    from services.lab.clusters import _startslot
+
+    assert _startslot(101) is _startslot(101)
+    assert _startslot(101) is not _startslot(102)
+
+
+def test_het_slot_wordt_meegegeven_bij_het_starten():
+    """Zonder dat het wordt meegegeven, staat het er voor niets."""
+    import ast
+    from pathlib import Path
+
+    bron = (Path(__file__).resolve().parents[1] / "src" / "services" / "lab"
+            / "clusters.py").read_text(encoding="utf-8")
+    boom = ast.parse(bron)
+    aanroepen = [k for k in ast.walk(boom)
+                 if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)
+                 and k.func.id == "_na_inrichten_starten"]
+    assert aanroepen, "start_branch_lab richt niets meer in?"
+    for k in aanroepen:
+        assert any(w.arg == "slot" for w in k.keywords), \
+            "het startslot van het cluster wordt niet meegegeven"
