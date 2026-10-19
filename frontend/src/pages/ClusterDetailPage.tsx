@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch, KanbanSquare,
-  KeyRound, Loader2, MessageSquare, Package, Play, PlayCircle, Plus, RefreshCw, Search,
+  KeyRound, Loader2, MessageSquare, Network, Package, Play, PlayCircle, Plus, RefreshCw, Search,
   Server, Square, Terminal, Trash2, TriangleAlert,
 } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
@@ -806,6 +806,8 @@ export function ClusterDetailPage() {
       <KluisKaart clusterId={c.id} benodigd={c.benodigde_geheimen || {}} />
 
       {/* ── de vaste laag ────────────────────────────────────────────────── */}
+      <PoortenKaart cluster={c} onWijzig={laad} />
+
       <EnvBestandenKaart clusterId={c.id} paden={c.env_paden || []} />
 
       <ExtrasKaart clusterId={c.id} gekozen={c.lab_extras || []} onWijzig={laad} />
@@ -932,12 +934,6 @@ export function ClusterDetailPage() {
           <div className="flex gap-2">
             <dt className="w-32 shrink-0 text-muted-foreground">Env-profiel</dt>
             <dd>{c.env_profiel || "—"}</dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="w-32 shrink-0 text-muted-foreground">Luistert op</dt>
-            <dd className="font-mono text-xs">
-              {c.lab_poorten?.length ? c.lab_poorten.join(", ") : "3000, 7071 (standaard)"}
-            </dd>
           </div>
           {Object.keys(c.omgeving).length > 0 && (
             <div className="flex gap-2">
@@ -1406,6 +1402,129 @@ function ExtrasKaart(
           </span>
         </div>
       )}
+    </Card>
+  );
+}
+
+/**
+ * Op welke poorten de applicatie IN een branch-lab luistert.
+ *
+ * Dit is het verschil tussen een lab dat werkt en een lab dat draait maar
+ * onbereikbaar is — en dat verschil is van buiten niet te zien. Daarom staat
+ * hier uitleg en geen tabel.
+ *
+ * De verkenner haalt deze nummers uit de repo (meestal `EXPOSE` in een
+ * Dockerfile). Dat gaat goed voor een backend en mis voor een PRODUCTIE-image:
+ * `frontend/Dockerfile` van Slimmer-Politiek zegt `EXPOSE 80`, maar dat is de
+ * nginx die in productie de SPA serveert — in een lab komt daar nooit iets.
+ * LabX wachtte dan tot de tijd om was en noemde het mislukt, en het model
+ * ging een tweede server op 80 zetten om eraan te voldoen.
+ */
+function PoortenKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => void }) {
+  const melding = useMelding();
+  const [poorten, setPoorten] = useState<number[]>(cluster.lab_poorten || []);
+  const [nieuw, setNieuw] = useState("");
+  const [bezig, setBezig] = useState(false);
+
+  useEffect(() => setPoorten(cluster.lab_poorten || []), [cluster.lab_poorten]);
+
+  const gewijzigd = poorten.join(",") !== (cluster.lab_poorten || []).join(",");
+
+  function voegToe() {
+    const n = Number(nieuw.trim());
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      melding.fout("Dat is geen poort", "Een poortnummer ligt tussen 1 en 65535.");
+      return;
+    }
+    if (poorten.includes(n)) { setNieuw(""); return; }
+    setPoorten((o) => [...o, n]);
+    setNieuw("");
+  }
+
+  async function bewaar() {
+    setBezig(true);
+    try {
+      await clusterApi.wijzig(cluster.id, { lab_poorten: poorten });
+      melding.ok("Poorten opgeslagen",
+                 "Branch-labs die hierna starten publiceren deze poorten.");
+      onWijzig();
+    } catch (e) {
+      melding.fout("Opslaan lukte niet", e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <Network className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold">Waarop de applicatie luistert</h2>
+          <p className="text-xs text-muted-foreground">
+            Poortnummers <em>binnen</em> de container. LabX publiceert ze naar buiten op
+            een vrij nummer vanaf 18000, en wacht bij het starten tot ze allemaal
+            antwoorden. Staat hier een nummer waar nooit iets komt, dan blijft het lab
+            op &quot;mislukt&quot; staan terwijl de applicatie prima draait.
+          </p>
+        </div>
+      </div>
+
+      {poorten.length === 0 ? (
+        <EmptyState>
+          Nog geen poorten. Zonder deze gokt LabX op 3000 en 7071 — vul in waarop jouw
+          applicatie echt luistert.
+        </EmptyState>
+      ) : (
+        <ul className="space-y-2">
+          {poorten.map((poort, i) => (
+            <li key={poort} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+              <span className="font-mono text-sm">{poort}</span>
+              {i === 0 && <Badge tone="green">hoofdpoort</Badge>}
+              <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+                {i === 0
+                  ? "Hier wijst de knop \u201eOpenen\u201d naartoe, en hierop bouwt LabX het adres van het lab."
+                  : "Wordt ook gepubliceerd; het starten slaagt pas als ook hier iets antwoordt."}
+              </span>
+              <Button variant="ghost" onClick={() => setPoorten((o) => o.filter((x) => x !== poort))}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Input
+          className="w-32 font-mono text-sm"
+          value={nieuw}
+          placeholder="8000"
+          onChange={(e) => setNieuw(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") voegToe(); }}
+        />
+        <Button variant="secondary" onClick={voegToe} disabled={!nieuw.trim()}>
+          <Plus className="h-3.5 w-3.5" /> Poort toevoegen
+        </Button>
+        {gewijzigd && (
+          <>
+            <Button onClick={() => void bewaar()} disabled={bezig}>
+              {bezig ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                     : <Check className="h-3.5 w-3.5" />}
+              Opslaan
+            </Button>
+            <Button variant="ghost" onClick={() => setPoorten(cluster.lab_poorten || [])}>
+              Terugdraaien
+            </Button>
+          </>
+        )}
+      </div>
+
+      <p className="mt-2 text-xs text-muted-foreground">
+        De verkenner haalt deze nummers meestal uit <code>EXPOSE</code> in een Dockerfile.
+        Let op een <strong>productie</strong>-image: een <code>EXPOSE 80</code> in
+        bijvoorbeeld <code>frontend/Dockerfile</code> is de nginx die later de gebouwde
+        site serveert — in een lab komt daar nooit iets. Haal zo&apos;n nummer hier weg.
+      </p>
     </Card>
   );
 }

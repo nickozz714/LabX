@@ -147,8 +147,35 @@ function Inhoud({ v }: { v: Vondst }) {
     );
   }
   if (v.soort === "lab_poorten" && w.poorten?.length) {
+    // Poort NAAST zijn vindplaats, niet eronder. "8000, 80" met twee losse
+    // bewijsregels eronder dwingt je zelf te koppelen — en juist dat koppelen
+    // is waar het misgaat: een EXPOSE 80 in frontend/Dockerfile is de nginx
+    // van PRODUCTIE, en in een lab komt daar nooit iets.
+    const bijPoort = (poort: number) =>
+      v.bewijs.find((b) => new RegExp(`\\b${poort}\\b`).test(b.fragment || ""));
     return (
-      <div className="mt-1 font-mono text-xs text-muted-foreground">{w.poorten.join(", ")}</div>
+      <ul className="mt-1 space-y-0.5">
+        {w.poorten.map((poort) => {
+          const b = bijPoort(poort);
+          return (
+            <li key={poort} className="flex flex-wrap items-baseline gap-2 text-xs">
+              <span className="w-14 shrink-0 font-mono">{poort}</span>
+              {b ? (
+                <span className="min-w-0 font-mono text-muted-foreground">
+                  {b.bestand}{b.regel ? `:${b.regel}` : ""}
+                  {/^frontend\//.test(b.bestand || "") && (
+                    <span className="ml-2 not-italic text-amber-400">
+                      — front-end-image: vaak de productie-nginx, niet de dev-server
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">voorgesteld door het model</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     );
   }
   if (v.soort === "omgeving" && w.keuzes?.length) {
