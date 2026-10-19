@@ -1199,3 +1199,89 @@ def test_het_slot_wordt_meegegeven_bij_het_starten():
     for k in aanroepen:
         assert any(w.arg == "slot" for w in k.keywords), \
             "het startslot van het cluster wordt niet meegegeven"
+
+
+# ── een lab dat omvalt op geheugen zegt dat ook ──────────────────────────────
+
+def test_een_oom_gekild_lab_krijgt_een_leesbare_fout(db):
+    """Zonder dit staat er: status 'running', groene stip, poort die niet
+    antwoordt, en een `Killed` halverwege duizend regels log."""
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-19T18:00:00+00:00"
+    lab = Lab(id="l-oom", name="Hive · bouwt", status="running", image="x",
+              volume_name="v", container_id="abc", mem_limit_mb=4096,
+              created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc = LabService(db)
+
+    class _Rt:
+        async def oom_gekild(self, _cid):
+            return True
+
+    svc.runtime_voor = lambda _p: _Rt()
+    svc.is_host = lambda _p: False
+
+    assert asyncio.run(svc.meld_geheugentekort("l-oom")) is True
+    db.refresh(lab)
+    assert "geheugen was op" in lab.error.lower()
+    assert "4096 MB" in lab.error
+    assert "Stop er een" in lab.error
+
+
+def test_een_lab_dat_gewoon_draait_krijgt_geen_valse_melding(db):
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-19T18:00:00+00:00"
+    lab = Lab(id="l-ok", name="Hive · draait", status="running", image="x",
+              volume_name="v", container_id="abc", created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc = LabService(db)
+
+    class _Rt:
+        async def oom_gekild(self, _cid):
+            return False
+
+    svc.runtime_voor = lambda _p: _Rt()
+    svc.is_host = lambda _p: False
+
+    assert asyncio.run(svc.meld_geheugentekort("l-ok")) is False
+    db.refresh(lab)
+    assert lab.error is None
+
+
+def test_een_kapotte_daemon_levert_geen_valse_geheugenmelding(db):
+    """Niet kunnen kijken is iets anders dan 'het geheugen was op'."""
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-19T18:00:00+00:00"
+    lab = Lab(id="l-stuk", name="Hive", status="running", image="x",
+              volume_name="v", container_id="abc", created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc = LabService(db)
+
+    class _Rt:
+        async def oom_gekild(self, _cid):
+            raise RuntimeError("daemon weg")
+
+    svc.runtime_voor = lambda _p: _Rt()
+    svc.is_host = lambda _p: False
+
+    assert asyncio.run(svc.meld_geheugentekort("l-stuk")) is False
+    db.refresh(lab)
+    assert lab.error is None

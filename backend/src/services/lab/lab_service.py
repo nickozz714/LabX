@@ -2533,6 +2533,41 @@ exec ssh -N \\
             log.infox("Proeflab weggegooid; cluster teruggezet op 'geen'",
                       cluster=c.naam, lab_id=lab_id)
 
+    async def meld_geheugentekort(self, lab_id: str) -> bool:
+        """Is dit lab door de OOM-killer geraakt? Zeg dat dan, op het lab.
+
+        Hier kwam een hele avond zoeken vandaan. Drie branch-labs van dezelfde
+        monorepo begonnen tegelijk aan `yarn install`; één won, de andere twee
+        werden afgeschoten. In het scherm stond daarna: status "running",
+        groene stip, een poort die niet antwoordde en verder niets. Het enige
+        spoor was een `Killed` halverwege een logbestand van duizend regels.
+
+        Een lab dat omvalt op geheugen is geen fout in de repo en geen fout in
+        het startscript -- het is een machine die te klein is. Dat is de enige
+        melding die je naar de juiste oplossing stuurt.
+        """
+        p = self.get(lab_id)
+        if not p.container_id:
+            return False
+        rt = self.runtime if self.is_host(p) else self.runtime_voor(p)
+        try:
+            geraakt = await rt.oom_gekild(p.container_id)
+        except Exception:  # noqa: BLE001
+            return False
+        if not geraakt:
+            return False
+        ruimte = f"{p.mem_limit_mb} MB" if p.mem_limit_mb else "het ingestelde maximum"
+        p.error = (
+            f"Het geheugen was op: de machine heeft dit lab afgebroken tijdens het "
+            f"starten ({ruimte} toegewezen). Draaien er meer labs van dit cluster? "
+            f"Stop er een, of geef Docker meer geheugen. Opnieuw proberen zonder "
+            f"een van beide loopt op hetzelfde uit.")
+        p.updated_at = _now_iso()
+        self.db.commit()
+        log.warningx("Lab afgebroken door geheugentekort", lab_id=p.id, lab=p.name,
+                     mem_limit_mb=p.mem_limit_mb)
+        return True
+
     async def expire_due(self) -> int:
         now = _now_iso()
         due = (self.db.query(Lab)
@@ -3682,6 +3717,11 @@ def _na_inrichten_starten(lab_id: str, *, slot: Optional[Any] = None) -> bool:
                 await LabService(db).start_applicatie(lab_id)
         except Exception as exc:  # noqa: BLE001 — starten mag het inrichten niet omverhalen
             log.warningx("Applicatie starten mislukt", lab_id=lab_id, error=str(exc)[:300])
+        try:
+            with SessionLocal() as db:
+                await LabService(db).meld_geheugentekort(lab_id)
+        except Exception as exc:  # noqa: BLE001 — een melding mag niets omverhalen
+            log.warningx("Geheugencontrole overgeslagen", lab_id=lab_id, error=str(exc)[:200])
 
     async def _beide() -> None:
         if slot is None:

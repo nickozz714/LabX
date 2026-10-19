@@ -659,6 +659,18 @@ class DockerRuntime:
             "inspect", "--format", "{{.State.Status}}", container_id, timeout=15)
         return out.strip() if code == 0 else None
 
+    async def oom_gekild(self, container_id: str) -> bool:
+        """Is deze container (of iets erin) door de OOM-killer geraakt?
+
+        Dit is het verschil tussen "er ging iets mis in het script" en "de
+        machine had het geheugen niet". Dat eerste los je op in de repo, dat
+        tweede nooit -- en zonder dit onderscheid zie je alleen een lab dat
+        op `running` staat en niets doet.
+        """
+        code, out, _ = await self._run_cli(
+            "inspect", "--format", "{{.State.OOMKilled}}", container_id, timeout=15)
+        return code == 0 and out.strip().lower() == "true"
+
     async def list_managed(self) -> List[Dict[str, str]]:
         """All containers LabX has ever started, running or not — used to
         reconcile DB state with the daemon after a backend restart (the daemon
