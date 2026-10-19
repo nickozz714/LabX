@@ -695,11 +695,54 @@ class PlanService:
         """
         if plan.max_parallel:
             return max(0, int(plan.max_parallel) - lopend)
-        from models.lab import Lab
         board = self.db.get(Board, plan.board_id)
-        lab = self.db.get(Lab, board.lab_id) if board and board.lab_id else None
-        plafond = int(getattr(lab, "max_workers", 1) or 1) if lab is not None else 1
-        return max(0, plafond - lopend)
+        return max(0, self._plafond(plan, board) - lopend)
+
+    def _plafond(self, plan: TicketPlan, board: Optional[Board]) -> int:
+        """Hoeveel bundels er hoogstens tegelijk mogen lopen.
+
+        Op een gewoon bord is dat het aantal werkers van het bordlab.
+
+        Op een CLUSTERBORD bestaat dat bordlab niet: elk ticket wijst naar een
+        branch en draait in het lab van díé branch. Hier stond daardoor
+        `plafond = 1`, en dat was fout op een manier die niet opvalt -- drie
+        tickets voor drie VERSCHILLENDE labs werden keurig één voor één
+        afgewerkt, terwijl ze elkaar onmogelijk in de weg konden zitten. Je
+        ziet geen fout, je ziet alleen dat het traag is.
+
+        Nu telt hij de werkers van de labs die in deze planning werkelijk
+        voorkomen. Twee tickets op dezelfde branch delen dus nog steeds één
+        lab en zijn werkers; tickets op verschillende branches niet.
+        """
+        from models.lab import Lab
+
+        if board is None:
+            return 1
+        if board.lab_id:
+            lab = self.db.get(Lab, board.lab_id)
+            return int(getattr(lab, "max_workers", 1) or 1) if lab is not None else 1
+        if not getattr(board, "cluster_id", None):
+            return 1
+
+        branches = {
+            (b or "").strip()
+            for (b,) in self.db.query(Ticket.branch)
+            .join(TicketPlanItem, TicketPlanItem.ticket_id == Ticket.id)
+            .filter(TicketPlanItem.plan_id == plan.id,
+                    TicketPlanItem.state.in_(("waiting", "running"))).all()
+        }
+        branches.discard("")
+        if not branches:
+            return 1
+        labs = (self.db.query(Lab)
+                .filter(Lab.cluster_id == board.cluster_id, Lab.branch.in_(branches))
+                .all())
+        # Een branch zonder lab telt voor één: het lab komt er nog, en zolang
+        # dat zo is houdt `_lab_voor_ticket` het ticket zelf tegen met een
+        # melding die zegt wat eraan ontbreekt.
+        plafond = sum(max(1, int(getattr(l, "max_workers", 1) or 1)) for l in labs)
+        plafond += len(branches) - len(labs)
+        return max(1, plafond)
 
     def _instructie_voor(self, plan: TicketPlan, ticket: Ticket,
                          item: Optional[TicketPlanItem] = None) -> Optional[str]:

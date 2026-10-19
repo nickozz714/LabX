@@ -30,7 +30,7 @@ def db():
     from sqlalchemy.orm import sessionmaker
 
     from db.database import Base
-    from models import board, cluster, lab  # noqa: F401
+    from models import board, cluster, lab, plan  # noqa: F401
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
@@ -114,3 +114,115 @@ def test_de_knop_inplannen_kijkt_niet_alleen_naar_lab_id() -> None:
     assert "disabled={busy || !board.lab_id}" not in tekst
     # En wat er wél staat: lab OF cluster.
     assert "board.lab_id || board.cluster_id" in tekst
+
+
+# ── hoeveel tickets er tegelijk mogen lopen ──────────────────────────────────
+
+def _plan_met(db, board, tickets):
+    from models.plan import TicketPlan, TicketPlanItem
+
+    nu = "2026-10-19T19:00:00+00:00"
+    plan = TicketPlan(board_id=board.id, name="P", state="running",
+                      created_at=nu, updated_at=nu)
+    db.add(plan)
+    db.commit()
+    for i, t in enumerate(tickets):
+        db.add(TicketPlanItem(plan_id=plan.id, ticket_id=t.id, position=i,
+                              state="waiting"))
+    db.commit()
+    return plan
+
+
+def _ticket(db, board, key, branch):
+    from models.board import Ticket
+
+    nu = "2026-10-19T19:00:00+00:00"
+    t = Ticket(board_id=board.id, key=key, title=key, status="agent",
+               priority="normal", labels=[], branch=branch,
+               created_at=nu, updated_at=nu)
+    db.add(t)
+    db.commit()
+    return t
+
+
+def _lab(db, cluster_id, lab_id, branch, werkers=1):
+    from models.lab import Lab
+
+    nu = "2026-10-19T19:00:00+00:00"
+    db.add(Lab(id=lab_id, name=lab_id, status="running", image="x", volume_name="v",
+               cluster_id=cluster_id, branch=branch, max_workers=werkers,
+               created_at=nu, updated_at=nu))
+    db.commit()
+
+
+def test_drie_tickets_in_drie_labs_lopen_tegelijk(db):
+    """Dit was de fout: het plafond kwam van het lab van het BORD, en een
+    clusterbord heeft dat niet. Drie tickets voor drie verschillende labs
+    werden daardoor één voor één afgewerkt terwijl ze elkaar onmogelijk in de
+    weg konden zitten -- je ziet geen fout, je ziet alleen traagheid."""
+    from services.boards.plan_service import PlanService
+
+    b, _ = _opzet(db, met_lab=False, branch="feature/a")
+    _lab(db, b.cluster_id, "l-a", "feature/a")
+    _lab(db, b.cluster_id, "l-b", "feature/b")
+    _lab(db, b.cluster_id, "l-c", "feature/c")
+    t1 = _ticket(db, b, "IH-10", "feature/a")
+    t2 = _ticket(db, b, "IH-11", "feature/b")
+    t3 = _ticket(db, b, "IH-12", "feature/c")
+    plan = _plan_met(db, b, [t1, t2, t3])
+
+    assert PlanService(db)._plafond(plan, b) == 3
+
+
+def test_twee_tickets_op_dezelfde_branch_delen_hun_lab(db):
+    """Die zitten wél in dezelfde container en horen elkaar niet te verdringen."""
+    from services.boards.plan_service import PlanService
+
+    b, _ = _opzet(db, met_lab=False, branch="feature/a")
+    _lab(db, b.cluster_id, "l-a", "feature/a")
+    t1 = _ticket(db, b, "IH-10", "feature/a")
+    t2 = _ticket(db, b, "IH-11", "feature/a")
+    plan = _plan_met(db, b, [t1, t2])
+
+    assert PlanService(db)._plafond(plan, b) == 1
+
+
+def test_meer_werkers_in_een_lab_tellen_mee(db):
+    from services.boards.plan_service import PlanService
+
+    b, _ = _opzet(db, met_lab=False, branch="feature/a")
+    _lab(db, b.cluster_id, "l-a", "feature/a", werkers=3)
+    t1 = _ticket(db, b, "IH-10", "feature/a")
+    plan = _plan_met(db, b, [t1])
+
+    assert PlanService(db)._plafond(plan, b) == 3
+
+
+def test_een_branch_zonder_lab_telt_voor_een(db):
+    """Het lab komt er nog; zolang dat zo is houdt _lab_voor_ticket het ticket
+    zelf tegen, met een melding die zegt wat eraan ontbreekt."""
+    from services.boards.plan_service import PlanService
+
+    b, _ = _opzet(db, met_lab=False, branch="feature/a")
+    _lab(db, b.cluster_id, "l-a", "feature/a")
+    t1 = _ticket(db, b, "IH-10", "feature/a")
+    t2 = _ticket(db, b, "IH-11", "feature/bestaat-nog-niet")
+    plan = _plan_met(db, b, [t1, t2])
+
+    assert PlanService(db)._plafond(plan, b) == 2
+
+
+def test_een_eigen_plafond_wint(db):
+    """Zet je zelf 'hooguit twee tegelijk', dan telt dat en niet de labs."""
+    from services.boards.plan_service import PlanService
+
+    b, _ = _opzet(db, met_lab=False, branch="feature/a")
+    for n in "abc":
+        _lab(db, b.cluster_id, f"l-{n}", f"feature/{n}")
+    tickets = [_ticket(db, b, f"IH-2{i}", f"feature/{n}")
+               for i, n in enumerate("abc")]
+    plan = _plan_met(db, b, tickets)
+    plan.max_parallel = 2
+    db.commit()
+
+    assert PlanService(db)._vrije_ruimte(plan, 0) == 2
