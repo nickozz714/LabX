@@ -232,6 +232,28 @@ async def branch_start_log(lab_id: str, db: Session = Depends(get_db)):
     return {"log": await LabService(db).start_log(lab_id, regels=200)}
 
 
+@router.post("/branches/{lab_id}/stop")
+async def stop_branch_lab(lab_id: str, db: Session = Depends(get_db)):
+    """Een branch-lab stilzetten vanuit het clusteroverzicht.
+
+    Stoppen kon alleen op het labscherm, en dat is precies de omweg die je
+    niet wilt: je bent hier omdat je de branches van dit cluster naast elkaar
+    hebt, en eentje mag van jou even niets meer doen.
+
+    Het werk blijft staan -- het volume blijft, de werkkopie blijft, en
+    starten pakt het weer op. Alleen de container verdwijnt, en daarmee ook
+    de poort op je machine.
+    """
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    lab = db.get(Lab, lab_id)
+    if lab is None or not lab.cluster_id:
+        raise HTTPException(status_code=404,
+                            detail="Dit is geen branch-lab van een cluster.")
+    return await LabService(db).stop(lab_id)
+
+
 @router.post("/branches/{lab_id}/start")
 async def start_branch_lab(lab_id: str, db: Session = Depends(get_db)):
     """Een branch-lab aanzetten op het netwerk van zijn cluster."""

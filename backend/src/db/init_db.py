@@ -381,4 +381,25 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _run_backfills(_ensure_columns())
+    _meegeleverde_skills()
     log.info("db_initialised")
+
+
+def _meegeleverde_skills() -> None:
+    """Skills die LabX zelf meebrengt, aanmaken als ze er nog niet zijn.
+
+    Nooit bijwerken en nooit terugzetten: wie er een uitzet of aanpast, heeft
+    dat zo bedoeld. Een fout hier mag het opstarten niet tegenhouden -- een
+    schrijfstijl is geen voorwaarde om te kunnen werken.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from services.skills.meegeleverd import zorg_voor_meegeleverde_skills
+
+    db = sessionmaker(bind=engine)()
+    try:
+        zorg_voor_meegeleverde_skills(db)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("meegeleverde_skills_overgeslagen error=%s", str(exc)[:200])
+    finally:
+        db.close()

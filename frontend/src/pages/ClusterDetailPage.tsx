@@ -37,7 +37,7 @@ import type {
 } from "@/lib/clusters";
 import { TUNNEL_OS } from "@/lib/clusters";
 import {
-  Badge, Button, Card, EmptyState, Input, Label, Modal, Select, TextArea,
+  Badge, Button, Card, EmptyState, Input, Label, MenuKnop, Modal, Select, TextArea,
 } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { DienstActies } from "@/components/DienstActies";
@@ -642,73 +642,122 @@ function BranchRegel({ lab, bordId, onActie }: {
 }) {
   const navigate = useNavigate();
   const melding = useMelding();
+  const bevestig = useBevestiging();
   const [gitOpen, setGitOpen] = useState(false);
+  const [tunnelOpen, setTunnelOpen] = useState(false);
+
+  const draait = lab.draait ?? false;
+  // Het adres waarop JIJ hem opent. De eerste gepubliceerde poort is bijna
+  // altijd de front-end; de rest haal je uit het labscherm.
+  const poort = Object.values(lab.poort_map || {})[0];
+
+  async function doe(wat: "start" | "stop" | "herstart-app") {
+    try {
+      if (wat === "start") {
+        await clusterApi.branchStart(lab.id);
+        melding.ok("Branch-lab gestart");
+      } else if (wat === "stop") {
+        await clusterApi.branchStop(lab.id);
+        melding.ok("Branch-lab gestopt. Het werk blijft staan.");
+      } else {
+        await clusterApi.branchAppHerstarten(lab.id);
+        melding.ok("Applicatie opnieuw gestart");
+      }
+      onActie();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Dat lukte niet");
+    }
+  }
+
+  async function weg() {
+    const ja = await bevestig.vraag({
+      titel: `'${lab.titel || lab.name}' verwijderen?`,
+      tekst: "Het lab en zijn werkkopie verdwijnen. Wat niet gepusht is, is daarna weg.",
+      variant: "danger",
+      bevestig: "Verwijderen",
+    });
+    if (!ja) return;
+    try {
+      await labsApi.remove(lab.id);
+      melding.ok("Branch-lab verwijderd");
+      onActie();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Verwijderen mislukte");
+    }
+  }
 
   return (
     <li className="rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <Link to={`/labs/${lab.id}`} className="min-w-0">
-          <span className="font-medium">{lab.titel || lab.name}</span>
-          {lab.branch && (
-            <span className="ml-2 font-mono text-xs text-muted-foreground">{lab.branch}</span>
+        <div className="flex min-w-0 items-start gap-2">
+          {/* Een stip en geen badge: de status is hier bijzaak zolang hij
+              draait, en springt eruit zodra dat niet zo is. */}
+          <span
+            title={draait ? "draait" : (lab.status || "gestopt")}
+            className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+              draait ? "bg-green-500"
+                     : lab.status === "error" ? "bg-destructive" : "bg-muted-foreground/40"}`}
+          />
+          <Link to={`/labs/${lab.id}`} className="min-w-0">
+            <span className="font-medium">{lab.titel || lab.name}</span>
+            {lab.branch && (
+              <span className="ml-2 font-mono text-xs text-muted-foreground">{lab.branch}</span>
+            )}
+            {lab.beschrijving && (
+              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{lab.beschrijving}</p>
+            )}
+            {!draait && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Gestopt — het werk staat er nog; starten pakt het weer op.
+              </p>
+            )}
+          </Link>
+        </div>
+
+        {/* Drie dingen in beeld in plaats van zes: openen, git, en de rest.
+            Zes knoppen op een rij is geen keuze meer maar een muur, en het
+            verschil tussen wat je dagelijks gebruikt en wat je zelden nodig
+            hebt was nergens aan te zien. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-1">
+          {draait && poort && (
+            <a href={`http://localhost:${poort}`} target="_blank" rel="noreferrer"
+               className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5
+                          text-sm hover:bg-muted">
+              <ExternalLink className="h-3.5 w-3.5" /> Openen
+            </a>
           )}
-          {lab.beschrijving && (
-            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{lab.beschrijving}</p>
-          )}
-        </Link>
-        <div className="flex flex-wrap gap-1">
-          {/* Chatten en het bord staan hier omdat dit de plek is waar je een
-              branch uitkiest. Anders moet je de naam van het lab onthouden en
-              hem elders terugzoeken. */}
           <Button variant={gitOpen ? "primary" : "secondary"} onClick={() => setGitOpen((x) => !x)}>
             <GitBranch className="h-3.5 w-3.5" /> Git
           </Button>
-          <Button variant="secondary" onClick={() => navigate(`/chat?lab=${lab.id}`)}>
-            <MessageSquare className="h-3.5 w-3.5" /> Chat
-          </Button>
-          <TunnelKnop lab={lab} />
-          {bordId && (
-            <Button variant="secondary"
-                    onClick={() => navigate(`/boards/${bordId}?branch=${encodeURIComponent(lab.branch || "")}`)}>
-              <KanbanSquare className="h-3.5 w-3.5" /> Bord
-            </Button>
-          )}
-          <Button
-            variant="secondary"
-            onClick={async () => {
-              try {
-                await clusterApi.branchStart(lab.id);
-                melding.ok("Branch-lab gestart");
-                onActie();
-              } catch (e) {
-                melding.fout(e instanceof ApiError ? e.message : "Starten mislukte");
-              }
-            }}
-          >
-            <Play className="h-3.5 w-3.5" /> Start
-          </Button>
-          {/* Opnieuw starten van de APPLICATIE, niet van het lab. Meestal
-              niet nodig: draait het startscript een devserver die meekijkt
-              (Vite, nodemon), dan is een wijziging van de agent meteen te
-              zien -- gemeten op dit cluster: index.html aanpassen en de
-              pagina serveert het direct.
-
-              Wel nodig als het script BOUWT in plaats van kijkt, of als de
-              applicatie is omgevallen. Vandaar een stil knopje. */}
-          <Button
-            variant="ghost"
-            title="Applicatie opnieuw starten — meestal niet nodig: een devserver pikt wijzigingen zelf op"
-            onClick={async () => {
-              try {
-                await clusterApi.branchAppHerstarten(lab.id);
-                melding.ok("Applicatie opnieuw gestart");
-              } catch (e) {
-                melding.fout(e instanceof ApiError ? e.message : "Herstarten mislukte");
-              }
-            }}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
+          <MenuKnop
+            label="Meer acties"
+            items={[
+              draait
+                ? { label: "Stoppen", icon: <Square className="h-3.5 w-3.5" />,
+                    onClick: () => doe("stop") }
+                : { label: "Starten", icon: <Play className="h-3.5 w-3.5" />,
+                    onClick: () => doe("start") },
+              { label: "Applicatie opnieuw starten",
+                icon: <RefreshCw className="h-3.5 w-3.5" />,
+                uit: !draait, onClick: () => doe("herstart-app") },
+              "scheiding",
+              { label: "Chatten met dit lab", icon: <MessageSquare className="h-3.5 w-3.5" />,
+                onClick: () => navigate(`/chat?lab=${lab.id}`) },
+              { label: "Werkruimte openen", icon: <Terminal className="h-3.5 w-3.5" />,
+                onClick: () => navigate(`/labs/${lab.id}`) },
+              ...(bordId
+                ? [{ label: "Naar het bord", icon: <KanbanSquare className="h-3.5 w-3.5" />,
+                     onClick: () => navigate(
+                       `/boards/${bordId}?branch=${encodeURIComponent(lab.branch || "")}`) }]
+                : []),
+              { label: "Tunnel naar een vaste poort…",
+                icon: <Download className="h-3.5 w-3.5" />,
+                uit: !draait, onClick: () => setTunnelOpen(true) },
+              "scheiding",
+              { label: "Branch-lab verwijderen", icon: <Trash2 className="h-3.5 w-3.5" />,
+                gevaarlijk: true, onClick: weg },
+            ]}
+          />
         </div>
       </div>
 
@@ -717,6 +766,8 @@ function BranchRegel({ lab, bordId, onActie }: {
           <BranchGit labId={lab.id} titel={lab.titel} />
         </div>
       )}
+
+      <TunnelVenster lab={lab} open={tunnelOpen} onClose={() => setTunnelOpen(false)} />
     </li>
   );
 }
@@ -1270,17 +1321,23 @@ export function ClusterDetailPage() {
  * bij de identity provider geregistreerd en nergens anders, en daar valt in
  * de repo niets aan te doen.
  *
- * Waarom een venster en geen knop in de rij: je moet twee dingen weten die
- * nergens anders staan -- welk adres je daarna opent, en dat de tunnel na een
- * herstart weg is. Een knop die stil een bestand neerzet laat je met allebei
- * die vragen zitten.
+ * Waarom een venster en geen knop die stil een bestand neerzet: je moet twee
+ * dingen weten die nergens anders staan -- welk adres je daarna opent, en dat
+ * de tunnel na een herstart weg is.
+ *
+ * De knop zelf staat sinds de opruiming in het menu van de branchregel: dit
+ * is iets wat je één keer per branch doet, niet iets wat in beeld hoort te
+ * staan terwijl je naar de status kijkt.
  */
-function TunnelKnop(
-  { lab }: { lab: { id: string; name: string; branch: string | null;
-                    poort_map?: Record<string, number> } },
+function TunnelVenster(
+  { lab, open, onClose }: {
+    lab: { id: string; name: string; branch: string | null;
+           poort_map?: Record<string, number> };
+    open: boolean;
+    onClose: () => void;
+  },
 ) {
   const melding = useMelding();
-  const [open, setOpen] = useState(false);
   const [bezig, setBezig] = useState<TunnelOs | null>(null);
 
   const poorten = Object.keys(lab.poort_map || {}).map(Number);
@@ -1292,7 +1349,7 @@ function TunnelKnop(
       const url = await clusterApi.branchTunnel(lab.id, os, poort);
       melding.ok("Tunnelscript gedownload",
                  `Start het en open daarna ${url}`);
-      setOpen(false);
+      onClose();
     } catch (e) {
       melding.fout("Tunnel maken lukte niet",
                    e instanceof ApiError ? e.message : String(e));
@@ -1302,11 +1359,7 @@ function TunnelKnop(
   }
 
   return (
-    <>
-      <Button variant="secondary" onClick={() => setOpen(true)}>
-        <Download className="h-3.5 w-3.5" /> Tunnel
-      </Button>
-      <Modal open={open} onClose={() => setOpen(false)} klikBuitenSluit
+    <Modal open={open} onClose={onClose} klikBuitenSluit
              title={`Tunnel naar ${lab.branch || lab.name}`}>
         <p className="text-sm text-muted-foreground">
           LabX publiceert dit lab op een oplopend nummer, zodat meerdere branches
@@ -1344,9 +1397,8 @@ function TunnelKnop(
               {o.naam}
             </Button>
           ))}
-        </div>
-      </Modal>
-    </>
+      </div>
+    </Modal>
   );
 }
 

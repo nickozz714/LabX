@@ -282,6 +282,7 @@ export type Cluster = {
     /** Waar deze branch over gaat. De titel is ook de branchnaam en reist
      *  mee naar git; de beschrijving blijft in LabX. */
     titel?: string; beschrijving?: string;
+    status?: string; draait?: boolean;
   }[];
   created_at: string;
   updated_at: string;
@@ -488,6 +489,7 @@ export const clusterApi = {
     api.patch<{ ok: boolean; titel: string; beschrijving: string }>(
       `/clusters/branches/${labId}`, body),
 
+  branchStop: (labId: string) => api.post<unknown>(`/clusters/branches/${labId}/stop`),
   branchStart: (labId: string) => api.post<unknown>(`/clusters/branches/${labId}/start`),
   /** De applicatie opnieuw starten zonder het lab te herstarten. Nodig zodra
    *  het startscript BOUWT in plaats van een devserver te draaien: dan is een

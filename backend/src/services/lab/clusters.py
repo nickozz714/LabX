@@ -1055,11 +1055,16 @@ class ClusterService:
         # poort van dit lab je op een vast nummer wilt, en een cluster met een
         # front-end en een API heeft er twee. Zonder dit kan het scherm die
         # keuze niet tonen en kiest de server altijd de eerste.
+        # De STATUS hoort erbij, niet alleen de naam. Zonder die kolom stond
+        # er een rij met een Start-knop voor een lab dat al draaide, en kon je
+        # er een niet stoppen zonder eerst naar het labscherm te lopen.
         labs = [{"id": i, "name": n, "branch": b, "poort_map": pm or {},
-                  "titel": t or "", "beschrijving": d or ""}
-                for i, n, b, pm, t, d in
+                  "titel": t or "", "beschrijving": d or "",
+                  "status": st, "draait": st == "running"}
+                for i, n, b, pm, t, d, st in
                 self.db.query(Lab.id, Lab.name, Lab.branch, Lab.poort_map,
-                              Lab.feature_titel, Lab.feature_beschrijving)
+                              Lab.feature_titel, Lab.feature_beschrijving,
+                              Lab.status)
                 .filter(Lab.cluster_id == c.id).all()]
         return {
             "id": c.id, "naam": c.naam, "status": c.status, "fout": c.fout,
