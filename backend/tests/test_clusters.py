@@ -1000,3 +1000,25 @@ def test_apt_krijgt_geduld_voordat_er_iets_geinstalleerd_wordt():
     assert "/etc/apt/apt.conf.d/" in stap["script"], "als config, niet per aanroep"
     # Idempotent: een lab dat al ingericht is, doet dit niet opnieuw.
     assert stap["check"].startswith("test -f")
+
+
+def test_een_afgebroken_installatie_wordt_eerst_afgemaakt():
+    """Een halve dpkg-transactie blokkeert ELKE volgende apt-aanroep met
+    "dpkg was interrupted". Daarna is het lab permanent stuk, want de
+    reparatie is zelf ook een apt-aanroep -- en het inrichten kwam dus nooit
+    meer voorbij `git`.
+
+    Deze stap moet VOOR de installaties staan en NA de wachtstap: herstellen
+    terwijl een ander proces de lock vasthoudt, mislukt opnieuw.
+    """
+    from services.lab.lab_service import _BASE_STEPS
+
+    sleutels = [s["key"] for s in _BASE_STEPS]
+    assert sleutels.index("apt-wacht") < sleutels.index("dpkg-herstel")
+    assert sleutels.index("dpkg-herstel") < sleutels.index("git")
+
+    stap = next(s for s in _BASE_STEPS if s["key"] == "dpkg-herstel")
+    assert "dpkg --configure -a" in stap["script"]
+    # Kosteloos als er niets half staat: `apt-get check` slaagt alleen bij
+    # een consistente dpkg-staat.
+    assert stap["check"].startswith("apt-get check")

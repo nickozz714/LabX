@@ -124,6 +124,18 @@ _BASE_STEPS: List[Dict[str, Any]] = [
                "printf 'DPkg::Lock::Timeout \"600\";\\n' "
                "> /etc/apt/apt.conf.d/99labx-wait",
      "timeout_s": 60},
+    # Een afgebroken installatie blokkeert ELKE volgende apt-aanroep met
+    # "dpkg was interrupted, you must manually run 'dpkg --configure -a'".
+    # Dat gebeurt zodra een container sneuvelt of een inrichting halverwege
+    # wordt gestopt -- en daarna is het lab permanent stuk, want elke poging
+    # om het te repareren is zelf weer een apt-aanroep.
+    #
+    # De check is `apt-get check`: die slaagt alleen als dpkg in een
+    # consistente staat is. Draait er niets half, dan kost deze stap niets.
+    {"key": "dpkg-herstel", "label": "afgebroken installatie afmaken",
+     "check": "apt-get check >/dev/null 2>&1",
+     "script": "DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
+     "timeout_s": 600},
     {"key": "git", "label": "git",
      "check": "command -v git >/dev/null 2>&1",
      "script": "apt-get update -qq && "
