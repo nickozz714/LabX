@@ -134,6 +134,31 @@ export type ClusterDienst = {
   draait: boolean;
 };
 
+export type ClusterBundel = {
+  id: number;
+  cluster_id: number;
+  naam: string;
+  bestandsnaam: string;
+  bytes_uitgepakt: number;
+  omvang: string;
+  aantal_bestanden: number;
+  boom: { pad: string; bytes: number }[];
+  instructie: string;
+  /** Waar de bundel hangt in de container die de opdracht uitvoert. */
+  koppelpunt: string;
+  laatst_toegepast: string | null;
+  laatste_exitcode: number | null;
+  laatste_uitvoer: string;
+};
+
+export type BundelUitslag = {
+  toelichting: string;
+  script: string;
+  image?: string;
+  uitvoer: string;
+  exit_code: number | null;
+};
+
 export type DienstActie = {
   id: number;
   dienst_id: number;
@@ -395,6 +420,22 @@ export const clusterApi = {
     api.delete<{ ok: boolean }>(`/clusters/diensten/acties/${actieId}`),
   dienstChat: (dienstId: number, vraag: string, geschiedenis: { rol: string; tekst: string }[]) =>
     api.post<DienstChatAntwoord>(`/clusters/diensten/${dienstId}/chat`, { vraag, geschiedenis }),
+
+  // ── bundels: bestanden van buiten, met een opdracht erbij ──────────────
+  bundels: (id: number) => api.get<ClusterBundel[]>(`/clusters/${id}/bundels`),
+  bundelUploaden: (id: number, bestand: File, naam: string, instructie: string) => {
+    const form = new FormData();
+    form.append("bestand", bestand);
+    form.append("naam", naam);
+    form.append("instructie", instructie);
+    return api.upload<ClusterBundel>(`/clusters/${id}/bundels`, form);
+  },
+  bundelWijzigen: (bundelId: number, body: { naam?: string; instructie?: string }) =>
+    api.patch<ClusterBundel>(`/clusters/bundels/${bundelId}`, body),
+  bundelWeg: (bundelId: number) => api.delete<{ ok: boolean }>(`/clusters/bundels/${bundelId}`),
+  bundelToepassen: (bundelId: number, body: {
+    dienst_id: number; instructie?: string; script?: string; image?: string;
+  }) => api.post<BundelUitslag>(`/clusters/bundels/${bundelId}/toepassen`, body),
 
   branchLab: (id: number, body: { branch: string; basis?: string; naam?: string }) =>
     api.post<{ id: string; name: string }>(`/clusters/${id}/branches`, body),

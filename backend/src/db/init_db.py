@@ -351,6 +351,7 @@ def init_db() -> None:
         lab,
         lab_extra,
         cluster,
+        cluster_bundel,
         cluster_dienst_actie,
         cluster_env_file,
         cluster_secret,

@@ -41,6 +41,7 @@ import {
 } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { DienstActies } from "@/components/DienstActies";
+import { ClusterBundels } from "@/components/ClusterBundels";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
 
@@ -881,6 +882,7 @@ export function ClusterDetailPage() {
 
       {/* ── de vaste laag ────────────────────────────────────────────────── */}
       {tab === "diensten" && (
+        <div className="space-y-4">
         <Card className="p-4">
           <div className="mb-3 flex items-start gap-2">
             <Box className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -898,6 +900,11 @@ export function ClusterDetailPage() {
                 {c.diensten.map((d) => <DienstRegel key={d.id} d={d} onActie={laad} />)}
               </ul>}
         </Card>
+
+        {/* Hier en niet op een eigen tab: het enige wat je met een bundel
+            doet is hem op een van de diensten hierboven loslaten. */}
+        <ClusterBundels cluster={c} />
+        </div>
       )}
 
       {/* ── de branches ──────────────────────────────────────────────────── */}

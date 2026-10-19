@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from authentication import require_user
 from db.database import get_db
 from services.lab.clusters import ClusterService
+from services.lab.bundels import MAX_ARCHIEF_BYTES, BundelService
 from services.lab.dienst_acties import DienstActieService
 
 router = APIRouter(prefix="/clusters", tags=["clusters"],
@@ -212,6 +213,86 @@ async def stop_dienst(dienst_id: int, db: Session = Depends(get_db)):
 async def verwijder_dienst(dienst_id: int, db: Session = Depends(get_db)):
     await _svc(db).verwijder_dienst(dienst_id)
     return {"ok": True}
+
+
+# ── bundels: bestanden van buiten, met een opdracht erbij ────────────────────
+#
+# Een vaste dienst begint leeg, en de bron waaruit hij gevuld hoort te worden
+# is niet altijd bereikbaar -- een firewall, een omgeving waar je niet bij
+# kunt. De export staat dan gewoon op je schijf. Die hier naar binnen kunnen
+# brengen is het verschil tussen een werkend cluster en wachten op iemand
+# anders.
+
+
+def _bundels(db: Session) -> BundelService:
+    return BundelService(db)
+
+
+@router.get("/{cluster_id}/bundels")
+def bundels(cluster_id: int, db: Session = Depends(get_db)):
+    svc = _bundels(db)
+    return [svc.dict(b) for b in svc.lijst(cluster_id)]
+
+
+@router.post("/{cluster_id}/bundels")
+async def bundel_uploaden(cluster_id: int,
+                          bestand: UploadFile = File(...),
+                          naam: str = Form(""),
+                          instructie: str = Form(""),
+                          db: Session = Depends(get_db)):
+    """Een archief binnenhalen en uitpakken in een eigen volume.
+
+    De upload gaat in stukjes naar schijf en niet in het geheugen: een
+    Cosmos-export is tientallen megabytes, en die in één `await read()` laden
+    zou de backend evenveel geheugen kosten als het bestand groot is.
+    """
+    import os
+    import tempfile
+
+    gezien = 0
+    fd, pad = tempfile.mkstemp(prefix="labx-upload-")
+    try:
+        with os.fdopen(fd, "wb") as uit:
+            while brok := await bestand.read(1024 * 1024):
+                gezien += len(brok)
+                if gezien > MAX_ARCHIEF_BYTES:
+                    raise HTTPException(status_code=400,
+                                        detail="Het archief is te groot.")
+                uit.write(brok)
+        svc = _bundels(db)
+        b = await svc.zet(cluster_id, bestandsnaam=bestand.filename or "bundel.zip",
+                          pad=pad, naam=naam, instructie=instructie)
+        return svc.dict(b)
+    finally:
+        try:
+            os.unlink(pad)
+        except OSError:
+            pass
+
+
+@router.patch("/bundels/{bundel_id}")
+def bundel_wijzigen(bundel_id: int, body: Dict[str, Any],
+                    db: Session = Depends(get_db)):
+    svc = _bundels(db)
+    return svc.dict(svc.wijzig(bundel_id, naam=body.get("naam"),
+                               instructie=body.get("instructie")))
+
+
+@router.delete("/bundels/{bundel_id}")
+async def bundel_weg(bundel_id: int, db: Session = Depends(get_db)):
+    await _bundels(db).verwijder(bundel_id)
+    return {"ok": True}
+
+
+@router.post("/bundels/{bundel_id}/toepassen")
+async def bundel_toepassen(bundel_id: int, body: Dict[str, Any],
+                           db: Session = Depends(get_db)):
+    return await _bundels(db).toepassen(
+        bundel_id,
+        dienst_id=int(body.get("dienst_id") or 0),
+        instructie=str(body.get("instructie") or ""),
+        script=str(body.get("script") or ""),
+        image=str(body.get("image") or ""))
 
 
 # ── knoppen bij een vaste dienst ─────────────────────────────────────────────

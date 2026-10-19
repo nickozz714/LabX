@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 from component_logging import get_logger
@@ -240,6 +241,39 @@ class DockerRuntime:
             raise RuntimeError(
                 f"Volume {volume} terugzetten mislukte: "
                 f"{(err or b'').decode(errors='replace')[:400]}")
+
+    async def vul_volume(self, volume: str, bron_map: str, *,
+                         timeout: float = 3600.0) -> None:
+        """Een lokale MAP in een (nieuw) volume zetten.
+
+        Hetzelfde trucje als `import_volume`, maar vanaf een map in plaats van
+        een tar-bestand: tar aan deze kant inpakken en in een wegwerpcontainer
+        weer uit. Dat is de enige weg die óók werkt als de daemon op een
+        andere machine draait -- `docker cp` werkt op containers, niet op
+        volumes, en een bind mount van een pad hier bestaat daar niet.
+        """
+        # Eerst naar een tar-BESTAND en dan pas naar binnen, niet via een pijp
+        # tussen twee processen: `create_subprocess_exec` wil voor stdin een
+        # echte filedescriptor, en de StreamReader van een ander proces is dat
+        # niet ("'StreamReader' object has no attribute 'fileno'"). Een tijdelijk
+        # bestand is bovendien hetzelfde pad als `import_volume` al liep.
+        fd, tar = tempfile.mkstemp(prefix="labx-bundel-", suffix=".tar.gz")
+        os.close(fd)
+        try:
+            pak_in = await asyncio.create_subprocess_exec(
+                "tar", "czf", tar, "-C", bron_map, ".",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            _, err = await asyncio.wait_for(pak_in.communicate(), timeout=timeout)
+            if pak_in.returncode != 0:
+                raise RuntimeError(
+                    f"Bundel inpakken mislukte: "
+                    f"{(err or b'').decode(errors='replace')[:400]}")
+            await self.import_volume(volume, tar, timeout=timeout)
+        finally:
+            try:
+                os.unlink(tar)
+            except OSError:
+                pass
 
     async def volume_bestaat(self, volume: str) -> bool:
         code, _, _ = await self._run_cli("volume", "inspect", volume, timeout=20)
@@ -547,6 +581,7 @@ class DockerRuntime:
         cmd: List[str],
         netwerk: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
+        volumes: Optional[Dict[str, str]] = None,
         timeout: float = 300.0,
         max_chars: int = _MAX_OUTPUT_CHARS,
     ) -> Dict[str, Any]:
@@ -560,10 +595,15 @@ class DockerRuntime:
         - **Een exitcode is geen uitzondering.** De uitslag ÍS het antwoord:
           "leegmaken mislukte en dit zei hij" is wat je wilt zien, niet een
           stacktrace in de log.
+
+        `volumes` hangt bundels erin, altijd alleen-lezen: een script dat een
+        dump inleest hoort die dump niet te kunnen veranderen.
         """
         args = ["run", "--rm", "--label", _LABEL,
                 "--security-opt", "no-new-privileges",
                 "--network", netwerk or self._network, "-w", "/tmp"]
+        for volume, pad in (volumes or {}).items():
+            args += ["-v", f"{volume}:{pad}:ro"]
         for key, value in (env or {}).items():
             args += ["-e", f"{key}={value}"]
         args += [image, *cmd]
