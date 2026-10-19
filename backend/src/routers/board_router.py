@@ -386,6 +386,27 @@ def resolve_ticket(board_id: int, key: str, db: Session = Depends(get_db)):
 # ticket geschreven.
 
 
+@router.post("/{board_id}/grill")
+async def grill_concept(board_id: int, payload: Dict[str, Any],
+                        db: Session = Depends(get_db)):
+    """Grillen vóórdat het ticket bestaat.
+
+    Dit hoort aan het begin te kunnen en niet pas als het ticket al op het
+    bord staat: juist dan is een extra vraag goedkoop -- je bent het nog aan
+    het bedenken en er hangt nog niets aan vast.
+    """
+    from services.boards.grillmeister import GrillMeister
+
+    return await GrillMeister(db).beurt_concept(
+        board_id,
+        titel=str(payload.get("titel") or ""),
+        beschrijving=str(payload.get("description") or ""),
+        acceptatie=str(payload.get("acceptance_criteria") or ""),
+        bericht=str(payload.get("bericht") or ""),
+        modus=str(payload.get("modus") or "grillen"),
+        geschiedenis=list(payload.get("geschiedenis") or []))
+
+
 @router.post("/{board_id}/tickets/{ticket_id}/grill")
 async def grill_ticket(board_id: int, ticket_id: int, payload: Dict[str, Any],
                        db: Session = Depends(get_db)):

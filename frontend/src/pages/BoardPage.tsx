@@ -15,6 +15,7 @@ import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } fr
 import { useBevestiging } from "@/components/Bevestiging";
 import { SoortKiezer } from "@/components/SoortKiezer";
 import { useMelding } from "@/components/Meldingen";
+import { GrillMeister } from "@/components/GrillMeister";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
@@ -719,6 +720,32 @@ function NewTicketModal({
           <SoortKiezer boardId={board.id} waarde={soort} onChange={setSoort}
                        hint="Bijvoorbeeld Bug. Leeg = de instelling van het bord." />
         </div>
+        {/* Grillen hoort HIER al te kunnen en niet pas als het ticket op het
+            bord staat: je bent het nu aan het bedenken, er hangt nog niets
+            aan vast, en een extra vraag is op dit moment het goedkoopst.
+            Dichtgeklapt, want hij kost een modelaanroep. */}
+        <details className="rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            🔥 Eerst laten grillen
+          </summary>
+          <div className="mt-3">
+            <GrillMeister
+              boardId={board.id}
+              doel={{
+                soort: "concept",
+                titel: title,
+                description,
+                acceptance_criteria: acceptance,
+                vul: (v) => {
+                  if (v.titel) setTitle(v.titel);
+                  if (v.description) setDescription(v.description);
+                  if (v.acceptance_criteria) setAcceptance(v.acceptance_criteria);
+                },
+              }}
+            />
+          </div>
+        </details>
+
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button className="w-full" onClick={submit} disabled={!title.trim()}>
           Aanmaken

@@ -23,6 +23,7 @@ DRIE KEUZES DIE DE REST VERKLAREN:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -41,6 +42,32 @@ MAX_BEURTEN = 10
 MAX_BUREN = 40
 
 
+@dataclass
+class _Beeld:
+    """Wat de grillmeister van een ticket ziet.
+
+    Eén vorm voor een rij op het bord én voor een concept dat nog in een
+    formulier staat. Zonder deze tussenstap zou de conceptkant een tweede set
+    prompts krijgen, en dan drijven ze uit elkaar: de ene streng, de andere
+    niet, en niemand die weet welke hij voor zich heeft.
+    """
+
+    sleutel: str
+    titel: str
+    beschrijving: str
+    acceptatie: str
+    status: str
+    prioriteit: str
+    labels: List[str]
+
+    @classmethod
+    def van_ticket(cls, t) -> "_Beeld":
+        return cls(sleutel=t.key, titel=t.title,
+                   beschrijving=t.description or "", acceptatie=t.acceptance_criteria or "",
+                   status=t.status, prioriteit=t.priority,
+                   labels=[str(x) for x in (t.labels or [])])
+
+
 class GrillMeister:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -48,7 +75,10 @@ class GrillMeister:
     async def beurt(self, ticket_id: int, *, bericht: str = "",
                     modus: str = "grillen",
                     geschiedenis: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
-        """Eén ronde. `modus` bepaalt wat eruit komt:
+        """Eén ronde over een BESTAAND ticket. Zie `beurt_concept` voor een
+        ticket dat nog niet aangemaakt is.
+
+        `modus` bepaalt wat eruit komt:
 
         - `grillen`     — vragen en gaten, geen nieuwe tekst.
         - `voorstel`    — een complete beschrijving plus acceptatiecriteria.
@@ -56,10 +86,50 @@ class GrillMeister:
                           buiten en zonder één verwijzing naar wat hier draait.
         """
         ticket, board = self._ticket(ticket_id)
+        return await self._ronde(_Beeld.van_ticket(ticket), board, ticket.id,
+                                 modus=modus, bericht=bericht,
+                                 geschiedenis=geschiedenis)
+
+    async def beurt_concept(self, board_id: int, *, titel: str = "",
+                            beschrijving: str = "", acceptatie: str = "",
+                            bericht: str = "", modus: str = "grillen",
+                            geschiedenis: Optional[List[Dict[str, str]]] = None
+                            ) -> Dict[str, Any]:
+        """Eén ronde over een ticket dat nog NIET bestaat.
+
+        Grillen hoort aan het begin te kunnen, niet pas als het ticket al op
+        het bord staat. Juist dan is het goedkoop om er nog een vraag bij te
+        krijgen: je bent het nog aan het bedenken, en er hangt nog niets aan
+        vast.
+
+        Hetzelfde model, dezelfde prompts, dezelfde controle op de
+        klantversie. Alleen de bron van de tekst verschilt -- en er is niets
+        om een voorstel op toe te passen: dat vult het formulier.
+        """
+        from models.board import Board
+
+        board = self.db.get(Board, int(board_id))
+        if board is None:
+            raise HTTPException(status_code=404, detail="Bord niet gevonden")
+        titel = (titel or "").strip()
+        if not titel and not (beschrijving or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Er valt nog niets te grillen — geef op zijn minst een titel.")
+        beeld = _Beeld(sleutel="(nieuw)", titel=titel or "(nog geen titel)",
+                       beschrijving=beschrijving, acceptatie=acceptatie,
+                       status="concept", prioriteit="normal", labels=[])
+        return await self._ronde(beeld, board, None, modus=modus, bericht=bericht,
+                                 geschiedenis=geschiedenis)
+
+    async def _ronde(self, beeld: "_Beeld", board, ticket_id: Optional[int], *,
+                     modus: str, bericht: str,
+                     geschiedenis: Optional[List[Dict[str, str]]]) -> Dict[str, Any]:
         if modus not in ("grillen", "voorstel", "klantversie"):
             raise HTTPException(status_code=400, detail=f"Onbekende modus '{modus}'.")
 
-        prompt = self._prompt(ticket, board, modus, bericht, geschiedenis or [])
+        prompt = self._prompt(beeld, board, ticket_id, modus, bericht,
+                              geschiedenis or [])
         ruw = await self._vraag(prompt)
         uit = _lees_json(ruw)
 
@@ -93,7 +163,7 @@ class GrillMeister:
                     (antwoord["antwoord"] + "\n\n" if antwoord["antwoord"] else "")
                     + klantcommunicatie.uitleg(antwoord["controle"]))
                 log.warningx("Klantversie bevatte interne verwijzingen",
-                             ticket=ticket.key,
+                             ticket=beeld.sleutel,
                              aantal=len(antwoord["controle"]["bevindingen"]))
 
         return antwoord
@@ -132,18 +202,22 @@ class GrillMeister:
             raise HTTPException(status_code=404, detail="Bord niet gevonden")
         return t, b
 
-    def _buren(self, board_id: int, behalve: int) -> str:
+    def _buren(self, board_id: int, behalve: Optional[int]) -> str:
+        """De andere tickets op dit bord, zodat hij kan zien of iets al ergens
+        anders belegd is. Bij een concept is er niets uit te sluiten."""
         from models.board import Ticket
 
-        rijen = (self.db.query(Ticket.key, Ticket.title, Ticket.status)
-                 .filter(Ticket.board_id == board_id, Ticket.id != behalve,
-                         Ticket.archived_at.is_(None))
-                 .limit(MAX_BUREN).all())
+        vraag = (self.db.query(Ticket.key, Ticket.title, Ticket.status)
+                 .filter(Ticket.board_id == board_id, Ticket.archived_at.is_(None)))
+        if behalve is not None:
+            vraag = vraag.filter(Ticket.id != behalve)
+        rijen = vraag.limit(MAX_BUREN).all()
         if not rijen:
             return "(geen andere tickets)"
         return "\n".join(f"- {k} [{s}] {t}" for k, t, s in rijen)
 
-    def _prompt(self, ticket, board, modus: str, bericht: str,
+    def _prompt(self, beeld: "_Beeld", board, ticket_id: Optional[int],
+                modus: str, bericht: str,
                 geschiedenis: List[Dict[str, str]]) -> str:
         eerder = "\n".join(
             f"{'GRILLMEISTER' if (b.get('rol') or '') == 'model' else 'JIJ'}: "
@@ -153,14 +227,14 @@ class GrillMeister:
         return kop.format(
             bord=board.name,
             borddoel=(board.description or "(geen omschrijving)")[:500],
-            sleutel=ticket.key,
-            titel=ticket.title,
-            beschrijving=(ticket.description or "(leeg)")[:6000],
-            acceptatie=(ticket.acceptance_criteria or "(leeg)")[:3000],
-            status=ticket.status,
-            prioriteit=ticket.priority,
-            labels=", ".join(ticket.labels or []) or "geen",
-            buren=self._buren(board.id, ticket.id),
+            sleutel=beeld.sleutel,
+            titel=beeld.titel,
+            beschrijving=(beeld.beschrijving or "(leeg)")[:6000],
+            acceptatie=(beeld.acceptatie or "(leeg)")[:3000],
+            status=beeld.status,
+            prioriteit=beeld.prioriteit,
+            labels=", ".join(beeld.labels) or "geen",
+            buren=self._buren(board.id, ticket_id),
             eerder=eerder,
             bericht=(bericht or "").strip()[:4000] or "(niets erbij gezegd)",
         )

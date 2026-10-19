@@ -64,6 +64,13 @@ export const boardApi = {
     modus?: "grillen" | "voorstel" | "klantversie";
     geschiedenis?: { rol: string; tekst: string }[];
   }) => api.post<GrillBeurt>(`/boards/${boardId}/tickets/${ticketId}/grill`, body),
+  /** Grillen vóórdat het ticket bestaat: het concept uit het formulier. */
+  grillConcept: (boardId: number, body: {
+    titel?: string; description?: string; acceptance_criteria?: string;
+    bericht?: string;
+    modus?: "grillen" | "voorstel" | "klantversie";
+    geschiedenis?: { rol: string; tekst: string }[];
+  }) => api.post<GrillBeurt>(`/boards/${boardId}/grill`, body),
   grillOvernemen: (boardId: number, ticketId: number, body: {
     titel?: string; description?: string; acceptance_criteria?: string;
   }) => api.post<TicketDto>(`/boards/${boardId}/tickets/${ticketId}/grill/overnemen`, body),

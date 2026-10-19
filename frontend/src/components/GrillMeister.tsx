@@ -34,10 +34,29 @@ import { useMelding } from "@/components/Meldingen";
 
 type Beurt = { rol: "mens" | "model"; tekst: string; uitslag?: GrillBeurt };
 
-export function GrillMeister({ boardId, ticket, onBijgewerkt }: {
+/** Waar de grillmeister naar kijkt.
+ *
+ * Een bestaand ticket (`ticket`) of een concept dat nog in het formulier
+ * staat (`concept`). Eén component voor allebei, want het verschil zit alleen
+ * in wáár de tekst vandaan komt en wat "overnemen" betekent: bij een ticket
+ * een PATCH, bij een concept het formulier vullen. Twee componenten zouden
+ * langzaam uit elkaar lopen -- de ene met de klantknop, de andere zonder.
+ */
+export type GrillDoel =
+  | { soort: "ticket"; ticket: TicketDto }
+  | {
+      soort: "concept";
+      titel: string;
+      description: string;
+      acceptance_criteria: string;
+      /** Het voorstel in het formulier zetten. */
+      vul: (v: { titel: string; description: string; acceptance_criteria: string }) => void;
+    };
+
+export function GrillMeister({ boardId, doel, onBijgewerkt }: {
   boardId: number;
-  ticket: TicketDto;
-  onBijgewerkt: () => void;
+  doel: GrillDoel;
+  onBijgewerkt?: () => void;
 }) {
   const melding = useMelding();
   const [beurten, setBeurten] = useState<Beurt[]>([]);
@@ -53,9 +72,16 @@ export function GrillMeister({ boardId, ticket, onBijgewerkt }: {
     setBericht("");
     setBezig(modus);
     try {
-      const uit = await boardApi.grill(boardId, ticket.id, {
-        bericht: tekst, modus, geschiedenis,
-      });
+      const uit = doel.soort === "ticket"
+        ? await boardApi.grill(boardId, doel.ticket.id, {
+            bericht: tekst, modus, geschiedenis,
+          })
+        : await boardApi.grillConcept(boardId, {
+            titel: doel.titel,
+            description: doel.description,
+            acceptance_criteria: doel.acceptance_criteria,
+            bericht: tekst, modus, geschiedenis,
+          });
       setBeurten((xs) => [...xs, {
         rol: "model",
         tekst: uit.antwoord || (uit.klanttekst ? "" : "(geen antwoord)"),
@@ -70,17 +96,31 @@ export function GrillMeister({ boardId, ticket, onBijgewerkt }: {
   }
 
   async function neemOver(v: NonNullable<GrillBeurt["voorstel"]>) {
+    // Bij een concept bestaat er niets om naar te schrijven: het voorstel
+    // gaat het formulier in, en jij drukt daarna zelf op Aanmaken.
+    if (doel.soort === "concept") {
+      doel.vul({ titel: v.titel, description: v.description,
+                 acceptance_criteria: v.acceptance_criteria });
+      melding.ok("Het voorstel staat in het formulier.");
+      return;
+    }
     try {
-      await boardApi.grillOvernemen(boardId, ticket.id, {
+      await boardApi.grillOvernemen(boardId, doel.ticket.id, {
         titel: v.titel, description: v.description,
         acceptance_criteria: v.acceptance_criteria,
       });
       melding.ok("Het ticket is bijgewerkt.");
-      onBijgewerkt();
+      onBijgewerkt?.();
     } catch (e) {
       melding.fout(e instanceof ApiError ? e.message : "Overnemen mislukte");
     }
   }
+
+  // Een concept zonder titel én zonder omschrijving valt niets over te
+  // zeggen. De knoppen uit zetten is eerlijker dan een foutmelding na een
+  // modelaanroep die een halve minuut duurde.
+  const genoeg = doel.soort === "ticket"
+    || !!(doel.titel.trim() || doel.description.trim());
 
   return (
     <div className="space-y-3">
@@ -94,9 +134,10 @@ export function GrillMeister({ boardId, ticket, onBijgewerkt }: {
 
       {beurten.length === 0 && (
         <EmptyState>
-          Nog niets gevraagd. Begin met <span className="font-medium">Grillen</span> — dan
-          krijg je de lastigste vragen over dit ticket terug, zonder dat er iets aan
-          verandert.
+          {genoeg
+            ? <>Nog niets gevraagd. Begin met <span className="font-medium">Grillen</span> — dan
+                krijg je de lastigste vragen terug, zonder dat er iets aan verandert.</>
+            : "Typ eerst een titel of een omschrijving; dan valt er wat te vragen."}
         </EmptyState>
       )}
 
@@ -126,7 +167,8 @@ export function GrillMeister({ boardId, ticket, onBijgewerkt }: {
                   <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
                     <span className="text-xs font-medium">Voorstel</span>
                     <Button onClick={() => neemOver(b.uitslag!.voorstel!)}>
-                      <Check className="h-3.5 w-3.5" /> Overnemen
+                      <Check className="h-3.5 w-3.5" />
+                      {doel.soort === "concept" ? "In het formulier zetten" : "Overnemen"}
                     </Button>
                   </div>
                   <div className="space-y-2 p-3">
@@ -203,15 +245,15 @@ export function GrillMeister({ boardId, ticket, onBijgewerkt }: {
         placeholder="Antwoord op zijn vragen, of zeg waar hij op moet letten."
       />
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => vraag("grillen")} disabled={bezig !== null}>
+        <Button onClick={() => vraag("grillen")} disabled={bezig !== null || !genoeg}>
           {bezig === "grillen" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}
           Grillen
         </Button>
-        <Button variant="secondary" onClick={() => vraag("voorstel")} disabled={bezig !== null}>
+        <Button variant="secondary" onClick={() => vraag("voorstel")} disabled={bezig !== null || !genoeg}>
           {bezig === "voorstel" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           Voorstel schrijven
         </Button>
-        <Button variant="secondary" onClick={() => vraag("klantversie")} disabled={bezig !== null}>
+        <Button variant="secondary" onClick={() => vraag("klantversie")} disabled={bezig !== null || !genoeg}>
           {bezig === "klantversie" ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}
           Versie voor de klant
         </Button>

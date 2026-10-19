@@ -616,7 +616,7 @@ export function TicketDrawer({
             🔥 Grillmeister — vragen, aanscherpen, en een versie voor de klant
           </summary>
           <div className="mt-3">
-            <GrillMeister boardId={board.id} ticket={ticket}
+            <GrillMeister boardId={board.id} doel={{ soort: "ticket", ticket }}
                           onBijgewerkt={() => { void load(); onChanged(); }} />
           </div>
         </details>

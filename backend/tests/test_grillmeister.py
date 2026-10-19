@@ -218,3 +218,85 @@ def test_alleen_de_klantversie_wordt_gecontroleerd(db):
 
     assert uit["controle"] is None
     assert "IH-4" in uit["antwoord"]
+
+
+# ── grillen vóórdat het ticket bestaat ───────────────────────────────────────
+
+def _bord(db):
+    from models.board import Board
+
+    return db.query(Board).one()
+
+
+def test_een_concept_kan_gegrild_worden(db):
+    """Grillen hoort aan het begin te kunnen: dan is een extra vraag goedkoop."""
+    svc, gezien = _meister(db, '{"antwoord": "Te vaag.", '
+                               '"vragen": ["Voor welke rol?"], "gaten": ["geen scope"]}')
+    uit = asyncio.run(svc.beurt_concept(
+        _bord(db).id, titel="Zoekfilter", beschrijving="Filteren op status."))
+
+    assert uit["vragen"] == ["Voor welke rol?"]
+    assert "Zoekfilter" in gezien["prompt"]
+    assert "Filteren op status." in gezien["prompt"]
+
+
+def test_een_concept_ziet_de_bestaande_tickets_van_het_bord(db):
+    """Zonder de buren kan hij niet zeggen dat dit al ergens anders staat."""
+    svc, gezien = _meister(db, '{"antwoord": "x"}')
+    asyncio.run(svc.beurt_concept(_bord(db).id, titel="Bulk nogmaals"))
+
+    assert "IH-4" in gezien["prompt"]
+    assert "IH-5" in gezien["prompt"]
+
+
+def test_een_leeg_concept_wordt_geweigerd(db):
+    from fastapi import HTTPException
+
+    svc, _ = _meister(db, "{}")
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.beurt_concept(_bord(db).id, titel="  ", beschrijving=" "))
+    assert fout.value.status_code == 400
+
+
+def test_een_concept_krijgt_ook_een_voorstel(db):
+    svc, _ = _meister(db, '{"antwoord": "ok", "voorstel": {"titel": "Zoekfilter op status", '
+                          '"description": "nieuw", "acceptance_criteria": "1. x"}}')
+    uit = asyncio.run(svc.beurt_concept(_bord(db).id, titel="Zoekfilter",
+                                        modus="voorstel"))
+
+    assert uit["voorstel"]["titel"] == "Zoekfilter op status"
+    assert uit["voorstel"]["acceptance_criteria"] == "1. x"
+
+
+def test_de_klantcontrole_geldt_ook_voor_een_concept(db):
+    """Dezelfde prompts én dezelfde controle -- anders is de ene streng en de
+    andere niet, zonder dat je weet welke je voor je hebt."""
+    svc, _ = _meister(db, '{"klanttekst": "Zie IH-4 voor de details."}')
+    uit = asyncio.run(svc.beurt_concept(_bord(db).id, titel="Iets",
+                                        modus="klantversie"))
+
+    assert uit["controle"]["schoon"] is False
+    assert "IH-4" in uit["antwoord"]
+
+
+def test_een_onbekend_bord_is_een_nette_404(db):
+    from fastapi import HTTPException
+
+    svc, _ = _meister(db, "{}")
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.beurt_concept(9999, titel="Iets"))
+    assert fout.value.status_code == 404
+
+
+def test_concept_en_bestaand_ticket_delen_dezelfde_prompts(db):
+    """Twee sets prompts drijven uit elkaar; één set kan dat niet."""
+    svc, gezien = _meister(db, '{"antwoord": "x"}')
+
+    asyncio.run(svc.beurt(_ticket(db).id, modus="klantversie"))
+    van_ticket = gezien["prompt"]
+    asyncio.run(svc.beurt_concept(_bord(db).id, titel="x", modus="klantversie"))
+    van_concept = gezien["prompt"]
+
+    for regel in ("ticketsleutels", "van buiten", "servernamen"):
+        assert regel in van_ticket.lower()
+        assert regel in van_concept.lower()
