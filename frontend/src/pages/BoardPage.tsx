@@ -287,6 +287,15 @@ export function BoardPage() {
     ? tickets.filter((t) => t.branch === branchFilter)
     : tickets;
 
+  // Een clusterbord heeft met opzet geen lab: het lab volgt uit de branch van
+  // het ticket. Werken kan dus zodra er ÓF een lab ÓF een cluster aan hangt.
+  const kanWerken = !!(board.lab_id || board.cluster_id);
+  // En op een clusterbord is de branch het echte vereiste. Dat hier zeggen
+  // scheelt een 409 nadat je al op Inplannen hebt gedrukt.
+  const zonderBranch = board.cluster_id
+    ? tickets.filter((t) => selectie.includes(t.id) && !t.branch).map((t) => t.key)
+    : [];
+
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -323,11 +332,23 @@ export function BoardPage() {
             </Badge>
           )}
 
+          {/* Een CLUSTERBORD heeft met opzet geen lab: elk ticket wijst naar
+              een branch en de agent werkt in het lab van díé branch. De
+              knoppen hieronder keken alleen naar `lab_id` en stonden daardoor
+              op een clusterbord permanent uit -- terwijl de backend dat geval
+              gewoon aankan. Wat er op een clusterbord wél moet: een branch op
+              het ticket. */}
           <div className="ml-auto flex items-center gap-2">
             {selectie.length > 0 ? (
               <>
                 <span className="text-xs text-muted-foreground">{selectie.length} geselecteerd</span>
-                <Button className="text-xs" onClick={() => setPlanOpen(true)} disabled={!board.lab_id}>
+                <Button className="text-xs" onClick={() => setPlanOpen(true)}
+                        disabled={!kanWerken || zonderBranch.length > 0}
+                        title={!kanWerken
+                          ? "Dit bord heeft geen lab en geen cluster — koppel er een in de instellingen."
+                          : zonderBranch.length > 0
+                            ? `Zonder branch weet de agent niet in welke werkkopie hij moet werken: ${zonderBranch.join(", ")}`
+                            : "De geselecteerde tickets op een rij zetten voor de agent"}>
                   <ListOrdered size={13} /> Inplannen
                 </Button>
                 <Button variant="secondary" className="text-xs" onClick={archiveerSelectie}
@@ -347,7 +368,10 @@ export function BoardPage() {
               </>
             ) : (
               <Button variant="secondary" className="text-xs" onClick={pakKolomOp}
-                      disabled={busy || !board.lab_id}>
+                      disabled={busy || !kanWerken}
+                      title={kanWerken
+                        ? "Alles in de agentkolom achter elkaar laten oppakken"
+                        : "Dit bord heeft geen lab en geen cluster — koppel er een in de instellingen."}>
                 <Bot size={13} /> Pak hele kolom op
               </Button>
             )}
