@@ -895,3 +895,78 @@ def test_de_scripttaal_van_het_model_telt_mee():
     from services.lab.lab_service import FOUTPATROON
 
     assert "mislukt" in FOUTPATROON
+
+
+def test_twee_inrichtingen_tegelijk_wachten_op_elkaar(db, monkeypatch):
+    """`start_branch_lab` zet het inrichten als ACHTERGRONDtaak weg en keert
+    meteen terug; daarna doet de proefbouw zijn eigen `provision()`. Dat zijn
+    twee apt-processen in dezelfde container, en dan krijg je
+
+        Could not get lock /var/lib/apt/lists/lock. It is held by process N
+
+    Die melding kostte een hele proefbouw om te herkennen, want hij ziet
+    eruit als een kapot image.
+    """
+    import asyncio as _a
+
+    from services.lab import lab_service as mod
+
+    c = _cluster(db)
+    p = _lab(db, c)
+    tegelijk, hoogste = {"n": 0}, {"n": 0}
+
+    async def nep(zelf, lab_id, *, force=False):
+        tegelijk["n"] += 1
+        hoogste["n"] = max(hoogste["n"], tegelijk["n"])
+        await _a.sleep(0.05)
+        tegelijk["n"] -= 1
+        return {"ok": True, "status": "ok", "steps": []}
+
+    monkeypatch.setattr(mod.LabService, "_provision", nep)
+    mod._PROVISION_SLOTEN.clear()
+
+    svc = mod.LabService(db)
+
+    async def allebei():
+        await _a.gather(svc.provision(p.id), svc.provision(p.id), svc.provision(p.id))
+
+    _a.run(allebei())
+    assert hoogste["n"] == 1, f"er liepen er {hoogste['n']} tegelijk in hetzelfde lab"
+
+
+def test_het_slot_geldt_per_lab_en_niet_globaal(db, monkeypatch):
+    """Twee verschillende labs hebben elk hun eigen container en dus hun eigen
+    apt-staat. Die op elkaar laten wachten maakt het inrichten onnodig traag."""
+    import asyncio as _a
+
+    from models.lab import Lab
+    from services.lab import lab_service as mod
+
+    c = _cluster(db)
+    p1 = _lab(db, c)
+    nu = "2026-10-19T10:00:00+00:00"
+    p2 = Lab(id="proef2", name="tweede", image="node:22", volume_name="v2",
+             status="running", cpu_limit=2, mem_limit_mb=4096, ttl_hours=24,
+             cluster_id=c.id, branch="labx/tweede", poort_map={"8000": 18010},
+             created_at=nu, updated_at=nu)
+    db.add(p2)
+    db.commit()
+
+    tegelijk, hoogste = {"n": 0}, {"n": 0}
+
+    async def nep(zelf, lab_id, *, force=False):
+        tegelijk["n"] += 1
+        hoogste["n"] = max(hoogste["n"], tegelijk["n"])
+        await _a.sleep(0.05)
+        tegelijk["n"] -= 1
+        return {"ok": True, "status": "ok", "steps": []}
+
+    monkeypatch.setattr(mod.LabService, "_provision", nep)
+    mod._PROVISION_SLOTEN.clear()
+    svc = mod.LabService(db)
+
+    async def allebei():
+        await _a.gather(svc.provision(p1.id), svc.provision(p2.id))
+
+    _a.run(allebei())
+    assert hoogste["n"] == 2, "verschillende labs horen niet op elkaar te wachten"

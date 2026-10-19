@@ -802,7 +802,16 @@ class LabService:
         distributie, netwerk weg, typefout in een eigen script) laat de rest
         gewoon doorgaan en landt als fout in provision_log. Inrichten mag nooit
         een lab kapotmaken dat verder prima werkt."""
+        slot = _PROVISION_SLOTEN.get(lab_id)
+        if slot is None:
+            slot = _PROVISION_SLOTEN[lab_id] = asyncio.Lock()
+        async with slot:
+            return await self._provision(lab_id, force=force)
+
+    async def _provision(self, lab_id: str, *, force: bool = False) -> Dict[str, Any]:
+        """Het eigenlijke inrichten. Alleen aanroepen met het slot vast."""
         p = self.get(lab_id)
+        self.db.refresh(p)
         if p.status != "running" or not p.container_id:
             return {"ok": False, "status": p.provision_status, "reason": "Lab draait niet"}
         if not p.allow_network:
@@ -3521,6 +3530,16 @@ exec ssh -N \\
 _PROVISION_TEGELIJK = 3
 
 _PROVISION_TASKS: Dict[str, Any] = {}
+
+#: Eén inrichting tegelijk PER LAB. `_na_inrichten_starten` bewaakte alleen
+#: zichzelf, en een rechtstreekse `provision()` wist daar niets van. Dat
+#: botste echt: `start_branch_lab` zet het inrichten als achtergrondtaak weg
+#: en keert meteen terug, waarna de proefbouw zijn eigen `provision()` doet --
+#: twee apt-processen in dezelfde container, en dan krijg je
+#: "Could not get lock /var/lib/apt/lists/lock. It is held by process N".
+#: De tweede aanroep wacht nu op de eerste en doet daarna zijn werk; dat kost
+#: niets, want elke stap heeft een check en is overgeslagen zodra hij klaar is.
+_PROVISION_SLOTEN: Dict[str, Any] = {}
 
 
 # Labs waarvoor tijdens een lopende inrichtronde opnieuw om inrichten is
