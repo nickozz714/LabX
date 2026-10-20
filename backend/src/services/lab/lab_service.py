@@ -226,6 +226,41 @@ class LabService:
                 project_dir=p.host_project_dir, token=token)
         return self._host_runtimes[p.id]
 
+    async def _eis_bereikbare_machine(self, p: Lab) -> None:
+        """Antwoordt de daemon van dít lab nog?
+
+        Een lab op een andere machine die uit is geweest, is het nare geval:
+        in Docker stáát de container daar gewoon, de administratie hier klopt,
+        en toch mislukt alles. Zonder deze controle loopt zo'n start door in
+        een SSH-verbinding die niet tot stand komt, valt er ergens een
+        uitzondering die niemand verwacht, en krijgt het scherm platte tekst
+        terug in plaats van JSON -- waarna de gebruiker een parse-fout ziet
+        die nergens over gaat.
+
+        Beter één nette vraag vooraf: praat die machine, ja of nee.
+        """
+        if not p.host_id or self.is_host(p):
+            return
+        from models.lab_host import LabHost
+
+        host = self.db.get(LabHost, int(p.host_id))
+        rt = self._docker_op_host(int(p.host_id))
+        try:
+            bereikbaar = await rt.daemon_up()
+        except Exception:  # noqa: BLE001 — een mislukte controle IS het antwoord
+            bereikbaar = False
+        if bereikbaar:
+            return
+        naam = host.naam if host else f"machine {p.host_id}"
+        laatst = (host.laatst_gezien or "")[:16].replace("T", " ") if host else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(f"'{naam}' geeft geen antwoord. Staat die machine aan, en draait "
+                    f"Docker er?"
+                    + (f" Laatst gezien: {laatst}." if laatst else "")
+                    + " Zodra hij er weer is, start dit lab gewoon verder — het werk "
+                      "staat op die machine en is niet weg."))
+
     def _docker_op_host(self, host_id: int) -> DockerRuntime:
         """Een DockerRuntime die praat met de daemon van een andere machine.
 
@@ -2065,6 +2100,7 @@ exec ssh -N \\
         p = self.get(lab_id)
         if p.status == "running":
             return self._to_dict(p)
+        await self._eis_bereikbare_machine(p)
 
         # Een BRANCH-LAB start anders, en er is maar één deur.
         #
