@@ -1878,7 +1878,8 @@ function AgentKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => v
           <h2 className="text-sm font-semibold">De agent in dit cluster</h2>
           <p className="text-xs text-muted-foreground">
             Geldt voor élk lab van dit cluster, ook de labs die er al staan. Een run die
-            nu loopt houdt wat hij had.
+            nu loopt houdt wat hij had. In een cluster geldt standaard géén beurtenplafond;
+            een gewoon lab volgt onveranderd de instellingen.
           </p>
         </div>
       </div>
@@ -1897,10 +1898,14 @@ function AgentKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => v
         <div>
           <Label>Beurten per run</Label>
           <Input value={turns} onChange={(e) => setTurns(e.target.value.replace(/[^0-9]/g, ""))}
-                 placeholder="bijv. 600" inputMode="numeric" />
+                 placeholder="geen limiet" inputMode="numeric" />
           <p className="mt-1 text-xs text-muted-foreground">
-            Leeg = de standaard. Werk in een monorepo loopt daar makkelijk overheen: het
-            zoeken naar de juiste code kost al tientallen beurten.
+            {turns.trim()
+              ? <>Harde grens: de run stopt na {turns} beurten, ook als hij nog bezig was.</>
+              : <>Leeg = <span className="font-medium">geen limiet</span>. Een beurt is geen maat
+                 voor werk — het zoeken naar de juiste code in een monorepo kost er al
+                 tientallen. De run blijft begrensd door de tijdslimiet en het kostenplafond
+                 uit Instellingen.</>}
           </p>
         </div>
       </div>

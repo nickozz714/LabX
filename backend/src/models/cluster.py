@@ -87,10 +87,17 @@ class Cluster(Base):
     #: herhaalt. Anders is één vergeten lab genoeg om een run op een ander
     #: model te laten lopen dan je dacht.
     #:
-    #: `lab_max_turns` bestaat omdat clusterwerk ánders is dan rondkijken in
-    #: een lab. Gemeten op dit cluster: een ticket in een monorepo liep stuk
-    #: op `error_max_turns` bij de standaard van 250 -- honderd shell-stappen
-    #: alleen al om de code te vinden, en dan moet het werk nog beginnen.
+    #: `lab_max_turns` LEEG betekent in een cluster: GEEN beurtenplafond.
+    #: Niet "volg de instellingen" -- dat is het verschil met een gewoon lab.
+    #:
+    #: Een beurt is geen maat voor werk. Gemeten op dit cluster liep een
+    #: ticket stuk op `error_max_turns` bij 250, waarvan honderd stappen
+    #: opgingen aan het vínden van de code in een monorepo. Het getal
+    #: verhogen verplaatst dat alleen: bij 600 valt hetzelfde ticket om op
+    #: een groter bestand. Er staan twee betere vangnetten omheen -- de
+    #: tijdslimiet van de run en het kostenplafond -- die meten wat je
+    #: werkelijk wilt begrenzen. Vul je hier wél een getal in, dan is dat
+    #: een harde grens.
     lab_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lab_max_turns: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: Krijgt elk branch-lab de data-egress-guard aan, en het lokale model

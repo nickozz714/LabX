@@ -141,15 +141,6 @@ def test_het_beurtenplafond_van_het_lab_wint_van_de_instelling(db):
     assert ChatAgent(db)._lab_max_turns(None) is None
 
 
-def test_een_lab_zonder_eigen_plafond_valt_terug_op_de_instelling(db):
-    from services.agent.chat_agent import ChatAgent
-
-    c = _cluster(db)
-    lab = _lab(db, c)
-
-    assert ChatAgent(db)._lab_max_turns(lab.id) is None
-
-
 # ── de werkcontext in de opdracht ────────────────────────────────────────────
 
 def test_de_opdracht_zegt_waar_de_werkkopie_staat(db):
@@ -350,3 +341,75 @@ def test_een_branch_lab_verhuist_nog_steeds_niet_los(db):
         asyncio.run(svc.verplaats(lab.id, host_id=3))
     assert fout.value.status_code == 409
     assert "hele cluster" in fout.value.detail.lower()
+
+
+# ── beurten: in een cluster geen plafond ─────────────────────────────────────
+
+def test_in_een_cluster_geldt_er_standaard_geen_beurtenplafond(db):
+    """Een beurt is geen maat voor werk. Het getal verhogen verplaatst het
+    probleem alleen: bij 600 valt hetzelfde ticket om op een groter bestand.
+    Tijd en geld begrenzen de run, niet het aantal keren opzoeken."""
+    from services.agent.chat_agent import ChatAgent
+
+    c = _cluster(db)
+    lab = _lab(db, c)
+
+    assert ChatAgent(db)._lab_max_turns(lab.id) == 0
+
+
+def test_een_gewoon_lab_volgt_gewoon_de_instelling(db):
+    """Regulier labwerk verandert niet — dat was het uitgangspunt."""
+    from models.lab import Lab
+    from services.agent.chat_agent import ChatAgent
+
+    nu = "2026-10-20T09:00:00+00:00"
+    db.add(Lab(id="los", name="Los", status="running", image="x", volume_name="v",
+               created_at=nu, updated_at=nu))
+    db.commit()
+
+    assert ChatAgent(db)._lab_max_turns("los") is None
+
+
+def test_een_eigen_getal_in_het_cluster_blijft_een_harde_grens(db):
+    from services.agent.chat_agent import ChatAgent
+
+    c = _cluster(db, lab_max_turns=600)
+    lab = _lab(db, c)
+    lab.max_turns = 600
+    db.commit()
+
+    assert ChatAgent(db)._lab_max_turns(lab.id) == 600
+
+
+def test_nul_wordt_niet_stilletjes_de_instelling(db):
+    """`or` zou die nul terugdraaien naar settings.max_turns, en dan was het
+    hele punt weg."""
+    from services.agent.chat_agent import ChatAgent
+
+    class _Instellingen:
+        default_model = "sonnet"
+        oauth_token = None
+        cli_path = "claude"
+        max_turns = 250
+        timeout_seconds = 100
+        extra_args = None
+        enable_tool_search = True
+        fallback_model = None
+        max_budget_usd = None
+        autocompact = False
+        custom_agents_json = None
+        default_agent = None
+
+    provider, _ = ChatAgent(db)._build_provider(None, None, _Instellingen(), max_turns=0)
+    assert provider._max_turns == 0
+
+    provider2, _ = ChatAgent(db)._build_provider(None, None, _Instellingen(), max_turns=None)
+    assert provider2._max_turns == 250
+
+
+def test_zonder_plafond_gaat_de_vlag_er_helemaal_af():
+    """Dat is wat `0` moet betekenen: niet 'nul beurten'."""
+    from services.agent.claude_cli_provider import ClaudeCliProvider
+
+    p = ClaudeCliProvider(default_model="sonnet", max_turns=0)
+    assert not p._max_turns
