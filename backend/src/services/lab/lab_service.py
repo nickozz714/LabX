@@ -3522,7 +3522,7 @@ exec ssh -N \\
              f"grep -iE '{patroon}' {map_}/{self.START_LOG} 2>/dev/null "
              f"| tail -n {int(regels)} | tail -c 4000"],
             workdir="/workspace", timeout=30)
-        return str(uit.get("output") or "").strip()
+        return self._schoon_log(lab_id, str(uit.get("output") or "").strip())
 
     async def start_log(self, lab_id: str, *, regels: int = 80) -> str:
         """De laatste regels van het startscript. Het bewijsmateriaal.
@@ -3548,7 +3548,28 @@ exec ssh -N \\
                          f"|| tail -n {int(regels)} /workspace/{self.START_LOG} 2>/dev/null) "
                          f"| tail -c 6000"],
             workdir="/workspace", timeout=30)
-        return str(uit.get("output") or "")
+        return self._schoon_log(lab_id, str(uit.get("output") or ""))
+
+    def _schoon_log(self, lab_id: str, tekst: str) -> str:
+        """Geheimen eruit, voordat dit een scherm of een model bereikt.
+
+        Twee lagen, want ze vangen verschillende dingen. De kluis kent de
+        waarden die LabX zelf aan dit lab geeft. De vormherkenning vangt wat
+        de APPLICATIE zelf logt uit een vault die LabX niet beheert -- en dat
+        is het geval dat dit nodig maakte: een startlog met de Key
+        Vault-responses van de app op DEBUG, inclusief het value-veld.
+        """
+        from utils.logmaskering import maskeer_log
+
+        if not tekst:
+            return tekst
+        try:
+            from services.lab.secrets import SecretService
+
+            tekst = SecretService(self.db).maskeer_in(lab_id, tekst)
+        except Exception as exc:  # noqa: BLE001 — maskeren mag nooit het log opeten
+            log.warningx("Kluismaskering op een log mislukte", error=str(exc)[:200])
+        return maskeer_log(tekst)
 
     async def luisterpoorten(self, lab_id: str) -> set:
         """Op welke poorten luistert er iets IN de container?

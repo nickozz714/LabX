@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  ScrollText,
   ArrowLeft, Bot, Box, Check, Copy, Download, ExternalLink, FileKey, GitBranch,
   KanbanSquare,
   KeyRound, LayoutDashboard, Loader2, MessageSquare, Network, Package, Play, PlayCircle,
@@ -689,6 +690,29 @@ function BranchRegel({ lab, bordId, onActie }: {
   // één computer stond en wees daarna naar een poort waar niets luistert --
   // "applicatie gestart" naast een knop die stuk leek.
   const [opent, setOpent] = useState(false);
+  // Het startlog van de applicatie. Dit stond al in de API en werd nergens
+  // getoond, terwijl het precies het bewijsmateriaal is als er een wit scherm
+  // komt: daar staat waarom. De server maskeert er geheimen uit -- gemeten
+  // geval: een applicatie die zijn Key Vault-responses op DEBUG logt.
+  const [logOpen, setLogOpen] = useState(false);
+  const [logBezig, setLogBezig] = useState(false);
+  const [logTekst, setLogTekst] = useState("");
+
+  async function toonLog() {
+    if (logOpen) { setLogOpen(false); return; }
+    setLogBezig(true);
+    try {
+      const { log } = await clusterApi.branchStartLog(lab.id);
+      setLogTekst(log || "(nog niets gelogd — is de applicatie al gestart?)");
+      setLogOpen(true);
+    } catch (e) {
+      melding.fout("Log ophalen lukte niet",
+                   e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setLogBezig(false);
+    }
+  }
+
 
   async function openen() {
     // Eerst het tabblad, dan pas het adres: een browser blokkeert een popup
@@ -795,6 +819,11 @@ function BranchRegel({ lab, bordId, onActie }: {
                 : <ExternalLink className="h-3.5 w-3.5" />} Openen
             </Button>
           )}
+          <Button variant={logOpen ? "primary" : "secondary"} onClick={() => void toonLog()}>
+            {logBezig
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <ScrollText className="h-3.5 w-3.5" />} Log
+          </Button>
           <Button variant={gitOpen ? "primary" : "secondary"} onClick={() => setGitOpen((x) => !x)}>
             <GitBranch className="h-3.5 w-3.5" /> Git
           </Button>
@@ -861,6 +890,18 @@ function BranchRegel({ lab, bordId, onActie }: {
         </div>
       )}
 
+      {logOpen && (
+        <div className="mt-2 rounded-md border border-border bg-muted/40 p-2">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              Startlog van de applicatie — geheimen zijn gemaskeerd
+            </span>
+            <Button variant="ghost" onClick={() => void toonLog()}>Sluiten</Button>
+          </div>
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all
+                          font-mono text-xs leading-relaxed">{logTekst}</pre>
+        </div>
+      )}
       <TunnelVenster lab={lab} open={tunnelOpen} onClose={() => setTunnelOpen(false)} />
     </li>
   );

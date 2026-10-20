@@ -79,8 +79,21 @@ def test_de_tunnel_wijst_naar_de_machinepoort_niet_de_containerpoort(db):
 
     assert "tcp:host.docker.internal:18004" in uit["inhoud"]
     assert uit["url"] == "http://localhost:5173"
-    assert uit["machine_poort"] == 18004
     assert "tcp-listen:5173" in uit["inhoud"]
+
+
+def test_alle_poorten_van_het_lab_gaan_tegelijk_mee(db):
+    """Een applicatie die zijn eigen API op een vaste poort verwacht heeft
+    aan één doorgang niets: dan laadt de pagina en blijft hij wit."""
+    from services.lab.tunnel import Tunnel
+
+    p = _lab(db)
+    uit = Tunnel(db).script(p.id, os_naam="mac")
+
+    assert uit["poorten"] == [5173, 7071]
+    assert "tcp-listen:5173" in uit["inhoud"]
+    assert "tcp-listen:7071" in uit["inhoud"]
+    assert "tcp:host.docker.internal:18005" in uit["inhoud"]
 
 
 def test_je_kunt_de_tweede_poort_kiezen(db):
@@ -93,17 +106,32 @@ def test_je_kunt_de_tweede_poort_kiezen(db):
 
     assert "tcp:host.docker.internal:18005" in uit["inhoud"]
     assert uit["url"] == "http://localhost:7071"
+    assert uit["poorten"] == [7071], "één poort kiezen doet er ook maar één"
 
 
 def test_een_eigen_lokale_poort_mag(db):
     from services.lab.tunnel import Tunnel
 
     p = _lab(db)
-    uit = Tunnel(db).script(p.id, os_naam="mac", lokaal=3000)
+    uit = Tunnel(db).script(p.id, os_naam="mac", lokaal=3000, container_poort=5173)
 
     assert uit["url"] == "http://localhost:3000"
     assert "tcp-listen:3000" in uit["inhoud"]
     assert "127.0.0.1:3000:3000" in uit["inhoud"]
+
+
+def test_een_eigen_poort_vraagt_om_een_keuze_als_er_meerdere_zijn(db):
+    """"Welke krijgt 3000?" is dan niet te beantwoorden, en stil de eerste
+    kiezen levert een tunnel op waarvan je het halve adres moet raden."""
+    from fastapi import HTTPException
+
+    from services.lab.tunnel import Tunnel
+
+    p = _lab(db)
+    with pytest.raises(HTTPException) as fout:
+        Tunnel(db).script(p.id, os_naam="mac", lokaal=3000)
+    assert fout.value.status_code == 400
+    assert "Kies er \u00e9\u00e9n" in fout.value.detail
 
 
 def test_op_linux_wordt_de_hostnaam_aangemaakt(db):
@@ -144,6 +172,12 @@ def test_een_oudere_tunnel_op_dezelfde_poort_wordt_opgeruimd(db):
         assert "docker rm -f" in inhoud, os_naam
 
 
+def monkeypatch_lokaal(mod, naam, waarde):
+    """Zonder de monkeypatch-fixture, want deze test zit midden in een
+    bestand dat die niet gebruikt."""
+    setattr(mod, naam, waarde)
+
+
 def test_een_lab_op_een_andere_machine_tunnelt_naar_die_machine(db):
     """host.docker.internal is JOUW machine. Staat het lab ergens anders, dan
     tunnel je daarmee naar een poort op de verkeerde computer."""
@@ -152,14 +186,26 @@ def test_een_lab_op_een_andere_machine_tunnelt_naar_die_machine(db):
 
     nu = "2026-10-18T10:00:00+00:00"
     h = LabHost(naam="iMac", machine_id="m1", status="gekoppeld",
-                agent_url="https://192.168.2.22:9443/", created_at=nu, updated_at=nu)
+                agent_url="http://192.168.2.22:8098", agent_token="geheim",
+                created_at=nu, updated_at=nu)
     db.add(h)
     db.flush()
     p = _lab(db, host_id=h.id)
 
-    inhoud = Tunnel(db).script(p.id, os_naam="mac")["inhoud"]
+    # De agent dáár zet de poort door; naar 18004 zelf tunnelen gaf
+    # "connection refused", want die staat op de loopback van die machine.
+    from services.lab import lab_adres
 
-    assert "tcp:192.168.2.22:18004" in inhoud
+    def nep(_url, _token, _pad, body):
+        return {"poort": body["poort"] + 10_000}
+
+    monkeypatch_lokaal(lab_adres, "_vraag_agent", nep)
+    try:
+        inhoud = Tunnel(db).script(p.id, os_naam="mac")["inhoud"]
+    finally:
+        monkeypatch_lokaal(lab_adres, "_vraag_agent", lab_adres._echt_vraag_agent)
+
+    assert "tcp:192.168.2.22:28004" in inhoud
     assert "host.docker.internal" not in inhoud
 
 
@@ -194,4 +240,4 @@ def test_de_bestandsnaam_overleeft_een_branch_met_schuine_strepen(db):
     naam = Tunnel(db).script(p.id, os_naam="mac")["bestandsnaam"]
 
     assert "/" not in naam
-    assert naam == "labx-tunnel-feature-inloggen-5173.sh"
+    assert naam == "labx-tunnel-feature-inloggen.sh"

@@ -25,6 +25,7 @@ achtergronddienst, geen rechten: Docker heb je al, anders draaide LabX niet.
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
@@ -46,19 +47,29 @@ def _naam(lokaal: int) -> str:
     return f"labx-tunnel-{lokaal}"
 
 
-def _sh(*, lokaal: int, doelhost: str, doelpoort: int, linux: bool,
-        lab: str, branch: str) -> str:
+def _sh(*, paren: list, linux: bool, lab: str, branch: str) -> str:
     extra = LINUX_EXTRA if linux else ""
+    regels = "\n".join(f"#   http://localhost:{a}  ->  {h}:{d}" for a, h, d in paren)
+    namen = " ".join(_naam(a) for a, _h, _d in paren)
+    starts = "\n".join(
+        f'docker run -d --rm --name {_naam(a)} \\\n'
+        f'  -p 127.0.0.1:{a}:{a} {extra}\\\n'
+        f'  {IMAGE} \\\n'
+        f'  tcp-listen:{a},fork,reuseaddr tcp:{h}:{d} >/dev/null'
+        for a, h, d in paren)
+    opruimen = "\n".join(f'docker rm -f {_naam(a)} >/dev/null 2>&1 || true'
+                          for a, _h, _d in paren)
     return f"""#!/bin/sh
 # LabX-tunnel naar {branch} ({lab})
 #
-#   http://localhost:{lokaal}  ->  {doelhost}:{doelpoort}
+{regels}
 #
-# Laat dit venster open staan; sluiten of Ctrl-C ruimt de tunnel op. Na een
-# herstart van je machine is hij weg -- start hem dan opnieuw.
+# Alle poorten van dit lab tegelijk, want een applicatie die zijn eigen API
+# op een vaste poort verwacht heeft aan één doorgang niets.
+#
+# Laat dit venster open staan; sluiten of Ctrl-C ruimt de tunnels op. Na een
+# herstart van je machine zijn ze weg -- start dit dan opnieuw.
 set -e
-
-NAAM={_naam(lokaal)}
 
 if ! docker info >/dev/null 2>&1; then
   echo "Docker draait niet. Start Docker en probeer het opnieuw." >&2
@@ -67,31 +78,42 @@ fi
 
 # Een oudere tunnel op deze poort wijst naar een ander lab. Die hoort weg,
 # anders krijg je stilletjes de verkeerde branch te zien.
-docker rm -f "$NAAM" >/dev/null 2>&1 || true
+{opruimen}
 
-echo "Tunnel open: http://localhost:{lokaal}  ->  {branch}"
-echo "Sluit dit venster om hem te stoppen."
+{starts}
 
-exec docker run --rm --name "$NAAM" \\
-  -p 127.0.0.1:{lokaal}:{lokaal} {extra}\\
-  {IMAGE} \\
-  tcp-listen:{lokaal},fork,reuseaddr tcp:{doelhost}:{doelpoort}
+echo "Tunnel open naar {branch}:"
+{chr(10).join(f'echo "  http://localhost:{a}"' for a, _h, _d in paren)}
+echo "Sluit dit venster (Ctrl-C) om ze te stoppen."
+
+# Opruimen zodra jij stopt, ook bij Ctrl-C.
+trap 'docker rm -f {namen} >/dev/null 2>&1; exit 0' INT TERM
+while docker ps --format "{{{{.Names}}}}" | grep -q "{_naam(paren[0][0])}"; do
+  sleep 2
+done
 """
 
 
-def _cmd(*, lokaal: int, doelhost: str, doelpoort: int,
-         lab: str, branch: str) -> str:
+def _cmd(*, paren: list, lab: str, branch: str) -> str:
     # Windows-regeleindes: een .cmd met alleen \n draait wel, maar wordt in
     # Kladblok één lange regel en dan is niet te zien wat je start.
-    regels = f"""@echo off
+    regels = "\n".join(f"REM   http://localhost:{a}  --^>  {h}:{d}" for a, h, d in paren)
+    opruimen = "\n".join(f"docker rm -f {_naam(a)} >nul 2>&1" for a, _h, _d in paren)
+    starts = "\n".join(
+        f"docker run -d --rm --name {_naam(a)} -p 127.0.0.1:{a}:{a} {IMAGE} ^\n"
+        f"  tcp-listen:{a},fork,reuseaddr tcp:{h}:{d} >nul"
+        for a, h, d in paren)
+    adressen = "\n".join(f"echo   http://localhost:{a}" for a, _h, _d in paren)
+    namen = " ".join(_naam(a) for a, _h, _d in paren)
+    inhoud = f"""@echo off
 REM LabX-tunnel naar {branch} ({lab})
 REM
-REM   http://localhost:{lokaal}  ->  {doelhost}:{doelpoort}
+{regels}
 REM
-REM Laat dit venster open staan; sluiten ruimt de tunnel op. Na een herstart
-REM van je machine is hij weg -- start hem dan opnieuw.
-
-set NAAM={_naam(lokaal)}
+REM Alle poorten van dit lab tegelijk, want een applicatie die zijn eigen API
+REM op een vaste poort verwacht heeft aan één doorgang niets.
+REM
+REM Laat dit venster open staan; sluiten ruimt de tunnels op.
 
 docker info >nul 2>&1
 if errorlevel 1 (
@@ -101,15 +123,17 @@ if errorlevel 1 (
 )
 
 REM Een oudere tunnel op deze poort wijst naar een ander lab.
-docker rm -f %NAAM% >nul 2>&1
+{opruimen}
 
-echo Tunnel open: http://localhost:{lokaal}  --^>  {branch}
-echo Sluit dit venster om hem te stoppen.
+{starts}
 
-docker run --rm --name %NAAM% -p 127.0.0.1:{lokaal}:{lokaal} {IMAGE} ^
-  tcp-listen:{lokaal},fork,reuseaddr tcp:{doelhost}:{doelpoort}
+echo Tunnel open naar {branch}:
+{adressen}
+echo Druk op een toets om ze te stoppen.
+pause >nul
+docker rm -f {namen} >nul 2>&1
 """
-    return regels.replace("\n", "\r\n")
+    return inhoud.replace("\n", "\r\n")
 
 
 class Tunnel:
@@ -139,57 +163,62 @@ class Tunnel:
                 status_code=400,
                 detail="Dit lab publiceert geen poorten; start het eerst.")
 
-        # Welke poort van het lab? De eerste is de hoofdpoort (de volgorde
-        # komt van de detector en is betekenisvol), maar bij een cluster met
-        # een front-end en een API wil je soms die tweede.
-        gekozen = container_poort if container_poort in kaart else next(iter(kaart))
-        machine_poort = kaart[gekozen]
+        # ALLE poorten van dit lab, niet één. Een applicatie die zijn eigen
+        # API op een vaste poort verwacht heeft aan één doorgang niets: bij
+        # IntelligentHive draait de front-end op 5173 en de API op 7071, en
+        # met alleen die eerste krijg je een wit scherm in plaats van een
+        # foutmelding. Met `container_poort` kun je het nog steeds tot één
+        # poort beperken, want twee branches tegelijk op 5173 kan niet.
+        gekozen = [container_poort] if container_poort in kaart else list(kaart)
 
-        # De poort op JOUW machine. Standaard dezelfde als in de container,
-        # want dat is precies het geval waarvoor dit bestaat: de applicatie
-        # verwacht zichzelf op 5173 omdat daar de redirect op geregistreerd
-        # staat.
-        lokaal = int(lokaal or gekozen)
-        if not 1 <= lokaal <= 65535:
-            raise HTTPException(status_code=400, detail="Dat is geen geldige poort.")
+        # Een eigen lokaal nummer slaat alleen ergens op bij één poort: bij
+        # twee is "welke krijgt 3000?" niet te beantwoorden, en stil de
+        # eerste kiezen levert een tunnel op waarvan je het halve adres zelf
+        # moet raden.
+        if lokaal and len(gekozen) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail=("Dit lab publiceert meerdere poorten. Kies er één als je "
+                        "zelf een lokaal nummer wilt geven."))
+
+        # Waar het script naartoe moet wijzen. Dat is NIET zomaar de
+        # machinepoort: labs publiceren op de loopback van hun eigen machine,
+        # dus staat het lab ergens anders, dan moet de agent daar hem eerst
+        # doorzetten. Dat is precies wat adres_voor_lab regelt -- en zonder
+        # dit gaf het script "connection refused" op een poort die van buiten
+        # dicht is, wat eruitziet als een stukke tunnel.
+        from services.lab.lab_adres import adres_voor_lab
 
         c = self.db.get(Cluster, p.cluster_id)
-        doelhost = self._doelhost(c)
-        branch = p.branch or p.name or lab_id[:8]
+        paren = []
+        for container_p in gekozen:
+            lokale_poort = int(lokaal) if (lokaal and len(gekozen) == 1) else int(container_p)
+            if not 1 <= lokale_poort <= 65535:
+                raise HTTPException(status_code=400, detail="Dat is geen geldige poort.")
+            if c is not None and c.host_id:
+                uit = adres_voor_lab(self.db, lab_id, container_p)
+                doel = urlparse(uit["url"])
+                paren.append((lokale_poort, doel.hostname, int(doel.port or 80)))
+            else:
+                # LabX en dit lab staan op dezelfde machine als jouw browser;
+                # dan komt een container daar via host.docker.internal bij.
+                paren.append((lokale_poort, HOSTNAAM, kaart[container_p]))
 
+        branch = p.branch or p.name or lab_id[:8]
         if os_naam == "windows":
-            inhoud = _cmd(lokaal=lokaal, doelhost=doelhost, doelpoort=machine_poort,
-                          lab=lab_id, branch=branch)
+            inhoud = _cmd(paren=paren, lab=lab_id, branch=branch)
         else:
-            inhoud = _sh(lokaal=lokaal, doelhost=doelhost, doelpoort=machine_poort,
-                         linux=(os_naam == "linux"), lab=lab_id, branch=branch)
+            inhoud = _sh(paren=paren, linux=(os_naam == "linux"), lab=lab_id, branch=branch)
 
         veilig = "".join(q if q.isalnum() else "-" for q in branch).strip("-") or "lab"
         return {
-            "bestandsnaam": f"labx-tunnel-{veilig}-{lokaal}.{BESTANDSNAAM[os_naam]}",
+            "bestandsnaam": f"labx-tunnel-{veilig}.{BESTANDSNAAM[os_naam]}",
             "inhoud": inhoud,
-            "url": f"http://localhost:{lokaal}",
-            "container_poort": gekozen,
-            "machine_poort": machine_poort,
+            "url": f"http://localhost:{paren[0][0]}",
+            "poorten": [a for a, _h, _d in paren],
         }
 
-    def _doelhost(self, c) -> str:
-        """Waar het script naartoe wijst.
-
-        Draait het cluster op deze machine, dan komt de container bij de
-        machinepoort via `host.docker.internal`. Staat het op een gekoppelde
-        lab-host, dan moet het script naar DIE machine wijzen -- anders
-        tunnelt hij vrolijk naar een poort op de verkeerde computer.
-        """
-        if c is None or not c.host_id:
-            return HOSTNAAM
-        from models.lab_host import LabHost
-
-        host = self.db.get(LabHost, c.host_id)
-        adres = (getattr(host, "agent_url", None) or getattr(host, "docker_host", None) or "")
-        adres = str(adres).split("://")[-1].split("/")[0].split(":")[0].strip()
-        if not adres:
-            raise HTTPException(
-                status_code=400,
-                detail="LabX weet het adres van de lab-host niet; een tunnel kan daar niet heen.")
-        return adres
+    # _doelhost is weg. Hij wees naar het ADRES van de lab-host, en daar
+    # staat de labpoort op de loopback: van buiten dicht, dus elke tunnel naar
+    # een lab op een andere machine gaf "connection refused". Het adres komt
+    # nu van adres_voor_lab, die de agent daar eerst om een doorgang vraagt.

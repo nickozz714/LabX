@@ -44,6 +44,10 @@ def _vraag_agent(agent_url: str, token: str, pad: str,
         return json.loads(r.read() or b"{}")
 
 
+#: De echte, zodat een test hem kan terugzetten na hem te hebben vervangen.
+_echt_vraag_agent = _vraag_agent
+
+
 def adres_voor_lab(db: Session, lab_id: str,
                    container_poort: Optional[int] = None) -> Dict[str, Any]:
     """Het adres waarop je dit branch-lab in je browser opent.
