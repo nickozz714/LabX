@@ -23,7 +23,7 @@ def db(monkeypatch):
     from db.database import Base
     from models import (  # noqa: F401
         audit, azure_profile, background_run, board, claim_resource, cluster,
-        cluster_env_file, cluster_secret, guard_audit, guard_rule, lab, lab_extra, lab_host,
+        cluster_bundel, cluster_env_file, cluster_secret, guard_audit, guard_rule, lab, lab_extra, lab_host,
         lab_secret, lab_worker,
         mcp_server, message, model_runner, notification, plan, schedule, secret,
         skill, skill_tool, thread, time_entry, tool, voice, workflow,
@@ -63,6 +63,12 @@ class NepDocker:
 
     async def remove(self, cid, **kw):
         self.verwijderd.append(cid)
+
+    async def volume_bestaat(self, naam):
+        return False
+
+    async def remove_volume(self, naam):
+        pass
 
 
 def _svc(db, docker=None):
@@ -1387,3 +1393,106 @@ def test_bestaande_labs_veranderen_niet_mee(db):
     db.refresh(lab)
     assert lab.data_guard is True
     assert lab.llm_guard is True
+
+
+# ── verhuizen ────────────────────────────────────────────────────────────────
+
+class _VolumeDocker(NepDocker):
+    """Een daemon die bijhoudt welke volumes er bij hem in en uit gaan."""
+
+    def __init__(self):
+        super().__init__()
+        self.aanwezig, self.uitgevoerd, self.ingevoerd, self.volumes_weg = set(), [], [], []
+
+    async def volume_bestaat(self, naam):
+        return naam in self.aanwezig
+
+    async def export_volume(self, naam, pad):
+        self.uitgevoerd.append(naam)
+        with open(pad, "wb") as f:
+            f.write(b"doet-er-niet-toe")
+
+    async def import_volume(self, naam, pad):
+        self.ingevoerd.append(naam)
+        self.aanwezig.add(naam)
+
+    async def remove_volume(self, naam):
+        self.volumes_weg.append(naam)
+        self.aanwezig.discard(naam)
+
+    async def diagnose(self):
+        return {"cli_present": True, "daemon_up": True}
+
+
+def test_bij_verhuizen_gaan_de_volumes_van_de_bundels_mee(db, monkeypatch):
+    """Anders is een bundel na de verhuizing een lege doos.
+
+    Hij staat er nog, hij laat zich toepassen, en er gebeurt niets -- want de
+    uitgepakte bestanden bleven op de oude machine staan. Dat is erger dan een
+    foutmelding, omdat het eruitziet alsof het werkte. Gemeten geval: de
+    byom-dump van 72 MB bij het verhuizen van een cluster.
+    """
+    from models.cluster_bundel import ClusterBundel
+
+    bron, doel = _VolumeDocker(), _VolumeDocker()
+    svc = _svc(db, bron)
+    c = svc.maak(naam="Hive")
+    svc.voeg_dienst_toe(c.id, naam="cosmos", image="emulator:1")
+
+    nu = "2026-10-20T12:00:00+00:00"
+    b = ClusterBundel(cluster_id=c.id, naam="dump", bestandsnaam="dump.zip",
+                      volume="labx_bundel_1", boom=[], created_at=nu, updated_at=nu)
+    db.add(b)
+    db.commit()
+    bron.aanwezig.add(b.volume)
+    bron.aanwezig.add(f"labx_dienst_{c.id}_cosmos")
+
+    from services.lab.lab_service import LabService
+
+    monkeypatch.setattr(LabService, "_docker_op_host", lambda _self, _h: doel)
+    monkeypatch.setattr(LabService, "runtime", doel, raising=False)
+
+    asyncio.run(svc.verplaats(c.id, host_id=7))
+
+    assert b.volume in doel.ingevoerd, "de bundel hoort op de nieuwe machine te staan"
+    assert b.volume in bron.volumes_weg, "en niet ook nog op de oude"
+    assert f"labx_dienst_{c.id}_cosmos" in doel.ingevoerd
+
+
+def test_een_cluster_verwijderen_neemt_ook_zijn_volumes_mee(db):
+    """Anders blijft de data achter zonder dat er nog iets naar verwijst.
+
+    Niet vindbaar, niet opruimbaar, en wél vol: zo liep er 30 GB vol met
+    resten van clusters die al maanden niet meer bestonden.
+    """
+    from models.cluster_bundel import ClusterBundel
+
+    docker = _VolumeDocker()
+    svc = _svc(db, docker)
+    c = svc.maak(naam="Hive")
+    svc.voeg_dienst_toe(c.id, naam="cosmos", image="emulator:1")
+    nu = "2026-10-20T12:00:00+00:00"
+    db.add(ClusterBundel(cluster_id=c.id, naam="dump", bestandsnaam="dump.zip",
+                         volume="labx_bundel_9", boom=[], created_at=nu, updated_at=nu))
+    db.commit()
+    docker.aanwezig.update({f"labx_dienst_{c.id}_cosmos", "labx_bundel_9"})
+
+    uit = asyncio.run(svc.verwijder(c.id))
+
+    assert uit["niet_opgeruimd"] == []
+    assert sorted(docker.volumes_weg) == sorted([f"labx_dienst_{c.id}_cosmos",
+                                                 "labx_bundel_9"])
+
+
+def test_een_volume_dat_al_weg_is_houdt_het_opruimen_niet_tegen(db):
+    """Opruimen dat halverwege struikelt is erger dan opruimen dat iets
+    laat staan -- dat staat al in de docstring, en geldt ook hier."""
+    docker = _VolumeDocker()
+    svc = _svc(db, docker)
+    c = svc.maak(naam="Hive")
+    svc.voeg_dienst_toe(c.id, naam="cosmos", image="emulator:1")
+
+    uit = asyncio.run(svc.verwijder(c.id))
+
+    assert uit["ok"] is True
+    assert docker.volumes_weg == []

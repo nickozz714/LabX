@@ -434,26 +434,40 @@ class ClusterService:
 
         # ── de diensten, mét hun gegevens ────────────────────────────────────
         werkmap = "/data" if os.path.isdir("/data") else tempfile.gettempdir()
+
+        async def verhuis_volume(volume: str, aanduiding: str) -> None:
+            if not await bron_rt.volume_bestaat(volume):
+                return
+            tar = os.path.join(werkmap, f"labx-{aanduiding}.tar.gz")
+            try:
+                await bron_rt.export_volume(volume, tar)
+                await doel_rt.import_volume(volume, tar)
+                await bron_rt.remove_volume(volume)
+            finally:
+                try:
+                    os.unlink(tar)
+                except OSError:
+                    pass
+
         for d in self.diensten(c.id):
             draaide = d.status == "draait"
             volume = f"labx_dienst_{c.id}_{d.naam}"
             if draaide:
                 await self.stop_dienst(d.id)
-            if await bron_rt.volume_bestaat(volume):
-                tar = os.path.join(werkmap, f"labx-dienst-{c.id}-{d.naam}.tar.gz")
-                try:
-                    await bron_rt.export_volume(volume, tar)
-                    await doel_rt.import_volume(volume, tar)
-                    await bron_rt.remove_volume(volume)
-                finally:
-                    try:
-                        os.unlink(tar)
-                    except OSError:
-                        pass
+            await verhuis_volume(volume, f"dienst-{c.id}-{d.naam}")
             d.container_id = None
             d.status = "gestopt"
             d.updated_at = _nu()
         self.db.commit()
+
+        # ── de bundels, want daar zit de bron-data in ────────────────────────
+        # Zonder dit blijft de uitgepakte inhoud op de oude machine achter en
+        # is een bundel na verhuizen een lege doos: hij staat er nog, hij laat
+        # zich toepassen, en er gebeurt niets. Dat is erger dan een foutmelding.
+        from services.lab.bundels import BundelService
+
+        for b in BundelService(self.db).lijst(c.id):
+            await verhuis_volume(b.volume, f"bundel-{b.id}")
 
         # ── de branch-labs ───────────────────────────────────────────────────
         for lab in labs:
@@ -507,6 +521,7 @@ class ClusterService:
 
         runtime = self._runtime(rij)
         klachten: List[str] = []
+        dienstnamen = [d.naam for d in self.diensten(cluster_id)]
         for d in self.diensten(cluster_id):
             if d.container_id:
                 try:
@@ -518,6 +533,26 @@ class ClusterService:
             await runtime.verwijder_netwerk(rij.netwerk)
         except Exception as exc:  # noqa: BLE001
             klachten.append(f"netwerk {rij.netwerk}: {str(exc)[:160]}")
+
+        # En de volumes. Hier staat de data in: de database van een vaste
+        # dienst, de uitgepakte inhoud van een bundel. Zonder dit blijven ze
+        # achter zonder dat er nog iets naar ze verwijst -- niet vindbaar, niet
+        # opruimbaar, en wél vol. Zo liep er 30 GB vol met resten van clusters
+        # die al maanden niet meer bestonden.
+        from models.cluster_bundel import ClusterBundel
+
+        bundels = (self.db.query(ClusterBundel)
+                   .filter(ClusterBundel.cluster_id == cluster_id).all())
+        volumes = [f"labx_dienst_{cluster_id}_{naam}" for naam in dienstnamen]
+        volumes += [b.volume for b in bundels if b.volume]
+        for volume in volumes:
+            try:
+                if await runtime.volume_bestaat(volume):
+                    await runtime.remove_volume(volume)
+            except Exception as exc:  # noqa: BLE001
+                klachten.append(f"volume {volume}: {str(exc)[:160]}")
+        for b in bundels:
+            self.db.delete(b)
 
         from models.cluster_secret import ClusterSecret
 
