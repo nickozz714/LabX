@@ -193,6 +193,34 @@ async def verwijder(host_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.get("/{host_id}/diagnose")
+async def diagnose_host(host_id: int, db: Session = Depends(get_db)):
+    """Alle kanalen van deze machine in één uitslag.
+
+    Opgeschreven (`laatst_gezien`), de hostagent, SSH en Docker. Ze kunnen
+    alle vier iets anders zeggen, en juist dán is één melding nodig in plaats
+    van vier. Dezelfde uitslag die een mislukte labstart gebruikt, zodat het
+    scherm en de foutmelding niet uiteenlopen.
+    """
+    from services.lab.machine_diagnose import diagnose
+
+    svc = LabHostService(db)
+    return await diagnose(db, svc.get_or_404(host_id))
+
+
+@router.get("/{host_id}/afstemming")
+async def afstemming_host(host_id: int, db: Session = Depends(get_db)):
+    """Wat LabX denkt, naast wat er werkelijk op die machine staat.
+
+    Verandert niets. Een afstemming die stilletjes dingen rechtzet is precies
+    hoe je werk kwijtraakt waar niemand om vroeg.
+    """
+    from services.lab.machine_diagnose import afstemming
+
+    svc = LabHostService(db)
+    return await afstemming(db, svc.get_or_404(host_id))
+
+
 @router.post("/{host_id}/test")
 async def test(host_id: int, db: Session = Depends(get_db)):
     """Kan LabX werkelijk bij de Docker van die machine?

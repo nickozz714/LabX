@@ -69,6 +69,24 @@ function KopieerKnop({ tekst, label = "Kopiëren" }: { tekst: string; label?: st
   );
 }
 
+type Kanalen = Awaited<ReturnType<typeof labHostsApi.diagnose>>["kanalen"];
+type Afstemming = Awaited<ReturnType<typeof labHostsApi.afstemming>>;
+
+/** Eén kanaal, met zijn eigen oordeel.
+ *
+ * Vier regels naast elkaar in plaats van één rondje: als ze het oneens zijn
+ * wil je zién welk kanaal het begeeft. "De machine doet het niet" is geen
+ * diagnose als de agent zich twee minuten geleden nog meldde. */
+function KanaalRegel({ naam, ok, uitleg }: { naam: string; ok: boolean; uitleg: string }) {
+  return (
+    <div className="flex items-start gap-1.5">
+      <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${ok ? "bg-green-500" : "bg-destructive"}`} />
+      <span className="shrink-0 font-medium">{naam}</span>
+      {uitleg && <span className="min-w-0 truncate text-muted-foreground">{uitleg}</span>}
+    </div>
+  );
+}
+
 export function MachinesPage() {
   const [hosts, setHosts] = useState<LabHost[]>([]);
   const [laden, setLaden] = useState(true);
@@ -197,21 +215,41 @@ function HostKaart({ host, onKoppel, onWijzig }: {
   const melding = useMelding();
   const bevestig = useBevestiging();
 
+  const [kanalen, setKanalen] = useState<Kanalen | null>(null);
+  const [afstemming, setAfstemming] = useState<Afstemming | null>(null);
+  const [afstemmen, setAfstemmen] = useState(false);
+
+  // Vier kanalen die het oneens kunnen zijn, en één uitslag.
+  //
+  // "Verbinding testen" keek alleen naar Docker. Dat gaf de melding "staat
+  // die machine aan?" terwijl de machine áánstond en SSH het probleem was --
+  // en LabX wist dat ook, want de agent had zich twee minuten eerder nog
+  // gemeld. De zin komt nu uit dezelfde diagnose die een mislukte labstart
+  // gebruikt, zodat scherm en foutmelding niet uiteenlopen.
   async function test() {
     setTesten(true);
     setUitslag(null);
+    setKanalen(null);
     try {
-      const r = await labHostsApi.test(host.id);
-      setUitslag({
-        ok: r.ok,
-        tekst: r.ok
-          ? `Verbonden met ${r.docker_host}`
-          : (r.detail || r.diagnose?.hint || "Geen verbinding met de Docker van die machine."),
-      });
+      const r = await labHostsApi.diagnose(host.id);
+      setUitslag({ ok: r.bruikbaar, tekst: r.melding });
+      setKanalen(r.kanalen);
     } catch (e) {
       setUitslag({ ok: false, tekst: e instanceof ApiError ? e.message : String(e) });
     } finally {
       setTesten(false);
+    }
+  }
+
+  async function stemAf() {
+    setAfstemmen(true);
+    setAfstemming(null);
+    try {
+      setAfstemming(await labHostsApi.afstemming(host.id));
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Afstemmen lukte niet");
+    } finally {
+      setAfstemmen(false);
     }
   }
 
@@ -406,9 +444,49 @@ function HostKaart({ host, onKoppel, onWijzig }: {
             </div>
           )}
 
-          <div className="flex gap-2">
+          {kanalen && (
+            <div className="mb-2 grid gap-1 text-xs sm:grid-cols-2">
+              <KanaalRegel naam="Laatst gemeld" ok={kanalen.opgeschreven.ok}
+                           uitleg={kanalen.opgeschreven.laatst_gezien
+                             ? new Date(kanalen.opgeschreven.laatst_gezien).toLocaleString("nl-NL")
+                             : "nooit"} />
+              <KanaalRegel naam="Hostagent" ok={kanalen.agent.ok}
+                           uitleg={kanalen.agent.melding || kanalen.agent.url || ""} />
+              <KanaalRegel naam="SSH" ok={kanalen.ssh.ok} uitleg={kanalen.ssh.melding} />
+              <KanaalRegel naam="Docker" ok={kanalen.docker.ok} uitleg={kanalen.docker.melding} />
+            </div>
+          )}
+
+          {afstemming && (
+            <div className="mb-2 rounded-lg border border-border p-2 text-xs">
+              <p className="font-medium">{afstemming.melding}</p>
+              {afstemming.weg.map((x) => (
+                <p key={x.lab_id} className="mt-1 text-amber-600 dark:text-amber-400">
+                  {x.naam}: container {x.container_id} bestaat niet meer — starten bouwt hem
+                  opnieuw op uit het volume.
+                </p>
+              ))}
+              {afstemming.ander_label.map((x) => (
+                <p key={x.lab_id} className="mt-1 text-amber-600 dark:text-amber-400">
+                  {x.naam}: op de machine {x.op_de_machine}, in LabX {x.in_labx}.
+                </p>
+              ))}
+              {afstemming.onbekend.map((x) => (
+                <p key={x.container_id} className="mt-1 text-muted-foreground">
+                  {x.naam} ({x.container_id}) draait daar, maar hoort bij geen lab hier —
+                  waarschijnlijk van een andere LabX. Alleen gemeld, niet aangeraakt.
+                </p>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
             <Button variant="ghost" onClick={test} busy={testen}>
               {testen ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verbinding testen"}
+            </Button>
+            <Button variant="ghost" onClick={stemAf} busy={afstemmen}
+                    title="Wat LabX denkt, naast wat er werkelijk op die machine staat">
+              {afstemmen ? <Loader2 className="h-4 w-4 animate-spin" /> : "Afstemmen"}
             </Button>
             <Button variant="ghost" onClick={verwijder} title="Verwijderen">
               <Trash2 className="h-4 w-4" />

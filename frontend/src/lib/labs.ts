@@ -87,6 +87,33 @@ export const labHostsApi = {
   /** Meten in plaats van aannemen: komt LabX er werkelijk bij? Een gekoppelde
    *  machine waar je niet bij kunt is erger dan een ongekoppelde — je zet er
    *  labs op en die starten niet. */
+  /** Alle kanalen van een machine in één uitslag: wat er opgeschreven staat,
+   *  de hostagent, SSH en Docker. Ze kunnen het oneens zijn, en juist dán is
+   *  één melding nodig in plaats van vier. */
+  diagnose: (id: number) => api.get<{
+    bruikbaar: boolean;
+    oorzaak: string;
+    melding: string;
+    kanalen: {
+      opgeschreven: { ok: boolean; laatst_gezien: string | null };
+      agent: { ok: boolean; melding: string; url: string | null };
+      ssh: { ok: boolean; melding: string };
+      docker: { ok: boolean; melding: string };
+    };
+  }>(`/lab-hosts/${id}/diagnose`),
+  /** Wat LabX denkt, naast wat er werkelijk op die machine staat. Verandert
+   *  niets — een afstemming die stilletjes dingen rechtzet is hoe je werk
+   *  kwijtraakt waar niemand om vroeg. */
+  afstemming: (id: number) => api.get<{
+    machine: string;
+    labs: number;
+    gemeten: boolean;
+    melding: string;
+    gelijk: { lab_id: string; naam: string; status: string; toelichting: string }[];
+    weg: { lab_id: string; naam: string; status: string; container_id: string; toelichting: string }[];
+    ander_label: { lab_id: string; naam: string; status: string; op_de_machine: string; in_labx: string }[];
+    onbekend: { container_id: string; naam: string; state: string }[];
+  }>(`/lab-hosts/${id}/afstemming`),
   test: (id: number) => api.post<{
     ok: boolean; detail?: string | null; docker_host?: string;
     /** Apart van `ok`: inloggen lukt wél maar Docker draait niet is een ander
