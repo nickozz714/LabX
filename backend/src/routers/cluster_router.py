@@ -55,6 +55,21 @@ def wijzig(cluster_id: int, body: Dict[str, Any], db: Session = Depends(get_db))
     return svc.to_dict(svc.wijzig(cluster_id, **body))
 
 
+@router.post("/{cluster_id}/verplaatsen")
+async def verplaats_cluster(cluster_id: int, body: Dict[str, Any],
+                            db: Session = Depends(get_db)):
+    """Het hele cluster naar een andere machine — diensten, gegevens en labs.
+
+    Een eigen handeling en geen veld in `PATCH`, omdat er werk achter zit:
+    volumes verhuizen, een netwerk aanmaken, containers opnieuw opbouwen. Een
+    nummer wijzigen zou alleen de administratie verzetten en alles op de oude
+    machine laten staan — en dat ziet eruit alsof het gelukt is.
+    """
+    host = body.get("host_id")
+    return await _svc(db).verplaats(cluster_id,
+                                    host_id=(int(host) if host else None))
+
+
 @router.delete("/{cluster_id}")
 async def verwijder(cluster_id: int, db: Session = Depends(get_db)):
     return await _svc(db).verwijder(cluster_id)

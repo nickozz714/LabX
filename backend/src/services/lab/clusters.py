@@ -25,7 +25,9 @@ DRIE DINGEN DIE DE REST VERKLAREN:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -351,17 +353,126 @@ class ClusterService:
         if "geheimen_zelf" in velden:
             rij.geheimen_zelf = bool(velden["geheimen_zelf"])
         if "host_id" in velden:
+            # Verhuizen kan wél, maar niet door stilletjes een nummer te
+            # wijzigen: dan blijven de containers, de volumes en het netwerk
+            # op de oude machine staan en wijst alleen de administratie ergens
+            # anders heen. Dat is erger dan niet kunnen verhuizen, want het
+            # ziet eruit alsof het gelukt is.
             raise HTTPException(
                 status_code=400,
-                detail=("De machine van een cluster is niet achteraf te wijzigen. "
-                        "Vaste diensten, hun volumes en de branch-labs staan daar "
-                        "samen; ze verhuizen alleen als geheel, en dat is een nieuw "
-                        "cluster."))
+                detail=("Gebruik 'verplaatsen' om een cluster naar een andere machine "
+                        "te brengen. Dan gaan de vaste diensten, hun gegevens en alle "
+                        "branch-labs mee; alleen het nummer wijzigen laat ze achter."))
         if "azure_profiel_id" in velden:
             waarde = velden["azure_profiel_id"]
             rij.azure_profiel_id = int(waarde) if waarde else None
         if "omgeving" in velden and isinstance(velden["omgeving"], dict):
             rij.omgeving = {str(k): str(v) for k, v in velden["omgeving"].items()}
+
+    async def verplaats(self, cluster_id: int, *, host_id: Optional[int]) -> Dict[str, Any]:
+        """Het hele cluster naar een andere machine.
+
+        Als GEHEEL, en dat is de hele reden dat dit een eigen handeling is.
+        Een cluster hangt aan één machine: daar staan de vaste diensten, daar
+        bestaat het clusternetwerk, daar komen de poorten naar buiten. Eén
+        onderdeel achterlaten levert geen half verhuisd cluster op maar een
+        kapot cluster -- een branch-lab dat `cosmos` niet meer vindt, zonder
+        dat ergens staat waarom.
+
+        De volgorde doet ertoe:
+
+        1. Eerst controleren of er werk draait. Een volume weghalen onder de
+           handen van een agent heeft geen nette afloop.
+        2. De diensten stoppen en hun VOLUMES meenemen. Dat is het deel dat er
+           werkelijk toe doet: in `labx_dienst_*` zit de data. Een dienst
+           opnieuw starten op een lege machine geeft een lege database en dat
+           ziet er precies hetzelfde uit.
+        3. De branch-labs, met hun werkkopie.
+        4. Pas daarna het cluster zelf omzetten en alles weer aanzetten.
+
+        Gaat stap 2 of 3 mis, dan stopt het hier en blijft de rest staan waar
+        hij staat. Half verhuisd is dan nog steeds beter dan doorgaan: je weet
+        waar het misging en wat er nog moet.
+        """
+        from models.lab import Lab
+        from services.lab.lab_service import LabService
+
+        c = self.get_or_404(cluster_id)
+        doel = int(host_id) if host_id else None
+        if (c.host_id or None) == doel:
+            return self.to_dict(c)
+
+        lab_svc = LabService(self.db)
+        if doel:
+            # Bestaat die machine, en kunnen we erbij? Dit nú weten scheelt
+            # een cluster dat halverwege strandt.
+            lab_svc._docker_op_host(doel)
+
+        labs = self.db.query(Lab).filter(Lab.cluster_id == c.id).all()
+        bezig = []
+        for lab in labs:
+            bezet = lab_svc.bezetting(lab.id)
+            if any(bezet.values()):
+                bezig.append(f"{lab.name} ({sum(bezet.values())})")
+        if bezig:
+            raise HTTPException(
+                status_code=409,
+                detail=("Er draait nog werk in dit cluster: " + ", ".join(bezig)
+                        + ". Laat dat aflopen of breek het af — verhuizen tijdens een "
+                          "run haalt de werkkopie onder de handen van de agent weg."))
+
+        bron_rt = self._runtime(c)
+        doel_rt = lab_svc._docker_op_host(doel) if doel else lab_svc.runtime
+        log.infox("Cluster verplaatsen", cluster=c.naam, van=c.host_id, naar=doel,
+                  diensten=len(self.diensten(c.id)), labs=len(labs))
+
+        # ── de diensten, mét hun gegevens ────────────────────────────────────
+        werkmap = "/data" if os.path.isdir("/data") else tempfile.gettempdir()
+        for d in self.diensten(c.id):
+            draaide = d.status == "draait"
+            volume = f"labx_dienst_{c.id}_{d.naam}"
+            if draaide:
+                await self.stop_dienst(d.id)
+            if await bron_rt.volume_bestaat(volume):
+                tar = os.path.join(werkmap, f"labx-dienst-{c.id}-{d.naam}.tar.gz")
+                try:
+                    await bron_rt.export_volume(volume, tar)
+                    await doel_rt.import_volume(volume, tar)
+                    await bron_rt.remove_volume(volume)
+                finally:
+                    try:
+                        os.unlink(tar)
+                    except OSError:
+                        pass
+            d.container_id = None
+            d.status = "gestopt"
+            d.updated_at = _nu()
+        self.db.commit()
+
+        # ── de branch-labs ───────────────────────────────────────────────────
+        for lab in labs:
+            await lab_svc.verplaats(lab.id, host_id=doel, met_het_cluster=True)
+
+        # ── en dan pas het cluster ───────────────────────────────────────────
+        c.host_id = doel
+        c.updated_at = _nu()
+        self.db.commit()
+        await doel_rt.ensure_network_named(c.netwerk)
+
+        # Het oude netwerk opruimen is netjes, maar geen reden om te falen:
+        # er kan nog iets aan hangen dat niet van ons is.
+        try:
+            await bron_rt.verwijder_netwerk(c.netwerk)
+        except Exception as exc:  # noqa: BLE001
+            log.infox("Oud clusternetwerk niet opgeruimd", cluster=c.naam,
+                      error=str(exc)[:200])
+
+        for d in self.diensten(c.id):
+            await self.start_dienst(d.id)
+
+        log.infox("Cluster verplaatst", cluster=c.naam, naar=doel)
+        self.db.refresh(c)
+        return self.to_dict(c)
 
     async def verwijder(self, cluster_id: int) -> Dict[str, Any]:
         """Het cluster weg, inclusief wat het bij Docker heeft achtergelaten.

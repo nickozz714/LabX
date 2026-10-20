@@ -30,8 +30,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { azureProfilesApi } from "@/lib/azureProfiles";
 import { boardApi } from "@/lib/boards";
-import { labsApi } from "@/lib/labs";
-import type { LabExtra } from "@/lib/types";
+import { labHostsApi, labsApi } from "@/lib/labs";
+import type { LabExtra, LabHost } from "@/lib/types";
 import { clusterApi } from "@/lib/clusters";
 import type {
   BenodigdGeheim, Cluster, ClusterDienst, ClusterGeheim, ClusterPlan, EnvBestand,
@@ -826,6 +826,8 @@ export function ClusterDetailPage() {
   const [verkent, setVerkent] = useState(false);
   const [bordId, setBordId] = useState<number | null>(null);
   const [azureProfielen, setAzureProfielen] = useState<{ id: number; name: string }[]>([]);
+  // De machines in het netwerk, voor het verplaatsen van het hele cluster.
+  const [hosts, setHosts] = useState<LabHost[]>([]);
   const [titel, setTitel] = useState("");
   const [beschrijving, setBeschrijving] = useState("");
   // De branchnaam volgt de titel zolang je hem niet zelf aanraakt. Daarna
@@ -855,6 +857,9 @@ export function ClusterDetailPage() {
         .then((ps: { id: number; name: string }[]) =>
           setAzureProfielen(ps.map((x) => ({ id: x.id, name: x.name }))))
         .catch(() => { /* geen profielen is geen fout */ });
+      labHostsApi.list()
+        .then(setHosts)
+        .catch(() => { /* geen machines is geen fout */ });
       boardApi.list()
         .then((bs) => setBordId(
           bs.find((b) => (b as { cluster_id?: number }).cluster_id === Number(clusterId))?.id ?? null))
@@ -1170,6 +1175,8 @@ export function ClusterDetailPage() {
           <RepoKaart cluster={c} onWijzig={laad} />
 
           <PoortenKaart cluster={c} onWijzig={laad} />
+
+          <MachineKaart cluster={c} hosts={hosts} onWijzig={laad} />
 
           <AgentKaart cluster={c} onWijzig={laad} />
 
@@ -1746,6 +1753,81 @@ function RepoKaart({ cluster, onWijzig }: { cluster: Cluster; onWijzig: () => vo
           zie <span className="font-medium">Toegang &amp; geheimen</span>.
         </p>
       )}
+    </Card>
+  );
+}
+
+/** Op welke machine dit cluster draait.
+ *
+ * Als GEHEEL, en dat is de hele reden dat dit een eigen knop is en geen veld
+ * dat je even wijzigt. Een cluster hangt aan één machine: daar staan de vaste
+ * diensten met hun gegevens, daar bestaat het clusternetwerk, daar komen de
+ * poorten naar buiten. Eén onderdeel achterlaten geeft geen half verhuisd
+ * cluster maar een kapot cluster — een branch-lab dat de database niet meer
+ * vindt, zonder dat ergens staat waarom.
+ */
+function MachineKaart({ cluster, hosts, onWijzig }: {
+  cluster: Cluster;
+  hosts: LabHost[];
+  onWijzig: () => void;
+}) {
+  const melding = useMelding();
+  const bevestig = useBevestiging();
+  const [doel, setDoel] = useState("");
+  const [bezig, setBezig] = useState(false);
+
+  async function verhuis() {
+    const naam = doel ? (hosts.find((h) => String(h.id) === doel)?.naam || doel) : "deze server";
+    const ja = await bevestig.vraag({
+      titel: `Het hele cluster naar ${naam}?`,
+      tekst: "De vaste diensten gaan uit, hun gegevens verhuizen mee, en alle branch-labs "
+        + "worden daarna opnieuw opgebouwd. Dat duurt een paar minuten en kan niet "
+        + "halverwege terug.",
+      bevestig: "Verplaatsen",
+    });
+    if (!ja) return;
+    setBezig(true);
+    try {
+      await clusterApi.verplaats(cluster.id, doel ? Number(doel) : null);
+      melding.ok(`Cluster staat nu op ${naam}.`);
+      setDoel("");
+      onWijzig();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Verplaatsen mislukte");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-start gap-2">
+        <Server className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h2 className="text-sm font-semibold">Machine</h2>
+          <p className="text-xs text-muted-foreground">
+            Dit cluster draait in zijn geheel op <span className="font-medium">{cluster.machine}</span>.
+            Verplaatsen neemt de vaste diensten, hun gegevens en alle branch-labs mee.
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-0 flex-1">
+          <Label>Verplaatsen naar</Label>
+          <Select value={doel} onChange={(e) => setDoel(e.target.value)}>
+            <option value="">deze server</option>
+            {hosts.map((h) => <option key={h.id} value={h.id}>{h.naam}</option>)}
+          </Select>
+        </div>
+        <Button onClick={verhuis} disabled={bezig}>
+          {bezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <Server className="h-4 w-4" />}
+          {bezig ? "Bezig met verhuizen…" : "Verplaatsen"}
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Kan niet terwijl er een agent werkt: dat zou de werkkopie onder zijn handen
+        weghalen. Laat lopend werk eerst aflopen.
+      </p>
     </Card>
   );
 }

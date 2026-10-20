@@ -1811,8 +1811,15 @@ exec ssh -N \\
         log.infox("Hostlab aangemaakt", lab_id=p.id, project=map_)
         return self._to_dict(p)
 
-    async def verplaats(self, lab_id: str, *, host_id: Optional[int]) -> Dict[str, Any]:
+    async def verplaats(self, lab_id: str, *, host_id: Optional[int],
+                        met_het_cluster: bool = False) -> Dict[str, Any]:
         """Een lab naar een andere machine verhuizen.
+
+        `met_het_cluster` is de enige manier waarop een BRANCH-LAB meegaat:
+        dan verhuist het cluster als geheel en regelt `ClusterService` de
+        volgorde (diensten eerst, netwerk, dan de labs). Los verhuizen blijft
+        geweigerd -- een branch-lab op een andere machine dan zijn vaste
+        diensten is geen spreiding maar een storing.
 
         Wat er meegaat is /workspace -- je repo's, je uitvoer, je halve werk.
         Wat er NIET meegaat is de containerlaag: de pakketten die het lab had,
@@ -1832,7 +1839,7 @@ exec ssh -N \\
         # clusternetwerk bestaat alleen daar, en de poorten komen daar naar
         # buiten. Een branch-lab elders is geen spreiding maar een storing --
         # de emulator is niet meer op naam te vinden en niets zegt waarom.
-        if getattr(p, "cluster_id", None):
+        if getattr(p, "cluster_id", None) and not met_het_cluster:
             from models.cluster import Cluster
 
             c = self.db.get(Cluster, p.cluster_id)
@@ -1841,8 +1848,8 @@ exec ssh -N \\
                 detail=(f"'{p.name}' hoort bij het cluster "
                         f"'{c.naam if c else p.cluster_id}' en draait op dezelfde "
                         f"machine als de vaste diensten daarvan. Een branch-lab "
-                        f"verhuist niet apart; verplaats het hele cluster, of maak "
-                        f"er een op de andere machine."))
+                        f"verhuist niet apart — verplaats het hele cluster "
+                        f"(Clusters → Instellingen → Machine)."))
         if (p.host_id or None) == (host_id or None):
             return self._to_dict(p)
 

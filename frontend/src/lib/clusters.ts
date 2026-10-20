@@ -499,6 +499,11 @@ export const clusterApi = {
     api.patch<{ ok: boolean; titel: string; beschrijving: string }>(
       `/clusters/branches/${labId}`, body),
 
+  /** Het hele cluster naar een andere machine: diensten, hun gegevens en
+   *  alle branch-labs. Een eigen handeling, want alleen het nummer wijzigen
+   *  zou de containers en volumes op de oude machine laten staan. */
+  verplaats: (id: number, hostId: number | null) =>
+    api.post<Cluster>(`/clusters/${id}/verplaatsen`, { host_id: hostId }),
   branchStop: (labId: string) => api.post<unknown>(`/clusters/branches/${labId}/stop`),
   branchStart: (labId: string) => api.post<unknown>(`/clusters/branches/${labId}/start`),
   /** De applicatie opnieuw starten zonder het lab te herstarten. Nodig zodra

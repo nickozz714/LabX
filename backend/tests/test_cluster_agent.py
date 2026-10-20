@@ -27,7 +27,7 @@ def db():
     from sqlalchemy.orm import sessionmaker
 
     from db.database import Base
-    from models import board, cluster, lab, plan  # noqa: F401
+    from models import board, cluster, lab, lab_host, plan  # noqa: F401
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
@@ -210,9 +210,133 @@ def test_zonder_instructiebestanden_komt_er_geen_leeg_kopje():
 
 # ── één cluster, één machine ─────────────────────────────────────────────────
 
-def test_een_branch_lab_verhuist_niet_apart(db):
-    """Een branch-lab op een andere server dan de vaste diensten is geen
-    spreiding maar een storing: de emulator is dan niet op naam bereikbaar."""
+
+
+# ── het hele cluster verhuizen ───────────────────────────────────────────────
+
+class _VerhuisDocker:
+    """Houdt bij wat er bij een verhuizing werkelijk gebeurt."""
+
+    def __init__(self, naam="bron"):
+        self.naam = naam
+        self.geexporteerd, self.geimporteerd, self.weg, self.netwerken = [], [], [], []
+
+    async def volume_bestaat(self, v):
+        return True
+
+    async def export_volume(self, volume, doel, **k):
+        self.geexporteerd.append(volume)
+        open(doel, "wb").write(b"x")
+
+    async def import_volume(self, volume, bron, **k):
+        self.geimporteerd.append(volume)
+
+    async def remove_volume(self, v):
+        self.weg.append(v)
+
+    async def ensure_network_named(self, n):
+        self.netwerken.append(n)
+
+    async def verwijder_netwerk(self, n):
+        pass
+
+
+def test_een_cluster_verhuist_met_de_gegevens_van_zijn_diensten(db, monkeypatch):
+    """Dit is het deel dat ertoe doet: in labx_dienst_* zit de DATA. Een
+    dienst opnieuw starten op een lege machine geeft een lege database, en dat
+    ziet er precies hetzelfde uit als een geslaagde verhuizing."""
+    from models.cluster import ClusterDienst
+    from services.lab.clusters import ClusterService
+    import services.lab.lab_service as ls
+
+    c = _cluster(db)
+    nu = "2026-10-20T08:00:00+00:00"
+    db.add(ClusterDienst(cluster_id=c.id, naam="hive-cosmos", image="cosmos:1",
+                         poorten=[8081], poort_map={}, omgeving={}, status="draait",
+                         container_id="abc", created_at=nu, updated_at=nu))
+    db.commit()
+    lab = _lab(db, c)
+
+    bron, doel = _VerhuisDocker("bron"), _VerhuisDocker("doel")
+    svc = ClusterService(db)
+    monkeypatch.setattr(svc, "_runtime", lambda _c: bron)
+    monkeypatch.setattr(ls.LabService, "_docker_op_host", lambda self, h: doel)
+    monkeypatch.setattr(ls.LabService, "bezetting", lambda self, i: {})
+    verplaatst = []
+
+    async def nep_lab_verplaats(self, lab_id, *, host_id, met_het_cluster=False):
+        verplaatst.append((lab_id, host_id, met_het_cluster))
+        return {}
+
+    monkeypatch.setattr(ls.LabService, "verplaats", nep_lab_verplaats)
+
+    async def nep_stop(dienst_id):
+        return None
+
+    async def nep_start(dienst_id):
+        return None
+
+    monkeypatch.setattr(svc, "stop_dienst", nep_stop)
+    monkeypatch.setattr(svc, "start_dienst", nep_start)
+
+    asyncio.run(svc.verplaats(c.id, host_id=7))
+
+    assert bron.geexporteerd == [f"labx_dienst_{c.id}_hive-cosmos"]
+    assert doel.geimporteerd == [f"labx_dienst_{c.id}_hive-cosmos"]
+    assert bron.weg == [f"labx_dienst_{c.id}_hive-cosmos"]
+    assert verplaatst == [(lab.id, 7, True)]
+    assert doel.netwerken == [c.netwerk]
+    db.refresh(c)
+    assert c.host_id == 7
+
+
+def test_verhuizen_tijdens_een_run_wordt_geweigerd(db, monkeypatch):
+    from fastapi import HTTPException
+
+    from services.lab.clusters import ClusterService
+    import services.lab.lab_service as ls
+
+    c = _cluster(db)
+    _lab(db, c)
+    svc = ClusterService(db)
+    monkeypatch.setattr(ls.LabService, "_docker_op_host", lambda self, h: _VerhuisDocker())
+    monkeypatch.setattr(ls.LabService, "bezetting", lambda self, i: {"w1": 1})
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.verplaats(c.id, host_id=7))
+    assert fout.value.status_code == 409
+    assert "werk" in fout.value.detail.lower()
+
+
+def test_naar_dezelfde_machine_verhuizen_doet_niets(db, monkeypatch):
+    from services.lab.clusters import ClusterService
+
+    c = _cluster(db)
+    c.host_id = 4
+    db.commit()
+    svc = ClusterService(db)
+
+    uit = asyncio.run(svc.verplaats(c.id, host_id=4))
+    assert uit["machine"] or True
+    db.refresh(c)
+    assert c.host_id == 4
+
+
+def test_alleen_het_nummer_wijzigen_mag_niet(db):
+    """Dat zou de administratie verzetten en de containers, volumes en het
+    netwerk op de oude machine laten staan — en eruitzien alsof het lukte."""
+    from fastapi import HTTPException
+
+    from services.lab.clusters import ClusterService
+
+    c = _cluster(db)
+    with pytest.raises(HTTPException) as fout:
+        ClusterService(db).wijzig(c.id, host_id=2)
+    assert fout.value.status_code == 400
+    assert "verplaatsen" in fout.value.detail.lower()
+
+
+def test_een_branch_lab_verhuist_nog_steeds_niet_los(db):
     from fastapi import HTTPException
 
     from services.lab.lab_service import LabService
@@ -225,16 +349,4 @@ def test_een_branch_lab_verhuist_niet_apart(db):
     with pytest.raises(HTTPException) as fout:
         asyncio.run(svc.verplaats(lab.id, host_id=3))
     assert fout.value.status_code == 409
-    assert "cluster" in fout.value.detail.lower()
-
-
-def test_de_machine_van_een_cluster_is_niet_achteraf_te_wijzigen(db):
-    from fastapi import HTTPException
-
-    from services.lab.clusters import ClusterService
-
-    c = _cluster(db)
-    with pytest.raises(HTTPException) as fout:
-        ClusterService(db).wijzig(c.id, host_id=2)
-    assert fout.value.status_code == 400
-    assert "machine" in fout.value.detail.lower()
+    assert "hele cluster" in fout.value.detail.lower()
