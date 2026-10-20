@@ -723,9 +723,13 @@ class ClusterService:
         # daarna op elk verzoek 503, omdat zijn Postgres niet draaide. Een
         # controle die daar "klaar" op zegt, liegt precies in het geval
         # waarvoor hij bestaat.
+        # wget en niet een met de hand geknutseld verzoek via nc: dat laatste
+        # kwam door drie lagen aanhalingstekens heen als iets wat de gateway
+        # stilzwijgend weggooide, en dan lijkt een dienst die 503 geeft
+        # ineens een dienst die geen HTTP spreekt.
         script = (f"nc -z -w 3 {d.naam} {poort} || {{ echo dicht; exit 0; }}; echo open; "
-                  f"printf 'GET / HTTP/1.0\\r\\nHost: {d.naam}\\r\\n\\r\\n' "
-                  f"| nc -w 3 {d.naam} {poort} 2>/dev/null | head -1")
+                  f"wget -q -S -O /dev/null -T 5 http://{d.naam}:{poort}/ 2>&1 "
+                  f"| grep -m1 'HTTP/' || true")
         try:
             uit = await rt.run_wegwerp(
                 image="alpine:3", netwerk=c.netwerk, timeout=30,
@@ -744,7 +748,7 @@ class ClusterService:
         # Spreekt hij HTTP, dan telt wat hij zegt. 503 is de nette manier van
         # "ik ben er nog niet"; al het andere -- ook 404 of 401 -- betekent dat
         # er iemand thuis is, en dat is wat we wilden weten.
-        statusregel = next((r for r in tekst.splitlines() if r.startswith("HTTP/")), "")
+        statusregel = next((r for r in tekst.splitlines() if "HTTP/" in r), "")
         if " 503" in statusregel:
             return {"stand": "start_op", "klaar": False,
                     "melding": (f"{d.naam} luistert op poort {poort} maar antwoordt met "

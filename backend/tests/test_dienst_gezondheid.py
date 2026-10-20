@@ -112,7 +112,7 @@ def test_een_open_poort_die_503_antwoordt_is_niet_klaar(db):
     en gaf op elk verzoek 503. Een controle die daar "klaar" op zegt, liegt
     precies in het geval waarvoor hij bestaat.
     """
-    rt = _Rt("open\nHTTP/1.1 503 Service Unavailable")
+    rt = _Rt("open\n  HTTP/1.1 503 Service Unavailable")
     _, d = _dienst(db)
 
     uit = asyncio.run(_svc(db, rt).dienst_gezondheid(d.id))
@@ -125,7 +125,7 @@ def test_een_open_poort_die_503_antwoordt_is_niet_klaar(db):
 def test_een_dienst_die_geen_http_spreekt_telt_gewoon_als_klaar(db):
     """Niet alles is een webserver. Een database die de poort opent en
     zwijgt op een GET is bereikbaar, en dat is hier het antwoord."""
-    rt = _Rt("open\n")
+    rt = _Rt("open\nwget: can\'t connect to remote host")
     _, d = _dienst(db)
 
     uit = asyncio.run(_svc(db, rt).dienst_gezondheid(d.id))
