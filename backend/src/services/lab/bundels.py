@@ -304,6 +304,16 @@ class BundelService:
                         "Het model kwam niet met een script voor deze bundel.",
                         "script": "", "uitvoer": "", "exit_code": None}
 
+        # Dezelfde controle als bij een dienstknop: een bundel loslaten op
+        # een emulator die nog opstart levert een stacktrace op in plaats van
+        # een antwoord, en bij een laadscript dat minuten draait merk je dat
+        # pas aan het eind.
+        from services.lab.clusters import ClusterService
+
+        gezond = await ClusterService(self.db).dienst_gezondheid(d.id)
+        if not gezond["klaar"] and gezond["stand"] != "onbekend":
+            raise HTTPException(status_code=409, detail=gezond["melding"])
+
         c = self.db.get(Cluster, b.cluster_id)
         rt = self._runtime(c)
         poorten = [int(p) for p in (d.poorten or [])]

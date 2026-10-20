@@ -150,6 +150,7 @@ class DienstActieService:
                         script: str) -> Dict[str, Any]:
         c = self._cluster(d)
         rt = self._runtime(c)
+        await self._eis_bruikbaar(d, plek)
         if plek == "in":
             if not d.container_id:
                 raise HTTPException(
@@ -165,6 +166,33 @@ class DienstActieService:
             netwerk=c.netwerk,
             env=self._hulpomgeving(d),
             timeout=ACTIE_TIJD)
+
+    async def _eis_bruikbaar(self, d: ClusterDienst, plek: str) -> None:
+        """Antwoordt deze dienst al, voordat we er iets tegenaan gooien?
+
+        Zonder deze controle kreeg je de stacktrace van de client in plaats
+        van het antwoord. Gemeten geval: de Cosmos-emulator stond op "draait"
+        terwijl hij nog opstartte, en de knop gaf
+
+            (ServiceUnavailable) pgcosmos extension is still starting
+
+        Dat is een waar bericht, maar het staat op de verkeerde plek en in de
+        verkeerde taal -- en het ziet eruit alsof de knop stuk is.
+
+        Deze controle gaat ALLEEN over het gat tussen "draait" en
+        "antwoordt". Een dienst die stilstaat was altijd al geregeld: een
+        knop in de dienst geeft dan zijn eigen 409, en een knop naast de
+        dienst mag juist wel draaien -- daar is die tweede plek voor. Die
+        twee paden blijven hier dus ongemoeid.
+        """
+        from services.lab.clusters import ClusterService
+
+        if d.status not in ("draait", "ophalen"):
+            return
+
+        uit = await ClusterService(self.db).dienst_gezondheid(d.id)
+        if uit["stand"] in ("ophalen", "start_op"):
+            raise HTTPException(status_code=409, detail=uit["melding"])
 
     def _hulpomgeving(self, d: ClusterDienst) -> Dict[str, str]:
         """Wat een script naast de dienst moet weten om hem te vinden.

@@ -31,6 +31,23 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
+
+@pytest.fixture(autouse=True)
+def _dienst_antwoordt(monkeypatch):
+    """Deze tests gaan over knoppen, niet over opstarten.
+
+    De echte gezondheidscontrole klopt van binnen het clusternetwerk aan bij
+    de dienst; dat heeft hier geen netwerk om op te kloppen. Die controle
+    heeft zijn eigen tests (test_dienst_gezondheid.py) -- hier zeggen we
+    gewoon dat de dienst antwoordt, zodat deze tests blijven gaan waar ze
+    over gaan.
+    """
+    async def klaar(_self, _id):
+        return {"stand": "klaar", "klaar": True, "melding": "ok"}
+
+    monkeypatch.setattr("services.lab.clusters.ClusterService.dienst_gezondheid",
+                        klaar, raising=False)
+
 @pytest.fixture()
 def db():
     from sqlalchemy import create_engine

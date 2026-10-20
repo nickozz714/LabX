@@ -189,9 +189,15 @@ class Cluster(Base):
 
 
 #: `gestopt` — bestaat als rij, draait niet
-#: `draait`  — container is op
+#: `ophalen` — het image staat er nog niet en wordt binnengehaald. Dit is een
+#:             eigen stand omdat het MINUTEN duurt: de Cosmos-emulator is 1,7
+#:             GB, en zonder deze stand kijk je naar een knop die hangt zonder
+#:             een woord. Eén keer per image per machine.
+#: `draait`  — container is op. Let op: dat is iets ANDERS dan "klaar". Een
+#:             emulator die net begonnen is antwoordt nog niet; wat daarvan
+#:             waar is, meet `dienst_gezondheid`.
 #: `fout`    — gestart maar gevallen; `fout` zegt waarom
-DIENST_STATUSSEN = ("gestopt", "draait", "fout")
+DIENST_STATUSSEN = ("gestopt", "ophalen", "draait", "fout")
 
 
 class ClusterDienst(Base):

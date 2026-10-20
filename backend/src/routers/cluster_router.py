@@ -360,6 +360,17 @@ async def start_dienst(dienst_id: int, db: Session = Depends(get_db)):
     return svc.dienst_dict(await svc.start_dienst(dienst_id))
 
 
+@router.get("/diensten/{dienst_id}/gezondheid")
+async def dienst_gezondheid(dienst_id: int, db: Session = Depends(get_db)):
+    """Draait deze dienst, en antwoordt hij ook?
+
+    Twee verschillende vragen. "De container draait" is wat docker weet;
+    "hij antwoordt" is wat jij nodig hebt. Een emulator met data erin zit daar
+    minuten tussen.
+    """
+    return await _svc(db).dienst_gezondheid(dienst_id)
+
+
 @router.post("/diensten/{dienst_id}/stop")
 async def stop_dienst(dienst_id: int, db: Session = Depends(get_db)):
     svc = _svc(db)

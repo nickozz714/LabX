@@ -227,6 +227,12 @@ BRANCH_LAB_MEM_MB = 4096
 #: de machine, en dat bewaakt verder niemand.
 _START_SLOTEN: Dict[int, Any] = {}
 
+# Welke diensten al een keer geantwoord hebben, op container-id. Opstarten
+# gebeurt één keer; daarna is elke klik nog een wegwerpcontainer starten om
+# hetzelfde te horen. De sleutel is de container, dus herstarten wist dit
+# vanzelf -- precies wanneer het antwoord weer kan veranderen.
+_HEEFT_GEANTWOORD: set[str] = set()
+
 
 def _startslot(cluster_id: int) -> Any:
     slot = _START_SLOTEN.get(int(cluster_id))
@@ -613,6 +619,36 @@ class ClusterService:
             except Exception as exc:  # noqa: BLE001
                 log.warningx("Oude dienst-container opruimen mislukt",
                              dienst=d.naam, error=str(exc)[:200])
+        # Het image ophalen is een eigen stap met een eigen stand. Zonder dit
+        # hing de knop minutenlang zonder een woord -- gemeten op de server:
+        # de Cosmos-emulator is 1,7 GB, en `docker ps` gaf al die tijd geen
+        # container terwijl er niets mis was.
+        try:
+            aanwezig = d.image in await rt.local_images()
+        except Exception as exc:  # noqa: BLE001
+            # Niet kunnen navragen is geen reden om niet te starten: het
+            # starten haalt het image desnoods zelf op. We weten dan alleen
+            # niet of er gewacht gaat worden, en dat zeggen we zo ook niet.
+            log.warningx("Niet na te vragen welke images er al zijn",
+                         dienst=d.naam, error=str(exc)[:200])
+            aanwezig = True
+
+        if not aanwezig:
+            d.status, d.fout = "ophalen", None
+            d.updated_at = _nu()
+            self.db.commit()
+            log.infox("Image ophalen voor een vaste dienst", dienst=d.naam,
+                      image=d.image)
+            try:
+                await rt.pull(d.image, timeout=1800)
+            except Exception as exc:  # noqa: BLE001
+                reden = _laatste_zinnige_regel(str(exc))
+                d.status, d.fout = "fout", f"Image ophalen mislukte: {reden[:400]}"
+                d.updated_at = _nu()
+                self.db.commit()
+                self.db.refresh(d)
+                return d
+
         try:
             kaart = self._ken_poorten_toe(d)
             d.poort_map = {str(k): v for k, v in kaart.items()}
@@ -638,6 +674,65 @@ class ClusterService:
         self.db.commit()
         self.db.refresh(d)
         return d
+
+    async def dienst_gezondheid(self, dienst_id: int) -> Dict[str, Any]:
+        """Draait deze dienst, en antwoordt hij ook?
+
+        Dat zijn twee verschillende vragen, en LabX beantwoordde alleen de
+        eerste. Gemeten op de server: de container stond op "draait" terwijl
+        de emulator nog aan het opstarten was, en een knop indrukken leverde
+        een stacktrace van de Azure-SDK op --
+
+            (ServiceUnavailable) pgcosmos extension is still starting
+
+        -- in plaats van "hij start nog op". Dat is dezelfde fout als een lab
+        dat op running staat zonder dat er iets luistert: de administratie
+        zegt iets anders dan de werkelijkheid, en de gebruiker krijgt de
+        schuld.
+
+        Meten gebeurt van BINNEN het clusternetwerk, op de naam waarop een
+        branch-lab hem ook aanspreekt. Dat is precies wat je wilt weten; de
+        gepubliceerde poort op de machine zegt daar niets over.
+        """
+        d = self._dienst_of_404(dienst_id)
+        c = self.get_or_404(d.cluster_id)
+        poorten = [int(p) for p in (d.poorten or [])]
+
+        if d.status == "ophalen":
+            return {"stand": "ophalen", "klaar": False,
+                    "melding": f"Het image van {d.naam} wordt opgehaald. Dat gebeurt "
+                               f"één keer per machine en duurt een paar minuten."}
+        if d.status != "draait" or not d.container_id:
+            return {"stand": d.status, "klaar": False,
+                    "melding": d.fout or f"{d.naam} draait niet."}
+        if not poorten:
+            # Geen poort om op te kloppen: dan is "de container draait" het
+            # beste antwoord dat er is, en dat zeggen we dan ook zo.
+            return {"stand": "draait", "klaar": True,
+                    "melding": f"{d.naam} draait. Er is geen poort om op te controleren."}
+
+        if d.container_id in _HEEFT_GEANTWOORD:
+            return {"stand": "klaar", "klaar": True,
+                    "melding": f"{d.naam} antwoordt."}
+
+        rt = self._runtime(c)
+        poort = poorten[0]
+        try:
+            uit = await rt.run_wegwerp(
+                image="alpine:3", netwerk=c.netwerk, timeout=30,
+                cmd=["sh", "-c", f"nc -z -w 3 {d.naam} {poort} && echo open || echo dicht"])
+        except Exception as exc:  # noqa: BLE001 — niet kunnen meten is geen fout van de dienst
+            return {"stand": "onbekend", "klaar": False,
+                    "melding": f"Niet te controleren: {_laatste_zinnige_regel(str(exc))[:200]}"}
+
+        if "open" in (uit.get("output") or ""):
+            _HEEFT_GEANTWOORD.add(d.container_id)
+            return {"stand": "klaar", "klaar": True,
+                    "melding": f"{d.naam} antwoordt op poort {poort}."}
+        return {"stand": "start_op", "klaar": False,
+                "melding": (f"{d.naam} draait, maar antwoordt nog niet op poort {poort}. "
+                            f"Een emulator met data erin doet daar minuten over — "
+                            f"wachten is hier het goede antwoord.")}
 
     async def stop_dienst(self, dienst_id: int) -> ClusterDienst:
         d = self._dienst_of_404(dienst_id)

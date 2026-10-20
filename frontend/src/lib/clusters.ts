@@ -129,7 +129,7 @@ export type ClusterDienst = {
   omgeving: Record<string, string>;
   /** {containerpoort: machinepoort} — waar je hem van buiten bereikt. */
   poort_map: Record<string, number>;
-  status: "gestopt" | "draait" | "fout";
+  status: "gestopt" | "ophalen" | "draait" | "fout";
   fout: string | null;
   draait: boolean;
 };
@@ -449,6 +449,14 @@ export const clusterApi = {
   // ── diensten en branches ───────────────────────────────────────────────
   dienstToevoegen: (id: number, body: { naam: string; image: string; poorten?: number[] }) =>
     api.post<ClusterDienst>(`/clusters/${id}/diensten`, body),
+  /** Draait deze dienst, en antwoordt hij ook? Twee verschillende vragen:
+   *  "de container draait" is wat docker weet, "hij antwoordt" is wat je
+   *  nodig hebt. Een emulator met data erin zit daar minuten tussen. */
+  dienstGezondheid: (dienstId: number) => api.get<{
+    stand: "gestopt" | "ophalen" | "start_op" | "klaar" | "fout" | "onbekend";
+    klaar: boolean;
+    melding: string;
+  }>(`/clusters/diensten/${dienstId}/gezondheid`),
   dienstStart: (dienstId: number) => api.post<ClusterDienst>(`/clusters/diensten/${dienstId}/start`),
   dienstStop: (dienstId: number) => api.post<ClusterDienst>(`/clusters/diensten/${dienstId}/stop`),
   dienstWeg: (dienstId: number) => api.delete<{ ok: boolean }>(`/clusters/diensten/${dienstId}`),

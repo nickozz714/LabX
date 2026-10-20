@@ -58,6 +58,22 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
   // draait, niet om er iets mee te doen. Pas bij het openklappen worden de
   // knoppen opgehaald.
   const [bedienen, setBedienen] = useState(false);
+  // "Draait" is wat docker weet; "antwoordt" is wat je nodig hebt. Zolang
+  // die twee niet samenvallen blijven we kijken — een emulator met data erin
+  // doet daar minuten over, en zonder dit druk je op een knop die dan een
+  // stacktrace van de client teruggeeft.
+  const [gezond, setGezond] = useState<{ stand: string; klaar: boolean; melding: string } | null>(null);
+
+  useEffect(() => {
+    if (d.status !== "draait" && d.status !== "ophalen") { setGezond(null); return; }
+    let levend = true;
+    const meet = () => clusterApi.dienstGezondheid(d.id)
+      .then((g) => { if (levend) setGezond(g); return g; })
+      .catch(() => null);
+    void meet();
+    const klok = setInterval(() => { void meet().then((g) => { if (g?.klaar) clearInterval(klok); }); }, 6000);
+    return () => { levend = false; clearInterval(klok); };
+  }, [d.id, d.status]);
 
   async function doe(wat: "start" | "stop" | "weg") {
     try {
@@ -86,8 +102,14 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{d.naam}</span>
-            <Badge tone={d.draait ? "green" : d.status === "fout" ? "red" : "neutral"}>
-              {d.draait ? "draait" : d.status}
+            <Badge tone={
+              d.status === "fout" ? "red"
+                : d.status === "ophalen" ? "violet"
+                : gezond && !gezond.klaar ? "yellow"
+                : d.draait ? "green" : "neutral"}>
+              {d.status === "ophalen" ? "image ophalen…"
+                : gezond?.stand === "start_op" ? "start op…"
+                : d.draait ? (gezond?.klaar ? "klaar" : "draait") : d.status}
             </Badge>
           </div>
           <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{d.image}</p>
@@ -106,10 +128,16 @@ function DienstRegel({ d, onActie }: { d: ClusterDienst; onActie: () => void }) 
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {d.fout}
             </p>
           )}
+          {gezond && !gezond.klaar && !d.fout && (
+            <p className="mt-1 text-xs text-muted-foreground">{gezond.melding}</p>
+          )}
         </div>
         <div className="flex shrink-0 gap-1">
           <Button variant={bedienen ? "primary" : "secondary"}
-                  onClick={() => setBedienen((x) => !x)}>
+                  onClick={() => setBedienen((x) => !x)}
+                  disabled={!!gezond && !gezond.klaar}
+                  title={gezond && !gezond.klaar ? gezond.melding
+                                                 : "Knoppen en chat voor deze dienst"}>
             <Wand2 className="h-3.5 w-3.5" /> Bedienen
           </Button>
           {d.draait
