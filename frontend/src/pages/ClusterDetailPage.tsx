@@ -651,11 +651,12 @@ function BranchRegel({ lab, bordId, onActie }: {
   const [tunnelOpen, setTunnelOpen] = useState(false);
 
   const draait = lab.draait ?? false;
+  const aanStart = lab.applicatie_starten !== false;
   // Het adres waarop JIJ hem opent. De eerste gepubliceerde poort is bijna
   // altijd de front-end; de rest haal je uit het labscherm.
   const poort = Object.values(lab.poort_map || {})[0];
 
-  async function doe(wat: "start" | "stop" | "herstart-app") {
+  async function doe(wat: "start" | "stop" | "herstart-app" | "stop-app") {
     try {
       if (wat === "start") {
         await clusterApi.branchStart(lab.id);
@@ -663,9 +664,14 @@ function BranchRegel({ lab, bordId, onActie }: {
       } else if (wat === "stop") {
         await clusterApi.branchStop(lab.id);
         melding.ok("Branch-lab gestopt. Het werk blijft staan.");
-      } else {
+      } else if (wat === "herstart-app") {
         await clusterApi.branchAppHerstarten(lab.id);
         melding.ok("Applicatie opnieuw gestart");
+      } else {
+        const uit = await clusterApi.branchAppStoppen(lab.id);
+        melding.ok(uit.uitvoer.includes("gestopt")
+          ? "Applicatie gestopt. Het lab blijft draaien."
+          : "Er draaide geen applicatie.");
       }
       onActie();
     } catch (e) {
@@ -715,6 +721,12 @@ function BranchRegel({ lab, bordId, onActie }: {
                 Gestopt — het werk staat er nog; starten pakt het weer op.
               </p>
             )}
+            {draait && !aanStart && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Lab draait met de code; de applicatie staat uit. Start hem via ⋯ als je
+                hem nodig hebt.
+              </p>
+            )}
           </Link>
         </div>
 
@@ -741,9 +753,33 @@ function BranchRegel({ lab, bordId, onActie }: {
                     onClick: () => doe("stop") }
                 : { label: "Starten", icon: <Play className="h-3.5 w-3.5" />,
                     onClick: () => doe("start") },
-              { label: "Applicatie opnieuw starten",
-                icon: <RefreshCw className="h-3.5 w-3.5" />,
+              // Starten en herstarten zijn dezelfde handeling in de backend,
+              // maar niet in je hoofd: "opnieuw starten" bij een applicatie
+              // die nooit aanging leest als een knop die niets doet.
+              { label: aanStart ? "Applicatie opnieuw starten" : "Applicatie starten",
+                icon: <PlayCircle className="h-3.5 w-3.5" />,
                 uit: !draait, onClick: () => doe("herstart-app") },
+              // Stoppen van de APPLICATIE, niet van het lab. Voor een lab
+              // waarin je alleen code leest: de container heb je nodig, de
+              // devserver niet.
+              { label: "Applicatie stoppen (lab blijft draaien)",
+                icon: <Square className="h-3.5 w-3.5" />,
+                uit: !draait, onClick: () => doe("stop-app") },
+              { label: aanStart
+                  ? "Applicatie niet meer vanzelf starten"
+                  : "Applicatie voortaan vanzelf starten",
+                icon: <RefreshCw className="h-3.5 w-3.5" />,
+                onClick: async () => {
+                  try {
+                    await clusterApi.branchWijzigen(lab.id, { applicatie_starten: !aanStart });
+                    melding.ok(aanStart
+                      ? "Dit lab start voortaan alleen de container."
+                      : "Dit lab start de applicatie voortaan vanzelf mee.");
+                    onActie();
+                  } catch (e) {
+                    melding.fout(e instanceof ApiError ? e.message : "Opslaan mislukte");
+                  }
+                } },
               "scheiding",
               { label: "Chatten met dit lab", icon: <MessageSquare className="h-3.5 w-3.5" />,
                 onClick: () => navigate(`/chat?lab=${lab.id}`) },

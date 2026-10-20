@@ -214,6 +214,24 @@ async def branch_git_push(lab_id: str, body: Dict[str, Any],
         alles=bool(body.get("alles")))
 
 
+@router.post("/branches/{lab_id}/stop-app")
+async def branch_app_stoppen(lab_id: str, db: Session = Depends(get_db)):
+    """De applicatie stilzetten, maar het LAB laten draaien.
+
+    Voor een lab waarin je code leest: de container heb je nodig, de
+    devserver niet -- die eet geheugen, houdt poorten bezet en bouwt opnieuw
+    bij elk bestand dat je aanraakt.
+    """
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    lab = db.get(Lab, lab_id)
+    if lab is None or not lab.cluster_id:
+        raise HTTPException(status_code=404,
+                            detail="Dit is geen branch-lab van een cluster.")
+    return await LabService(db).stop_applicatie(lab_id)
+
+
 @router.get("/branches/{lab_id}/git/branches")
 async def branch_git_branches(lab_id: str, db: Session = Depends(get_db)):
     """Welke branches er in deze werkkopie te kiezen zijn — lokaal en op de
@@ -269,6 +287,8 @@ def branch_wijzigen(lab_id: str, body: Dict[str, Any],
         lab.feature_titel = str(body["titel"]).strip()[:200] or None
     if "beschrijving" in body:
         lab.feature_beschrijving = str(body["beschrijving"]).strip() or None
+    if "applicatie_starten" in body:
+        lab.applicatie_starten = bool(body["applicatie_starten"])
     if "setup_script" in body:
         # Het startscript van DIT lab, los van dat van het cluster.
         #
@@ -281,7 +301,8 @@ def branch_wijzigen(lab_id: str, body: Dict[str, Any],
     db.commit()
     return {"ok": True, "titel": lab.feature_titel or "",
             "beschrijving": lab.feature_beschrijving or "",
-            "setup_script": lab.setup_script or ""}
+            "setup_script": lab.setup_script or "",
+            "applicatie_starten": bool(getattr(lab, "applicatie_starten", True))}
 
 
 @router.get("/branches/{lab_id}/start-log")

@@ -182,6 +182,11 @@ _ADDITIVE_COLUMNS = {
         # in een commit terecht.
         ("feature_titel", "VARCHAR(200)"),
         ("max_turns", "INTEGER"),
+        # Of het startscript draait. Bestaande labs: ja, dat was de
+        # enige stand.
+        # Standaard 0: starten is sinds 20-10-2026 een handeling van de
+        # gebruiker, geen bijwerking van het aanzetten van een container.
+        ("applicatie_starten", "BOOLEAN NOT NULL DEFAULT 0"),
         ("feature_beschrijving", "TEXT"),
         ("chat_deelt_werker", "BOOLEAN NOT NULL DEFAULT 1"),
         ("azure_profile_id", "INTEGER"),

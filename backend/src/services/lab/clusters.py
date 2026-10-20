@@ -1185,7 +1185,16 @@ class ClusterService:
         # anders draaien dan de rest -- de devcontainer van de repo
         # bijvoorbeeld. Zonder deze regel werd zo'n eigen script wel bewaard
         # en nooit gestart, want de voorwaarde keek alleen naar het cluster.
-        if p.setup_script or c.start_script:
+        wat = self._wat_starten(p, c)
+        if wat == "alleen-inrichten":
+            # Alleen de container, geen applicatie. Inrichten gebeurt wél --
+            # zonder git en basisgereedschap kun je ook geen code lezen.
+            from services.lab.lab_service import provision_in_background
+
+            provision_in_background(p.id)
+            log.infox("Branch-lab gestart zonder applicatie", cluster=c.naam,
+                      branch=p.branch)
+        elif wat == "applicatie":
             # Inrichten EN daarna de applicatie starten. Het startscript is
             # geen inrichtingsstap: het keert niet terug als het goed gaat.
             #
@@ -1201,6 +1210,27 @@ class ClusterService:
                   poorten=p.poort_map)
         self.db.refresh(p)
         return lab_svc._to_dict(p)
+
+    @staticmethod
+    def _wat_starten(p: Any, c: Cluster) -> str:
+        """Wat er na het aanzetten van de container moet gebeuren.
+
+        Drie uitkomsten, en het verschil doet ertoe:
+
+        - `applicatie`        — inrichten én het startscript draaien.
+        - `alleen-inrichten`  — wel klaarmaken, geen applicatie. Voor een lab
+          waarin je code LEEST: de container heb je nodig, de devserver niet.
+        - `niets`             — er is geen startscript; er valt niets te
+          starten.
+
+        Als los stukje, want dit is de enige beslissing in `start_branch_lab`
+        die je kunt narekenen zonder docker.
+        """
+        if not getattr(p, "applicatie_starten", True):
+            return "alleen-inrichten"
+        if getattr(p, "setup_script", None) or c.start_script:
+            return "applicatie"
+        return "niets"
 
     @staticmethod
     def _adres_omgeving(c: Cluster, kaart: Dict[int, int]) -> Dict[str, str]:
@@ -1273,11 +1303,12 @@ class ClusterService:
         # er een niet stoppen zonder eerst naar het labscherm te lopen.
         labs = [{"id": i, "name": n, "branch": b, "poort_map": pm or {},
                   "titel": t or "", "beschrijving": d or "",
-                  "status": st, "draait": st == "running"}
-                for i, n, b, pm, t, d, st in
+                  "status": st, "draait": st == "running",
+                  "applicatie_starten": bool(aan)}
+                for i, n, b, pm, t, d, st, aan in
                 self.db.query(Lab.id, Lab.name, Lab.branch, Lab.poort_map,
                               Lab.feature_titel, Lab.feature_beschrijving,
-                              Lab.status)
+                              Lab.status, Lab.applicatie_starten)
                 .filter(Lab.cluster_id == c.id).all()]
         return {
             "id": c.id, "naam": c.naam, "status": c.status, "fout": c.fout,

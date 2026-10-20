@@ -61,6 +61,22 @@ class Lab(Base):
     #: Hoeveel beurten een agent-run in dit lab mag doen. Leeg = de
     #: instelling van de installatie. Komt bij een branch-lab van het cluster.
     max_turns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Start LabX de applicatie in dit lab, of alleen de container?
+    #:
+    #: Standaard NIET. Een lab aanzetten en een applicatie starten zijn twee
+    #: verschillende dingen, en het tweede is het dure: een devserver eet
+    #: geheugen, houdt poorten bezet, bouwt opnieuw bij elk bestand dat je
+    #: aanraakt, en begint met een installatie van minuten. Dat hoort te
+    #: gebeuren omdat JIJ het vraagt, niet omdat er een container aanging.
+    #:
+    #: Gemeten waarom dit omging: drie branch-labs die tegelijk `yarn install`
+    #: begonnen pasten niet in het geheugen van deze machine, en twee werden
+    #: door de OOM-killer afgeschoten terwijl niemand om die installatie had
+    #: gevraagd -- er werd code gelezen.
+    #:
+    #: Dit zet alleen het STARTSCRIPT uit. Inrichten gebeurt gewoon, want
+    #: zonder git en basisgereedschap kun je ook niets lezen.
+    applicatie_starten: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     feature_titel: Mapped[str | None] = mapped_column(String(200), nullable=True)
     feature_beschrijving: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: {containerpoort: machinepoort} voor een branch-lab. Vast, zodat het

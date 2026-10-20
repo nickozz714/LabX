@@ -285,3 +285,100 @@ def test_bijwerken_rebaset_niet():
     from services.lab.branch_git import _BIJWERK_SCRIPT
 
     assert "rebase" not in _BIJWERK_SCRIPT
+
+
+# ── de applicatie los van het lab ────────────────────────────────────────────
+
+def test_een_lab_kan_draaien_zonder_dat_de_applicatie_start(db):
+    """Een lab wordt ook gebruikt om code te LEZEN. Dan heb je de container
+    nodig en de devserver juist niet: die eet geheugen, houdt poorten bezet en
+    bouwt opnieuw bij elk bestand dat je aanraakt."""
+    from services.lab.clusters import ClusterService
+
+    c, lab = _opzet(db)
+    c.start_script = "npm run dev"
+    db.commit()
+
+    # Inrichten gebeurt wél -- zonder git en basisgereedschap kun je niets lezen.
+    assert ClusterService._wat_starten(lab, c) == "alleen-inrichten"
+
+
+def test_met_de_schakelaar_aan_start_de_applicatie_gewoon(db):
+    from services.lab.clusters import ClusterService
+
+    c, lab = _opzet(db)
+    c.start_script = "npm run dev"
+    lab.applicatie_starten = True
+    db.commit()
+
+    assert ClusterService._wat_starten(lab, c) == "applicatie"
+
+
+def test_een_eigen_startscript_telt_ook_zonder_cluster_script(db):
+    """Dat ontbrak: de voorwaarde keek alleen naar het cluster, dus een eigen
+    script werd wel bewaard en nooit gestart."""
+    from services.lab.clusters import ClusterService
+
+    c, lab = _opzet(db)
+    lab.setup_script = "bash .devcontainer/bootstrap.sh"
+    lab.applicatie_starten = True
+    db.commit()
+
+    assert ClusterService._wat_starten(lab, c) == "applicatie"
+
+
+def test_zonder_enig_startscript_valt_er_niets_te_starten(db):
+    from services.lab.clusters import ClusterService
+
+    c, lab = _opzet(db)
+    lab.applicatie_starten = True
+    db.commit()
+    assert ClusterService._wat_starten(lab, c) == "niets"
+
+
+def test_het_stopscript_laat_het_logbestand_staan():
+    """Dat is het verslag van wat er draaide, en dat wil je juist kunnen
+    teruglezen nádat je hem hebt stilgezet."""
+    import inspect
+
+    from services.lab.lab_service import LabService
+
+    bron = inspect.getsource(LabService.stop_applicatie)
+    assert "kill -TERM" in bron and "kill -KILL" in bron
+    assert "START_PID" in bron
+    # De log wordt NIET verwijderd (anders dan bij het starten).
+    assert "START_LOG" not in bron.split("script = (")[1]
+
+
+def test_een_nieuw_lab_start_zijn_applicatie_niet_vanzelf(db):
+    """Een lab aanzetten en een applicatie starten zijn twee dingen, en het
+    tweede is het dure. Gemeten waarom dit omging: drie branch-labs die
+    tegelijk `yarn install` begonnen pasten niet in het geheugen, en twee
+    werden afgeschoten terwijl niemand om die installatie had gevraagd."""
+    _, lab = _opzet(db)
+    assert bool(lab.applicatie_starten) is False
+
+
+def test_een_lab_zonder_applicatie_wordt_wel_ingericht(db):
+    """Zonder git en basisgereedschap kun je ook geen code lezen."""
+    from services.lab.clusters import ClusterService
+
+    c, lab = _opzet(db)
+    c.start_script = "npm run dev"
+    db.commit()
+
+    assert ClusterService._wat_starten(lab, c) == "alleen-inrichten"
+
+
+def test_de_proefbouw_zet_de_applicatie_wel_aan(db):
+    """Het ene geval waarin starten vanzelf moet: de proefbouw bestaat om uit
+    te zoeken of dat startscript werkt."""
+    from services.lab.proefbouw import _zet_app_aan
+
+    _, lab = _opzet(db)
+    assert bool(lab.applicatie_starten) is False
+
+    _zet_app_aan(db, lab.id)
+
+    db.refresh(lab)
+    assert bool(lab.applicatie_starten) is True

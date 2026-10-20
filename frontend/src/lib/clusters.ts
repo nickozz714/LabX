@@ -293,6 +293,9 @@ export type Cluster = {
      *  mee naar git; de beschrijving blijft in LabX. */
     titel?: string; beschrijving?: string;
     status?: string; draait?: boolean;
+    /** Start LabX de applicatie in dit lab, of alleen de container? Uit is
+     *  voor een lab waarin je alleen code leest. */
+    applicatie_starten?: boolean;
   }[];
   created_at: string;
   updated_at: string;
@@ -517,8 +520,12 @@ export const clusterApi = {
       `/clusters/branches/${labId}/git/bijwerken`, { basis: basis || "" }),
   branchWijzigen: (labId: string, body: {
     titel?: string; beschrijving?: string; setup_script?: string;
+    applicatie_starten?: boolean;
   }) =>
-    api.patch<{ ok: boolean; titel: string; beschrijving: string; setup_script: string }>(
+    api.patch<{
+      ok: boolean; titel: string; beschrijving: string; setup_script: string;
+      applicatie_starten: boolean;
+    }>(
       `/clusters/branches/${labId}`, body),
 
   /** Het hele cluster naar een andere machine: diensten, hun gegevens en
@@ -531,6 +538,10 @@ export const clusterApi = {
   /** De applicatie opnieuw starten zonder het lab te herstarten. Nodig zodra
    *  het startscript BOUWT in plaats van een devserver te draaien: dan is een
    *  wijziging pas na een nieuwe bouw te zien. */
+  /** De applicatie stilzetten, maar het lab laten draaien. */
+  branchAppStoppen: (labId: string) =>
+    api.post<{ ok: boolean; map: string; uitvoer: string }>(
+      `/clusters/branches/${labId}/stop-app`),
   branchAppHerstarten: (labId: string) =>
     api.post<{ ok: boolean; map?: string }>(`/clusters/branches/${labId}/herstart-app`),
   /** De uitvoer van het startscript — waar je kijkt als er niets antwoordt. */

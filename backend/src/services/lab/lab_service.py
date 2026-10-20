@@ -3382,6 +3382,40 @@ exec ssh -N \\
     #: De pijp die stdin openhoudt. Zie _LOPER_SCRIPT.
     START_FIFO = ".labx-stdin"
 
+    async def stop_applicatie(self, lab_id: str) -> Dict[str, Any]:
+        """De applicatie stilzetten, maar het LAB laten draaien.
+
+        Dat onderscheid ontbrak, en het is precies waarvoor een lab ook
+        gebruikt wordt: code lezen, een branch nakijken, iets opzoeken. Daar
+        heb je de container voor nodig en de devserver juist niet -- die eet
+        geheugen, houdt poorten bezet, en bouwt elke keer opnieuw als je een
+        bestand aanraakt.
+
+        Het stoppen zelf bestond al, maar alleen als eerste stap van het
+        STARTEN. Dezelfde regels, nu als eigen handeling: de hele procesgroep
+        van de loper krijgt TERM, en wie dat negeert daarna KILL. Het
+        logbestand blijft staan -- dat is het verslag van wat er draaide, en
+        dat wil je juist kunnen teruglezen nadat je hem hebt stilgezet.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        cid = self._require_running(p)
+        rt = self.runtime_voor(p)
+        c = self.db.get(Cluster, p.cluster_id) if p.cluster_id else None
+        map_ = self._repomap(c) if c else "/workspace"
+        script = (
+            f"cd {map_} 2>/dev/null || cd /workspace; "
+            f"if [ -f {self.START_PID} ]; then "
+            f"  kill -TERM -$(cat {self.START_PID}) 2>/dev/null; sleep 2; "
+            f"  kill -KILL -$(cat {self.START_PID}) 2>/dev/null; "
+            f"  rm -f {self.START_PID} {self.START_FIFO}; echo gestopt; "
+            f"else echo 'er draaide niets'; fi")
+        uit = await rt.exec(cid, ["sh", "-c", script], workdir="/workspace", timeout=30)
+        log.infox("Applicatie gestopt", lab_id=p.id, map=map_)
+        return {"ok": uit.get("exit_code") == 0, "map": map_,
+                "uitvoer": (uit.get("output") or "").strip()}
+
     async def start_applicatie(self, lab_id: str) -> Dict[str, Any]:
         """Het startscript van het cluster draaien -- op de ACHTERGROND.
 

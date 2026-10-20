@@ -37,6 +37,21 @@ from models.cluster import Cluster
 
 log = get_logger(__name__)
 
+
+def _zet_app_aan(db, lab_id) -> None:
+    """Dit ene lab mag zijn applicatie wél vanzelf starten.
+
+    De proefbouw bestaat om uit te zoeken of het startscript werkt; zonder
+    start valt er niets te beoordelen. Overal elders is starten een handeling
+    van de gebruiker -- zie models/lab.applicatie_starten.
+    """
+    from models.lab import Lab
+
+    lab = db.get(Lab, lab_id) if lab_id else None
+    if lab is not None and not lab.applicatie_starten:
+        lab.applicatie_starten = True
+        db.commit()
+
 #: Hoe vaak het model het script mag bijstellen. Een lus zonder plafond is
 #: een lus die een uur later nog bezig is met de verkeerde aanname.
 MAX_RONDES = 3
@@ -326,7 +341,11 @@ class Proefbouw:
             bestaat = (self.db.query(Lab)
                        .filter(Lab.cluster_id == c.id, Lab.branch == branch).first())
         if bestaat is None:
-            await svc.maak_branch_lab(c.id, branch=branch, basis="main")
+            # De proefbouw is het ene geval waarin de applicatie wél vanzelf
+            # moet starten: het hele punt is uitzoeken of dat startscript
+            # werkt. Overal elders is starten een handeling van de gebruiker.
+            uit = await svc.maak_branch_lab(c.id, branch=branch, basis="main")
+            _zet_app_aan(self.db, uit.get("id"))
             bestaat = (self.db.query(Lab)
                        .filter(Lab.cluster_id == c.id, Lab.branch == branch).first())
 
@@ -339,6 +358,7 @@ class Proefbouw:
         # klopten. `start_branch_lab` verwijdert de container en maakt hem
         # opnieuw met de huidige omgeving; de werkkopie staat in het volume
         # en overleeft dat.
+        _zet_app_aan(self.db, bestaat.id)
         await svc.start_branch_lab(bestaat.id)
         return self.db.get(Lab, bestaat.id)
 
