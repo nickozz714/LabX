@@ -227,39 +227,37 @@ class LabService:
         return self._host_runtimes[p.id]
 
     async def _eis_bereikbare_machine(self, p: Lab) -> None:
-        """Antwoordt de daemon van dít lab nog?
+        """Kan LabX werkelijk bij de machine van dít lab?
 
-        Een lab op een andere machine die uit is geweest, is het nare geval:
-        in Docker stáát de container daar gewoon, de administratie hier klopt,
-        en toch mislukt alles. Zonder deze controle loopt zo'n start door in
-        een SSH-verbinding die niet tot stand komt, valt er ergens een
-        uitzondering die niemand verwacht, en krijgt het scherm platte tekst
-        terug in plaats van JSON -- waarna de gebruiker een parse-fout ziet
-        die nergens over gaat.
+        Een lab op een andere machine die niet bereikbaar is, is het nare
+        geval: in Docker stáát die container daar gewoon, de administratie
+        hier klopt, en toch mislukt alles. Zonder controle loopt het starten
+        door in een verbinding die niet tot stand komt, en wat daaruit komt
+        is geen nette foutmelding.
 
-        Beter één nette vraag vooraf: praat die machine, ja of nee.
+        De MELDING komt uit `machine_diagnose`, en niet uit een zin die hier
+        bedacht is. Dat bleek nodig: de eerste versie keek alleen naar Docker
+        en zei "staat die machine aan?" tegen iemand die ernaast zat met de
+        machine áán -- terwijl het echte probleem SSH was. LabX wist dat ook:
+        `laatst_gezien` was twee minuten oud. Drie kanalen die los van elkaar
+        iets beweren, geven drie verhalen; één diagnose geeft er één.
         """
         if not p.host_id or self.is_host(p):
             return
         from models.lab_host import LabHost
+        from services.lab.machine_diagnose import diagnose
 
         host = self.db.get(LabHost, int(p.host_id))
-        rt = self._docker_op_host(int(p.host_id))
-        try:
-            bereikbaar = await rt.daemon_up()
-        except Exception:  # noqa: BLE001 — een mislukte controle IS het antwoord
-            bereikbaar = False
-        if bereikbaar:
+        if host is None:
+            raise HTTPException(
+                status_code=409,
+                detail="De machine van dit lab bestaat niet meer in LabX.")
+        uit = await diagnose(self.db, host)
+        if uit["bruikbaar"]:
             return
-        naam = host.naam if host else f"machine {p.host_id}"
-        laatst = (host.laatst_gezien or "")[:16].replace("T", " ") if host else ""
-        raise HTTPException(
-            status_code=409,
-            detail=(f"'{naam}' geeft geen antwoord. Staat die machine aan, en draait "
-                    f"Docker er?"
-                    + (f" Laatst gezien: {laatst}." if laatst else "")
-                    + " Zodra hij er weer is, start dit lab gewoon verder — het werk "
-                      "staat op die machine en is niet weg."))
+        log.warningx("Lab niet te starten: machine onbereikbaar", lab_id=p.id,
+                     host=host.naam, oorzaak=uit["oorzaak"])
+        raise HTTPException(status_code=409, detail=uit["melding"])
 
     def _docker_op_host(self, host_id: int) -> DockerRuntime:
         """Een DockerRuntime die praat met de daemon van een andere machine.

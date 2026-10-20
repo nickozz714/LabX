@@ -74,54 +74,65 @@ class _Daemon:
         return self._up
 
 
-def test_een_slapende_machine_geeft_een_leesbare_melding(db, monkeypatch):
+def test_een_onbereikbare_machine_geeft_de_melding_van_de_diagnose(db, monkeypatch):
+    """Het startpad verzint geen eigen zin meer.
+
+    De eerste versie deed dat wel, en zei "staat die machine aan?" tegen
+    iemand die ernaast zat met de machine áán -- terwijl het probleem SSH
+    was. Scherm en foutmelding horen dezelfde uitslag te gebruiken; zie
+    test_machine_diagnose voor wat die uitslag zegt.
+    """
     from fastapi import HTTPException
 
-    from services.lab.lab_service import LabService
-
-    h, p = _opzet(db)
-    svc = LabService(db)
-    monkeypatch.setattr(svc, "_docker_op_host", lambda hid: _Daemon(False))
-
-    with pytest.raises(HTTPException) as fout:
-        asyncio.run(svc.start(p.id))
-
-    assert fout.value.status_code == 409
-    detail = fout.value.detail
-    assert "imac-van-nick" in detail
-    assert "geen antwoord" in detail
-    # De naam van de machine en wanneer we hem voor het laatst zagen: dat is
-    # wat je nodig hebt om te weten wélke machine je moet aanzetten.
-    assert "2026-10-15" in detail
-    # En de geruststelling, want "machine weg" leest als "werk weg".
-    assert "niet weg" in detail
-
-
-def test_een_mislukte_controle_telt_als_onbereikbaar(db, monkeypatch):
-    """Niet kunnen vragen is hier hetzelfde als 'nee' — doorgaan levert de
-    onbegrijpelijke fout op die we juist wilden vermijden."""
-    from fastapi import HTTPException
-
+    import services.lab.lab_service as ls
     from services.lab.lab_service import LabService
 
     _, p = _opzet(db)
     svc = LabService(db)
-    monkeypatch.setattr(svc, "_docker_op_host",
-                        lambda hid: _Daemon(RuntimeError("ssh: connect timed out")))
+
+    async def nep(_db, host):
+        return {"bruikbaar": False, "oorzaak": "ssh dicht",
+                "melding": f"'{host.naam}' is aan, maar LabX komt er niet in over SSH.",
+                "kanalen": {}}
+
+    monkeypatch.setattr("services.lab.machine_diagnose.diagnose", nep)
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.start(p.id))
+
+    assert fout.value.status_code == 409
+    assert fout.value.detail == "'imac-van-nick' is aan, maar LabX komt er niet in over SSH."
+
+
+def test_een_machine_die_er_niet_meer_is_levert_een_nette_fout(db, monkeypatch):
+    from fastapi import HTTPException
+
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    _, p = _opzet(db)
+    p.host_id = 999
+    db.commit()
+    svc = LabService(db)
 
     with pytest.raises(HTTPException) as fout:
         asyncio.run(svc.start(p.id))
     assert fout.value.status_code == 409
+    assert "bestaat niet meer" in fout.value.detail
 
 
-def test_een_machine_die_wel_antwoordt_wordt_niet_tegengehouden(db, monkeypatch):
+def test_een_bruikbare_machine_wordt_niet_tegengehouden(db, monkeypatch):
     """De controle mag geen extra drempel worden voor een machine die het
     gewoon doet."""
     from services.lab.lab_service import LabService
 
     _, p = _opzet(db)
     svc = LabService(db)
-    monkeypatch.setattr(svc, "_docker_op_host", lambda hid: _Daemon(True))
+
+    async def nep(_db, _host):
+        return {"bruikbaar": True, "oorzaak": "in orde", "melding": "ok", "kanalen": {}}
+
+    monkeypatch.setattr("services.lab.machine_diagnose.diagnose", nep)
 
     # Geen uitzondering = door naar het echte starten.
     asyncio.run(svc._eis_bereikbare_machine(p))
