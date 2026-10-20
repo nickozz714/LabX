@@ -32,6 +32,32 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Het antwoord als JSON, of een bruikbare fout.
+ *
+ * `JSON.parse` stond hier kaal, en dat gaf precies de verkeerde melding op
+ * het verkeerde moment. Een backend die onderuitgaat antwoordt met platte
+ * tekst ("Internal Server Error"), een proxy met HTML; de gebruiker zag dan
+ * "Unexpected token I in JSON" — een parse-fout die niets zegt over wat er
+ * misging en alles verbergt wat de server wél vertelde.
+ *
+ * Bij een geslaagd antwoord dat geen JSON is, is het alsnog een fout: de
+ * aanroeper verwacht een object.
+ */
+function leesJson(tekst: string, status: number, statusTekst: string): any {
+  if (!tekst) return null;
+  try {
+    return JSON.parse(tekst);
+  } catch {
+    // Geen JSON. Dan is de ruwe tekst het beste spoor dat we hebben —
+    // afgekapt, want een HTML-pagina hoort niet in een melding.
+    const kaal = tekst.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    throw new ApiError(status, kaal.slice(0, 300)
+      || statusTekst
+      || `De server antwoordde met status ${status} en geen leesbare inhoud.`);
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
@@ -47,7 +73,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(401, "Niet ingelogd");
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = leesJson(text, res.status, res.statusText);
   if (!res.ok) {
     const detail = (data && (data.detail || data.error)) || res.statusText;
     throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
@@ -73,7 +99,7 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
     throw new ApiError(401, "Niet ingelogd");
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = leesJson(text, res.status, res.statusText);
   if (!res.ok) {
     const detail = (data && (data.detail || data.error)) || res.statusText;
     throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
