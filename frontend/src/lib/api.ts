@@ -118,32 +118,6 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
 }
 
 /**
- * Het antwoord als JSON, of een bruikbare fout.
- *
- * `JSON.parse` stond hier kaal, en dat gaf precies de verkeerde melding op
- * het verkeerde moment. Een backend die onderuitgaat antwoordt met platte
- * tekst ("Internal Server Error"), een proxy met HTML; de gebruiker zag dan
- * "Unexpected token I in JSON" — een parse-fout die niets zegt over wat er
- * misging en alles verbergt wat de server wél vertelde.
- *
- * Bij een geslaagd antwoord dat geen JSON is, is het alsnog een fout: de
- * aanroeper verwacht een object.
- */
-function leesJson(tekst: string, status: number, statusTekst: string): any {
-  if (!tekst) return null;
-  try {
-    return JSON.parse(tekst);
-  } catch {
-    // Geen JSON. Dan is de ruwe tekst het beste spoor dat we hebben —
-    // afgekapt, want een HTML-pagina hoort niet in een melding.
-    const kaal = tekst.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    throw new ApiError(status, kaal.slice(0, 300)
-      || statusTekst
-      || `De server antwoordde met status ${status} en geen leesbare inhoud.`);
-  }
-}
-
-/**
  * Een bestand ophalen en als download aanbieden. Bewust NIET via `request`:
  * die parseert altijd JSON, en een shellscript is dat niet.
  *
