@@ -23,13 +23,13 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import {
-  AlertTriangle, ArrowDown, ArrowUp, Check, GitCommitHorizontal, Loader2,
-  RefreshCw, Upload,
+  AlertTriangle, ArrowDown, ArrowUp, Check, GitBranchPlus, GitCommitHorizontal,
+  Loader2, RefreshCw, Trash2, Upload,
 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { clusterApi } from "@/lib/clusters";
 import type { BranchGitStatus, PushUitslag } from "@/lib/clusters";
-import { Badge, Button, EmptyState, Label, TextArea } from "@/components/ui";
+import { Badge, Button, EmptyState, Input, Label, TextArea } from "@/components/ui";
 import { useMelding } from "@/components/Meldingen";
 import { useBevestiging } from "@/components/Bevestiging";
 
@@ -38,7 +38,13 @@ const KLEUR: Record<string, "neutral" | "green" | "red" | "yellow"> = {
   toegevoegd: "green", hernoemd: "yellow",
 };
 
-export function BranchGit({ labId, titel }: { labId: string; titel?: string }) {
+export function BranchGit({ labId, titel, onGewisseld }: {
+  labId: string;
+  titel?: string;
+  /** Het lab staat nu op een andere branch — het scherm eromheen moet
+   *  herladen, want LabX gebruikt die branch om tickets aan labs te koppelen. */
+  onGewisseld?: () => void;
+}) {
   const melding = useMelding();
   const bevestig = useBevestiging();
 
@@ -48,6 +54,11 @@ export function BranchGit({ labId, titel }: { labId: string; titel?: string }) {
   const [bericht, setBericht] = useState("");
   const [bezig, setBezig] = useState(false);
   const [uitslag, setUitslag] = useState<PushUitslag | null>(null);
+  // Van branch wisselen hoort hier, bij de status: je kijkt naar wat er
+  // openstaat en beslist dán of je weg kunt.
+  const [branches, setBranches] = useState<{ naam: string; lokaal: boolean; op_remote: boolean }[]>([]);
+  const [doel, setDoel] = useState("");
+  const [wisselt, setWisselt] = useState(false);
 
   const laad = useCallback(async () => {
     setLaadt(true);
@@ -66,6 +77,81 @@ export function BranchGit({ labId, titel }: { labId: string; titel?: string }) {
   }, [labId, melding, titel]);
 
   useEffect(() => { void laad(); }, [laad]);
+
+  useEffect(() => {
+    // De branchlijst doet een `git fetch` en kost dus even; apart ophalen,
+    // zodat de status er al staat terwijl dit nog loopt.
+    clusterApi.branchLijst(labId)
+      .then((b) => setBranches(b.branches.filter((x) => !x.huidig)))
+      .catch(() => { /* geen lijst is geen fout; je kunt nog steeds typen */ });
+  }, [labId]);
+
+  async function wisselBranch() {
+    if (!status || !doel) return;
+    const vuil = status.bestanden.length;
+    let weggooien = false;
+    if (vuil > 0) {
+      const ja = await bevestig.vraag({
+        titel: `${vuil} wijziging(en) weggooien?`,
+        tekst: `Je staat op ${status.branch} met ongecommit werk: `
+          + status.bestanden.slice(0, 6).map((b) => b.pad).join(", ")
+          + (vuil > 6 ? ` en nog ${vuil - 6}` : "")
+          + ". Wisselen van branch kan alleen door dit weg te gooien. Daarna is het "
+          + "echt weg — ook de nieuwe bestanden.",
+        variant: "danger",
+        bevestig: "Weggooien en wisselen",
+      });
+      if (!ja) return;
+      weggooien = true;
+    }
+    setWisselt(true);
+    try {
+      const uit = await clusterApi.branchCheckout(labId, { branch: doel, weggooien });
+      if (uit.ok) {
+        melding.ok(`Nu op ${uit.branch}.`);
+        setDoel("");
+        onGewisseld?.();
+        await laad();
+      } else {
+        melding.fout("Wisselen lukte niet", uit.uitvoer.slice(0, 300));
+      }
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Wisselen lukte niet");
+    } finally {
+      setWisselt(false);
+    }
+  }
+
+  async function gooiWeg() {
+    if (!status) return;
+    const ja = await bevestig.vraag({
+      titel: `${status.bestanden.length} wijziging(en) weggooien?`,
+      tekst: status.bestanden.map((b) => b.pad).slice(0, 10).join(", ")
+        + ". Dit zet de werkkopie terug op de laatste commit. Nieuwe bestanden "
+        + "verdwijnen mee en zijn niet terug te halen.",
+      variant: "danger",
+      bevestig: "Alles weggooien",
+    });
+    if (!ja) return;
+    try {
+      const uit = await clusterApi.branchWeggooien(labId);
+      melding.ok(`${uit.weggegooid.length} wijziging(en) weggegooid.`);
+      await laad();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Weggooien lukte niet");
+    }
+  }
+
+  async function werkBij() {
+    try {
+      const uit = await clusterApi.branchBijwerken(labId);
+      setUitslag({ ok: uit.ok, exit_code: uit.ok ? 0 : 1,
+                   branch: status?.branch || "", uitvoer: uit.uitvoer });
+      await laad();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Bijwerken lukte niet");
+    }
+  }
 
   function wissel(pad: string) {
     setGekozen((s) => {
@@ -136,9 +222,50 @@ export function BranchGit({ labId, titel }: { labId: string; titel?: string }) {
             <ArrowDown className="h-3 w-3" />{status.achter} achter
           </span>
         )}
-        <Button variant="ghost" onClick={laad} aria-label="Verversen" className="ml-auto">
+        <Button variant="ghost" onClick={werkBij} className="ml-auto"
+                title="De remote ophalen en de basis in deze branch mergen">
+          <ArrowDown className="h-3.5 w-3.5" /> Bijwerken
+        </Button>
+        <Button variant="ghost" onClick={laad} aria-label="Verversen">
           <RefreshCw className={`h-3.5 w-3.5 ${laadt ? "animate-spin" : ""}`} />
         </Button>
+      </div>
+
+      {/* Van branch wisselen staat hier, vlak onder de status: je kijkt naar
+          wat er openstaat en beslist dán pas of je weg kunt. */}
+      <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-2">
+        <div className="min-w-0 flex-1">
+          <Label>Naar een andere branch</Label>
+          {/* Een invoerveld met suggesties, geen keuzelijst. Gemeten op
+              IntelligentHive: 790 branches. Daar scrol je niet doorheen — je
+              typt een stuk van de naam. En je mag een branch intypen die er
+              nog niet is; dan wordt hij aangemaakt. */}
+          <Input list={`branches-${labId}`} value={doel} placeholder="typ of kies een branch…"
+                 onChange={(e) => setDoel(e.target.value)} />
+          <datalist id={`branches-${labId}`}>
+            {branches.map((b) => (
+              <option key={b.naam} value={b.naam}>
+                {b.lokaal ? "hier" : "alleen op de remote"}
+              </option>
+            ))}
+          </datalist>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {branches.length > 0
+              ? <>{branches.length} branch{branches.length === 1 ? "" : "es"} beschikbaar.
+                  Een naam die nog niet bestaat, wordt aangemaakt.</>
+              : "De branchlijst wordt opgehaald…"}
+          </p>
+        </div>
+        <Button variant="secondary" onClick={wisselBranch} disabled={!doel || wisselt}>
+          {wisselt ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitBranchPlus className="h-4 w-4" />}
+          Omzetten
+        </Button>
+        {status.bestanden.length > 0 && (
+          <Button variant="danger" onClick={gooiWeg}
+                  title="Zet de werkkopie terug op de laatste commit">
+            <Trash2 className="h-3.5 w-3.5" /> Wijzigingen weggooien
+          </Button>
+        )}
       </div>
 
       {status.laatste_commit && (

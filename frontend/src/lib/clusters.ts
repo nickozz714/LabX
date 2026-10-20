@@ -495,8 +495,30 @@ export const clusterApi = {
   branchGitPush: (labId: string, body: {
     bericht: string; bestanden?: string[]; alles?: boolean;
   }) => api.post<PushUitslag>(`/clusters/branches/${labId}/git/push`, body),
-  branchWijzigen: (labId: string, body: { titel?: string; beschrijving?: string }) =>
-    api.patch<{ ok: boolean; titel: string; beschrijving: string }>(
+  /** Welke branches er in deze werkkopie te kiezen zijn — lokaal en op de
+   *  remote. Dat laatste is het punt: je wilt naar een branch kunnen die je
+   *  hier nog niet hebt. */
+  branchLijst: (labId: string) => api.get<{
+    huidig: string;
+    branches: { naam: string; huidig: boolean; lokaal: boolean; op_remote: boolean }[];
+  }>(`/clusters/branches/${labId}/git/branches`),
+  /** Omzetten naar een andere branch. Weigert bij ongecommit werk, tenzij je
+   *  zegt dat het weg mag. */
+  branchCheckout: (labId: string, body: { branch: string; weggooien?: boolean }) =>
+    api.post<{ ok: boolean; branch: string; exit_code: number | null; uitvoer: string }>(
+      `/clusters/branches/${labId}/git/checkout`, body),
+  /** Alles wat niet gecommit is, weg — inclusief nieuwe bestanden. */
+  branchWeggooien: (labId: string) =>
+    api.post<{ ok: boolean; weggegooid: string[]; uitvoer: string }>(
+      `/clusters/branches/${labId}/git/weggooien`),
+  /** De remote ophalen en de basis in deze branch mergen. */
+  branchBijwerken: (labId: string, basis?: string) =>
+    api.post<{ ok: boolean; uitvoer: string }>(
+      `/clusters/branches/${labId}/git/bijwerken`, { basis: basis || "" }),
+  branchWijzigen: (labId: string, body: {
+    titel?: string; beschrijving?: string; setup_script?: string;
+  }) =>
+    api.patch<{ ok: boolean; titel: string; beschrijving: string; setup_script: string }>(
       `/clusters/branches/${labId}`, body),
 
   /** Het hele cluster naar een andere machine: diensten, hun gegevens en

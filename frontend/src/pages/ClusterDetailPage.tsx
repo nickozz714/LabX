@@ -766,8 +766,9 @@ function BranchRegel({ lab, bordId, onActie }: {
       </div>
 
       {gitOpen && (
-        <div className="mt-3 border-t border-border pt-3">
-          <BranchGit labId={lab.id} titel={lab.titel} />
+        <div className="mt-3 space-y-3 border-t border-border pt-3">
+          <BranchGit labId={lab.id} titel={lab.titel} onGewisseld={onActie} />
+          <EigenStartscript lab={lab} onBewaard={onActie} />
         </div>
       )}
 
@@ -1323,6 +1324,88 @@ export function ClusterDetailPage() {
           <Button variant="secondary" onClick={() => setBranchOpen(false)}>Annuleren</Button>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+/** Het startscript van dít lab, los van dat van het cluster.
+ *
+ * Een cluster heeft één startscript voor al zijn branches, en dat is bijna
+ * altijd goed. Bijna: een lab waarin je andermans werk nakijkt wil soms iets
+ * anders draaien dan de rest — de devcontainer van de repo bijvoorbeeld, in
+ * plaats van de losse diensten die het cluster start.
+ *
+ * Leeg laten betekent: volg het cluster. Met opzet geen aparte schakelaar —
+ * een vinkje "eigen script" dat je aan kunt zetten met een leeg veld
+ * eronder, levert een lab op dat niets start en nergens zegt waarom.
+ */
+function EigenStartscript({ lab, onBewaard }: {
+  lab: Cluster["labs"][number];
+  onBewaard: () => void;
+}) {
+  const melding = useMelding();
+  const [open, setOpen] = useState(false);
+  const [script, setScript] = useState<string | null>(null);
+  const [bezig, setBezig] = useState(false);
+
+  async function laad() {
+    setOpen(true);
+    if (script !== null) return;
+    try {
+      // Een lege PATCH verandert niets en geeft de huidige stand terug.
+      const uit = await clusterApi.branchWijzigen(lab.id, {});
+      setScript(uit.setup_script || "");
+    } catch {
+      setScript("");
+    }
+  }
+
+  async function bewaar() {
+    setBezig(true);
+    try {
+      await clusterApi.branchWijzigen(lab.id, { setup_script: script || "" });
+      melding.ok((script || "").trim()
+        ? "Eigen startscript bewaard. Het geldt bij de volgende start van dit lab."
+        : "Dit lab volgt weer het startscript van het cluster.");
+      onBewaard();
+    } catch (e) {
+      melding.fout(e instanceof ApiError ? e.message : "Bewaren mislukte");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button onClick={laad} className="text-xs text-muted-foreground hover:text-foreground">
+        Eigen startscript voor dit lab…
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="mb-2 flex items-start gap-2">
+        <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <h3 className="text-sm font-semibold">Startscript van dit lab</h3>
+          <p className="text-xs text-muted-foreground">
+            Leeg = het startscript van het cluster. Vul je hier iets in, dan draait dát in
+            dit lab — bijvoorbeeld de devcontainer van de repo in plaats van de losse
+            diensten. Het geldt bij de volgende start.
+          </p>
+        </div>
+      </div>
+      <TextArea rows={8} className="font-mono text-xs" value={script ?? ""}
+                onChange={(e) => setScript(e.target.value)}
+                placeholder="leeg = volg het cluster" />
+      <div className="mt-2 flex gap-2">
+        <Button onClick={bewaar} disabled={bezig}>
+          {bezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+          Bewaren
+        </Button>
+        <Button variant="ghost" onClick={() => setOpen(false)}>Dichtklappen</Button>
+      </div>
     </div>
   );
 }

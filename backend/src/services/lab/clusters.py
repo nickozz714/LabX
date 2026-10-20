@@ -1180,7 +1180,12 @@ class ClusterService:
             log.warningx("Azure-sessie niet in het branch-lab gezet",
                          lab_id=p.id, error=str(exc)[:200])
 
-        if c.start_script:
+        # Het startscript van dit LAB als het er een heeft, anders dat van het
+        # cluster. Een lab waarin je andermans werk nakijkt wil soms iets
+        # anders draaien dan de rest -- de devcontainer van de repo
+        # bijvoorbeeld. Zonder deze regel werd zo'n eigen script wel bewaard
+        # en nooit gestart, want de voorwaarde keek alleen naar het cluster.
+        if p.setup_script or c.start_script:
             # Inrichten EN daarna de applicatie starten. Het startscript is
             # geen inrichtingsstap: het keert niet terug als het goed gaat.
             #

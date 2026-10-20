@@ -214,6 +214,41 @@ async def branch_git_push(lab_id: str, body: Dict[str, Any],
         alles=bool(body.get("alles")))
 
 
+@router.get("/branches/{lab_id}/git/branches")
+async def branch_git_branches(lab_id: str, db: Session = Depends(get_db)):
+    """Welke branches er in deze werkkopie te kiezen zijn — lokaal en op de
+    remote. Dat laatste is het punt: je wilt naar een branch kunnen die je
+    hier nog niet hebt."""
+    return await _git(db).branches(lab_id)
+
+
+@router.post("/branches/{lab_id}/git/checkout")
+async def branch_git_checkout(lab_id: str, body: Dict[str, Any],
+                              db: Session = Depends(get_db)):
+    """Deze werkkopie op een andere branch zetten.
+
+    Weigert bij ongecommit werk, tenzij `weggooien` meekomt. `git checkout`
+    zou zulke wijzigingen meeslepen naar de andere branch, en dan staat je
+    halve werk ergens waar het niet hoort zonder dat het ergens gemeld is.
+    """
+    return await _git(db).checkout(lab_id,
+                                   branch=str(body.get("branch") or ""),
+                                   weggooien=bool(body.get("weggooien")))
+
+
+@router.post("/branches/{lab_id}/git/weggooien")
+async def branch_git_weggooien(lab_id: str, db: Session = Depends(get_db)):
+    """Alles wat niet gecommit is, weg — inclusief nieuwe bestanden."""
+    return await _git(db).weggooien(lab_id)
+
+
+@router.post("/branches/{lab_id}/git/bijwerken")
+async def branch_git_bijwerken(lab_id: str, body: Dict[str, Any] | None = None,
+                               db: Session = Depends(get_db)):
+    """De remote ophalen en de basis in deze branch mergen."""
+    return await _git(db).bijwerken(lab_id, basis=str((body or {}).get("basis") or ""))
+
+
 @router.patch("/branches/{lab_id}")
 def branch_wijzigen(lab_id: str, body: Dict[str, Any],
                     db: Session = Depends(get_db)):
@@ -234,9 +269,19 @@ def branch_wijzigen(lab_id: str, body: Dict[str, Any],
         lab.feature_titel = str(body["titel"]).strip()[:200] or None
     if "beschrijving" in body:
         lab.feature_beschrijving = str(body["beschrijving"]).strip() or None
+    if "setup_script" in body:
+        # Het startscript van DIT lab, los van dat van het cluster.
+        #
+        # Een cluster heeft één startscript voor alle branches, en dat is
+        # bijna altijd goed. Bijna: een lab waarin je andermans werk nakijkt
+        # wil soms iets anders draaien dan de rest -- de devcontainer van de
+        # repo bijvoorbeeld, in plaats van de losse diensten. Leeg laten
+        # betekent: volg het cluster.
+        lab.setup_script = str(body["setup_script"]).strip() or None
     db.commit()
     return {"ok": True, "titel": lab.feature_titel or "",
-            "beschrijving": lab.feature_beschrijving or ""}
+            "beschrijving": lab.feature_beschrijving or "",
+            "setup_script": lab.setup_script or ""}
 
 
 @router.get("/branches/{lab_id}/start-log")
