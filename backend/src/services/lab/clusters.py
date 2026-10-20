@@ -717,22 +717,43 @@ class ClusterService:
 
         rt = self._runtime(c)
         poort = poorten[0]
+        # Twee vragen in één bezoekje. Eerst: luistert er iets? En als dat zo
+        # is, wat zegt het dan? Een open poort is namelijk nog geen antwoord:
+        # gemeten op de server accepteerde de Cosmos-gateway netjes TCP en gaf
+        # daarna op elk verzoek 503, omdat zijn Postgres niet draaide. Een
+        # controle die daar "klaar" op zegt, liegt precies in het geval
+        # waarvoor hij bestaat.
+        script = (f"nc -z -w 3 {d.naam} {poort} || {{ echo dicht; exit 0; }}; echo open; "
+                  f"printf 'GET / HTTP/1.0\\r\\nHost: {d.naam}\\r\\n\\r\\n' "
+                  f"| nc -w 3 {d.naam} {poort} 2>/dev/null | head -1")
         try:
             uit = await rt.run_wegwerp(
                 image="alpine:3", netwerk=c.netwerk, timeout=30,
-                cmd=["sh", "-c", f"nc -z -w 3 {d.naam} {poort} && echo open || echo dicht"])
+                cmd=["sh", "-c", script])
         except Exception as exc:  # noqa: BLE001 — niet kunnen meten is geen fout van de dienst
             return {"stand": "onbekend", "klaar": False,
                     "melding": f"Niet te controleren: {_laatste_zinnige_regel(str(exc))[:200]}"}
 
-        if "open" in (uit.get("output") or ""):
-            _HEEFT_GEANTWOORD.add(d.container_id)
-            return {"stand": "klaar", "klaar": True,
-                    "melding": f"{d.naam} antwoordt op poort {poort}."}
-        return {"stand": "start_op", "klaar": False,
-                "melding": (f"{d.naam} draait, maar antwoordt nog niet op poort {poort}. "
-                            f"Een emulator met data erin doet daar minuten over — "
-                            f"wachten is hier het goede antwoord.")}
+        tekst = uit.get("output") or ""
+        if "open" not in tekst:
+            return {"stand": "start_op", "klaar": False,
+                    "melding": (f"{d.naam} draait, maar luistert nog niet op poort {poort}. "
+                                f"Een emulator met data erin doet daar minuten over — "
+                                f"wachten is hier het goede antwoord.")}
+
+        # Spreekt hij HTTP, dan telt wat hij zegt. 503 is de nette manier van
+        # "ik ben er nog niet"; al het andere -- ook 404 of 401 -- betekent dat
+        # er iemand thuis is, en dat is wat we wilden weten.
+        statusregel = next((r for r in tekst.splitlines() if r.startswith("HTTP/")), "")
+        if " 503" in statusregel:
+            return {"stand": "start_op", "klaar": False,
+                    "melding": (f"{d.naam} luistert op poort {poort} maar antwoordt met "
+                                f"503: hij is nog niet klaar van binnen. Blijft dit lang "
+                                f"zo, kijk dan in de logs van de container.")}
+
+        _HEEFT_GEANTWOORD.add(d.container_id)
+        return {"stand": "klaar", "klaar": True,
+                "melding": f"{d.naam} antwoordt op poort {poort}."}
 
     async def stop_dienst(self, dienst_id: int) -> ClusterDienst:
         d = self._dienst_of_404(dienst_id)

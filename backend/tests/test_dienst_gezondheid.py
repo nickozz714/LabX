@@ -95,7 +95,7 @@ def _svc(db, rt):
 
 
 def test_een_dienst_die_antwoordt_is_klaar(db):
-    rt = _Rt("open")
+    rt = _Rt("open\nHTTP/1.1 200 OK")
     _, d = _dienst(db)
 
     uit = asyncio.run(_svc(db, rt).dienst_gezondheid(d.id))
@@ -103,6 +103,43 @@ def test_een_dienst_die_antwoordt_is_klaar(db):
     assert uit["klaar"] is True
     assert uit["stand"] == "klaar"
     assert "8081" in uit["melding"]
+
+
+def test_een_open_poort_die_503_antwoordt_is_niet_klaar(db):
+    """Gemeten op de server, en de reden dat dit meer doet dan `nc -z`.
+
+    De Cosmos-gateway accepteerde netjes TCP terwijl zijn Postgres omviel,
+    en gaf op elk verzoek 503. Een controle die daar "klaar" op zegt, liegt
+    precies in het geval waarvoor hij bestaat.
+    """
+    rt = _Rt("open\nHTTP/1.1 503 Service Unavailable")
+    _, d = _dienst(db)
+
+    uit = asyncio.run(_svc(db, rt).dienst_gezondheid(d.id))
+
+    assert uit["klaar"] is False
+    assert uit["stand"] == "start_op"
+    assert "503" in uit["melding"]
+
+
+def test_een_dienst_die_geen_http_spreekt_telt_gewoon_als_klaar(db):
+    """Niet alles is een webserver. Een database die de poort opent en
+    zwijgt op een GET is bereikbaar, en dat is hier het antwoord."""
+    rt = _Rt("open\n")
+    _, d = _dienst(db)
+
+    uit = asyncio.run(_svc(db, rt).dienst_gezondheid(d.id))
+
+    assert uit["klaar"] is True
+
+
+def test_een_andere_foutcode_dan_503_betekent_dat_er_iemand_thuis_is(db):
+    """404 of 401 is een antwoord. Het is niet aan deze controle om te
+    vinden dat het een vervelend antwoord is."""
+    rt = _Rt("open\nHTTP/1.1 401 Unauthorized")
+    _, d = _dienst(db)
+
+    assert asyncio.run(_svc(db, rt).dienst_gezondheid(d.id))["klaar"] is True
 
 
 def test_een_dienst_die_nog_opstart_zegt_dat(db):
@@ -114,7 +151,7 @@ def test_een_dienst_die_nog_opstart_zegt_dat(db):
 
     assert uit["klaar"] is False
     assert uit["stand"] == "start_op"
-    assert "antwoordt nog niet" in uit["melding"]
+    assert "luistert nog niet" in uit["melding"]
     assert "wachten is hier het goede antwoord" in uit["melding"]
 
 
@@ -190,14 +227,14 @@ def test_een_knop_wacht_op_een_dienst_die_nog_opstart(db, monkeypatch):
 
     async def nog_niet(_self, _id):
         return {"stand": "start_op", "klaar": False,
-                "melding": "ih-cosmos draait, maar antwoordt nog niet op poort 8081."}
+                "melding": "ih-cosmos draait, maar luistert nog niet op poort 8081."}
 
     monkeypatch.setattr("services.lab.clusters.ClusterService.dienst_gezondheid", nog_niet)
 
     with pytest.raises(HTTPException) as fout:
         asyncio.run(svc.draai(a.id))
     assert fout.value.status_code == 409
-    assert "antwoordt nog niet" in fout.value.detail
+    assert "luistert nog niet" in fout.value.detail
 
 
 def test_een_knop_draait_gewoon_als_de_dienst_klaar_is(db, monkeypatch):
