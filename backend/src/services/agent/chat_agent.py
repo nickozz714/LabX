@@ -217,13 +217,51 @@ class ChatAgent:
         lab = self.db.get(Lab, lab_id)
         return (getattr(lab, "model", None) or None) if lab else None
 
-    def _build_provider(self, model: Optional[str], mcp_config_path: Optional[str], settings) -> ClaudeCliProvider:
+    def _lab_max_turns(self, lab_id: Optional[str]) -> Optional[int]:
+        """Het beurtenplafond voor dit lab. `None` = volg de instellingen,
+        `0` = geen plafond.
+
+        **In een CLUSTER geldt er standaard geen plafond.** Dat is geen
+        slordigheid maar het enige antwoord dat klopt: een beurt is geen maat
+        voor werk. Gemeten op het IntelligentHive-cluster liep een ticket
+        stuk op `error_max_turns` bij 250 -- honderd shell-stappen gingen op
+        aan het vínden van de code in een monorepo, en daarna moest het
+        bouwen nog beginnen. Het getal verhogen verplaatst dat alleen: bij
+        600 valt hetzelfde ticket om op een groter bestand.
+
+        En een plafond beschermt hier niets, want er staan twee betere
+        vangnetten omheen: de tijdslimiet van de run en het kostenplafond.
+        Die meten wat je werkelijk wilt begrenzen -- tijd en geld -- in plaats
+        van het aantal keren dat iemand iets opzoekt.
+
+        Een GEWOON lab verandert niet: daar blijft de instelling gelden.
+        Wil je in een cluster toch een harde grens, vul dan een getal in bij
+        de clusterinstellingen.
+        """
+        if not lab_id:
+            return None
+        from models.lab import Lab
+        lab = self.db.get(Lab, lab_id)
+        if lab is None:
+            return None
+        eigen = getattr(lab, "max_turns", None)
+        if eigen:
+            return int(eigen)
+        # Geen eigen getal: in een cluster betekent dat GEEN plafond, niet
+        # "val terug op de instelling".
+        return 0 if getattr(lab, "cluster_id", None) else None
+
+    def _build_provider(self, model: Optional[str], mcp_config_path: Optional[str],
+                        settings, max_turns: Optional[int] = None) -> ClaudeCliProvider:
         cc_model = claude_code_model(model or settings.default_model, default=settings.default_model)
         return ClaudeCliProvider(
             default_model=cc_model,
             oauth_token=settings.oauth_token,
             cli_path=settings.cli_path,
-            max_turns=settings.max_turns,
+            # `None` = volg de instellingen, `0` = geen plafond (de vlag
+            # gaat er dan helemaal af). `or` zou die nul stilletjes
+            # terugdraaien naar de instelling.
+            max_turns=(settings.max_turns if max_turns is None else max_turns),
             timeout=settings.timeout_seconds,
             extra_args=settings.extra_args,
             enable_tool_search=settings.enable_tool_search,
@@ -331,7 +369,8 @@ class ChatAgent:
         from services.settings_service import get_settings
         settings = get_settings(self.db)
         provider, cc_model = self._build_provider(model or self._lab_model(lab_id),
-                                                  mcp_config_path, settings)
+                                                  mcp_config_path, settings,
+                                                  max_turns=self._lab_max_turns(lab_id))
         effort = settings.default_effort
         instructions = AGENT_PREAMBLE
         from services.lab.governed_policy import PLANNER_POLICY

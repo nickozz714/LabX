@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 from component_logging import get_logger
@@ -50,6 +51,10 @@ _LAB_LABEL = "labx.lab"
 #: lab-opruiming ze met rust laat: die ruimt alles op wat labx.managed
 #: draagt en geen lab-rij meer heeft, en een runner is geen lab.
 _MODEL_LABEL = "labx.model=1"
+#: Vaste diensten van een cluster. Weer een eigen label, en om dezelfde
+#: reden: wat bij een cluster hoort mag niet opgeruimd worden door iets
+#: dat over labs gaat.
+_DIENST_LABEL = "labx.dienst=1"
 _EXPIRES_LABEL = "labx.expires_at"
 #: Het wegwerpcontainertje waarmee een volume in- en uitgepakt wordt. Klein,
 #: overal te krijgen, en het enige dat het hoeft te kunnen is `tar`.
@@ -237,6 +242,39 @@ class DockerRuntime:
                 f"Volume {volume} terugzetten mislukte: "
                 f"{(err or b'').decode(errors='replace')[:400]}")
 
+    async def vul_volume(self, volume: str, bron_map: str, *,
+                         timeout: float = 3600.0) -> None:
+        """Een lokale MAP in een (nieuw) volume zetten.
+
+        Hetzelfde trucje als `import_volume`, maar vanaf een map in plaats van
+        een tar-bestand: tar aan deze kant inpakken en in een wegwerpcontainer
+        weer uit. Dat is de enige weg die óók werkt als de daemon op een
+        andere machine draait -- `docker cp` werkt op containers, niet op
+        volumes, en een bind mount van een pad hier bestaat daar niet.
+        """
+        # Eerst naar een tar-BESTAND en dan pas naar binnen, niet via een pijp
+        # tussen twee processen: `create_subprocess_exec` wil voor stdin een
+        # echte filedescriptor, en de StreamReader van een ander proces is dat
+        # niet ("'StreamReader' object has no attribute 'fileno'"). Een tijdelijk
+        # bestand is bovendien hetzelfde pad als `import_volume` al liep.
+        fd, tar = tempfile.mkstemp(prefix="labx-bundel-", suffix=".tar.gz")
+        os.close(fd)
+        try:
+            pak_in = await asyncio.create_subprocess_exec(
+                "tar", "czf", tar, "-C", bron_map, ".",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            _, err = await asyncio.wait_for(pak_in.communicate(), timeout=timeout)
+            if pak_in.returncode != 0:
+                raise RuntimeError(
+                    f"Bundel inpakken mislukte: "
+                    f"{(err or b'').decode(errors='replace')[:400]}")
+            await self.import_volume(volume, tar, timeout=timeout)
+        finally:
+            try:
+                os.unlink(tar)
+            except OSError:
+                pass
+
     async def volume_bestaat(self, volume: str) -> bool:
         code, _, _ = await self._run_cli("volume", "inspect", volume, timeout=20)
         return code == 0
@@ -268,11 +306,21 @@ class DockerRuntime:
         allow_network: bool,
         ports: Optional[List[int]] = None,
         expires_at: Optional[str] = None,
+        netwerk: Optional[str] = None,
+        poort_map: Optional[Dict[int, int]] = None,
+        omgeving: Optional[Dict[str, str]] = None,
     ) -> str:
         """Start the lab container: idle process, /workspace on the volume,
         caps + no-new-privileges, NO host-mounts, on the shared lab network with
         a DNS alias == its container name. Returns the container id."""
-        await self.ensure_network()
+        # Een branch-lab hoort bij ZIJN cluster en niet bij het gedeelde
+        # labnetwerk: daar moet het de vaste diensten op naam kunnen vinden,
+        # en daar hoort niet elk ander lab bij te kunnen.
+        net = netwerk or self._network
+        if netwerk:
+            await self.ensure_network_named(netwerk)
+        else:
+            await self.ensure_network()
         args = [
             "run", "-d",
             "--name", name,
@@ -288,14 +336,23 @@ class DockerRuntime:
             # pids-limit vol zit en er niets meer start.
             "--init",
             "--security-opt", "no-new-privileges",
-            "--network", self._network,
+            "--network", net,
             "--network-alias", name,
             "-v", f"{volume}:/workspace",
             "-w", "/workspace",
         ]
+        for k, v in (omgeving or {}).items():
+            args += ["-e", f"{k}={v}"]
         if expires_at:
             args += ["--label", f"{_EXPIRES_LABEL}={expires_at}"]
+        # Een vast nummer als het gegeven is (een branch-lab hoort op een
+        # adres te staan dat niet elke herstart verandert), anders laat de
+        # daemon er een kiezen zoals altijd.
+        for container_poort, machine_poort in (poort_map or {}).items():
+            args += ["-p", f"127.0.0.1:{int(machine_poort)}:{int(container_poort)}"]
         for port in (ports or []):
+            if poort_map and int(port) in {int(k) for k in poort_map}:
+                continue
             args += ["-p", f"127.0.0.1:0:{int(port)}"]
         args += [image, "sleep", "infinity"]
         return await self._cli_ok(*args, timeout=180)
@@ -314,6 +371,113 @@ class DockerRuntime:
         ips = [x for x in out.split() if x]
         return ips[0] if ips else None
 
+    async def verwijder_netwerk(self, naam: str) -> None:
+        """Een netwerk opruimen. Bestaat het niet (meer), dan is dat geen fout.
+
+        Docker weigert een netwerk met aangesloten containers; die horen dus
+        eerst weg. Mislukt het toch, dan is dat hier geen reden om de rest van
+        het opruimen te staken -- een achtergebleven netwerk is hinderlijk, een
+        halve verwijdering is erger.
+        """
+        code, _, err = await self._run_cli("network", "rm", naam, timeout=30)
+        if code != 0 and "not found" not in (err or "").lower():
+            raise RuntimeError((err or "").strip()[:300] or f"netwerk {naam} niet te verwijderen")
+
+    async def ensure_network_named(self, naam: str) -> None:
+        """Een netwerk met een EIGEN naam, voor een cluster.
+
+        `ensure_network` gaat over het gedeelde labnetwerk; een cluster heeft
+        zijn eigen, zodat zijn vaste diensten en branch-labs elkaar op naam
+        vinden zonder dat elk ander lab daarbij kan.
+        """
+        code, _, _ = await self._run_cli("network", "inspect", naam, timeout=10)
+        if code != 0:
+            await self._cli_ok("network", "create", "--label", _LABEL, naam,
+                               timeout=20)
+
+    async def run_dienst_container(self, *, naam: str, image: str, netwerk: str,
+                                   volume: str,
+                                   container_naam: Optional[str] = None,
+                                   aliassen: Optional[List[str]] = None,
+                                   poorten: Optional[Dict[int, int]] = None,
+                                   omgeving: Optional[Dict[str, str]] = None,
+                                   timeout: float = 600.0) -> str:
+        """Een vaste dienst van een cluster starten (de Cosmos-emulator, ...).
+
+        Geen lab-labels: de lab-opruiming mag hier niet aankomen. Wel
+        `--restart unless-stopped`, want een vaste dienst hoort een herstart
+        van die machine te overleven -- dat is het verschil met een lab, dat
+        juist wegwerpbaar is.
+
+        Poorten gaan naar 127.0.0.1 van de machine zelf. Binnen het cluster is
+        dat niet nodig: daar praat alles op naam.
+
+        **`naam` en `container_naam` zijn met opzet twee dingen.** `naam` is
+        de DNS-naam op het clusternetwerk -- dat is wat een branch-lab typt
+        (`cosmos:8081`), en die hoort dus per cluster hetzelfde te kunnen
+        zijn. `container_naam` is hoe de container bij de daemon heet, en die
+        is GLOBAAL: twee clusters met allebei een `cosmos` delen die ene naam.
+
+        Dat liep echt mis en het liep stil mis: hieronder staat een
+        `docker rm -f` op de naam, dus het starten van de emulator in het
+        tweede cluster maakte die van het eerste dood en nam zijn plaats in.
+        LabX bleef voor allebei "draait" melden. Vandaar: de alias per
+        cluster, de containernaam uniek over alle clusters heen.
+        """
+        container_naam = container_naam or naam
+        await self._cli_ok("volume", "create", volume, timeout=30)
+        # Een naamgenoot opruimen, ook als WIJ zijn id niet kennen.
+        #
+        # Dat gebeurt makkelijker dan het lijkt: een `docker run` die de
+        # container aanmaakt en daarna struikelt (op een poort, op het
+        # netwerk) laat de naam bezet achter terwijl de rij in de database
+        # nooit een container_id kreeg. De volgende poging strandt dan op
+        # "The container name is already in use" -- een fout over onze eigen
+        # rommel, waar de gebruiker niets aan kan doen.
+        await self._run_cli("rm", "-f", container_naam, timeout=120)
+        # EERST ophalen, apart. Doet `docker run` dat zelf, dan loopt de
+        # voortgang van een image van anderhalve gigabyte door de uitvoer van
+        # het starten heen -- en belandt die bij een time-out als
+        # "foutmelding" in het scherm. Dat zag er zo uit:
+        #
+        #   fout: Unable to find image ... locally
+        #         65899dddd4f4: Pulling fs layer
+        #         ede28f09bd35: Pulling fs layer
+        #
+        # Niets daarvan is een fout, en niets ervan zegt wat er mis ging.
+        await self._cli_ok("pull", image, timeout=max(timeout, 1800.0))
+        args = [
+            "run", "-d",
+            "--name", container_naam,
+            "--label", _DIENST_LABEL,
+            "--restart", "unless-stopped",
+            "--network", netwerk,
+            # Meer dan één alias op het clusternetwerk.
+            #
+            # De dienst heet `ih-cosmos` om bij de daemon uniek te zijn, maar
+            # repo's noemen hem vaak gewoon `cosmos` -- en soms met een
+            # harde controle erop. Het seed-script van IntelligentHive
+            # weigert te schrijven tenzij de host `localhost`, `127.0.0.1`,
+            # `0.0.0.0` of `cosmos` heet; met alleen `ih-cosmos` deed het
+            # niets, en dat zag eruit als een lege database zonder uitleg.
+            #
+            # Binnen één clusternetwerk kan dat veilig: elk cluster heeft zijn
+            # eigen netwerk, dus twee keer `cosmos` botst niet.
+            "--network-alias", naam,
+            "-v", f"{volume}:/data",
+        ]
+        # {containerpoort: machinepoort}. Niet hetzelfde nummer aan beide
+        # kanten: 8081 is op een gemiddelde machine allang bezet.
+        for container_poort, machine_poort in (poorten or {}).items():
+            args += ["-p", f"127.0.0.1:{int(machine_poort)}:{int(container_poort)}"]
+        for k, v in (omgeving or {}).items():
+            args += ["-e", f"{k}={v}"]
+        for extra in (aliassen or []):
+            if extra and extra != naam:
+                args += ["--network-alias", extra]
+        args += [image]
+        return await self._cli_ok(*args, timeout=timeout)
+
     async def run_model_container(self, *, naam: str, image: str, volume: str,
                                   verre_poort: int, mem_limit_mb: int = 4096) -> str:
         """Een modelcontainer (Ollama) starten op deze daemon.
@@ -330,7 +494,7 @@ class DockerRuntime:
         await self._cli_ok("volume", "create", volume, timeout=30)
         args = [
             "run", "-d",
-            "--name", naam,
+            "--name", container_naam,
             "--label", _MODEL_LABEL,
             "--restart", "unless-stopped",
             "--memory", f"{int(mem_limit_mb)}m",
@@ -389,7 +553,7 @@ class DockerRuntime:
         self,
         *,
         image: str,
-        volume: str,
+        volume: Optional[str] = None,
         cmd: List[str],
         env: Optional[Dict[str, str]] = None,
         timeout: float = 300.0,
@@ -400,12 +564,65 @@ class DockerRuntime:
         await self.ensure_network()
         args = ["run", "--rm", "--label", _LABEL,
                 "--security-opt", "no-new-privileges",
-                "--network", self._network,
-                "-v", f"{volume}:/workspace", "-w", "/workspace"]
+                "--network", self._network]
+        # Zonder volume: een containertje dat alleen iets PROBEERT (mag deze
+        # sleutel bij de repo?) hoeft nergens te schrijven, en een leeg volume
+        # aanmaken om het daarna weg te gooien is werk voor niets.
+        args += ["-v", f"{volume}:/workspace", "-w", "/workspace"] if volume else ["-w", "/tmp"]
         for key, value in (env or {}).items():
             args += ["-e", f"{key}={value}"]
         args += [image, *cmd]
         return await self._cli_ok(*args, timeout=timeout)
+
+    async def run_wegwerp(
+        self,
+        *,
+        image: str,
+        cmd: List[str],
+        netwerk: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        volume: Optional[str] = None,
+        volumes: Optional[Dict[str, str]] = None,
+        timeout: float = 300.0,
+        max_chars: int = _MAX_OUTPUT_CHARS,
+    ) -> Dict[str, Any]:
+        """Een wegwerpcontainer NAAST een vaste dienst, op diens netwerk.
+
+        Twee verschillen met `run_ephemeral`, allebei nodig voor dienstacties:
+
+        - **Het netwerk is te kiezen.** Een actie tegen de Cosmos-emulator
+          moet `ih-cosmos` op naam kunnen vinden, en dat kan alleen op het
+          netwerk van het cluster.
+        - **Een exitcode is geen uitzondering.** De uitslag ÍS het antwoord:
+          "leegmaken mislukte en dit zei hij" is wat je wilt zien, niet een
+          stacktrace in de log.
+
+        `volume` is de werkkopie en hangt op /workspace, schrijfbaar -- daar
+        committeert het git-werk in. `volumes` hangt bundels erin, altijd
+        alleen-lezen: een script dat een dump inleest hoort die dump niet te
+        kunnen veranderen.
+        """
+        if netwerk is None:
+            # Zonder netwerk van een cluster valt hij terug op het gedeelde
+            # labnetwerk, en dat moet dan wel bestaan -- anders faalt `docker
+            # run` op iets waar de aanroeper niets mee te maken heeft.
+            await self.ensure_network()
+        args = ["run", "--rm", "--label", _LABEL,
+                "--security-opt", "no-new-privileges",
+                "--network", netwerk or self._network]
+        args += (["-v", f"{volume}:/workspace", "-w", "/workspace"]
+                 if volume else ["-w", "/tmp"])
+        for extra, pad in (volumes or {}).items():
+            args += ["-v", f"{extra}:{pad}:ro"]
+        for key, value in (env or {}).items():
+            args += ["-e", f"{key}={value}"]
+        args += [image, *cmd]
+        code, out, err = await self._run_cli(*args, timeout=timeout)
+        samen = out if not err else (out + ("\n" if out else "") + err)
+        afgekapt = len(samen) > max_chars
+        if afgekapt:
+            samen = samen[:max_chars] + "\n… [uitvoer afgekapt]"
+        return {"exit_code": code, "output": samen, "truncated": afgekapt}
 
     async def start(self, container_id: str) -> None:
         await self._cli_ok("start", container_id)
@@ -441,6 +658,18 @@ class DockerRuntime:
         code, out, _ = await self._run_cli(
             "inspect", "--format", "{{.State.Status}}", container_id, timeout=15)
         return out.strip() if code == 0 else None
+
+    async def oom_gekild(self, container_id: str) -> bool:
+        """Is deze container (of iets erin) door de OOM-killer geraakt?
+
+        Dit is het verschil tussen "er ging iets mis in het script" en "de
+        machine had het geheugen niet". Dat eerste los je op in de repo, dat
+        tweede nooit -- en zonder dit onderscheid zie je alleen een lab dat
+        op `running` staat en niets doet.
+        """
+        code, out, _ = await self._run_cli(
+            "inspect", "--format", "{{.State.OOMKilled}}", container_id, timeout=15)
+        return code == 0 and out.strip().lower() == "true"
 
     async def list_managed(self) -> List[Dict[str, str]]:
         """All containers LabX has ever started, running or not — used to

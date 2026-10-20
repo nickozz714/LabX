@@ -1,0 +1,1389 @@
+"""Development clusters: vaste diensten die blijven, branch-labs die gaan.
+
+Wat hier vastligt is vooral het ONDERSCHEID. Een cluster is geen slim lab en
+een vaste dienst is geen lab: de Cosmos-emulator moet blijven draaien terwijl
+je drie branch-labs weggooit en vier nieuwe maakt. Precies dat verschil is de
+reden dat clusters apart bestaan, en precies dat is wat stil kan verdwijnen
+als iemand later "opruimen" uitbreidt.
+"""
+import asyncio
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+
+@pytest.fixture()
+def db(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from db.database import Base
+    from models import (  # noqa: F401
+        audit, azure_profile, background_run, board, claim_resource, cluster,
+        cluster_env_file, cluster_secret, guard_audit, guard_rule, lab, lab_extra, lab_host,
+        lab_secret, lab_worker,
+        mcp_server, message, model_runner, notification, plan, schedule, secret,
+        skill, skill_tool, thread, time_entry, tool, voice, workflow,
+    )
+
+    monkeypatch.setenv("LABX_FERNET_KEY",
+                       "dGVzdC1zbGV1dGVsLXZvb3ItZGUtdW5pdC10ZXN0cy0wMDA9")
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    try:
+        yield s
+    finally:
+        s.close()
+
+
+class NepDocker:
+    def __init__(self):
+        self.netwerken, self.gestart, self.verwijderd = [], [], []
+        self.netwerken_weg = []
+
+    async def verwijder_netwerk(self, naam):
+        self.netwerken_weg.append(naam)
+
+    async def ensure_network_named(self, naam):
+        self.netwerken.append(naam)
+
+    async def run_dienst_container(self, *, naam, image, netwerk, volume,
+                                   container_naam=None, aliassen=None, poorten=None,
+                                   omgeving=None, **kw):
+        self.gestart.append({"naam": naam, "container_naam": container_naam or naam,
+                             "aliassen": list(aliassen or []),
+                             "image": image, "netwerk": netwerk,
+                             "volume": volume, "poorten": dict(poorten or {}),
+                             "omgeving": omgeving or {}})
+        return f"container-{container_naam or naam}"
+
+    async def remove(self, cid, **kw):
+        self.verwijderd.append(cid)
+
+
+def _svc(db, docker=None):
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    if docker is not None:
+        svc._runtime = lambda c: docker          # noqa: ARG005
+    return svc
+
+
+# ── het cluster zelf ─────────────────────────────────────────────────────────
+
+def test_een_cluster_krijgt_een_eigen_netwerk(db):
+    """Een eigen netwerk en niet het gedeelde labnetwerk: de vaste diensten
+    van dit cluster horen niet zichtbaar te zijn voor elk ander lab."""
+    c = _svc(db).maak(naam="IntelligentHive")
+    assert c.netwerk == "labx-cluster-intelligenthive"
+
+
+def test_een_naam_met_rare_tekens_wordt_een_bruikbare_netwerknaam(db):
+    c = _svc(db).maak(naam="Hive / Dev 2026!")
+    assert c.netwerk.startswith("labx-cluster-")
+    assert " " not in c.netwerk and "/" not in c.netwerk
+
+
+def test_twee_clusters_met_dezelfde_naam_kan_niet(db):
+    from fastapi import HTTPException
+
+    _svc(db).maak(naam="Hive")
+    with pytest.raises(HTTPException) as fout:
+        _svc(db).maak(naam="Hive")
+    assert fout.value.status_code == 409
+
+
+# ── vaste diensten ───────────────────────────────────────────────────────────
+
+def test_een_dienst_draait_op_het_clusternetwerk_en_op_zijn_eigen_naam(db):
+    """Binnen het cluster praat alles op containernaam. Zou de dienst niet op
+    het clusternetwerk staan, dan moest elk branch-lab een adres kennen."""
+    d = NepDocker()
+    svc = _svc(db, d)
+    c = svc.maak(naam="Hive")
+    dienst = svc.voeg_dienst_toe(c.id, naam="ih-cosmos",
+                                 image="mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview",
+                                 poorten=[8081, 1234])
+    asyncio.run(svc.start_dienst(dienst.id))
+
+    assert d.netwerken == [c.netwerk]
+    gestart = d.gestart[0]
+    assert gestart["naam"] == "ih-cosmos"
+    assert gestart["netwerk"] == c.netwerk
+    # Niet hetzelfde nummer aan beide kanten: 8081 is op een gemiddelde
+    # machine allang bezet (bij de eerste proef botste hij op LabX zelf).
+    assert set(gestart["poorten"]) == {8081, 1234}
+    assert all(v >= 18000 for v in gestart["poorten"].values())
+
+
+def test_een_dienst_houdt_zijn_volume_bij_opnieuw_opbouwen(db):
+    """Een dienst is wegwerpbaar, zijn data niet. Anders is "even opnieuw
+    opbouwen" een beslissing met gevolgen die niemand overzag."""
+    d = NepDocker()
+    svc = _svc(db, d)
+    c = svc.maak(naam="Hive")
+    dienst = svc.voeg_dienst_toe(c.id, naam="ih-cosmos", image="cosmos:1")
+    asyncio.run(svc.start_dienst(dienst.id))
+    eerste_volume = d.gestart[0]["volume"]
+
+    asyncio.run(svc.start_dienst(dienst.id))     # opnieuw opbouwen
+    assert d.verwijderd, "de oude container moet weg"
+    assert d.gestart[1]["volume"] == eerste_volume, "het volume blijft"
+
+
+def test_twee_diensten_met_dezelfde_naam_kan_niet(db):
+    """De naam is ook de DNS-naam op het netwerk."""
+    from fastapi import HTTPException
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+    svc.voeg_dienst_toe(c.id, naam="ih-cosmos", image="cosmos:1")
+    with pytest.raises(HTTPException) as fout:
+        svc.voeg_dienst_toe(c.id, naam="ih-cosmos", image="cosmos:2")
+    assert "DNS-naam" in str(fout.value.detail)
+
+
+def test_een_mislukte_dienst_zet_het_cluster_op_fout_met_een_reden(db):
+    d = NepDocker()
+
+    async def _stuk(**kw):
+        raise RuntimeError("geen image gevonden")
+
+    d.run_dienst_container = _stuk
+    svc = _svc(db, d)
+    c = svc.maak(naam="Hive")
+    dienst = svc.voeg_dienst_toe(c.id, naam="ih-cosmos", image="bestaat-niet")
+    asyncio.run(svc.start_dienst(dienst.id))
+
+    db.refresh(c)
+    assert c.status == "fout"
+    assert "ih-cosmos" in (c.fout or "") and "image" in (c.fout or "")
+
+
+# ── de grens tussen cluster en labs ──────────────────────────────────────────
+
+def test_een_cluster_met_branch_labs_gaat_er_niet_uit(db):
+    """Anders blijven die labs achter zonder vaste diensten om mee te praten."""
+    from fastapi import HTTPException
+
+    from models.lab import Lab
+
+    svc = _svc(db)
+    c = svc.maak(naam="Hive")
+    nu = "2026-10-16T10:00:00+00:00"
+    db.add(Lab(id="lab1", name="feature/zoek", image="node:22", volume_name="v",
+               status="running", cpu_limit=1, mem_limit_mb=512, ttl_hours=4,
+               cluster_id=c.id, branch="feature/zoek", created_at=nu, updated_at=nu))
+    db.commit()
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.verwijder(c.id))
+    assert "feature/zoek" in str(fout.value.detail)
+
+
+def test_een_gewoon_lab_hoort_bij_geen_cluster(db):
+    """Elk bestaand lab heeft cluster_id en branch NULL, en daar mag niets
+    aan veranderen."""
+    from models.lab import Lab
+
+    nu = "2026-10-16T10:00:00+00:00"
+    p = Lab(id="gewoon", name="Fabric", image="python:3", volume_name="v",
+            status="running", cpu_limit=1, mem_limit_mb=512, ttl_hours=4,
+            created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    assert p.cluster_id is None and p.branch is None
+
+
+def test_de_migratietabel_heeft_geen_dubbele_sleutels():
+    """Twee keer dezelfde tabelnaam in _ADDITIVE_COLUMNS laat de eerste stil
+    verdwijnen — Python houdt bij een dict-literal alleen de laatste over.
+
+    Dat gebeurde: er stond al een "labs"-blok, er kwam een tweede bij, en de
+    kolommen uit het eerste werden nooit toegevoegd. De backend startte
+    daarna niet meer op ("no such column: labs.cluster_id"), en dat is nog de
+    vriendelijke variant — bij een kolom die alleen soms gelezen wordt, merk
+    je het pas veel later.
+    """
+    import ast
+    import collections
+    from pathlib import Path
+
+    bron = (Path(__file__).resolve().parents[1] / "src" / "db"
+            / "init_db.py").read_text(encoding="utf-8")
+    boom = ast.parse(bron)
+    gevonden = False
+    for knoop in ast.walk(boom):
+        if (isinstance(knoop, ast.Assign)
+                and getattr(knoop.targets[0], "id", "") == "_ADDITIVE_COLUMNS"):
+            gevonden = True
+            sleutels = [k.value for k in knoop.value.keys]
+            dubbel = [k for k, n in collections.Counter(sleutels).items() if n > 1]
+            assert not dubbel, f"dubbele tabelnamen: {dubbel}"
+    assert gevonden, "_ADDITIVE_COLUMNS niet gevonden"
+
+
+def test_labs_krijgen_de_clusterkolommen_erbij():
+    """Zonder deze migratie start de backend niet meer op zodra het model de
+    kolommen kent."""
+    from pathlib import Path
+
+    bron = (Path(__file__).resolve().parents[1] / "src" / "db"
+            / "init_db.py").read_text(encoding="utf-8")
+    assert '("cluster_id", "INTEGER")' in bron
+    assert '("branch", "VARCHAR(255)")' in bron
+
+
+def test_een_foutmelding_toont_de_oorzaak_en_niet_de_pull_voortgang():
+    """Een mislukte start gaf een scherm vol "Pulling fs layer".
+
+    Docker schrijft voortgang en fouten door elkaar. Bij een image van
+    anderhalve gigabyte stond er twintig regels laagjes-voortgang in het veld
+    waar had moeten staan wát er misging.
+    """
+    from services.lab.clusters import _laatste_zinnige_regel
+
+    rommel = (
+        "Unable to find image 'cosmos:vnext' locally\n"
+        "vnext: Pulling from cosmosdb/linux/azure-cosmos-emulator\n"
+        "65899dddd4f4: Pulling fs layer\n"
+        "ede28f09bd35: Pulling fs layer\n"
+        "no matching manifest for linux/arm64/v8 in the manifest list entries\n"
+    )
+    assert _laatste_zinnige_regel(rommel).startswith("no matching manifest")
+
+
+def test_een_lege_fout_levert_nog_steeds_iets_op():
+    from services.lab.clusters import _laatste_zinnige_regel
+
+    assert _laatste_zinnige_regel("") == "onbekende fout"
+
+
+# ── poorten naar buiten ──────────────────────────────────────────────────────
+
+def test_poorten_krijgen_een_eigen_bereik_en_botsen_niet(db):
+    """De containerpoort op de machine publiceren leek simpel, maar botst op
+    alles wat daar al luistert. Bij de eerste proef liep de Cosmos-emulator
+    vast op "address already in use" — op 8081, waar LabX zelf al zat."""
+    d = NepDocker()
+    svc = _svc(db, d)
+    c = svc.maak(naam="Hive")
+    een = svc.voeg_dienst_toe(c.id, naam="cosmos", image="c:1", poorten=[8081])
+    twee = svc.voeg_dienst_toe(c.id, naam="mailvanger", image="m:1", poorten=[8081])
+    asyncio.run(svc.start_dienst(een.id))
+    asyncio.run(svc.start_dienst(twee.id))
+
+    db.refresh(een)
+    db.refresh(twee)
+    poort_een = list(een.poort_map.values())[0]
+    poort_twee = list(twee.poort_map.values())[0]
+    assert poort_een != poort_twee, "twee diensten mogen niet dezelfde poort krijgen"
+    assert poort_een >= 18000 and poort_twee >= 18000
+
+
+def test_het_adres_van_een_dienst_blijft_hetzelfde_bij_herstarten(db):
+    """Anders moet je na elke herstart opnieuw opzoeken waar je hem vindt."""
+    d = NepDocker()
+    svc = _svc(db, d)
+    c = svc.maak(naam="Hive")
+    dienst = svc.voeg_dienst_toe(c.id, naam="cosmos", image="c:1", poorten=[8081])
+    asyncio.run(svc.start_dienst(dienst.id))
+    db.refresh(dienst)
+    eerst = dict(dienst.poort_map)
+
+    asyncio.run(svc.start_dienst(dienst.id))
+    db.refresh(dienst)
+    assert dict(dienst.poort_map) == eerst
+
+
+def test_een_gebruiksfout_van_docker_wijst_niet_naar_de_help(db):
+    """docker sluit een gebruiksfout af met "See 'docker run --help'." — dan
+    is juist de laatste regel de minst bruikbare."""
+    from services.lab.clusters import _laatste_zinnige_regel
+
+    tekst = ("docker: Error response from daemon: failed to bind host port for "
+             "127.0.0.1:8081: address already in use.\n"
+             "See 'docker run --help'.\n")
+    assert "address already in use" in _laatste_zinnige_regel(tekst)
+
+
+# ── branch-labs ──────────────────────────────────────────────────────────────
+
+def _cluster_met_repo(db, svc):
+    c = svc.maak(naam="Hive")
+    c.repo_url = "https://github.com/beeminds-data/Intelligenthive.git"
+    c.lab_image = "node:22-bookworm"
+    c.start_script = "yarn build:all && yarn start:api"
+    db.commit()
+    return c
+
+
+def test_een_branch_lab_erft_het_startscript_van_het_cluster(db, monkeypatch):
+    """Het startscript hoort bij het cluster maar draait in het lab.
+
+    Het hier overnemen betekent dat het bestáánde inrichten het uitvoert, met
+    zijn log, zijn statussen en zijn herstel na een herstart. Een tweede
+    manier om scripts te draaien zou al die dingen opnieuw moeten uitvinden.
+    """
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    svc = ClusterService(db)
+    c = _cluster_met_repo(db, svc)
+
+    nu = "2026-10-16T12:00:00+00:00"
+
+    async def _nep_create(**kw):
+        p = Lab(id="branchlab", name=kw["name"], image="node:22-bookworm",
+                volume_name="v", status="stopped", cpu_limit=1, mem_limit_mb=512,
+                ttl_hours=4, created_at=nu, updated_at=nu)
+        db.add(p)
+        db.commit()
+        return {"id": p.id}
+
+    async def _nep_kloon(self, c, p, *, branch, basis):
+        return None
+
+    monkeypatch.setattr(LabService, "create", lambda self, **kw: _nep_create(**kw))
+    monkeypatch.setattr(ClusterService, "_kloon_branch", _nep_kloon)
+    monkeypatch.setattr(LabService, "_to_dict", lambda self, p: {"id": p.id})
+
+    asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x", basis="main"))
+    p = db.get(Lab, "branchlab")
+    assert p.cluster_id == c.id and p.branch == "feature/x"
+    assert p.setup_script == c.start_script
+
+
+def test_twee_labs_voor_dezelfde_branch_kan_niet(db):
+    import asyncio
+
+    from fastapi import HTTPException
+    from models.lab import Lab
+
+    svc = _svc(db)
+    c = _cluster_met_repo(db, svc)
+    nu = "2026-10-16T12:00:00+00:00"
+    db.add(Lab(id="al-er", name="x", image="node:22", volume_name="v",
+               status="running", cpu_limit=1, mem_limit_mb=512, ttl_hours=4,
+               cluster_id=c.id, branch="feature/x", created_at=nu, updated_at=nu))
+    db.commit()
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
+    assert fout.value.status_code == 409
+
+
+def test_een_cluster_zonder_repo_begint_leeg_in_plaats_van_te_klonen(db, monkeypatch):
+    """Geen repo-URL is geen fout meer: dan begin je een nieuw project.
+
+    Eerder was dit een harde 400 ("zonder repo valt er niets uit te checken"),
+    en daarmee was er geen enkele weg om in LabX iets nieuws te BEGINNEN --
+    je moest eerst elders een repo maken. Nu krijgt het lab een verse
+    `git init` met een eerste commit, want zonder commit heeft `git log`,
+    `git checkout -b` en elke agent die iets wil vastleggen geen grond onder
+    de voeten.
+    """
+    import asyncio
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Leeg")
+
+    gezien = {}
+
+    async def nep_init(_c, _p, *, branch):
+        gezien["branch"] = branch
+
+    async def nep_kloon(*_a, **_k):
+        gezien["kloonde"] = True
+
+    monkeypatch.setattr(svc, "_init_branch", nep_init)
+    monkeypatch.setattr(svc, "_kloon_branch", nep_kloon)
+    uit = asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
+
+    assert gezien["branch"] == "feature/x"
+    assert "kloonde" not in gezien
+    assert uit["branch"] == "feature/x"
+
+
+def test_diensten_en_branch_labs_delen_een_poortbereik(db):
+    """Apart tellen zou een dienst en een lab op hetzelfde nummer zetten --
+    ze draaien op dezelfde machine."""
+    import asyncio
+
+    from models.lab import Lab
+
+    d = NepDocker()
+    svc = _svc(db, d)
+    c = svc.maak(naam="Hive")
+    dienst = svc.voeg_dienst_toe(c.id, naam="cosmos", image="c:1", poorten=[8081])
+    asyncio.run(svc.start_dienst(dienst.id))
+    db.refresh(dienst)
+
+    nu = "2026-10-16T12:00:00+00:00"
+    p = Lab(id="bl", name="x", image="node:22", volume_name="v", status="stopped",
+            cpu_limit=1, mem_limit_mb=512, ttl_hours=4, cluster_id=c.id,
+            branch="feature/x", ports=[3000], created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+
+    kaart = svc._lab_poorten(p, c)
+    dienst_poorten = set(dienst.poort_map.values())
+    assert not (set(kaart.values()) & dienst_poorten), (
+        "een lab mag niet op de poort van een dienst landen")
+
+
+def test_de_auth_header_staat_in_de_git_config_en_niet_als_losse_optie():
+    """`git ${VAR:+-c "http.extraHeader=AUTHORIZATION: basic $X"}` wordt door
+    de shell alsnog op spaties gesplitst; git kreeg "basic" als subcommando.
+
+    Dat viel nooit op omdat het alleen misgaat MET een token -- een publieke
+    repo kloont prima. Het zat daarom ook in de gewone kloon van labs en in
+    publish.
+    """
+    from pathlib import Path
+
+    for naam in ("clusters.py", "lab_service.py"):
+        bron = (Path(__file__).resolve().parents[1] / "src" / "services" / "lab"
+                / naam).read_text(encoding="utf-8")
+        if "extraHeader" not in bron:
+            continue
+        assert "git config --global http.extraHeader" in bron, naam
+        # Alleen naar CODE kijken: de uitleg hierboven noemt het foute
+        # patroon met zoveel woorden, en die hoort niet mee te tellen.
+        code = "\n".join(r for r in bron.splitlines()
+                          if not r.lstrip().startswith("#"))
+        assert "${GIT_AUTH:+-c" not in code, (
+            f"{naam}: de losse -c met expansie is de constructie die stukging")
+
+
+# ── kan het cluster bij zijn repo? ───────────────────────────────────────────
+
+def _met_pat(db, svc, monkeypatch, antwoord):
+    """Een cluster met een token, en een GitHub die `antwoord` geeft."""
+    import urllib.error
+    import urllib.request
+
+    c = _cluster_met_repo(db, svc)
+    c.repo_token_geheim = "pat"
+    db.commit()
+    monkeypatch.setattr(type(svc), "_pat", lambda self, c: "github_pat_proef")
+
+    def _nep(verzoek, timeout=0):
+        if isinstance(antwoord, int):
+            raise urllib.error.HTTPError("u", antwoord, "nee", {}, None)
+
+        class Antwoord:
+            def read(self):
+                import json
+                return json.dumps(antwoord).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        return Antwoord()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _nep)
+    return c
+
+
+def test_een_token_dat_wacht_op_goedkeuring_wordt_benoemd(db, monkeypatch):
+    """GitHub geeft 404 als een fine-grained token de repo niet mag zien — of
+    dat nu komt door goedkeuring, door de selectie, of door de verkeerde
+    resource owner. Een kale "403" uit git noemt geen van drieën."""
+    import asyncio
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch, 404)
+    uit = asyncio.run(svc.controleer_toegang(c))
+
+    assert uit["ok"] is False
+    for stuk in ("goedgekeurd", "Pending requests", "Repository access",
+                 "resource owner"):
+        assert stuk.lower() in uit["hint"].lower(), stuk
+
+
+def test_een_verlopen_token_krijgt_een_ander_antwoord(db, monkeypatch):
+    import asyncio
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch, 401)
+    uit = asyncio.run(svc.controleer_toegang(c))
+    assert uit["ok"] is False
+    assert "verlopen" in uit["hint"].lower()
+
+
+def test_alleen_lezen_wordt_gemeld_maar_houdt_niets_tegen(db, monkeypatch):
+    """Lezen is genoeg om te klonen. Pas als de agent wil pushen gaat het
+    knellen, en dan wil je het van tevoren weten."""
+    import asyncio
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch,
+                 {"full_name": "org/repo", "permissions": {"push": False}})
+    uit = asyncio.run(svc.controleer_toegang(c))
+    assert uit["ok"] is True and uit["mag_pushen"] is False
+    assert "Read and write" in uit["hint"]
+
+
+def test_een_branch_lab_wordt_niet_aangemaakt_als_het_token_niet_mag(db, monkeypatch):
+    """Een lab maken en daarna weer opruimen omdat het token niet mag, is
+    werk en verwarring voor niets."""
+    import asyncio
+
+    from fastapi import HTTPException
+    from models.lab import Lab
+
+    svc = _svc(db)
+    c = _met_pat(db, svc, monkeypatch, 404)
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.maak_branch_lab(c.id, branch="feature/x"))
+    assert fout.value.status_code == 400
+    assert db.query(Lab).count() == 0, "er mag geen half lab achterblijven"
+
+
+def test_een_niet_github_repo_wordt_niet_beoordeeld(db, monkeypatch):
+    """We weten dan niet welke API erbij hoort, en raden is erger dan niet
+    kijken."""
+    import asyncio
+
+    svc = _svc(db)
+    c = svc.maak(naam="Elders")
+    c.repo_url = "https://git.intern.example/team/app.git"
+    db.commit()
+    uit = asyncio.run(svc.controleer_toegang(c))
+    assert uit["gecontroleerd"] is False
+
+
+# ── opruimen laat niets bij Docker achter ────────────────────────────────────
+
+def test_verwijderen_ruimt_containers_en_netwerk_op(db):
+    """Alleen de rijen weghalen voelt opgeruimd en is het niet.
+
+    De containers van de vaste diensten blijven dan draaien en het netwerk
+    blijft staan: geheugen dat niemand nog kan vinden, en een volgend cluster
+    met dezelfde naam erft het netwerk van zijn voorganger.
+    """
+    docker = NepDocker()
+    svc = _svc(db, docker)
+    c = svc.maak(naam="Hive")
+    d = svc.voeg_dienst_toe(c.id, naam="cosmos", image="emulator:1")
+    d.container_id = "container-cosmos"
+    db.commit()
+
+    uit = asyncio.run(svc.verwijder(c.id))
+
+    assert uit["niet_opgeruimd"] == []
+    assert docker.verwijderd == ["container-cosmos"]
+    assert docker.netwerken_weg == [c.netwerk]
+    assert svc.lijst() == []
+
+
+def test_een_container_die_niet_weg_wil_stopt_het_opruimen_niet(db):
+    """Opruimen dat halverwege struikelt is erger dan opruimen dat iets laat
+    staan — maar je hoort wel te zien wat er bleef."""
+    docker = NepDocker()
+
+    async def stug(cid, **kw):
+        raise RuntimeError("daemon weg")
+
+    docker.remove = stug
+    svc = _svc(db, docker)
+    c = svc.maak(naam="Hive")
+    d = svc.voeg_dienst_toe(c.id, naam="cosmos", image="emulator:1")
+    d.container_id = "container-cosmos"
+    db.commit()
+
+    uit = asyncio.run(svc.verwijder(c.id))
+
+    assert svc.lijst() == [], "de rijen gaan hoe dan ook weg"
+    assert any("cosmos" in k for k in uit["niet_opgeruimd"])
+
+
+def test_twee_clusters_mogen_allebei_een_cosmos_hebben(db):
+    """De DNS-naam is per cluster, de containernaam is globaal.
+
+    Dit liep echt mis en het liep STIL mis: starten begint met een
+    `docker rm -f` op de containernaam, dus de emulator van het tweede cluster
+    maakte die van het eerste dood en nam zijn plaats in -- terwijl LabX voor
+    allebei "draait" bleef melden. Gemeten op een echte daemon: de container-id
+    van de eerste veranderde.
+    """
+    docker = NepDocker()
+    svc = _svc(db, docker)
+    een = svc.maak(naam="Hive")
+    twee = svc.maak(naam="Hub")
+    svc.voeg_dienst_toe(een.id, naam="cosmos", image="emulator:1")
+    svc.voeg_dienst_toe(twee.id, naam="cosmos", image="emulator:1")
+
+    for d in svc.diensten(een.id) + svc.diensten(twee.id):
+        asyncio.run(svc.start_dienst(d.id))
+
+    dns = [g["naam"] for g in docker.gestart]
+    containers = [g["container_naam"] for g in docker.gestart]
+    assert dns == ["cosmos", "cosmos"], "op het netwerk heet hij in beide clusters cosmos"
+    assert len(set(containers)) == 2, "bij de daemon hebben ze verschillende namen"
+    assert all(str(een.id) in c or str(twee.id) in c for c in containers)
+
+
+# ── een branch-lab is een ontwikkellab, geen Fabric-werkplek ─────────────────
+
+def test_een_branch_lab_krijgt_de_azure_cli_niet(db):
+    """Deze installatie zet de Azure CLI in elk lab, want ze is voor
+    Fabric-werk gebouwd. In een branch-lab kost dat 616 MB en vier minuten
+    voor gereedschap dat een node-monorepo nooit aanroept."""
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    c = ClusterService(db).maak(naam="Hive")
+    nu = "2026-10-17T10:00:00+00:00"
+    branch_lab = Lab(id="b1", name="Hive · feature/x", image="node:22", volume_name="v",
+                     status="running", cpu_limit=2, mem_limit_mb=4096, ttl_hours=4,
+                     cluster_id=c.id, branch="feature/x", created_at=nu, updated_at=nu)
+    gewoon = Lab(id="g1", name="Gewoon", image="python:3", volume_name="v2",
+                 status="running", cpu_limit=1, mem_limit_mb=2048, ttl_hours=4,
+                 created_at=nu, updated_at=nu)
+    db.add_all([branch_lab, gewoon])
+    db.commit()
+
+    svc = LabService(db)
+    assert svc._az_gewenst(gewoon) is True, "een gewoon lab verandert niet"
+    assert svc._az_gewenst(branch_lab) is False
+
+
+def test_een_cluster_kan_de_azure_cli_alsnog_vragen(db):
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    svc_c = ClusterService(db)
+    c = svc_c.maak(naam="Hive")
+    svc_c.wijzig(c.id, lab_azure=True)
+    nu = "2026-10-17T10:00:00+00:00"
+    db.add(Lab(id="b1", name="x", image="node:22", volume_name="v", status="running",
+               cpu_limit=2, mem_limit_mb=4096, ttl_hours=4, cluster_id=c.id,
+               branch="feature/x", created_at=nu, updated_at=nu))
+    db.commit()
+
+    assert LabService(db)._az_gewenst(db.get(Lab, "b1")) is True
+
+
+def test_een_branch_lab_is_ruimer_bemeten(db):
+    """Een gewoon lab is 1 CPU en 2 GB: genoeg om in rond te kijken, te krap
+    om een monorepo in te bouwen."""
+    from services.lab.clusters import BRANCH_LAB_CPU, BRANCH_LAB_MEM_MB, ClusterService
+
+    c = ClusterService(db).maak(naam="Hive")
+    uit = ClusterService(db).to_dict(c)
+    assert uit["lab_cpu"] == BRANCH_LAB_CPU and uit["lab_mem_mb"] == BRANCH_LAB_MEM_MB
+    assert BRANCH_LAB_MEM_MB > 2048 and BRANCH_LAB_CPU > 1.0
+
+
+def test_het_lab_zegt_bij_welke_branch_het_hoort(db):
+    """Zonder dit kan een scherm niet zeggen dat dit een branch-lab is, laat
+    staan op welk adres het draait — en dan staat er een lab dat je nergens
+    kunt openen."""
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-17T10:00:00+00:00"
+    db.add(Lab(id="b1", name="x", image="node:22", volume_name="v", status="stopped",
+               cpu_limit=2, mem_limit_mb=4096, ttl_hours=4, cluster_id=3,
+               branch="feature/x", poort_map={"8080": 18002}, created_at=nu, updated_at=nu))
+    db.commit()
+
+    uit = LabService(db)._to_dict(db.get(Lab, "b1"))
+    assert uit["cluster_id"] == 3
+    assert uit["branch"] == "feature/x"
+    assert uit["poort_map"] == {"8080": 18002}
+
+
+def test_een_branch_lab_start_altijd_als_branch_lab(db, monkeypatch):
+    """Er is maar één deur.
+
+    Zonder dit hing het ervan af welke knop je toevallig gebruikte: via het
+    cluster kwam het lab op het clusternetwerk met zijn poorten en zijn
+    LABX_-variabelen, via de labpagina op het gedeelde labnetwerk zonder
+    poorten en zonder omgeving. Dat tweede lab stond vrolijk op "running" en
+    was volstrekt onbruikbaar — en nergens stond waarom.
+    """
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+    from services.lab.lab_service import LabService
+
+    c = ClusterService(db).maak(naam="Hive")
+    nu = "2026-10-17T10:00:00+00:00"
+    db.add(Lab(id="b1", name="Hive · main", image="node:22", volume_name="v",
+               status="stopped", cpu_limit=2, mem_limit_mb=4096, ttl_hours=4,
+               cluster_id=c.id, branch="main", created_at=nu, updated_at=nu))
+    db.commit()
+
+    gezien = {}
+
+    async def nep_branchstart(zelf, lab_id):
+        gezien["lab_id"] = lab_id
+        return {"id": lab_id}
+
+    # Via monkeypatch en niet met een gewone toewijzing: dat laatste blijft
+    # staan voor de rest van de sessie, en dan draait een latere test tegen
+    # een nepmethode aan. Dat gebeurde ook -- de test die controleert of de
+    # Azure-sessie gezet wordt, las de BRON van deze nepfunctie.
+    monkeypatch.setattr(ClusterService, "start_branch_lab", nep_branchstart)
+    asyncio.run(LabService(db).start("b1"))
+    assert gezien.get("lab_id") == "b1", "de gewone start moet doorverwijzen"
+
+
+def test_de_poorten_van_een_cluster_zijn_met_de_hand_te_zetten(db):
+    """Zonder dit stond `lab_poorten` wel op het cluster maar was het niet te
+    wijzigen — en dan kun je een verkeerde detectie alleen rechtzetten door
+    opnieuw te verkennen, wat een modelaanroep kost."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    svc.wijzig(c.id, lab_poorten=[5173, 7071])
+    assert svc.get_or_404(c.id).lab_poorten == [5173, 7071]
+
+
+def test_getallen_en_lijsten_worden_geen_tekst(db):
+    """Deze stonden eerst in dezelfde lus als de tekstvelden, en dan werd
+    `[5173, 7071]` de string "[5173, 7071]" — een lijst die er in een antwoord
+    nog precies zo uitziet en bij het starten van een lab nergens meer op
+    slaat."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    svc.wijzig(c.id, lab_poorten=["5173", 7071], lab_cpu="4", lab_mem_mb="8192",
+               lab_azure=True, lab_image="  node:22  ")
+    ververst = svc.get_or_404(c.id)
+
+    assert ververst.lab_poorten == [5173, 7071]
+    assert ververst.lab_cpu == 4.0 and ververst.lab_mem_mb == 8192
+    assert bool(ververst.lab_azure) is True
+    assert ververst.lab_image == "node:22", "tekst wordt nog steeds getrimd"
+
+
+# ── een cluster dat bij Azure moet kunnen ───────────────────────────────────
+
+def test_een_branch_lab_erft_het_azure_profiel_van_zijn_cluster(db):
+    """In het lab kan niemand `az login` doen; de sessie komt van dit
+    profiel. Zonder dat valt de API om op "Missing API_KEY" terwijl de
+    front-end gewoon draait — en dat ziet eruit als een half geslaagd lab."""
+    from models.lab import Lab
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    svc.wijzig(c.id, azure_profiel_id=1)
+
+    nu = "2026-10-17T10:00:00+00:00"
+    p = Lab(id="b1", name="x", image="node:22", volume_name="v", status="stopped",
+            cpu_limit=2, mem_limit_mb=4096, ttl_hours=4, created_at=nu, updated_at=nu)
+    db.add(p)
+    db.commit()
+    # Wat maak_branch_lab doet na het aanmaken van het lab:
+    p.cluster_id = c.id
+    if svc.get_or_404(c.id).azure_profiel_id:
+        p.azure_profile_id = svc.get_or_404(c.id).azure_profiel_id
+    db.commit()
+
+    assert db.get(Lab, "b1").azure_profile_id == 1
+
+
+def test_een_ontbrekend_profiel_wordt_gemeld_als_het_nodig_is(db):
+    """Een project dat zijn geheimen zelf ophaalt heeft een aanmelding nodig.
+    Ontbreekt die, dan is dat geen detail maar de reden dat straks de helft
+    van de applicatie niet start."""
+    from services.lab.clusters import ClusterService
+
+    svc = ClusterService(db)
+    c = svc.maak(naam="Hive")
+    assert svc.to_dict(c)["azure_profiel_nodig"] is False, "zonder Azure geen eis"
+
+    svc.wijzig(c.id, geheimen_zelf=True)
+    assert svc.to_dict(svc.get_or_404(c.id))["azure_profiel_nodig"] is True
+
+    svc.wijzig(c.id, azure_profiel_id=1)
+    assert svc.to_dict(svc.get_or_404(c.id))["azure_profiel_nodig"] is False
+
+
+def test_een_branch_lab_krijgt_de_azure_sessie(db):
+    """Dit ontbrak, en daarom ging een branch-lab langs de hele
+    Azure-machinerie heen: `az` stond er wel, maar `az account show` zei
+    "Please run 'az login'". Een project dat zijn geheimen zelf uit een vault
+    haalt, haalt er dan niets op — en valt om op "Missing API_KEY" terwijl de
+    front-end gewoon draait."""
+    import inspect
+
+    from services.lab.clusters import ClusterService
+
+    bron = inspect.getsource(ClusterService.start_branch_lab)
+    assert "_sync_azure_profile_into_lab" in bron
+
+
+def test_een_dienst_is_ook_op_zijn_kale_naam_bereikbaar(db):
+    """Repo's noemen hun diensten bij de kale naam, en soms met een harde
+    controle erop. Het seed-script van IntelligentHive weigert te schrijven
+    tenzij de host `cosmos` heet; met alleen `ih-cosmos` deed het niets, en
+    dat zag eruit als een lege database zonder uitleg.
+
+    Binnen één clusternetwerk kan dat veilig — elk cluster heeft zijn eigen
+    netwerk, dus twee keer `cosmos` botst niet. Het prefix was nodig voor de
+    CONTAINERnaam, die globaal is, niet voor de DNS-naam.
+    """
+    docker = NepDocker()
+    svc = _svc(db, docker)
+    c = svc.maak(naam="IntelligentHive")
+    d = svc.voeg_dienst_toe(c.id, naam="ih-cosmos", image="emulator:1")
+    asyncio.run(svc.start_dienst(d.id))
+
+    gestart = docker.gestart[-1]
+    assert gestart["naam"] == "ih-cosmos", "de hoofdalias blijft de dienstnaam"
+    assert "cosmos" in (gestart.get("aliassen") or []), "en de kale naam komt erbij"
+    assert gestart["container_naam"] != "ih-cosmos", "bij de daemon wel uniek"
+
+
+def test_een_dienst_zonder_prefix_krijgt_geen_dubbele_alias(db):
+    from services.lab.clusters import _kale_naam
+
+    class NepDienst:
+        naam = "mailpit"
+
+    class NepCluster:
+        naam = "IntelligentHive"
+
+    assert _kale_naam(NepCluster(), NepDienst()) == "mailpit"
+
+
+# ── klonen vraagt om git, niet om het lab-image ──────────────────────────────
+
+
+def test_een_lab_image_zonder_git_kloont_met_het_standaard_image(db, monkeypatch):
+    """`python:3.12-slim` heeft geen git. Het enige spoor was
+    `sh: 1: git: not found` -- een melding die niets zegt over het image dat
+    je koos, en die je laat zoeken in de verkeerde hoek."""
+    import asyncio as _a
+
+    from services.lab import lab_service as mod
+
+    gevraagd = []
+
+    class _RT:
+        async def run_ephemeral(self, *, image, cmd, **kw):
+            gevraagd.append(image)
+            return "nee" if image == "python:3.12-slim" else "ja"
+
+    monkeypatch.setattr(mod, "default_image", lambda: "labx/standaard:1")
+
+    uit = _a.run(mod.kloon_image(_RT(), "python:3.12-slim"))
+    assert uit == "labx/standaard:1"
+    assert gevraagd == ["python:3.12-slim"], "eerst het lab-image zelf vragen"
+
+
+def test_een_lab_image_MET_git_kloont_met_zichzelf(db, monkeypatch):
+    """Zo blijft het gedrag hetzelfde waar het al werkte: de werkkopie
+    ontstaat onder dezelfde gebruiker die hem straks gebruikt."""
+    import asyncio as _a
+
+    from services.lab import lab_service as mod
+
+    class _RT:
+        async def run_ephemeral(self, **kw):
+            return "ja\n"
+
+    monkeypatch.setattr(mod, "default_image", lambda: "labx/standaard:1")
+    assert _a.run(mod.kloon_image(_RT(), "node:lts-bookworm")) == "node:lts-bookworm"
+
+
+def test_niet_kunnen_kijken_verandert_niets(db, monkeypatch):
+    """Een probe die omvalt is geen oordeel over het image. Dan maar klonen
+    zoals voorheen; dat faalt hooguit met de oude melding."""
+    import asyncio as _a
+
+    from services.lab import lab_service as mod
+
+    class _RT:
+        async def run_ephemeral(self, **kw):
+            raise RuntimeError("docker weg")
+
+    monkeypatch.setattr(mod, "default_image", lambda: "labx/standaard:1")
+    assert _a.run(mod.kloon_image(_RT(), "python:3.12-slim")) == "python:3.12-slim"
+
+
+# ── extra pakketten: jij kiest ze, of het model stelt ze voor ───────────────
+
+
+def test_git_zit_in_de_basis_en_niet_in_de_extras():
+    """Git hoort in ELK lab, ongeacht het image. Dat is geen keuze en dus geen
+    extra -- anders moet iemand het per cluster aanvinken en vergeet hij het."""
+    from services.lab.extras_catalog import BUILTIN_EXTRAS
+    from services.lab.lab_service import _BASE_STEPS
+
+    basis = {s["key"] for s in _BASE_STEPS}
+    assert "git" in basis
+    assert "git" not in {str(x["key"]) for x in BUILTIN_EXTRAS}
+
+
+def test_een_branch_lab_erft_de_extras_van_zijn_cluster(db, monkeypatch):
+    """Zonder dit kreeg een branch-lab er nooit een: `create` liet ze leeg en
+    er was geen andere weg naar binnen."""
+    import asyncio as _a
+
+    from services.lab import clusters as mod
+    from services.lab.lab_service import LabService
+
+    svc = mod.ClusterService(db)
+    c = svc.maak(naam="Slim")
+    c.repo_url = "https://x/slim.git"
+    c.lab_extras = ["node", "uv"]
+    db.commit()
+
+    gezien = {}
+
+    async def nep_create(zelf, **kw):
+        gezien.update(kw)
+        from models.lab import Lab
+        nu = "2026-10-18T10:00:00+00:00"
+        p = Lab(id="lab9", name="x", image="python:3.12-slim", volume_name="v",
+                status="stopped", cpu_limit=2, mem_limit_mb=4096, ttl_hours=24,
+                created_at=nu, updated_at=nu)
+        db.add(p); db.commit()
+        return {"id": p.id}
+
+    monkeypatch.setattr(LabService, "create", nep_create)
+    monkeypatch.setattr(mod.ClusterService, "controleer_toegang",
+                        lambda zelf, c: _klaar_dict())
+    monkeypatch.setattr(mod.ClusterService, "_kloon_branch",
+                        lambda zelf, c, p, **kw: _klaar_niets())
+
+    _a.run(svc.maak_branch_lab(c.id, branch="feature/x", basis="main"))
+    assert gezien.get("extras") == ["node", "uv"]
+
+
+async def _klaar_dict():
+    return {"gecontroleerd": False, "ok": True}
+
+
+async def _klaar_niets():
+    return None
+
+
+def test_een_verzonnen_extra_haalt_het_cluster_niet(db):
+    """Een sleutel die niet bestaat levert bij het inrichten een stille no-op
+    op, en dan zoek je naar een pakket dat nooit geinstalleerd werd."""
+    from services.lab.extras_catalog import BUILTIN_EXTRAS
+
+    bekend = {str(x["key"]) for x in BUILTIN_EXTRAS}
+    assert "node" in bekend
+    assert "verzonnen-pakket" not in bekend
+
+
+def test_de_catalogus_gaat_mee_naar_het_model():
+    """Uit de catalogus zelf, niet overgetypt: een pakket dat erbij komt hoort
+    het model te bereiken zonder dat iemand de prompttekst bijwerkt."""
+    from services.lab.extras_catalog import BUILTIN_EXTRAS
+    from services.lab.verkenner import _extras_lijst
+
+    lijst = _extras_lijst()
+    for spec in BUILTIN_EXTRAS:
+        assert str(spec["key"]) in lijst, f"{spec['key']} ontbreekt in de prompt"
+
+
+def test_apt_krijgt_geduld_voordat_er_iets_geinstalleerd_wordt():
+    """Debian geeft alleen het `apt`-commando een lock-timeout (120s);
+    `apt-get` krijgt niets en faalt meteen met "Could not get lock". Alles wat
+    LabX en de meeste startscripts draaien is `apt-get`, en die twee lopen
+    naast elkaar in dezelfde container.
+
+    De stap moet VOOR elke installatie komen, anders is hij zinloos.
+    """
+    from services.lab.lab_service import _BASE_STEPS
+
+    sleutels = [s["key"] for s in _BASE_STEPS]
+    assert sleutels[0] == "apt-wacht", "de wachtstap hoort als eerste"
+    assert sleutels.index("apt-wacht") < sleutels.index("git")
+
+    stap = _BASE_STEPS[0]
+    assert "DPkg::Lock::Timeout" in stap["script"]
+    assert "/etc/apt/apt.conf.d/" in stap["script"], "als config, niet per aanroep"
+    # Idempotent: een lab dat al ingericht is, doet dit niet opnieuw.
+    assert stap["check"].startswith("test -f")
+
+
+def test_een_afgebroken_installatie_wordt_eerst_afgemaakt():
+    """Een halve dpkg-transactie blokkeert ELKE volgende apt-aanroep met
+    "dpkg was interrupted". Daarna is het lab permanent stuk, want de
+    reparatie is zelf ook een apt-aanroep -- en het inrichten kwam dus nooit
+    meer voorbij `git`.
+
+    Deze stap moet VOOR de installaties staan en NA de wachtstap: herstellen
+    terwijl een ander proces de lock vasthoudt, mislukt opnieuw.
+    """
+    from services.lab.lab_service import _BASE_STEPS
+
+    sleutels = [s["key"] for s in _BASE_STEPS]
+    assert sleutels.index("apt-wacht") < sleutels.index("dpkg-herstel")
+    assert sleutels.index("dpkg-herstel") < sleutels.index("git")
+
+    stap = next(s for s in _BASE_STEPS if s["key"] == "dpkg-herstel")
+    assert "dpkg --configure -a" in stap["script"]
+    # Kosteloos als er niets half staat: `apt-get check` slaagt alleen bij
+    # een consistente dpkg-staat.
+    assert stap["check"].startswith("apt-get check")
+
+
+# ── een branch-lab hoort te DRAAIEN waar het hoort ───────────────────────────
+
+def test_een_nieuw_branch_lab_wordt_op_het_clusternetwerk_gestart(db, monkeypatch):
+    """Zonder deze stap stond het lab op 'running' met een groene stip, maar
+    zonder gepubliceerde poort en zonder de vaste diensten op naam te kunnen
+    vinden. Er was geen adres om te openen en geen aanwijzing waarom niet."""
+    import asyncio
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+    gezien = {}
+
+    async def nep_kloon(_c, _p, *, branch, basis):
+        gezien["gekloond"] = branch
+
+    async def nep_start(lab_id):
+        gezien["gestart"] = lab_id
+        return {"id": lab_id, "branch": "feature/x"}
+
+    async def nep_toegang(_c):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(svc, "_kloon_branch", nep_kloon)
+    monkeypatch.setattr(svc, "start_branch_lab", nep_start)
+    monkeypatch.setattr(svc, "controleer_toegang", nep_toegang)
+
+    uit = asyncio.run(svc.maak_branch_lab(c.id, titel="Zoek filter"))
+
+    assert gezien["gekloond"] == "feature/zoek-filter"
+    assert gezien["gestart"] == uit["id"]
+
+
+def test_een_lab_dat_niet_start_blijft_staan(db, monkeypatch):
+    """De werkkopie staat er al; weggooien zou het klonen vernietigen voor
+    iets wat je met één druk op Start herstelt."""
+    import asyncio
+
+    from models.lab import Lab
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+
+    async def nep_kloon(_c, _p, *, branch, basis):
+        return None
+
+    async def stuk(_lab_id):
+        raise RuntimeError("daemon weg")
+
+    async def nep_toegang(_c):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(svc, "_kloon_branch", nep_kloon)
+    monkeypatch.setattr(svc, "start_branch_lab", stuk)
+    monkeypatch.setattr(svc, "controleer_toegang", nep_toegang)
+
+    uit = asyncio.run(svc.maak_branch_lab(c.id, titel="Zoek filter"))
+
+    assert db.get(Lab, uit["id"]) is not None
+
+
+# ── een weggegooid proeflab laat geen knop achter ────────────────────────────
+
+def test_een_weggegooid_proeflab_verdwijnt_uit_het_cluster(db):
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+    nu = "2026-10-19T16:00:00+00:00"
+    lab = Lab(id="proef-1", name="Hive · proef", status="running", image="x",
+              volume_name="v", cluster_id=c.id, created_at=nu, updated_at=nu)
+    db.add(lab)
+    c.proef_lab_id = "proef-1"
+    c.proef_status = "goedgekeurd"
+    db.commit()
+
+    LabService(db)._vergeet_als_proeflab("proef-1")
+    # Hij commit zelf niet: hij hoort bij de transactie van het verwijderen.
+    db.commit()
+
+    db.refresh(c)
+    assert c.proef_lab_id is None
+    assert c.proef_status == "geen"
+
+
+def test_het_cluster_toont_geen_link_naar_een_lab_dat_er_niet_meer_is(db):
+    """Vangt wat er al stond: een cluster dat nog naar een verdwenen lab wees."""
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+    c.proef_lab_id = "weg-en-nooit-bestaan"
+    c.proef_status = "goedgekeurd"
+    db.commit()
+
+    uit = svc.to_dict(c)
+
+    assert uit["proef_lab_id"] is None
+    assert uit["proef_status"] == "geen"
+
+
+# ── één startend branch-lab tegelijk per cluster ─────────────────────────────
+
+def test_branch_labs_van_een_cluster_starten_na_elkaar(monkeypatch):
+    """Gemeten op deze machine: drie branch-labs van dezelfde monorepo die
+    tegelijk `yarn install` draaien passen niet in 8 GB. Eén kreeg 2,5 GB, de
+    andere twee werden afgeschoten (`OOMKilled=true`) en stonden daarna op
+    'running' zonder iets te doen. Dus: op een rij."""
+    import asyncio
+
+    from services.lab.clusters import _startslot
+
+    slot = _startslot(99)
+    tegelijk, hoogste = 0, 0
+
+    async def werk():
+        nonlocal tegelijk, hoogste
+        async with slot:
+            tegelijk += 1
+            hoogste = max(hoogste, tegelijk)
+            await asyncio.sleep(0.01)
+            tegelijk -= 1
+
+    asyncio.run(_drie(werk))
+    assert hoogste == 1
+
+
+async def _drie(werk):
+    import asyncio
+
+    await asyncio.gather(werk(), werk(), werk())
+
+
+def test_elk_cluster_heeft_zijn_eigen_slot():
+    """Twee clusters kunnen op twee machines staan; die hoeven niet op
+    elkaar te wachten."""
+    from services.lab.clusters import _startslot
+
+    assert _startslot(101) is _startslot(101)
+    assert _startslot(101) is not _startslot(102)
+
+
+def test_het_slot_wordt_meegegeven_bij_het_starten():
+    """Zonder dat het wordt meegegeven, staat het er voor niets."""
+    import ast
+    from pathlib import Path
+
+    bron = (Path(__file__).resolve().parents[1] / "src" / "services" / "lab"
+            / "clusters.py").read_text(encoding="utf-8")
+    boom = ast.parse(bron)
+    aanroepen = [k for k in ast.walk(boom)
+                 if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)
+                 and k.func.id == "_na_inrichten_starten"]
+    assert aanroepen, "start_branch_lab richt niets meer in?"
+    for k in aanroepen:
+        assert any(w.arg == "slot" for w in k.keywords), \
+            "het startslot van het cluster wordt niet meegegeven"
+
+
+# ── een lab dat omvalt op geheugen zegt dat ook ──────────────────────────────
+
+def test_een_oom_gekild_lab_krijgt_een_leesbare_fout(db):
+    """Zonder dit staat er: status 'running', groene stip, poort die niet
+    antwoordt, en een `Killed` halverwege duizend regels log."""
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-19T18:00:00+00:00"
+    lab = Lab(id="l-oom", name="Hive · bouwt", status="running", image="x",
+              volume_name="v", container_id="abc", mem_limit_mb=4096,
+              created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc = LabService(db)
+
+    class _Rt:
+        async def oom_gekild(self, _cid):
+            return True
+
+    svc.runtime_voor = lambda _p: _Rt()
+    svc.is_host = lambda _p: False
+
+    assert asyncio.run(svc.meld_geheugentekort("l-oom")) is True
+    db.refresh(lab)
+    assert "geheugen was op" in lab.error.lower()
+    assert "4096 MB" in lab.error
+    assert "Stop er een" in lab.error
+
+
+def test_een_lab_dat_gewoon_draait_krijgt_geen_valse_melding(db):
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-19T18:00:00+00:00"
+    lab = Lab(id="l-ok", name="Hive · draait", status="running", image="x",
+              volume_name="v", container_id="abc", created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc = LabService(db)
+
+    class _Rt:
+        async def oom_gekild(self, _cid):
+            return False
+
+    svc.runtime_voor = lambda _p: _Rt()
+    svc.is_host = lambda _p: False
+
+    assert asyncio.run(svc.meld_geheugentekort("l-ok")) is False
+    db.refresh(lab)
+    assert lab.error is None
+
+
+def test_een_kapotte_daemon_levert_geen_valse_geheugenmelding(db):
+    """Niet kunnen kijken is iets anders dan 'het geheugen was op'."""
+    import asyncio
+
+    from models.lab import Lab
+    from services.lab.lab_service import LabService
+
+    nu = "2026-10-19T18:00:00+00:00"
+    lab = Lab(id="l-stuk", name="Hive", status="running", image="x",
+              volume_name="v", container_id="abc", created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc = LabService(db)
+
+    class _Rt:
+        async def oom_gekild(self, _cid):
+            raise RuntimeError("daemon weg")
+
+    svc.runtime_voor = lambda _p: _Rt()
+    svc.is_host = lambda _p: False
+
+    assert asyncio.run(svc.meld_geheugentekort("l-stuk")) is False
+    db.refresh(lab)
+    assert lab.error is None
+
+
+# ── guards per cluster ───────────────────────────────────────────────────────
+
+def test_een_nieuw_cluster_heeft_de_guards_aan(db):
+    """Aan is de veilige kant; uitzetten is een bewuste keuze."""
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+
+    uit = svc.to_dict(c)
+    assert uit["lab_data_guard"] is True
+    assert uit["lab_llm_guard"] is True
+
+
+def test_de_guardstand_van_het_cluster_gaat_mee_naar_een_nieuw_branch_lab(db, monkeypatch):
+    """Zonder dit kreeg elk nieuw branch-lab ze weer aan, ook op een cluster
+    waarvan je al had vastgesteld dat er geen klantdata in zit."""
+    import asyncio
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+    svc.wijzig(c.id, lab_data_guard=False, lab_llm_guard=False)
+
+    meegegeven = {}
+    import services.lab.lab_service as ls
+
+    async def nep_create(self, **kw):
+        from models.lab import Lab
+
+        meegegeven.update(kw)
+        rij = Lab(id="nieuw", name=kw["name"], status="running",
+                  image=kw.get("image") or "x", volume_name="v",
+                  created_at="x", updated_at="x")
+        db.add(rij)
+        db.commit()
+        return {"id": "nieuw"}
+
+    async def niets(*a, **k):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(ls.LabService, "create", nep_create)
+    monkeypatch.setattr(svc, "_kloon_branch", niets)
+    monkeypatch.setattr(svc, "start_branch_lab", niets)
+    monkeypatch.setattr(svc, "controleer_toegang", niets)
+
+    asyncio.run(svc.maak_branch_lab(c.id, titel="Zoek filter"))
+
+    assert meegegeven["data_guard"] is False
+    assert meegegeven["llm_guard"] is False
+
+
+def test_een_cluster_dat_de_guards_aan_heeft_geeft_ze_ook_door(db, monkeypatch):
+    import asyncio
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive", repo_url="https://github.com/org/repo.git")
+
+    meegegeven = {}
+    import services.lab.lab_service as ls
+
+    async def nep_create(self, **kw):
+        from models.lab import Lab
+
+        meegegeven.update(kw)
+        db.add(Lab(id="nieuw2", name=kw["name"], status="running", image="x",
+                   volume_name="v", created_at="x", updated_at="x"))
+        db.commit()
+        return {"id": "nieuw2"}
+
+    async def niets(*a, **k):
+        return {"gecontroleerd": False}
+
+    monkeypatch.setattr(ls.LabService, "create", nep_create)
+    monkeypatch.setattr(svc, "_kloon_branch", niets)
+    monkeypatch.setattr(svc, "start_branch_lab", niets)
+    monkeypatch.setattr(svc, "controleer_toegang", niets)
+
+    asyncio.run(svc.maak_branch_lab(c.id, titel="Iets"))
+
+    assert meegegeven["data_guard"] is True
+    assert meegegeven["llm_guard"] is True
+
+
+def test_bestaande_labs_veranderen_niet_mee(db):
+    """De clusterstand geldt voor NIEUWE labs. Een lopend lab omzetten achter
+    iemands rug is precies wat je niet wilt terwijl er een run draait."""
+    from models.lab import Lab
+
+    svc = _svc(db, NepDocker())
+    c = svc.maak(naam="Hive")
+    nu = "2026-10-19T20:00:00+00:00"
+    lab = Lab(id="bestaand", name="Hive · x", status="running", image="x",
+              volume_name="v", cluster_id=c.id, data_guard=True, llm_guard=True,
+              created_at=nu, updated_at=nu)
+    db.add(lab)
+    db.commit()
+
+    svc.wijzig(c.id, lab_data_guard=False, lab_llm_guard=False)
+
+    db.refresh(lab)
+    assert lab.data_guard is True
+    assert lab.llm_guard is True

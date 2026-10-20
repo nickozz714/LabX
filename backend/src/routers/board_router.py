@@ -378,6 +378,76 @@ def resolve_ticket(board_id: int, key: str, db: Session = Depends(get_db)):
             "gearchiveerd": bool(getattr(ticket, "archived_at", None))}
 
 
+# ── de grillmeister ──────────────────────────────────────────────────────────
+#
+# Een ticket dat je zelf schrijft, lijkt altijd duidelijk. Wat erin ontbreekt
+# zie je pas als iemand anders het leest -- of erger, pas als het half gebouwd
+# is. Hij stelt de vragen, jij beslist; er wordt nooit stilletjes naar een
+# ticket geschreven.
+
+
+@router.post("/{board_id}/grill")
+async def grill_concept(board_id: int, payload: Dict[str, Any],
+                        db: Session = Depends(get_db)):
+    """Grillen vóórdat het ticket bestaat.
+
+    Dit hoort aan het begin te kunnen en niet pas als het ticket al op het
+    bord staat: juist dan is een extra vraag goedkoop -- je bent het nog aan
+    het bedenken en er hangt nog niets aan vast.
+    """
+    from services.boards.grillmeister import GrillMeister
+
+    return await GrillMeister(db).beurt_concept(
+        board_id,
+        titel=str(payload.get("titel") or ""),
+        beschrijving=str(payload.get("description") or ""),
+        acceptatie=str(payload.get("acceptance_criteria") or ""),
+        bericht=str(payload.get("bericht") or ""),
+        modus=str(payload.get("modus") or "grillen"),
+        geschiedenis=list(payload.get("geschiedenis") or []))
+
+
+@router.post("/{board_id}/tickets/{ticket_id}/grill")
+async def grill_ticket(board_id: int, ticket_id: int, payload: Dict[str, Any],
+                       db: Session = Depends(get_db)):
+    from services.boards.grillmeister import GrillMeister
+
+    _ticket_of_board(_svc(db), board_id, ticket_id)
+    return await GrillMeister(db).beurt(
+        ticket_id,
+        bericht=str(payload.get("bericht") or ""),
+        modus=str(payload.get("modus") or "grillen"),
+        geschiedenis=list(payload.get("geschiedenis") or []))
+
+
+@router.post("/{board_id}/tickets/{ticket_id}/grill/overnemen")
+def grill_overnemen(board_id: int, ticket_id: int, payload: Dict[str, Any],
+                    db: Session = Depends(get_db)):
+    """Een voorstel van de grillmeister op het ticket zetten."""
+    from services.boards.grillmeister import GrillMeister
+
+    _ticket_of_board(_svc(db), board_id, ticket_id)
+    return GrillMeister(db).pas_toe(
+        ticket_id,
+        titel=str(payload.get("titel") or ""),
+        description=str(payload.get("description") or ""),
+        acceptance_criteria=str(payload.get("acceptance_criteria") or ""))
+
+
+@router.post("/klantcheck")
+def klantcheck(payload: Dict[str, Any], db: Session = Depends(get_db)):
+    """Staat er iets in deze tekst dat een klant niet hoort te zien?
+
+    Een eigen endpoint en niet alleen een stap in de grillmeister, want dit
+    geldt voor elke tekst die naar buiten gaat -- ook een die je zelf typt.
+    """
+    from services.boards import klantcommunicatie
+
+    uit = klantcommunicatie.controleer(str(payload.get("tekst") or ""), db)
+    uit["uitleg"] = klantcommunicatie.uitleg(uit)
+    return uit
+
+
 @router.post("/{board_id}/tickets/archive")
 def archive_tickets(board_id: int, payload: Dict[str, Any], db: Session = Depends(get_db)):
     """Tickets opzij zetten, of terughalen met `terug: true`.

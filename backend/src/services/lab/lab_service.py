@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -52,6 +53,35 @@ def default_image() -> str:
     return settings.LAB_DEFAULT_IMAGE
 
 
+async def kloon_image(rt: Any, image: str) -> str:
+    """Een image waarin `git` bestaat, om in te klonen.
+
+    Klonen gebeurde altijd met het LAB-image, en dat gaat goed zolang dat
+    image git heeft. `python:3.12-slim` heeft het niet, en dan is het enige
+    spoor `sh: 1: git: not found` -- een melding die niets zegt over het
+    image dat je koos.
+
+    Eerst kijken of het lab-image git heeft, en alleen anders uitwijken naar
+    het standaard-image van LabX. Zo blijft het gedrag precies hetzelfde waar
+    het al werkte: de werkkopie ontstaat onder dezelfde gebruiker als die hem
+    straks gebruikt, en dat scheelt rechtenellende.
+    """
+    try:
+        uit = await rt.run_ephemeral(
+            image=image, cmd=["sh", "-c", "command -v git >/dev/null && echo ja || echo nee"],
+            timeout=120)
+    except Exception as exc:  # noqa: BLE001 — niet kunnen kijken is geen oordeel
+        log.warningx("Kon niet vaststellen of het image git heeft",
+                     image=image, error=str(exc)[:200])
+        return image
+    if "ja" in str(uit):
+        return image
+    val_terug = default_image()
+    log.infox("Lab-image heeft geen git; klonen met het standaard-image",
+              image=image, kloon_image=val_terug)
+    return val_terug
+
+
 IMAGE_PRESETS: List[Dict[str, str]] = [
     {"key": "python", "label": "Python (nieuwste 3.x)", "image": "python:3-bookworm",
      "description": "Python + pip — algemeen ontwikkelwerk, data en scripts. git + Azure CLI standaard."},
@@ -71,6 +101,41 @@ IMAGE_PRESETS: List[Dict[str, str]] = [
 # check-commando dat "staat er al" betekent, plus een installatie — zodat één
 # runner beide afhandelt en alles idempotent blijft.
 _BASE_STEPS: List[Dict[str, Any]] = [
+    # EERST. Zonder dit valt apt om zodra iets anders in dezelfde container
+    # net ook installeert -- en dat gebeurt: het startscript van een cluster
+    # installeert vaak zijn eigen pakketten, en dat loopt naast het inrichten.
+    # De melding is dan "Could not get lock /var/lib/apt/lists/lock. It is
+    # held by process N", en het inrichten faalt terwijl er niets stuk is.
+    #
+    # Waarom Debian je hier niet tegen beschermt, gemeten met `apt-config dump`:
+    #
+    #     Binary::apt::DPkg::Lock::Timeout "120"     <- standaard
+    #
+    # Dat geduld geldt alleen voor het `apt`-commando. `apt-get` krijgt niets
+    # en faalt dus meteen -- en alles wat LabX en de meeste startscripts
+    # draaien is `apt-get`.
+    #
+    # Als CONFIGBESTAND en niet als optie per aanroep: zo geldt het ook voor
+    # apt-aanroepen die wij niet schrijven -- die in een startscript, in een
+    # extra uit de catalogus, of in iets dat de gebruiker zelf draait.
+    {"key": "apt-wacht", "label": "apt laten wachten op de pakketlock",
+     "check": "test -f /etc/apt/apt.conf.d/99labx-wait",
+     "script": "mkdir -p /etc/apt/apt.conf.d && "
+               "printf 'DPkg::Lock::Timeout \"600\";\\n' "
+               "> /etc/apt/apt.conf.d/99labx-wait",
+     "timeout_s": 60},
+    # Een afgebroken installatie blokkeert ELKE volgende apt-aanroep met
+    # "dpkg was interrupted, you must manually run 'dpkg --configure -a'".
+    # Dat gebeurt zodra een container sneuvelt of een inrichting halverwege
+    # wordt gestopt -- en daarna is het lab permanent stuk, want elke poging
+    # om het te repareren is zelf weer een apt-aanroep.
+    #
+    # De check is `apt-get check`: die slaagt alleen als dpkg in een
+    # consistente staat is. Draait er niets half, dan kost deze stap niets.
+    {"key": "dpkg-herstel", "label": "afgebroken installatie afmaken",
+     "check": "apt-get check >/dev/null 2>&1",
+     "script": "DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
+     "timeout_s": 600},
     {"key": "git", "label": "git",
      "check": "command -v git >/dev/null 2>&1",
      "script": "apt-get update -qq && "
@@ -589,11 +654,23 @@ class LabService:
         env = {"REPO_URL": spec["url"], "DEST": spec["name"]}
         if spec.get("token"):
             env["GIT_AUTH"] = _b64.b64encode(f"x-access-token:{spec['token']}".encode()).decode()
+        # De header in de git-config, niet als losse optie.
+        #
+        # `git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $X"} clone`
+        # ziet er goed uit en werkt niet: de shell splitst het resultaat van
+        # die expansie alsnog op spaties, dus git krijgt "basic" als los woord
+        # en antwoordt "'basic' is not a git command". Dat viel nooit op omdat
+        # het alleen misgaat MET een token -- een publieke repo kloont prima.
         cmd = ["sh", "-c",
-               'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} '
-               'clone --depth 1 "$REPO_URL" "$DEST"']
-        await self.runtime_voor(p).run_ephemeral(
-            image=p.image, volume=p.volume_name, cmd=cmd, env=env)
+               'set -e; '
+               'if [ -n "$GIT_AUTH" ]; then '
+               '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
+               'fi; '
+               'git clone --depth 1 "$REPO_URL" "$DEST"']
+        rt = self.runtime_voor(p)
+        await rt.run_ephemeral(
+            image=await kloon_image(rt, p.image), volume=p.volume_name,
+            cmd=cmd, env=env)
 
     # ── inrichten: basis + aangevinkte extra's + eigen setup-script ─────────
 
@@ -770,7 +847,16 @@ class LabService:
         distributie, netwerk weg, typefout in een eigen script) laat de rest
         gewoon doorgaan en landt als fout in provision_log. Inrichten mag nooit
         een lab kapotmaken dat verder prima werkt."""
+        slot = _PROVISION_SLOTEN.get(lab_id)
+        if slot is None:
+            slot = _PROVISION_SLOTEN[lab_id] = asyncio.Lock()
+        async with slot:
+            return await self._provision(lab_id, force=force)
+
+    async def _provision(self, lab_id: str, *, force: bool = False) -> Dict[str, Any]:
+        """Het eigenlijke inrichten. Alleen aanroepen met het slot vast."""
         p = self.get(lab_id)
+        self.db.refresh(p)
         if p.status != "running" or not p.container_id:
             return {"ok": False, "status": p.provision_status, "reason": "Lab draait niet"}
         if not p.allow_network:
@@ -783,10 +869,16 @@ class LabService:
             return {"ok": True, "status": "skipped", "steps": list(p.provision_log)}
 
         steps: List[Dict[str, Any]] = list(_BASE_STEPS)
-        if settings.LAB_PROVISION_AZ:
+        if settings.LAB_PROVISION_AZ and self._az_gewenst(p):
             steps.append(_AZ_STEP)
         steps += self._extra_steps(p)
         script = (p.setup_script or "").strip()
+        # Een branch-lab start zijn applicatie apart, op de achtergrond (zie
+        # start_applicatie). Hem hier als stap draaien betekent wachten op een
+        # proces dat per definitie niet terugkomt -- en dat eindigt in een
+        # time-out die eruitziet als een fout terwijl alles werkt.
+        if p.cluster_id:
+            script = ""
         if script:
             # Geen check: een eigen script hoort zelf idempotent te zijn, en wat
             # het klaar-zijn ervan betekent weet alleen de schrijver.
@@ -1559,6 +1651,12 @@ exec ssh -N \\
         host_project_dir: Optional[str] = None,
         host_agent_token: Optional[str] = None,
         host_id: Optional[int] = None,
+        #: Zelf het inrichten inplannen? Standaard ja. Een branch-lab zegt
+        #: NEE: dat wordt meteen daarna opnieuw opgebouwd op het netwerk van
+        #: zijn cluster, en een ronde die tegen een container praat die
+        #: verdwijnt levert een halve installatie op -- precies de
+        #: apt-botsing die een proefbouw eerder al liet stranden.
+        richt_in: bool = True,
     ) -> Dict[str, Any]:
         name = (name or "").strip()
         if not name:
@@ -1681,7 +1779,7 @@ exec ssh -N \\
         # Het inrichten loopt erachteraan (zie provision_in_background): een
         # browser binnenhalen duurt minuten en dit antwoord mag daar niet op
         # wachten — het lab bestaat en draait al.
-        if p.status == "running" and p.allow_network:
+        if richt_in and p.status == "running" and p.allow_network:
             provision_in_background(p.id)
         return self._to_dict(p)
 
@@ -1746,8 +1844,15 @@ exec ssh -N \\
         log.infox("Hostlab aangemaakt", lab_id=p.id, project=map_)
         return self._to_dict(p)
 
-    async def verplaats(self, lab_id: str, *, host_id: Optional[int]) -> Dict[str, Any]:
+    async def verplaats(self, lab_id: str, *, host_id: Optional[int],
+                        met_het_cluster: bool = False) -> Dict[str, Any]:
         """Een lab naar een andere machine verhuizen.
+
+        `met_het_cluster` is de enige manier waarop een BRANCH-LAB meegaat:
+        dan verhuist het cluster als geheel en regelt `ClusterService` de
+        volgorde (diensten eerst, netwerk, dan de labs). Los verhuizen blijft
+        geweigerd -- een branch-lab op een andere machine dan zijn vaste
+        diensten is geen spreiding maar een storing.
 
         Wat er meegaat is /workspace -- je repo's, je uitvoer, je halve werk.
         Wat er NIET meegaat is de containerlaag: de pakketten die het lab had,
@@ -1762,6 +1867,22 @@ exec ssh -N \\
         """
         p = self.get(lab_id)
         self._weiger_bij_host(p, "Verplaatsen")
+        # Een BRANCH-LAB verhuist niet los. Het hoort bij een cluster, en een
+        # cluster is één machine: de vaste diensten staan daar, het
+        # clusternetwerk bestaat alleen daar, en de poorten komen daar naar
+        # buiten. Een branch-lab elders is geen spreiding maar een storing --
+        # de emulator is niet meer op naam te vinden en niets zegt waarom.
+        if getattr(p, "cluster_id", None) and not met_het_cluster:
+            from models.cluster import Cluster
+
+            c = self.db.get(Cluster, p.cluster_id)
+            raise HTTPException(
+                status_code=409,
+                detail=(f"'{p.name}' hoort bij het cluster "
+                        f"'{c.naam if c else p.cluster_id}' en draait op dezelfde "
+                        f"machine als de vaste diensten daarvan. Een branch-lab "
+                        f"verhuist niet apart — verplaats het hele cluster "
+                        f"(Clusters → Instellingen → Machine)."))
         if (p.host_id or None) == (host_id or None):
             return self._to_dict(p)
 
@@ -1978,6 +2099,18 @@ exec ssh -N \\
         if p.status == "running":
             return self._to_dict(p)
         await self._eis_bereikbare_machine(p)
+
+        # Een BRANCH-LAB start anders, en er is maar één deur.
+        #
+        # Zonder dit hing het ervan af welke knop je toevallig gebruikte: via
+        # het cluster kwam het lab op het clusternetwerk met zijn poorten en
+        # zijn LABX_-variabelen, via de labpagina op het gedeelde labnetwerk
+        # zonder poorten en zonder omgeving. Dat tweede lab stond vrolijk op
+        # "running" en was volstrekt onbruikbaar -- en nergens stond waarom.
+        if p.cluster_id:
+            from services.lab.clusters import ClusterService
+
+            return await ClusterService(self.db).start_branch_lab(p.id)
         if self.is_host(p):
             # Een hostlab "start" niet: de machine draait al. Wat we wél doen
             # is kijken of de agent er is, want anders zet je hem op running
@@ -2435,9 +2568,62 @@ exec ssh -N \\
         # A thread's lab_id is NOT NULL by design (chat requires a lab) — so
         # deleting a bound lab cascades to its threads rather than orphaning them.
         self.db.query(Thread).filter(Thread.lab_id == p.id).delete(synchronize_session=False)
+        self._vergeet_als_proeflab(p.id)
         self.db.delete(p)
         self.db.commit()
         return {"ok": True}
+
+    def _vergeet_als_proeflab(self, lab_id: str) -> None:
+        """Een cluster dat naar DIT lab wees, wijst nergens meer heen.
+
+        Zonder dit blijft `proef_lab_id` staan nadat je het proeflab hebt
+        weggegooid, en biedt het clusterscherm een knop naar een lab dat niet
+        meer bestaat. De proefbouw is daarmee ook niet meer "goedgekeurd":
+        waar dat oordeel over ging, is weg.
+        """
+        from models.cluster import Cluster
+
+        for c in self.db.query(Cluster).filter(Cluster.proef_lab_id == lab_id).all():
+            c.proef_lab_id = None
+            c.proef_status = "geen"
+            c.updated_at = _now_iso()
+            log.infox("Proeflab weggegooid; cluster teruggezet op 'geen'",
+                      cluster=c.naam, lab_id=lab_id)
+
+    async def meld_geheugentekort(self, lab_id: str) -> bool:
+        """Is dit lab door de OOM-killer geraakt? Zeg dat dan, op het lab.
+
+        Hier kwam een hele avond zoeken vandaan. Drie branch-labs van dezelfde
+        monorepo begonnen tegelijk aan `yarn install`; één won, de andere twee
+        werden afgeschoten. In het scherm stond daarna: status "running",
+        groene stip, een poort die niet antwoordde en verder niets. Het enige
+        spoor was een `Killed` halverwege een logbestand van duizend regels.
+
+        Een lab dat omvalt op geheugen is geen fout in de repo en geen fout in
+        het startscript -- het is een machine die te klein is. Dat is de enige
+        melding die je naar de juiste oplossing stuurt.
+        """
+        p = self.get(lab_id)
+        if not p.container_id:
+            return False
+        rt = self.runtime if self.is_host(p) else self.runtime_voor(p)
+        try:
+            geraakt = await rt.oom_gekild(p.container_id)
+        except Exception:  # noqa: BLE001
+            return False
+        if not geraakt:
+            return False
+        ruimte = f"{p.mem_limit_mb} MB" if p.mem_limit_mb else "het ingestelde maximum"
+        p.error = (
+            f"Het geheugen was op: de machine heeft dit lab afgebroken tijdens het "
+            f"starten ({ruimte} toegewezen). Draaien er meer labs van dit cluster? "
+            f"Stop er een, of geef Docker meer geheugen. Opnieuw proberen zonder "
+            f"een van beide loopt op hetzelfde uit.")
+        p.updated_at = _now_iso()
+        self.db.commit()
+        log.warningx("Lab afgebroken door geheugentekort", lab_id=p.id, lab=p.name,
+                     mem_limit_mb=p.mem_limit_mb)
+        return True
 
     async def expire_due(self) -> int:
         now = _now_iso()
@@ -3110,7 +3296,12 @@ exec ssh -N \\
             raise HTTPException(status_code=404, detail=f"'{naam}' is hier niet geregistreerd")
         uit = await self._git(
             p, rij["name"],
-            'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} pull --ff-only',
+            # Zelfde reden als bij clone en push: die expansie wordt door de
+            # shell op spaties gesplitst en git ziet "basic" als subcommando.
+            'if [ -n "$GIT_AUTH" ]; then '
+            '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
+            'fi; '
+            'git pull --ff-only',
             token=self._repo_token(rij), timeout=180)
         self._touch(p)
         return {"repo": rij["name"], "output": uit[:2000]}
@@ -3152,8 +3343,10 @@ exec ssh -N \\
             'git config user.name "LabX"; '
             'if [ -n "$COMMIT_MSG" ]; then git add -A; '
             '  git diff --cached --quiet || git commit -m "$COMMIT_MSG"; fi; '
-            'git ${GIT_AUTH:+-c "http.extraHeader=AUTHORIZATION: basic $GIT_AUTH"} '
-            'push "${PUSH_URL:-origin}" "HEAD:${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"'
+            'if [ -n "$GIT_AUTH" ]; then '
+            '  git config --global http.extraHeader "AUTHORIZATION: basic $GIT_AUTH"; '
+            'fi; '
+            'git push "${PUSH_URL:-origin}" "HEAD:${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"'
         )
         try:
             out = await self.runtime_voor(p).run_ephemeral(
@@ -3175,6 +3368,256 @@ exec ssh -N \\
                 out["port_map"] = {}
         return out
 
+
+    # ── de applicatie starten ────────────────────────────────────────────────
+
+    #: Waar de uitvoer van het startscript heen gaat. In de werkkopie, zodat
+    #: je er via de bestandsbrowser van het lab bij kunt.
+    START_LOG = ".labx-start.log"
+    #: Het procesgroep-nummer van de vorige start. Nodig om hem te kunnen
+    #: stoppen: een devserver die blijft staan houdt de poort bezet, en de
+    #: volgende poging strandt op "Port 8099 is already in use" -- een fout
+    #: over onze eigen rommel, waar niemand iets aan kan doen.
+    START_PID = ".labx-start.pid"
+    #: De pijp die stdin openhoudt. Zie _LOPER_SCRIPT.
+    START_FIFO = ".labx-stdin"
+
+    async def stop_applicatie(self, lab_id: str) -> Dict[str, Any]:
+        """De applicatie stilzetten, maar het LAB laten draaien.
+
+        Dat onderscheid ontbrak, en het is precies waarvoor een lab ook
+        gebruikt wordt: code lezen, een branch nakijken, iets opzoeken. Daar
+        heb je de container voor nodig en de devserver juist niet -- die eet
+        geheugen, houdt poorten bezet, en bouwt elke keer opnieuw als je een
+        bestand aanraakt.
+
+        Het stoppen zelf bestond al, maar alleen als eerste stap van het
+        STARTEN. Dezelfde regels, nu als eigen handeling: de hele procesgroep
+        van de loper krijgt TERM, en wie dat negeert daarna KILL. Het
+        logbestand blijft staan -- dat is het verslag van wat er draaide, en
+        dat wil je juist kunnen teruglezen nadat je hem hebt stilgezet.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        cid = self._require_running(p)
+        rt = self.runtime_voor(p)
+        c = self.db.get(Cluster, p.cluster_id) if p.cluster_id else None
+        map_ = self._repomap(c) if c else "/workspace"
+        script = (
+            f"cd {map_} 2>/dev/null || cd /workspace; "
+            f"if [ -f {self.START_PID} ]; then "
+            f"  kill -TERM -$(cat {self.START_PID}) 2>/dev/null; sleep 2; "
+            f"  kill -KILL -$(cat {self.START_PID}) 2>/dev/null; "
+            f"  rm -f {self.START_PID} {self.START_FIFO}; echo gestopt; "
+            f"else echo 'er draaide niets'; fi")
+        uit = await rt.exec(cid, ["sh", "-c", script], workdir="/workspace", timeout=30)
+        log.infox("Applicatie gestopt", lab_id=p.id, map=map_)
+        return {"ok": uit.get("exit_code") == 0, "map": map_,
+                "uitvoer": (uit.get("output") or "").strip()}
+
+    async def start_applicatie(self, lab_id: str) -> Dict[str, Any]:
+        """Het startscript van het cluster draaien -- op de ACHTERGROND.
+
+        Dit was eerst een inrichtingsstap, en dat is precies verkeerd om. Een
+        inrichtingsstap moet EINDIGEN; een applicatie moet juist blijven
+        draaien. Het script doet keurig wat de prompt vraagt --
+        `exec npm run dev` op de voorgrond -- en kwam dus nooit terug. Na een
+        half uur sloeg de stap om in exitcode 124, en die geslaagde uitvoer
+        ging als "fout" naar het model. Dat antwoordde, volkomen terecht:
+        "Ik zie in deze uitvoer geen fout."
+
+        Dus: op de achtergrond, met de uitvoer in een logbestand, en het
+        oordeel komt van de POORT. Een draaiende applicatie herken je eraan
+        dat er iets antwoordt, niet aan een exitcode die er nooit komt.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        if not p.cluster_id:
+            raise HTTPException(status_code=400, detail="Dit is geen branch-lab.")
+        c = self.db.get(Cluster, p.cluster_id)
+        if c is None or not (c.start_script or "").strip():
+            return {"ok": False, "reden": "Dit cluster heeft geen startscript."}
+
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return {"ok": False, "reden": "Er draait geen container voor dit lab."}
+
+        rt = self.runtime_voor(p)
+        map_ = self._repomap(c)
+        cid = werkers[0].container_id
+
+        # De env-bestanden van het cluster in de werkkopie zetten, VOORDAT het
+        # startscript draait. Dit is LabX' antwoord op wat de start-dev-skill
+        # van IntelligentHive met `cp` doet: die kopieert de gitignored
+        # .env-bestanden uit een bestaande hoofdcheckout, en een verse kloon
+        # heeft die niet. Het cluster is de hoofdcheckout.
+        from services.lab.cluster_env import ClusterEnvBestanden
+
+        geleverd = await ClusterEnvBestanden(self.db).schrijf_naar_lab(p, c)
+
+        # Allebei de scripts via STDIN wegschrijven en niet als argument
+        # meegeven: een script met aanhalingstekens erin overleeft de reis
+        # door `docker exec sh -c` niet ongeschonden. Dat kostte een hele
+        # proefbouw -- het startcommando kwam verminkt aan en het enige wat
+        # er terugkwam was "Starten mislukte", waar niemand iets aan heeft.
+        await rt.exec(cid, ["sh", "-c", f"cat > {_START_SCRIPT} && chmod +x {_START_SCRIPT}"],
+                      stdin=(c.start_script or "").encode(), timeout=60)
+        await rt.exec(cid, ["sh", "-c", f"cat > {_LOPER} && chmod +x {_LOPER}"],
+                      stdin=_LOPER_SCRIPT.encode(), timeout=60)
+
+        # LABX_ENV_BESTANDEN hier meegeven en niet via de containeromgeving.
+        # Die wordt alleen bij het AANMAKEN van de container gezet, en een
+        # applicatie-herstart draait in de bestaande container -- dan bereikte
+        # de variabele het script nooit en haalde het alsnog instellingen op
+        # die de zojuist neergezette bestanden overschreven.
+        env_voorvoegsel = (f"LABX_ENV_BESTANDEN={shlex.quote(' '.join(geleverd))}; "
+                           f"export LABX_ENV_BESTANDEN; ") if geleverd else ""
+
+        start = (
+            env_voorvoegsel
+            + f"cd {map_} 2>/dev/null || cd /workspace; "
+            # De vorige ronde eerst weg. Zonder dit blijft er bij elke poging
+            # een devserver staan en krijgt de volgende "Port is already in
+            # use" -- een fout over onze eigen rommel.
+            f"if [ -f {self.START_PID} ]; then "
+            f"  kill -TERM -$(cat {self.START_PID}) 2>/dev/null; sleep 2; "
+            f"  kill -KILL -$(cat {self.START_PID}) 2>/dev/null; "
+            f"fi; "
+            f"rm -f {self.START_LOG} {self.START_PID} {self.START_FIFO}; "
+            # `setsid` zet de loper en al zijn kinderen in een eigen
+            # procesgroep, zodat ze straks samen te stoppen zijn.
+            f"setsid sh {_LOPER} {map_} > {self.START_LOG} 2>&1 & "
+            f"echo gestart")
+        uit = await rt.exec(cid, ["sh", "-c", start], workdir="/workspace", timeout=60)
+        log.infox("Applicatie gestart", lab_id=p.id, map=map_,
+                  exit=uit.get("exit_code"))
+        return {"ok": uit.get("exit_code") == 0, "map": map_,
+                "uitvoer": str(uit.get("output") or "")[:400]}
+
+    async def foutregels(self, lab_id: str, *, regels: int = 40) -> str:
+        """De regels uit het startlog die op een FOUT lijken.
+
+        Eén logbestand, twee processen: een devserver die vrolijk doorpraat
+        en een API die omvalt. De staart is dan gevuld met yarn- en
+        Vite-ruis, en de crash is allang weggescrold. Het model kreeg dus
+        netjes de laatste tachtig regels -- en daar stond niets in.
+
+        Het patroon staat in `FOUTPATROON`, want het is zelf een keer stil
+        de mist in gegaan: zie daar.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        c = self.db.get(Cluster, p.cluster_id) if p.cluster_id else None
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return ""
+        map_ = self._repomap(c) if c else "/workspace"
+        patroon = FOUTPATROON
+        uit = await self.runtime_voor(p).exec(
+            werkers[0].container_id,
+            ["sh", "-c",
+             f"grep -iE '{patroon}' {map_}/{self.START_LOG} 2>/dev/null "
+             f"| tail -n {int(regels)} | tail -c 4000"],
+            workdir="/workspace", timeout=30)
+        return str(uit.get("output") or "").strip()
+
+    async def start_log(self, lab_id: str, *, regels: int = 80) -> str:
+        """De laatste regels van het startscript. Het bewijsmateriaal.
+
+        Draait de applicatie niet, dan staat hier waarom -- en dit is wat het
+        model moet zien, niet een exitcode die nooit komt.
+        """
+        from models.cluster import Cluster
+
+        p = self.get(lab_id)
+        c = self.db.get(Cluster, p.cluster_id) if p.cluster_id else None
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return ""
+        map_ = self._repomap(c) if c else "/workspace"
+        uit = await self.runtime_voor(p).exec(
+            werkers[0].container_id,
+            # Twee keer afknippen: op regels én op tekens, en allebei aan het
+            # EINDE. De exec kapt lange uitvoer namelijk vooraan af en houdt
+            # het begin -- dus kreeg het model de eerste regels van een
+            # yarn-install te zien in plaats van de fout waar het om ging.
+            ["sh", "-c", f"(tail -n {int(regels)} {map_}/{self.START_LOG} 2>/dev/null "
+                         f"|| tail -n {int(regels)} /workspace/{self.START_LOG} 2>/dev/null) "
+                         f"| tail -c 6000"],
+            workdir="/workspace", timeout=30)
+        return str(uit.get("output") or "")
+
+    async def luisterpoorten(self, lab_id: str) -> set:
+        """Op welke poorten luistert er iets IN de container?
+
+        Dit bestaat omdat "er antwoordt niets" geen diagnose is. De
+        applicatie kan prima draaien en op de VERKEERDE poort luisteren -- dat
+        gebeurde: het model liet Vite op 18002 luisteren, het poortnummer op
+        de machine, terwijl de container 8099 publiceert. Van buiten ziet dat
+        er identiek uit als een applicatie die niet start.
+
+        Uit /proc en niet met `ss` of `netstat`: die zitten niet in elk image,
+        en een diagnose die afhangt van geïnstalleerd gereedschap is er geen.
+        """
+        p = self.get(lab_id)
+        werkers = [w for w in self.ensure_workers(p) if w.container_id]
+        if not werkers:
+            return set()
+        try:
+            uit = await self.runtime_voor(p).exec(
+                werkers[0].container_id,
+                ["sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"],
+                workdir="/workspace", timeout=20)
+        except Exception as exc:  # noqa: BLE001 — niet kunnen kijken is geen fout
+            log.infox("Luisterpoorten niet op te vragen", lab_id=lab_id, error=str(exc)[:200])
+            return set()
+
+        poorten = set()
+        for regel in str(uit.get("output") or "").splitlines():
+            velden = regel.split()
+            # 0A = TCP_LISTEN. Het lokale adres is hex: "00000000:1F93".
+            if len(velden) < 4 or velden[3] != "0A":
+                continue
+            _, _, hex_poort = velden[1].rpartition(":")
+            try:
+                poorten.add(int(hex_poort, 16))
+            except ValueError:
+                continue
+        return poorten
+
+    @staticmethod
+    def _repomap(c: Any) -> str:
+        """Waar de werkkopie staat.
+
+        `git clone <url> <naam>` zet hem in een submap, dus de werkkopie is
+        /workspace/<reponaam> en niet /workspace. Het script dat daar niet van
+        uitging kreeg `npm error path /workspace/package.json` -- en het model
+        schreef er vervolgens zoekcode voor, om een vraag te beantwoorden die
+        LabX gewoon kan beantwoorden.
+        """
+        naam = (getattr(c, "repo_url", "") or "").rstrip("/").split("/")[-1]
+        naam = naam.removesuffix(".git").strip()
+        return f"/workspace/{naam}" if naam else "/workspace"
+
+    def _az_gewenst(self, p: Lab) -> bool:
+        """Moet dit lab de Azure CLI krijgen?
+
+        Deze installatie zet hem in elk lab, want ze is voor Fabric-werk
+        gebouwd. Een BRANCH-LAB is iets anders: daar kost het 616 MB en vier
+        minuten voor gereedschap dat een node-monorepo nooit aanroept. Het
+        cluster zegt of zijn applicatie hem nodig heeft, en standaard is dat
+        nee -- een development-lab vraagt andere dingen dan een Fabric-werkplek.
+        """
+        if not getattr(p, "cluster_id", None):
+            return True
+        from models.cluster import Cluster
+
+        c = self.db.get(Cluster, p.cluster_id)
+        return bool(c.lab_azure) if c is not None else True
+
     def _to_dict(self, p: Lab) -> Dict[str, Any]:
         # Eén telling voor alle werkers samen; per werker vragen zou een query
         # per container zijn op een lijst die bij elke verversing langskomt.
@@ -3182,6 +3625,13 @@ exec ssh -N \\
         return {
             "id": p.id, "name": p.name,
             "status": p.status, "image": p.image,
+            # Bij welk cluster en welke branch dit lab hoort, en waar je hem
+            # van buiten bereikt. Zonder deze drie kon een scherm niet zeggen
+            # dat dit een branch-lab is, laat staan op welk adres het draait --
+            # en dan staat er een lab dat je nergens kunt openen.
+            "cluster_id": getattr(p, "cluster_id", None),
+            "branch": getattr(p, "branch", None),
+            "poort_map": getattr(p, "poort_map", None) or {},
             # "container" of "host". De frontend verbergt hierop alles wat
             # alleen voor een container bestaat -- werkers, poorten, TTL,
             # opnieuw opbouwen.
@@ -3243,10 +3693,141 @@ _PROVISION_TEGELIJK = 3
 
 _PROVISION_TASKS: Dict[str, Any] = {}
 
+#: Eén inrichting tegelijk PER LAB. `_na_inrichten_starten` bewaakte alleen
+#: zichzelf, en een rechtstreekse `provision()` wist daar niets van. Dat
+#: botste echt: `start_branch_lab` zet het inrichten als achtergrondtaak weg
+#: en keert meteen terug, waarna de proefbouw zijn eigen `provision()` doet --
+#: twee apt-processen in dezelfde container, en dan krijg je
+#: "Could not get lock /var/lib/apt/lists/lock. It is held by process N".
+#: De tweede aanroep wacht nu op de eerste en doet daarna zijn werk; dat kost
+#: niets, want elke stap heeft een check en is overgeslagen zodra hij klaar is.
+_PROVISION_SLOTEN: Dict[str, Any] = {}
+
 
 # Labs waarvoor tijdens een lopende inrichtronde opnieuw om inrichten is
 # gevraagd. Zie _na_inrichten.
 _PROVISION_NOGMAALS: set = set()
+
+
+#: Het script van het cluster, zoals het in de container terechtkomt.
+#: Waar `foutregels` op zoekt in het startlog.
+#:
+#: Twee keer stil misgegaan, en allebei de keren koste dat een ronde:
+#:
+#: 1. `at [A-Za-z]` stond er om JS-stackframes te vangen, maar zonder anker.
+#:    De yarn-regel "...doesn't satisfy what react-diff-viewer-continued..."
+#:    bevat "at react" en kwam dus bovenaan de foutenlijst te staan, samen
+#:    met tientallen andere peer-dependency-waarschuwingen. Een echt frame
+#:    staat ingesprongen aan het begin van de regel; daar anker je op.
+#: 2. De ENIGE regel die telde -- "API is exiting on unhandledRejection" --
+#:    matchte op geen van de woorden. Het model kreeg een lijst vol
+#:    waarschuwingen zonder de crash die ertoe deed.
+#:
+#: Dat de scripts die het model schrijft in het Nederlands loggen, is geen
+#: detail: "[lab] seeden mislukt" is vaak de enige regel die zegt wat er
+#: gebeurde.
+FOUTPATROON = (
+    r"error|exception|fatal|crash|panic|traceback"
+    r"|unhandledRejection|uncaughtException"
+    r"|ECONN|EPROTO|ENOENT|EADDR|EACCES|ETIMEDOUT"
+    r"|cannot|failed|refused|denied|no such file"
+    r"|mislukt|geweigerd"
+    r"|^[[:space:]]+at [A-Za-z]"
+)
+
+_START_SCRIPT = "/workspace/.labx-start.sh"
+#: Het lopertje eromheen. Staat hier als tekst en niet in een commandoregel,
+#: want aanhalingstekens overleven `docker exec sh -c` niet.
+_LOPER = "/workspace/.labx-loper.sh"
+
+#: Waarom dit lopertje bestaat.
+#:
+#: 1. STDIN MOET OPEN BLIJVEN. `< /dev/null` lijkt netjes en is het niet: een
+#:    devserver als Vite luistert op stdin naar toetsen ('r' om te herladen)
+#:    en sluit zichzelf af zodra stdin EOF geeft. Dat gebeurde: "ready in
+#:    102 ms" en meteen daarna weg, zonder een enkele foutmelding.
+#:
+#:    Een pijp die openblijft doet dat niet. De `sleep` die hem openhoudt is
+#:    een KIND van deze loper, dus hij zit in dezelfde procesgroep en gaat
+#:    vanzelf mee als we die groep stoppen. Een losse `tail -f /dev/null`
+#:    buiten de groep leek simpeler, maar dan moet je hem met `pkill -f`
+#:    opruimen -- en dat patroon matcht ook de shell die het startcommando
+#:    uitvoert, want die heeft die tekst in zijn eigen commandoregel staan.
+#:    Die maakte dus zichzelf dood.
+#:
+#: 2. HET GROEPSNUMMER komt uit het proces zelf. Onder `setsid` is `$$` de
+#:    procesgroep; `$!` in de aanroepende shell levert de setsid-wrapper op,
+#:    en die is al weg tegen de tijd dat je hem wilt stoppen.
+_LOPER_SCRIPT = """#!/bin/sh
+cd "$1" 2>/dev/null || cd /workspace
+echo $$ > .labx-start.pid
+rm -f .labx-stdin
+mkfifo -m 600 .labx-stdin 2>/dev/null || true
+sleep 2147483647 > .labx-stdin &
+exec sh /workspace/.labx-start.sh < .labx-stdin
+"""
+
+
+def _na_inrichten_starten(lab_id: str, *, slot: Optional[Any] = None) -> bool:
+    """Inrichten, en als dat klaar is de applicatie starten.
+
+    Twee handelingen die niet samen in één stap kunnen: inrichten moet
+    EINDIGEN, de applicatie moet juist blijven draaien. Ze allebei als
+    inrichtingsstap behandelen levert een time-out op die eruitziet als een
+    fout terwijl alles werkt -- dat kostte een hele proefbouw om te ontdekken.
+
+    Zelfde boekhouding als het gewone inrichten, zodat twee rondes niet
+    tegelijk in dezelfde container aan apt gaan zitten.
+
+    `slot` zet dit werk achter een slot dat je zélf meebrengt -- bedoeld voor
+    labs die een MACHINE delen. De boekhouding hierboven bewaakt één
+    container; het geheugen van de machine bewaakt niemand. Drie branch-labs
+    van dezelfde monorepo die tegelijk `yarn install` draaien passen niet in
+    8 GB, en dan wint er één en worden de andere twee doodgeschoten met een
+    `Killed` halverwege de installatie -- een lab dat op "running" staat en
+    niets doet, zonder uitleg.
+    """
+    import asyncio
+
+    running = _PROVISION_TASKS.get(lab_id)
+    if running is not None and not running.done():
+        _PROVISION_NOGMAALS.add(lab_id)
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # geen draaiende loop (script/test) — dan niet
+        log.warningx("Inrichten niet gestart: geen event loop", lab_id=lab_id)
+        return False
+
+    async def _werk() -> None:
+        from db.database import SessionLocal
+
+        await _provision_worker(lab_id, force=True)
+        try:
+            with SessionLocal() as db:
+                await LabService(db).start_applicatie(lab_id)
+        except Exception as exc:  # noqa: BLE001 — starten mag het inrichten niet omverhalen
+            log.warningx("Applicatie starten mislukt", lab_id=lab_id, error=str(exc)[:300])
+        try:
+            with SessionLocal() as db:
+                await LabService(db).meld_geheugentekort(lab_id)
+        except Exception as exc:  # noqa: BLE001 — een melding mag niets omverhalen
+            log.warningx("Geheugencontrole overgeslagen", lab_id=lab_id, error=str(exc)[:200])
+
+    async def _beide() -> None:
+        if slot is None:
+            await _werk()
+            return
+        if slot.locked():
+            log.infox("Lab wacht op een ander lab van hetzelfde cluster", lab_id=lab_id)
+        async with slot:
+            await _werk()
+
+    _PROVISION_NOGMAALS.discard(lab_id)
+    task = loop.create_task(_beide())
+    _PROVISION_TASKS[lab_id] = task
+    task.add_done_callback(lambda _t: _na_inrichten(lab_id))
+    return True
 
 
 def provision_in_background(lab_id: str, *, force: bool = False) -> bool:

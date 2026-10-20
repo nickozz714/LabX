@@ -19,11 +19,12 @@
  * balk was van de naam nauwelijks iets te zien.
  */
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Archive, ArchiveRestore, Bot, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, SendHorizontal, Shield, Square, Terminal, Trash2, PanelLeft, Search, X } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Archive, ArchiveRestore, Bot, Boxes, ChevronDown, ChevronRight, PanelRight, Pencil, Pin, Plus, SendHorizontal, Shield, Square, Terminal, Trash2, PanelLeft, Search, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi, chatBijlageMap } from "@/lib/chat";
+import { clusterApi } from "@/lib/clusters";
 import { labsApi, type Bijlage } from "@/lib/labs";
 import { settingsApi } from "@/lib/settings";
 import type { BackgroundRunDto, ChatEvent, Lab, Message, Thread } from "@/lib/types";
@@ -76,6 +77,10 @@ export function ChatPage() {
   const bevestig = useBevestiging();
   const melding = useMelding();
   const [threads, setThreads] = useState<Thread[]>([]);
+  // Een lege lijst en een lijst die nog moet komen zien er hetzelfde uit.
+  // Voor /chat?lab= is dat verschil beslissend: bij "nog niet binnen"
+  // zou hij een nieuw gesprek maken naast het gesprek dat er al is.
+  const [threadsGeladen, setThreadsGeladen] = useState(false);
   const [zoekterm, setZoekterm] = useState("");
   // Sessies achter agent-runs op een ticket. Standaard uit: op een bord met
   // tachtig tickets zou de lijst niet meer te lezen zijn. Aan als je erin wilt
@@ -86,6 +91,8 @@ export function ChatPage() {
   const [toonArchief, setToonArchief] = useState(false);
   const [zoekParams, setZoekParams] = useSearchParams();
   const [labs, setLabs] = useState<Lab[]>([]);
+  // Alleen de namen; het clusteroverzicht zelf hoort hier niet.
+  const [clusterNamen, setClusterNamen] = useState<Record<number, string>>({});
   const [activeThread, setActiveThread] = useState<Thread | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -187,7 +194,7 @@ export function ChatPage() {
   useEffect(() => {
     let leeft = true;
     const haal = () => chatApi.listThreads(toonBoard, toonArchief)
-      .then((r) => { if (leeft) setThreads(r); })
+      .then((r) => { if (leeft) { setThreads(r); setThreadsGeladen(true); } })
       .catch(() => {});
     haal();
     // Elke vijf seconden opnieuw. Zonder dat is "actief" een momentopname van
@@ -198,6 +205,9 @@ export function ChatPage() {
 
   useEffect(() => {
     labsApi.list().then(setLabs);
+    clusterApi.lijst()
+      .then((cs) => setClusterNamen(Object.fromEntries(cs.map((c) => [c.id, c.naam]))))
+      .catch(() => { /* geen clusters is geen fout */ });
   }, []);
 
   // Rechtstreekse link vanaf een ticket: /chat?thread=<id>. Die thread staat
@@ -216,6 +226,23 @@ export function ChatPage() {
       .catch(() => setZoekParams({}, { replace: true }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoekParams]);
+
+  // Rechtstreekse link vanaf een branch-lab: /chat?lab=<id>. Zonder dit deed
+  // de chatknop in een cluster niets zichtbaars -- je belandde op de chat,
+  // maar zonder dat lab, en moest het alsnog zelf opzoeken. Een bestaand
+  // gesprek voor dat lab openen heeft de voorkeur boven een nieuw gesprek:
+  // anders staat er na drie klikken een rij lege chats.
+  useEffect(() => {
+    const gevraagd = zoekParams.get("lab");
+    if (!gevraagd || !threadsGeladen) return;
+    if (activeThread?.lab_id === gevraagd) { setZoekParams({}, { replace: true }); return; }
+    const bestaand = threads.find((t) => t.lab_id === gevraagd && !t.archived_at);
+    (bestaand ? openThread(bestaand) : createThreadForLab(gevraagd))
+      .catch(() => melding.fout("Chat openen lukte niet",
+                                "Draait dit lab nog?"))
+      .finally(() => setZoekParams({}, { replace: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoekParams, threadsGeladen]);
 
   const activeThreadIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -506,9 +533,24 @@ export function ChatPage() {
     for (const t of zichtbaar) {
       byLab.set(t.lab_id, [...(byLab.get(t.lab_id) || []), t]);
     }
+    // Een branch-lab heet "Cluster · branch"; onder het clusterkopje is dat
+    // dubbelop. Daar is de branch genoeg.
     let groups: ThreadGroup[] = labs.map((l) => ({
-      id: l.id, name: l.name, lab: l, threads: byLab.get(l.id) || [],
+      id: l.id,
+      name: l.cluster_id && l.branch ? l.branch : l.name,
+      lab: l,
+      threads: byLab.get(l.id) || [],
+      clusterId: l.cluster_id ?? null,
+      clusterNaam: l.cluster_id ? clusterNamen[l.cluster_id] || "Cluster" : null,
     }));
+    // Eigen labs eerst, daarna de clusters bij elkaar. Zonder dit raken je
+    // eigen chats verspreid tussen de branches zodra er een paar labs
+    // bijkomen.
+    groups.sort((a, b) => {
+      if (!!a.clusterId !== !!b.clusterId) return a.clusterId ? 1 : -1;
+      if (a.clusterId !== b.clusterId) return (a.clusterId || 0) - (b.clusterId || 0);
+      return 0;
+    });
     // Chats waarvan het lab niet in de lijst staat — terwijl de labs nog laden,
     // of als er een verdwijnt. Ze mogen niet uit beeld vallen.
     const known = new Set(labs.map((l) => l.id));
@@ -624,10 +666,24 @@ export function ChatPage() {
           </p>
         ) : (
           <div className="space-y-2">
-            {threadGroups.map((group) => {
+            {threadGroups.map((group, i) => {
               const open = !collapsed[group.id];
+              // Het clusterkopje: alleen boven de EERSTE categorie van dit
+              // cluster. Zo zie je in één oogopslag welke branches bij elkaar
+              // horen, zonder dat elke regel zijn cluster herhaalt.
+              const eersteVanCluster =
+                group.clusterId && threadGroups[i - 1]?.clusterId !== group.clusterId;
               return (
                 <section key={group.id}>
+                  {eersteVanCluster && (
+                    <Link
+                      to={`/clusters/${group.clusterId}`}
+                      className="mt-3 mb-1 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                    >
+                      <Boxes size={12} />
+                      {group.clusterNaam}
+                    </Link>
+                  )}
                   <div className="group flex items-center gap-1 rounded px-1 py-1 hover:bg-secondary/60">
                     <button
                       onClick={() => setCollapsed((prev) => ({ ...prev, [group.id]: open }))}
@@ -1248,7 +1304,16 @@ function ChatGuardAudit({ labId }: { labId: string }) {
   );
 }
 
-type ThreadGroup = { id: string; name: string; lab: Lab | null; threads: Thread[] };
+type ThreadGroup = {
+  id: string;
+  name: string;
+  lab: Lab | null;
+  threads: Thread[];
+  /** Bij welk cluster deze categorie hoort, als het een branch-lab is. De
+   *  kopjes van één cluster staan dan bij elkaar onder één koprel. */
+  clusterId?: number | null;
+  clusterNaam?: string | null;
+};
 
 /**
  * Hernoemen in een pop-up. Bewust géén opslaan-op-blur: dat maakte van elke

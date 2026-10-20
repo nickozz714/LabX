@@ -20,3 +20,9 @@ fastmcp>=4.0.0,<5
 # wordt in de Dockerfile opgehaald (~13 MB); zonder dat model start Presidio
 # niet.
 presidio-analyzer>=2.2
+
+# Compose-bestanden lezen voor de clusterverkenner. Dit is de sterkste bron
+# die een repo kan hebben: daar staat het cluster al in, alleen noemde niemand
+# het ooit zo. Zonder dit pakket valt alleen die ene detector weg -- de rest
+# van de verkenning werkt door.
+PyYAML>=6.0

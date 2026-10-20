@@ -21,6 +21,67 @@ log = get_logger(__name__)
 # a table already existed in the wild. Remove an entry once comfortable that
 # no deployed database predates it.
 _ADDITIVE_COLUMNS = {
+    "clusters": [
+        # Welke geheimen dit cluster nodig heeft voordat een branch-lab kan
+        # draaien -- de tweede lijst van de verkenner. Dat rijtje is geen
+        # restpost: het is precies waar een branch-lab veertig minuten later
+        # op omvalt als niemand het vooraf opschreef.
+        ("benodigde_geheimen", "TEXT"),
+        # Waarop de applicatie in een branch-lab luistert. Bestaande clusters
+        # hebben dit niet en vallen terug op de oude standaard.
+        ("lab_poorten", "TEXT"),
+        ("env_paden", "TEXT"),
+        # Of een nieuw branch-lab de guards aan krijgt. Bestaande clusters
+        # staan op aan -- dat was tot nu toe de enige stand.
+        ("lab_model", "VARCHAR(128)"),
+        ("lab_max_turns", "INTEGER"),
+        ("lab_data_guard", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("lab_llm_guard", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("lab_extras", "TEXT"),
+        # De deploy key van dit cluster. Erbij gekomen omdat een organisatie
+        # met goedkeuringsbeleid een token kan tegenhouden, en een deploy key
+        # op repo-niveau daarbuiten valt.
+        ("proef_status", "VARCHAR(20) NOT NULL DEFAULT 'geen'"),
+        ("proef_lab_id", "VARCHAR(64)"),
+        ("proef_log", "TEXT"),
+        ("lab_cpu", "REAL"),
+        ("lab_mem_mb", "INTEGER"),
+        # Standaard 0: een branch-lab krijgt de Azure CLI niet, ook al zet
+        # deze installatie hem in elk gewoon lab.
+        ("lab_azure", "BOOLEAN NOT NULL DEFAULT 0"),
+        # Haalt de applicatie haar geheimen zelf op? Dan hoeven ze niet in
+        # de kluis; LabX levert alleen het gereedschap.
+        ("geheimen_zelf", "BOOLEAN NOT NULL DEFAULT 0"),
+        # Het Azure-profiel dat elk branch-lab meekrijgt. Nodig zodra de
+        # applicatie zelf bij Azure moet kunnen.
+        ("azure_profiel_id", "INTEGER"),
+        ("ssh_publiek", "TEXT"),
+        ("ssh_prive_encrypted", "TEXT"),
+    ],
+    "cluster_plannen": [
+        # Antwoorden op de vragen van de verkenner, en het plan waar dit uit
+        # voortkwam. Erbij gekomen nadat bleek dat een plan wel vragen stelde
+        # maar niemand ze kon beantwoorden.
+        ("antwoorden", "TEXT"),
+        ("token_geheim", "VARCHAR(120)"),
+        # Env-bestanden die bij het VERKENNEN zijn meegegeven, zodat het model
+        # de sleutelnamen kent voordat het een startscript schrijft.
+        ("env_bestanden", "TEXT"),
+        ("lab_extras", "TEXT"),
+        # Terugkoppeling op het plan en op losse onderdelen. Erbij gekomen
+        # nadat bleek dat antwoorden alleen kon op vragen die het model
+        # toevallig stelde.
+        ("opmerkingen", "TEXT"),
+        ("instructie", "TEXT"),
+        ("opmerking", "TEXT"),
+        ("vorig_plan_id", "INTEGER"),
+    ],
+    "cluster_diensten": [
+        # Waar een dienst van buiten te bereiken is: {containerpoort:
+        # machinepoort}. Erbij gekomen nadat bleek dat de containerpoort zelf
+        # publiceren botst met wat er al op de machine luistert.
+        ("poort_map", "TEXT"),
+    ],
     "lab_hosts": [
         # Hoeveel modelcontainers hier mogen draaien. 0 voor wat er al staat:
         # een bestaande machine doet alleen labs tot jij er iets anders van
@@ -111,6 +172,22 @@ _ADDITIVE_COLUMNS = {
         ("wait_reason", "TEXT"),
     ],
     "labs": [
+        # Bij welk cluster en welke branch dit lab hoort. NULL voor alles
+        # wat er al staat: een bestaand lab is een gewoon lab.
+        ("cluster_id", "INTEGER"),
+        ("branch", "VARCHAR(255)"),
+        ("poort_map", "TEXT"),
+        # Waar dit branch-lab over GAAT. De titel wordt de branchnaam en
+        # reist dus mee naar git; de beschrijving blijft hier en komt nergens
+        # in een commit terecht.
+        ("feature_titel", "VARCHAR(200)"),
+        ("max_turns", "INTEGER"),
+        # Of het startscript draait. Bestaande labs: ja, dat was de
+        # enige stand.
+        # Standaard 0: starten is sinds 20-10-2026 een handeling van de
+        # gebruiker, geen bijwerking van het aanzetten van een container.
+        ("applicatie_starten", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("feature_beschrijving", "TEXT"),
         ("chat_deelt_werker", "BOOLEAN NOT NULL DEFAULT 1"),
         ("azure_profile_id", "INTEGER"),
         ("extras", "TEXT"),
@@ -151,6 +228,10 @@ _ADDITIVE_COLUMNS = {
         ("archived_at", "VARCHAR(64)"),
     ],
     "boards": [
+        # Een bord kan bij een cluster horen. Eén bord per cluster; het
+        # "labbord" is dit bord gefilterd op één branch, want een bord per
+        # branch-lab zou verdwijnen zodra je dat wegwerplab opruimt.
+        ("cluster_id", "INTEGER"),
         # Kolom waar een ticket heen gaat zodra de agent eraan begint.
         ("agent_busy_column", "VARCHAR(64)"),
         # Automatisch archiveren: in welke kolom, en na hoeveel dagen.
@@ -158,6 +239,9 @@ _ADDITIVE_COLUMNS = {
         ("archive_days", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "tickets": [
+        # Bij welke branch dit ticket hoort. De branch en niet het lab-id:
+        # het lab komt en gaat, de branch blijft.
+        ("branch", "VARCHAR(200)"),
         ("acceptance_criteria", "TEXT"),
         ("depends_on", "TEXT"),
         # Wat de bron als laatste zei; het ijkpunt voor "welk veld is hier
@@ -283,6 +367,11 @@ def init_db() -> None:
         guard_rule,
         lab,
         lab_extra,
+        cluster,
+        cluster_bundel,
+        cluster_dienst_actie,
+        cluster_env_file,
+        cluster_secret,
         lab_host,
         model_runner,
         secret,
@@ -304,4 +393,25 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _run_backfills(_ensure_columns())
+    _meegeleverde_skills()
     log.info("db_initialised")
+
+
+def _meegeleverde_skills() -> None:
+    """Skills die LabX zelf meebrengt, aanmaken als ze er nog niet zijn.
+
+    Nooit bijwerken en nooit terugzetten: wie er een uitzet of aanpast, heeft
+    dat zo bedoeld. Een fout hier mag het opstarten niet tegenhouden -- een
+    schrijfstijl is geen voorwaarde om te kunnen werken.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from services.skills.meegeleverd import zorg_voor_meegeleverde_skills
+
+    db = sessionmaker(bind=engine)()
+    try:
+        zorg_voor_meegeleverde_skills(db)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("meegeleverde_skills_overgeslagen error=%s", str(exc)[:200])
+    finally:
+        db.close()

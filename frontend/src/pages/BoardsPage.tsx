@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
+import { clusterApi, type Cluster } from "@/lib/clusters";
 import { labsApi } from "@/lib/labs";
 import type { BoardDto, Lab, ProviderSpec } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, Input, Label, Modal, Select } from "@/components/ui";
@@ -86,10 +87,19 @@ export function BoardsPage() {
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <Boxes size={12} />
+                  {/* Een clusterbord HOORT geen lab te hebben: elk ticket wijst
+                      naar een branch en draait in het lab van díé branch.
+                      "Geen lab gekoppeld" was feitelijk waar en volstrekt
+                      misleidend — het las als een tekortkoming. */}
                   {b.lab_id ? (
                     <>
                       {b.lab_name || b.lab_id.slice(0, 8)}
                       <Badge tone={b.lab_status === "running" ? "green" : "yellow"}>{b.lab_status}</Badge>
+                    </>
+                  ) : b.cluster_id ? (
+                    <>
+                      cluster {b.cluster_naam || b.cluster_id}
+                      <Badge tone="violet">een lab per branch</Badge>
                     </>
                   ) : (
                     "geen lab gekoppeld"
@@ -148,6 +158,11 @@ function CreateBoardModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [keyPrefix, setKeyPrefix] = useState("");
   const [description, setDescription] = useState("");
   const [labId, setLabId] = useState("");
+  // Een bord hoort bij één lab OF bij een cluster. Bij een cluster krijgt
+  // elk ticket een branch en werkt de agent in het lab van díé branch --
+  // daarom sluiten ze elkaar uit en staan ze in één keuzelijst.
+  const [clusterId, setClusterId] = useState<number | null>(null);
+  const [clusters, setClusters] = useState<Cluster[]>([]);
   const [provider, setProvider] = useState<string>("local");
   const [labs, setLabs] = useState<Lab[]>([]);
   const [providers, setProviders] = useState<ProviderSpec[]>([]);
@@ -156,6 +171,7 @@ function CreateBoardModal({ onClose, onCreated }: { onClose: () => void; onCreat
   useEffect(() => {
     labsApi.list().then(setLabs);
     boardApi.providers().then(setProviders);
+    clusterApi.lijst().then(setClusters).catch(() => { /* geen clusters is geen fout */ });
   }, []);
 
   const spec = providers.find((p) => p.key === provider);
@@ -167,6 +183,7 @@ function CreateBoardModal({ onClose, onCreated }: { onClose: () => void; onCreat
         key_prefix: keyPrefix.trim() || undefined,
         description: description.trim() || undefined,
         lab_id: labId || undefined,
+        cluster_id: clusterId ?? undefined,
         provider,
       });
       onCreated(board);
@@ -198,17 +215,35 @@ function CreateBoardModal({ onClose, onCreated }: { onClose: () => void; onCreat
           <Input value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
         <div>
-          <Label>Gekoppeld lab</Label>
-          <Select value={labId} onChange={(e) => setLabId(e.target.value)}>
-            <option value="">Geen lab (agent kan nog niets oppakken)</option>
-            {labs.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name} — {l.status}
-              </option>
-            ))}
+          <Label>Hoort bij</Label>
+          <Select
+            value={clusterId ? `c:${clusterId}` : (labId ? `l:${labId}` : "")}
+            onChange={(e) => {
+              const v = e.target.value;
+              setClusterId(v.startsWith("c:") ? Number(v.slice(2)) : null);
+              setLabId(v.startsWith("l:") ? v.slice(2) : "");
+            }}
+          >
+            <option value="">Niets (de agent kan nog niets oppakken)</option>
+            {clusters.length > 0 && (
+              <optgroup label="Cluster — één bord, een ticket per branch">
+                {clusters.map((c) => (
+                  <option key={c.id} value={`c:${c.id}`}>{c.naam}</option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label="Eén lab">
+              {labs.filter((l) => !l.cluster_id).map((l) => (
+                <option key={l.id} value={`l:${l.id}`}>
+                  {l.name} — {l.status}
+                </option>
+              ))}
+            </optgroup>
           </Select>
           <p className="mt-1 text-xs text-muted-foreground">
-            De agent werkt ín dit lab wanneer hij een ticket van dit board oppakt.
+            {clusterId
+              ? "Elk ticket krijgt een branch, en de agent werkt in het lab van díé branch."
+              : "De agent werkt ín dit lab wanneer hij een ticket van dit board oppakt."}
           </p>
         </div>
         <div>

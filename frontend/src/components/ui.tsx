@@ -234,3 +234,78 @@ export function Label({ children }: { children: ReactNode }) {
 export function EmptyState({ children }: { children: ReactNode }) {
   return <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">{children}</div>;
 }
+
+/**
+ * Een knop met een uitklaplijstje: de rest van de acties.
+ *
+ * Nodig geworden toen een branch-lab zes knoppen op een rij had staan. Zes
+ * knoppen is geen keuze meer maar een muur, en het verschil tussen de ene
+ * die je bijna altijd gebruikt en de vijf die je zelden nodig hebt, was
+ * nergens aan te zien.
+ *
+ * Bewust klein gehouden: geen portal, geen focus-val, geen toetsenbordpad
+ * door de items. Wat er wél in moet, omdat het anders stil misgaat: buiten
+ * klikken sluit, Escape sluit, en een item dat iets GEVAARLIJKS doet ziet er
+ * anders uit.
+ */
+export function MenuKnop({ label = "Meer", items, align = "right" }: {
+  label?: string;
+  items: ({
+    label: string;
+    onClick: () => void | Promise<unknown>;
+    icon?: ReactNode;
+    gevaarlijk?: boolean;
+    uit?: boolean;
+  } | "scheiding")[];
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const doos = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function buiten(e: Event) {
+      if (doos.current && !doos.current.contains(e.target as Node)) setOpen(false);
+    }
+    function toets(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", buiten);
+    document.addEventListener("keydown", toets);
+    return () => {
+      document.removeEventListener("mousedown", buiten);
+      document.removeEventListener("keydown", toets);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={doos}>
+      <Button variant="ghost" aria-label={label} aria-expanded={open}
+              onClick={() => setOpen((v) => !v)}>
+        <span className="px-0.5 text-base leading-none">⋯</span>
+      </Button>
+      {open && (
+        <div className={`absolute z-50 mt-1 min-w-48 rounded-lg border border-border bg-background
+                         p-1 shadow-lg ${align === "right" ? "right-0" : "left-0"}`}>
+          {items.map((item, i) => (item === "scheiding" ? (
+            <div key={`s${i}`} className="my-1 border-t border-border" />
+          ) : (
+            <button
+              key={item.label}
+              disabled={item.uit}
+              onClick={() => { setOpen(false); void item.onClick(); }}
+              className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm
+                          disabled:cursor-not-allowed disabled:opacity-40
+                          ${item.gevaarlijk
+                            ? "text-destructive hover:bg-destructive/10"
+                            : "hover:bg-muted"}`}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          )))}
+        </div>
+      )}
+    </div>
+  );
+}

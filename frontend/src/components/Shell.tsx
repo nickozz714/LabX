@@ -24,7 +24,7 @@ import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { Versie } from "@/components/Versie";
 import { ThemaKiezer } from "@/components/ThemaKiezer";
 import {
-  Boxes, ChevronLeft, ChevronRight, KanbanSquare, LayoutDashboard, Lock, LogOut,
+  Boxes, ChevronLeft, ChevronRight, GitBranch, KanbanSquare, LayoutDashboard, Lock, LogOut,
   MessageSquare, Menu, Settings, ShieldCheck, Wrench, Clock, X,
 } from "lucide-react";
 import { chatApi } from "@/lib/chat";
@@ -37,6 +37,7 @@ const NAV = [
   // liep het laatste af. Hier start je ook de orchestrator.
   { to: "/overzicht", label: "Overzicht", icon: LayoutDashboard, onder: "Wat draait er nu" },
   { to: "/labs", label: "Labs", icon: Boxes, onder: "Je omgevingen" },
+  { to: "/clusters", label: "Clusters", icon: GitBranch, onder: "Repo's met branch-labs" },
   { to: "/chat", label: "Chat", icon: MessageSquare, onder: "Werken" },
   { to: "/boards", label: "Boards", icon: KanbanSquare, onder: "Tickets en agent-runs" },
   { to: "/workbench", label: "Workbench", icon: Wrench, onder: "Skills, workflows en planning" },
@@ -51,6 +52,7 @@ const NAV = [
  *  blijven zeggen en dat is precies de verwarring die een kop moet wegnemen. */
 const EXTRA_PAGINAS = [
   { to: "/labs/machines", label: "Machines", onder: "Computers die labs draaien" },
+  { to: "/clusters/plannen/", label: "Voorstel", onder: "Wat de verkenner van je repo maakte" },
   { to: "/orchestrator", label: "Orchestrator", onder: "Praten met je labs" },
   { to: "/workflows/", label: "Workflow", onder: "De tekenaar" },
 ];

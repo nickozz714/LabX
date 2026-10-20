@@ -1,214 +1,386 @@
-"""Tickets die samen in één werker draaien.
+"""Bestanden van buiten naar een cluster brengen, met een opdracht erbij.
 
-Een planning gaf elk ticket zijn eigen werker: twee runs in dezelfde container
-vechten om dezelfde bestanden, processen en az-sessie. Dat blijft waar — maar
-het is niet altijd een probleem, en soms is het precies wat je wilt: zes
-tickets oppakken en ze per twee laten lopen, parallel waar het mag en
-volgordelijk waar het moet.
+Een vaste dienst begint leeg, en de bron waaruit hij gevuld hoort te worden
+is niet altijd bereikbaar — een firewall, een omgeving waar je niet bij kunt.
+De export staat dan gewoon op je schijf.
 
-Dat is een bundel: tickets met hetzelfde bundelnummer draaien samen in één
-container, de bundels zelf gaan op volgorde. Wie ze bij elkaar zet, zegt
-daarmee dat ze elkaar verdragen — LabX weet dat niet en gaat dat ook niet
-raden.
+Wat hier vastligt en stil kan sneuvelen:
 
-Deze tests leggen de twee regels vast die dat werkend maken: een bundel bezet
-samen één plek, en het tweede ticket van een bundel gaat naar de werker van
-zijn bundelgenoot in plaats van op zoek naar een vrije.
+- **Een archief komt van buiten.** `../../etc/passwd`, een absoluut pad, een
+  symlink: alle drie horen geweigerd te worden, en weigeren komt vóór
+  opschonen. Andersom is de fout die hier eerder in zat — `lstrip("./")`
+  maakte van `/etc/passwd` een keurig `etc/passwd`.
+- **De inhoud gaat nooit naar het model.** Alleen paden en omvang.
+- **De bundel hangt alleen-lezen.** Een script dat een dump inleest hoort die
+  dump niet te kunnen veranderen.
+- **Zonder opdracht gebeurt er niets.** "Draai maar iets tegen deze dienst"
+  is geen opdracht.
 """
+from __future__ import annotations
+
+import asyncio
+import io
+import os
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from services.boards.plan_service import PlanService  # noqa: E402
 
-
-def _svc(items=None, werker=None, bezet_door=None):
-    svc = PlanService.__new__(PlanService)
-    svc.items = lambda plan_id: list(items or [])
-    svc._claim_worker = lambda plan: (werker, bezet_door)
-    return svc
-
-
-def _item(id_, *, bundel=None, state="waiting", worker_id=None):
-    return SimpleNamespace(id=id_, bundel=bundel, state=state, worker_id=worker_id,
-                           ticket_id=id_ * 10)
-
-
-# ── de sleutel ──────────────────────────────────────────────────────────────
-
-def test_zonder_bundelnummer_is_een_ticket_zijn_eigen_bundel():
-    """Dit is wat maakt dat een bestaande planning zich niet anders gedraagt:
-    elk ticket is dan zijn eigen bundel, dus elk ticket krijgt zijn eigen
-    werker — precies zoals voorheen."""
-    assert PlanService.bundelsleutel(_item(7)) == "item:7"
-    assert PlanService.bundelsleutel(_item(8)) == "item:8"
-
-
-def test_hetzelfde_nummer_is_dezelfde_bundel():
-    assert (PlanService.bundelsleutel(_item(1, bundel=2))
-            == PlanService.bundelsleutel(_item(9, bundel=2)))
-
-
-def test_bundel_nul_telt_niet_als_bundel():
-    """0 en None betekenen allebei 'alleen'. Een scherm dat een leeg veld als 0
-    doorstuurt, mag niet per ongeluk alle tickets in één bundel gooien."""
-    assert PlanService.bundelsleutel(_item(3, bundel=0)) == "item:3"
-
-
-# ── waar een ticket terechtkomt ─────────────────────────────────────────────
-
-def test_eerste_van_een_bundel_claimt_een_vrije_werker():
-    werker = SimpleNamespace(id=42)
-    svc = _svc(items=[_item(1, bundel=1)], werker=werker)
-    mag, worker_id, bezet = svc._plek_voor_item(SimpleNamespace(id=1), _item(1, bundel=1))
-    assert (mag, worker_id, bezet) == (True, 42, None)
-
-
-def test_tweede_van_een_bundel_gaat_naar_de_werker_van_zijn_genoot():
-    """De kern van het bundelen. Zonder dit zou het tweede ticket een NIEUWE
-    werker claimen — en dan is een bundel niets anders dan gewoon parallel
-    draaien."""
-    lopend = _item(1, bundel=3, state="running", worker_id=7)
-    svc = _svc(items=[lopend, _item(2, bundel=3)],
-               werker=SimpleNamespace(id=99))  # deze zou hij NIET moeten pakken
-    svc.db = SimpleNamespace()
-    import services.lab.lab_service as ls
-    origineel = ls.LabService
-    try:
-        ls.LabService = lambda db: SimpleNamespace(touch_worker=lambda _id: None)
-        mag, worker_id, bezet = svc._plek_voor_item(SimpleNamespace(id=1), _item(2, bundel=3))
-    finally:
-        ls.LabService = origineel
-    assert mag is True
-    assert worker_id == 7, "hij hoort bij zijn bundelgenoot te gaan zitten"
-
-
-def test_een_ticket_van_een_ANDERE_bundel_krijgt_gewoon_een_eigen_werker():
-    lopend = _item(1, bundel=3, state="running", worker_id=7)
-    svc = _svc(items=[lopend, _item(2, bundel=4)], werker=SimpleNamespace(id=99))
-    mag, worker_id, _ = svc._plek_voor_item(SimpleNamespace(id=1), _item(2, bundel=4))
-    assert (mag, worker_id) == (True, 99)
-
-
-def test_geen_werker_vrij_betekent_wachten_en_geen_stille_start():
-    svc = _svc(items=[], werker=None, bezet_door=12)
-    mag, worker_id, bezet = svc._plek_voor_item(SimpleNamespace(id=1), _item(1))
-    assert mag is False and bezet == 12
-
-
-def test_bundelgenoot_zonder_werker_neemt_dezelfde_plek():
-    """Een lab dat bij de allereerste start nog geen werkers had, draait zijn
-    ticket zonder werker-id (dat is dan 'de container van het lab'). Zijn
-    bundelgenoot hoort dáár ook te landen, en niet te gaan wachten."""
-    lopend = _item(1, bundel=5, state="running", worker_id=None)
-    svc = _svc(items=[lopend, _item(2, bundel=5)], werker=None, bezet_door=3)
-    mag, worker_id, _ = svc._plek_voor_item(SimpleNamespace(id=1), _item(2, bundel=5))
-    assert (mag, worker_id) == (True, None)
-
-
-# ── hoeveel plekken een planning gebruikt ───────────────────────────────────
-
-class NepDb:
-    def __init__(self, lab=None, board=None):
-        self._lab, self._board = lab, board
-
-    def get(self, model, _id):
-        return self._board if model.__name__ == "Board" else self._lab
-
-
-def test_de_ruimte_telt_bundels_en_geen_tickets():
-    """Drie tickets in één bundel zijn samen één plek. Zou dit tickets tellen,
-    dan zou een bundel van drie in een lab met drie werkers alle ruimte
-    opeten terwijl hij er maar één container gebruikt."""
-    svc = PlanService.__new__(PlanService)
-    svc.db = NepDb(lab=SimpleNamespace(max_workers=3), board=SimpleNamespace(lab_id="lab-1"))
-    plan = SimpleNamespace(max_parallel=None, board_id=1)
-    lopend = [_item(1, bundel=1, state="running"), _item(2, bundel=1, state="running"),
-              _item(3, bundel=1, state="running")]
-    bundels = {PlanService.bundelsleutel(i) for i in lopend}
-    assert len(bundels) == 1
-    assert svc._vrije_ruimte(plan, len(bundels)) == 2
-
-
-# ── bundels zetten ──────────────────────────────────────────────────────────
-
-class ZetDb:
-    def __init__(self):
-        self.commits = 0
-
-    def commit(self):
-        self.commits += 1
-
-
-def test_bundels_zetten_slaat_een_lopend_ticket_over():
-    """Een lopend ticket zit al ergens. Zijn bundel verplaatsen zou betekenen
-    dat het volgens de administratie ineens in een andere container draait dan
-    waar het echt is."""
-    lopend = _item(1, state="running")
-    wacht = _item(2)
-    svc = PlanService.__new__(PlanService)
-    svc.db = ZetDb()
-    svc.items = lambda plan_id: [lopend, wacht]
-    svc.set_bundels(1, {1: 5, 2: 5})
-    assert lopend.bundel is None, "een lopend ticket mag niet verhuizen"
-    assert wacht.bundel == 5
-
-
-@pytest.mark.parametrize("waarde", [None, 0, ""])
-def test_leeg_bundelnummer_betekent_alleen(waarde):
-    it = _item(2, bundel=4)
-    svc = PlanService.__new__(PlanService)
-    svc.db = ZetDb()
-    svc.items = lambda plan_id: [it]
-    svc.set_bundels(1, {2: waarde})
-    assert it.bundel is None
-
-
-# ── en dezelfde weg, maar dan door de echte database ────────────────────────
-
-def test_bundels_overleven_de_database_en_komen_terug_in_de_uitvoer():
-    """De unittests hierboven werken met nepobjecten. Deze legt vast dat de
-    kolom er echt is, dat een bundelnummer bewaard blijft en dat het scherm het
-    terugkrijgt — anders sleep je in de UI iets wat na een verversing weg is."""
+@pytest.fixture()
+def db():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
     from db.database import Base
-    import models.board  # noqa: F401  (Ticket + Board horen bij de tabellen)
-    import models.plan  # noqa: F401
-    from models.board import Board, Ticket
-    from models.plan import PlanClaim, TicketPlan, TicketPlanItem
+    from models import (  # noqa: F401
+        audit, azure_profile, background_run, board, claim_resource, cluster,
+        cluster_bundel, cluster_dienst_actie, cluster_env_file, cluster_secret,
+        guard_audit, guard_rule, lab, lab_extra, lab_host, lab_secret,
+        lab_worker, mcp_server, message, model_runner, notification, plan,
+        schedule, secret, skill, skill_tool, thread, time_entry, tool, voice,
+        workflow,
+    )
 
     engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine, tables=[
-        Board.__table__, Ticket.__table__,
-        TicketPlan.__table__, TicketPlanItem.__table__, PlanClaim.__table__,
-    ])
-    db = sessionmaker(bind=engine)()
-    nu = "2026-09-23T12:00:00+00:00"
-    db.add(Board(id=1, name="Bord", columns=["todo"], created_at=nu, updated_at=nu))
-    for tid in (1, 2, 3):
-        db.add(Ticket(id=tid, board_id=1, key=f"T-{tid}", title=f"Ticket {tid}",
-                      status="todo", position=float(tid), created_at=nu, updated_at=nu))
-    db.add(TicketPlan(id=1, board_id=1, name="Plan", state="draft",
-                      created_at=nu, updated_at=nu))
-    for tid in (1, 2, 3):
-        db.add(TicketPlanItem(id=tid, plan_id=1, ticket_id=tid, position=float(tid * 100),
-                              state="waiting"))
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    try:
+        yield s
+    finally:
+        s.close()
+
+
+class _NepRuntime:
+    def __init__(self):
+        self.gevuld = []
+        self.gedraaid = []
+        self.verwijderd = []
+
+    async def vul_volume(self, volume, bron_map, *, timeout=0):
+        # Vastleggen WAT er het volume in zou gaan, zodat een test kan zien
+        # dat een geweigerd pad er ook echt niet in beland is.
+        bestanden = []
+        for wortel, _mappen, namen in os.walk(bron_map):
+            for n in namen:
+                bestanden.append(os.path.relpath(os.path.join(wortel, n), bron_map))
+        self.gevuld.append((volume, sorted(bestanden)))
+
+    async def run_wegwerp(self, *, image, cmd, netwerk=None, env=None,
+                          volumes=None, timeout=0, **_):
+        self.gedraaid.append({"image": image, "cmd": cmd, "netwerk": netwerk,
+                              "env": env, "volumes": volumes})
+        return {"exit_code": 0, "output": "13603 documenten", "truncated": False}
+
+    async def remove_volume(self, naam):
+        self.verwijderd.append(naam)
+
+
+def _cluster_en_dienst(db):
+    from models.cluster import Cluster, ClusterDienst
+
+    nu = "2026-10-19T12:00:00+00:00"
+    c = Cluster(naam="Hive", netwerk="labx-cluster-hive", created_at=nu, updated_at=nu)
+    db.add(c)
+    db.commit()
+    d = ClusterDienst(cluster_id=c.id, naam="ih-cosmos", image="cosmos:latest",
+                      poorten=[8081], poort_map={"8081": 18000}, omgeving={},
+                      status="draait", container_id="abc", created_at=nu, updated_at=nu)
+    db.add(d)
+    db.commit()
+    return c, d
+
+
+def _zip(tmp_path, leden: dict) -> str:
+    pad = str(tmp_path / "bundel.zip")
+    with zipfile.ZipFile(pad, "w") as z:
+        for naam, inhoud in leden.items():
+            z.writestr(naam, inhoud)
+    return pad
+
+
+def _svc(db, rt):
+    from services.lab.bundels import BundelService
+
+    svc = BundelService(db)
+    svc._runtime = lambda _c: rt
+    return svc
+
+
+# ── paden van buiten ─────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("pad", [
+    "../../etc/passwd", "/etc/passwd", "~/.ssh/id_rsa", "a/../../../x",
+    "..\\\\..\\\\windows\\\\system32", "",
+])
+def test_een_pad_dat_buiten_de_bundel_wijst_wordt_geweigerd(pad):
+    from services.lab.bundels import veilig_pad
+
+    assert veilig_pad(pad) is None
+
+
+@pytest.mark.parametrize("pad,verwacht", [
+    ("./controlcenter/data/models.ndjson", "controlcenter/data/models.ndjson"),
+    ("manifest.json", "manifest.json"),
+    ("a//b/./c.txt", "a/b/c.txt"),
+])
+def test_een_gewoon_pad_blijft_gewoon(pad, verwacht):
+    from services.lab.bundels import veilig_pad
+
+    assert veilig_pad(pad) == verwacht
+
+
+def test_een_archief_met_een_ontsnappend_pad_levert_dat_bestand_niet_op(db, tmp_path):
+    """Weigeren, niet opschonen: /etc/passwd mag geen etc/passwd worden."""
+    rt = _NepRuntime()
+    pad = _zip(tmp_path, {"manifest.json": "{}", "../../etc/passwd": "root:x:0:0"})
+    c, _ = _cluster_en_dienst(db)
+
+    b = asyncio.run(_svc(db, rt).zet(c.id, bestandsnaam="bundel.zip", pad=pad))
+
+    paden = [x["pad"] for x in b.boom]
+    assert paden == ["manifest.json"]
+    assert rt.gevuld[0][1] == ["manifest.json"]
+
+
+def test_een_symlink_in_een_tar_komt_er_niet_in(db, tmp_path):
+    from services.lab.bundels import BundelService  # noqa: F401
+
+    pad = str(tmp_path / "bundel.tar.gz")
+    with tarfile.open(pad, "w:gz") as t:
+        data = b"{}"
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(data)
+        t.addfile(info, io.BytesIO(data))
+        link = tarfile.TarInfo("sleutel")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/root/.ssh/id_rsa"
+        t.addfile(link)
+
+    rt = _NepRuntime()
+    c, _ = _cluster_en_dienst(db)
+    b = asyncio.run(_svc(db, rt).zet(c.id, bestandsnaam="bundel.tar.gz", pad=pad))
+
+    assert [x["pad"] for x in b.boom] == ["manifest.json"]
+
+
+def test_een_archief_zonder_bruikbare_inhoud_wordt_geweigerd(db, tmp_path):
+    from fastapi import HTTPException
+
+    rt = _NepRuntime()
+    pad = _zip(tmp_path, {"../buiten.txt": "x"})
+    c, _ = _cluster_en_dienst(db)
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(_svc(db, rt).zet(c.id, bestandsnaam="bundel.zip", pad=pad))
+    assert fout.value.status_code == 400
+
+
+def test_een_bestandssoort_die_labx_niet_uitpakt_wordt_geweigerd(db, tmp_path):
+    from fastapi import HTTPException
+
+    pad = str(tmp_path / "dump.ndjson")
+    Path(pad).write_text("{}")
+    c, _ = _cluster_en_dienst(db)
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(_svc(db, _NepRuntime()).zet(c.id, bestandsnaam="dump.ndjson", pad=pad))
+    assert ".zip" in fout.value.detail
+
+
+def test_te_veel_uitgepakte_bytes_wordt_geweigerd(db, tmp_path, monkeypatch):
+    """Een klein archief met een enorme inhoud zet anders de schijf vol."""
+    from fastapi import HTTPException
+
+    import services.lab.bundels as mod
+
+    monkeypatch.setattr(mod, "MAX_UITGEPAKT_BYTES", 100)
+    pad = _zip(tmp_path, {"groot.txt": "x" * 500})
+    c, _ = _cluster_en_dienst(db)
+
+    with pytest.raises(HTTPException):
+        asyncio.run(_svc(db, _NepRuntime()).zet(c.id, bestandsnaam="bundel.zip", pad=pad))
+
+
+def test_een_mislukte_vulling_laat_geen_spookbundel_achter(db, tmp_path):
+    """Een rij zonder volume is erger dan geen rij: hij belooft iets dat er
+    niet is, en elke poging hem te gebruiken faalt onbegrijpelijk."""
+    from services.lab.bundels import BundelService
+    from models.cluster_bundel import ClusterBundel
+
+    class _Stuk(_NepRuntime):
+        async def vul_volume(self, *a, **k):
+            raise RuntimeError("daemon weg")
+
+    c, _ = _cluster_en_dienst(db)
+    pad = _zip(tmp_path, {"manifest.json": "{}"})
+    svc = _svc(db, _Stuk())
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(svc.zet(c.id, bestandsnaam="bundel.zip", pad=pad))
+    assert db.query(ClusterBundel).count() == 0
+
+
+# ── wat het model te zien krijgt ─────────────────────────────────────────────
+
+def test_het_model_ziet_de_paden_maar_nooit_de_inhoud(db, tmp_path):
+    from services.lab.bundels import BundelService
+
+    rt = _NepRuntime()
+    pad = _zip(tmp_path, {
+        "manifest.json": '{"source": "cosmosmxfzpsgk7ltc2.documents.azure.com"}',
+        "controlcenter/data/models.ndjson": '{"id": "geheim-document-42"}',
+    })
+    c, d = _cluster_en_dienst(db)
+    svc = _svc(db, rt)
+    b = asyncio.run(svc.zet(c.id, bestandsnaam="bundel.zip", pad=pad))
+
+    prompt = BundelService(db)._prompt(b, d, "zet deze dump in de emulator")
+
+    assert "controlcenter/data/models.ndjson" in prompt
+    assert "geheim-document-42" not in prompt
+    assert "cosmosmxfzpsgk7ltc2" not in prompt
+    assert "LEES DIE DAN IN JE SCRIPT" in prompt
+    assert "zet deze dump in de emulator" in prompt
+    assert "ih-cosmos" in prompt
+
+
+def test_de_prompt_rendert_zonder_ontbrekende_placeholder(db, tmp_path):
+    import re
+
+    from services.lab.bundels import BundelService
+
+    pad = _zip(tmp_path, {"manifest.json": "{}"})
+    c, d = _cluster_en_dienst(db)
+    b = asyncio.run(_svc(db, _NepRuntime()).zet(c.id, bestandsnaam="bundel.zip", pad=pad))
+
+    prompt = BundelService(db)._prompt(b, d, "doe iets")
+    assert not re.search(r"\{[a-z_]+\}", prompt), re.findall(r"\{[a-z_]+\}", prompt)
+
+
+# ── toepassen ────────────────────────────────────────────────────────────────
+
+def _bundel(db, tmp_path, rt, instructie=""):
+    c, d = _cluster_en_dienst(db)
+    pad = _zip(tmp_path, {"manifest.json": "{}"})
+    svc = _svc(db, rt)
+    b = asyncio.run(svc.zet(c.id, bestandsnaam="bundel.zip", pad=pad,
+                            instructie=instructie))
+    return svc, b, d
+
+
+def test_de_bundel_hangt_alleen_lezen_op_een_vaste_plek(db, tmp_path):
+    from models.cluster_bundel import KOPPELPUNT
+
+    rt = _NepRuntime()
+    svc, b, d = _bundel(db, tmp_path, rt)
+
+    asyncio.run(svc.toepassen(b.id, dienst_id=d.id, script="echo hoi"))
+
+    run = rt.gedraaid[0]
+    assert run["volumes"] == {b.volume: KOPPELPUNT}
+    assert run["netwerk"] == "labx-cluster-hive"
+    assert run["env"]["DIENST_HOST"] == "ih-cosmos"
+    assert run["env"]["BUNDEL"] == KOPPELPUNT
+
+
+def test_een_meegegeven_script_gaat_ongewijzigd_en_zonder_model(db, tmp_path, monkeypatch):
+    """Wat één keer goed ging wil je ongewijzigd kunnen herhalen."""
+    from services.lab.dienst_acties import DienstActieService
+
+    def nooit(*_a, **_k):
+        raise AssertionError("het model hoort hier niet gevraagd te worden")
+
+    monkeypatch.setattr(DienstActieService, "_vraag", nooit)
+    rt = _NepRuntime()
+    svc, b, d = _bundel(db, tmp_path, rt)
+
+    uit = asyncio.run(svc.toepassen(b.id, dienst_id=d.id, script="python laad.py",
+                                    image="python:3.12-slim"))
+
+    assert rt.gedraaid[0]["cmd"] == ["sh", "-c", "python laad.py"]
+    assert uit["exit_code"] == 0
+    assert uit["uitvoer"] == "13603 documenten"
+
+
+def test_zonder_opdracht_en_zonder_script_gebeurt_er_niets(db, tmp_path):
+    from fastapi import HTTPException
+
+    rt = _NepRuntime()
+    svc, b, d = _bundel(db, tmp_path, rt)
+
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.toepassen(b.id, dienst_id=d.id))
+    assert fout.value.status_code == 400
+    assert not rt.gedraaid
+
+
+def test_de_opdracht_van_de_bundel_telt_als_er_geen_losse_meekomt(db, tmp_path, monkeypatch):
+    from services.lab.dienst_acties import DienstActieService
+
+    gezien = {}
+
+    async def nep(_self, prompt):
+        gezien["prompt"] = prompt
+        return '{"script": "echo ja", "image": "python:3.12-slim"}'
+
+    monkeypatch.setattr(DienstActieService, "_vraag", nep)
+    rt = _NepRuntime()
+    svc, b, d = _bundel(db, tmp_path, rt, instructie="zet deze dump in de emulator")
+
+    asyncio.run(svc.toepassen(b.id, dienst_id=d.id))
+
+    assert "zet deze dump in de emulator" in gezien["prompt"]
+    assert rt.gedraaid[0]["cmd"] == ["sh", "-c", "echo ja"]
+
+
+def test_een_dienst_van_een_ander_cluster_kan_niet(db, tmp_path):
+    from fastapi import HTTPException
+
+    from models.cluster import Cluster, ClusterDienst
+
+    rt = _NepRuntime()
+    svc, b, _ = _bundel(db, tmp_path, rt)
+    nu = "2026-10-19T12:00:00+00:00"
+    ander = Cluster(naam="Ander", netwerk="labx-cluster-ander", created_at=nu, updated_at=nu)
+    db.add(ander)
+    db.commit()
+    vreemd = ClusterDienst(cluster_id=ander.id, naam="x", image="x:1", poorten=[],
+                           poort_map={}, omgeving={}, status="draait",
+                           created_at=nu, updated_at=nu)
+    db.add(vreemd)
     db.commit()
 
-    svc = PlanService(db)
-    svc.set_bundels(1, {1: 1, 2: 1, 3: None})
-    uit = svc.to_dict(db.get(TicketPlan, 1))
-    bundels = {r["ticket_key"]: r["bundel"] for r in uit["items"]}
-    assert bundels == {"T-1": 1, "T-2": 1, "T-3": None}
+    with pytest.raises(HTTPException) as fout:
+        asyncio.run(svc.toepassen(b.id, dienst_id=vreemd.id, script="echo x"))
+    assert fout.value.status_code == 404
 
-    # En losmaken werkt ook echt los.
-    svc.set_bundels(1, {2: None})
-    uit = svc.to_dict(db.get(TicketPlan, 1))
-    assert {r["ticket_key"]: r["bundel"] for r in uit["items"]}["T-2"] is None
-    db.close()
+
+def test_weggooien_ruimt_ook_het_volume_op(db, tmp_path):
+    from models.cluster_bundel import ClusterBundel
+
+    rt = _NepRuntime()
+    svc, b, _ = _bundel(db, tmp_path, rt)
+    volume = b.volume
+
+    asyncio.run(svc.verwijder(b.id))
+
+    assert rt.verwijderd == [volume]
+    assert db.query(ClusterBundel).count() == 0
+
+
+def test_de_uitslag_blijft_bij_de_bundel_staan(db, tmp_path):
+    """Een week later wil je kunnen zien dat het vorige keer goed ging."""
+    rt = _NepRuntime()
+    svc, b, d = _bundel(db, tmp_path, rt)
+
+    asyncio.run(svc.toepassen(b.id, dienst_id=d.id, script="echo hoi"))
+
+    uit = svc.dict(svc._bundel(b.id))
+    assert uit["laatste_exitcode"] == 0
+    assert "13603 documenten" in uit["laatste_uitvoer"]
+    assert uit["laatst_toegepast"]

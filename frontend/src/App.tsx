@@ -24,6 +24,9 @@ import { OrchestratorPage } from "@/pages/OrchestratorPage";
 import { AzureProfilesPage } from "@/pages/AzureProfilesPage";
 import { WorkbenchPage } from "@/pages/WorkbenchPage";
 import { KluisTabsPage } from "@/pages/KluisTabsPage";
+import { ClustersPage } from "@/pages/ClustersPage";
+import { ClusterDetailPage } from "@/pages/ClusterDetailPage";
+import { ClusterPlanPage } from "@/pages/ClusterPlanPage";
 
 const queryClient = new QueryClient();
 
@@ -59,6 +62,13 @@ function AppRoutes() {
         {/* Een lab open je niet even tussendoor; dat hoort een eigen
             adres te hebben dat je kunt delen. */}
         <Route path="labs/:labId" element={<LabDetailPage />} />
+        {/* Clusters: een repo met een vaste laag en een lab per branch.
+            `plannen/:planId` staat VOOR `:clusterId` omdat beide uit twee
+            segmenten bestaan -- andersom zou "plannen" als clusternummer
+            gelezen worden. */}
+        <Route path="clusters" element={<ClustersPage />} />
+        <Route path="clusters/plannen/:planId" element={<ClusterPlanPage />} />
+        <Route path="clusters/:clusterId" element={<ClusterDetailPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="boards" element={<BoardsPage />} />
         <Route path="boards/:boardId" element={<BoardPage />} />

@@ -17,6 +17,15 @@ export interface Lab {
   heeft_agent_token?: boolean;
   status: "creating" | "running" | "stopped" | "error" | "expired";
   image: string;
+  /** Bij welk cluster en welke branch dit lab hoort. null = een gewoon lab. */
+  cluster_id?: number | null;
+  /** De naam van dat cluster — zodat een scherm kan zeggen WAAR het bij hoort
+   *  in plaats van dat er geen lab is. */
+  cluster_naam?: string | null;
+  branch?: string | null;
+  /** Waar je dit lab van buiten bereikt: {containerpoort: machinepoort}.
+   *  Zonder dit staat er een lab dat je nergens kunt openen. */
+  poort_map?: Record<string, number>;
   network_alias: string | null;
   cpu_limit: number;
   mem_limit_mb: number;
@@ -526,7 +535,20 @@ export interface BoardColumnDto {
 export type BoardProvider = "local" | "azure_devops" | "jira";
 export type SyncDirection = "pull" | "two_way";
 
+/** Welke branches van dit cluster op dit moment een lab hebben. Een ticket
+ *  mag naar een branch zonder lab wijzen — dat is de normale beginsituatie. */
+export interface BoardBranch {
+  branch: string;
+  lab_id: string;
+  status: string;
+}
+
 export interface BoardDto {
+  /** Bij welk cluster dit bord hoort. Eén bord per cluster; het "labbord" is
+   *  dit bord gefilterd op één branch. */
+  cluster_id?: number | null;
+  cluster_naam?: string | null;
+  branches?: BoardBranch[];
   id: number;
   name: string;
   description: string | null;
@@ -667,6 +689,9 @@ export interface OverviewDto {
 }
 
 export interface TicketDto {
+  /** Bij welke branch dit ticket hoort. De branch en niet het lab: het lab
+   *  komt en gaat, de branch blijft. */
+  branch?: string | null;
   id: number;
   board_id: number;
   key: string;

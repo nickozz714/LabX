@@ -67,10 +67,20 @@ def _kort(tekst: Optional[str], grens: int) -> str:
 
 
 def _ticket_prompt(board: Board, ticket: Ticket, comments: List[Any],
-                   extra_instruction: Optional[str] = None) -> str:
+                   extra_instruction: Optional[str] = None,
+                   werkcontext: str = "") -> str:
     lines = [
         f"Je pakt ticket {ticket.key} op van het board '{board.name}'.",
         "",
+    ]
+    # De werkcontext staat BOVENAAN en niet onderaan bij de werkafspraken.
+    # Waar de code staat is het eerste wat je nodig hebt -- een agent die dat
+    # pas onderaan vindt, is er dan al twintig shell-stappen naar op zoek
+    # geweest, en die beurten komen van hetzelfde plafond als het werk.
+    if (werkcontext or "").strip():
+        lines.append(werkcontext.strip())
+        lines.append("")
+    lines += [
         f"## {ticket.key} — {ticket.title}",
         f"Status: {ticket.status} | Prioriteit: {ticket.priority}"
         + (f" | Toegewezen aan: {ticket.assignee}" if ticket.assignee else ""),
@@ -221,14 +231,86 @@ def _zet_op_bezig(db: Session, svc: BoardService, board: Board, ticket: Ticket) 
                      error=str(exc.detail)[:200])
 
 
+def _lab_voor_ticket(db: Session, board: Board, ticket: Ticket):
+    """In welk lab hoort deze agent-run te draaien?
+
+    Op een CLUSTERBORD is dat het lab van de branch van dit ticket, en niet
+    het lab van het bord. Daar zit het hele punt van een clusterbord: één
+    bord, tickets voor verschillende branches, en elke agent werkt in de
+    werkkopie die bij zíjn ticket hoort. Zou hij in het bordlab werken, dan
+    wijzigde hij de verkeerde branch -- en dat merk je pas bij de merge.
+
+    Het lab wordt op het moment zelf opgezocht, want het ticket kent alleen
+    de branch. Dat is met opzet: het lab is wegwerpbaar, de branch niet.
+    """
+    from models.lab import Lab
+
+    if getattr(board, "cluster_id", None) and getattr(ticket, "branch", None):
+        lab = (db.query(Lab)
+               .filter(Lab.cluster_id == board.cluster_id, Lab.branch == ticket.branch)
+               .first())
+        if lab is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Er is nog geen branch-lab voor '{ticket.branch}'. Maak het aan "
+                        f"op het cluster; dan werkt de agent in die werkkopie."))
+        return lab
+
+    if getattr(board, "cluster_id", None) and not getattr(ticket, "branch", None):
+        raise HTTPException(
+            status_code=409,
+            detail=("Dit ticket hoort bij geen branch. Zet er een branch op, zodat de "
+                    "agent weet in welke werkkopie hij moet werken."))
+
+    if not board.lab_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Dit board heeft geen gekoppeld lab — de agent heeft een lab nodig om in te werken")
+    lab = db.get(Lab, board.lab_id)
+    if lab is None:
+        raise HTTPException(status_code=409, detail="Het lab van dit board bestaat niet meer")
+    return lab
+
+
+async def _werkcontext(db: Session, lab, ticket) -> str:
+    """Wat deze agent over ZIJN omgeving moet weten, vóór het ticket.
+
+    Leeg voor een gewoon lab: daar verandert er niets. Voor een branch-lab
+    staat hier waar de werkkopie is, op welke branch, welke vaste diensten er
+    naast draaien, en welke instructiebestanden de repo zelf meebrengt.
+    """
+    from services.boards import cluster_werk
+
+    kop = cluster_werk.cluster_kop(db, lab, ticket)
+    if not kop:
+        return ""
+    from models.cluster import Cluster
+    from services.lab.lab_service import LabService
+
+    c = db.get(Cluster, lab.cluster_id)
+    map_ = cluster_werk._werkmap(c) if c else ""
+    blok = ""
+    if map_:
+        try:
+            paden = await cluster_werk.instructiebestanden(LabService(db), lab, map_)
+            blok = cluster_werk.instructieblok(paden, map_)
+        except Exception as exc:  # noqa: BLE001 — geen lijst is geen reden om niet te starten
+            log.warningx("Instructiebestanden overgeslagen", lab_id=lab.id,
+                         error=str(exc)[:200])
+    return kop + (("\n\n" + blok) if blok else "")
+
+
 def _thread_for_ticket(db: Session, board: Board, ticket: Ticket) -> Thread:
+    # Hetzelfde lab als waar de run in draait -- anders staat de chat van dit
+    # ticket onder een ander lab dan waar het werk gebeurt.
+    lab = _lab_voor_ticket(db, board, ticket)
     if ticket.agent_thread_id:
         existing = db.get(Thread, ticket.agent_thread_id)
         if existing is not None:
             return existing
     now = _now_iso()
     t = Thread(id=str(uuid4()), title=f"{ticket.key} — {ticket.title}"[:255],
-               lab_id=board.lab_id, source="board", created_at=now, updated_at=now)
+               lab_id=lab.id, source="board", created_at=now, updated_at=now)
     db.add(t)
     db.commit()
     ticket.agent_thread_id = t.id
@@ -249,12 +331,7 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
     ticket = svc.get_ticket(ticket_id)
     board = svc.get_board(ticket.board_id)
 
-    if not board.lab_id:
-        raise HTTPException(status_code=409,
-                            detail="Dit board heeft geen gekoppeld lab — de agent heeft een lab nodig om in te werken")
-    lab = db.get(Lab, board.lab_id)
-    if not lab:
-        raise HTTPException(status_code=409, detail="Het lab van dit board bestaat niet meer")
+    lab = _lab_voor_ticket(db, board, ticket)
     if lab.status != "running":
         # Een lab dat uit staat is geen reden om te weigeren: aanzetten is
         # precies wat degene die op "agent" drukt bedoelde. Lukt dát niet, dan
@@ -266,7 +343,9 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
         raise HTTPException(status_code=409, detail="De agent werkt al aan dit ticket")
 
     thread = _thread_for_ticket(db, board, ticket)
-    prompt = _ticket_prompt(board, ticket, svc.list_comments(ticket.id), extra_instruction)
+    werkcontext = await _werkcontext(db, lab, ticket)
+    prompt = _ticket_prompt(board, ticket, svc.list_comments(ticket.id),
+                            extra_instruction, werkcontext=werkcontext)
     _zet_op_bezig(db, svc, board, ticket)
 
     # Geen werker meegekregen (een handmatige start vanaf het ticket): zelf een
@@ -298,7 +377,7 @@ async def start_ticket_run(db: Session, ticket_id: int, *,
                              lab_id=lab.id, error=str(exc)[:200])
 
     run = background_runs.start(
-        db, thread_id=thread.id, lab_id=board.lab_id,
+        db, thread_id=thread.id, lab_id=lab.id,
         history=[{"role": "user", "content": prompt}], prompt=prompt,
         mode="background",
         # De werker waarin deze run moet werken. Zonder werker landt alles in

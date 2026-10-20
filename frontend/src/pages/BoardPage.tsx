@@ -8,17 +8,18 @@
  * zonder de pagina te herladen.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { boardApi } from "@/lib/boards";
 import type { BoardDto, PlanDto, TicketDto } from "@/lib/types";
 import { Badge, Button, Card, Input, Label, Modal, Select, TextArea, Toggle } from "@/components/ui";
 import { useBevestiging } from "@/components/Bevestiging";
 import { SoortKiezer } from "@/components/SoortKiezer";
 import { useMelding } from "@/components/Meldingen";
+import { GrillMeister } from "@/components/GrillMeister";
 import { TicketDrawer } from "@/components/TicketDrawer";
 import { BoardSettings } from "@/components/BoardSettings";
 import { ApiError } from "@/lib/api";
-import { Archive, ArrowLeft, Bot, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Archive, ArrowLeft, Bot, ChevronLeft, ChevronRight, GitBranch, ListOrdered, Pause, Play, RefreshCw, Settings2, Trash2, X } from "lucide-react";
 import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
 import type { Bijlage } from "@/lib/labs";
 
@@ -33,6 +34,11 @@ export function BoardPage() {
 
   const balk = useMelding();
   const [board, setBoard] = useState<BoardDto | null>(null);
+  // Het "labbord" is dit bord, gefilterd op één branch. Geen apart bord:
+  // een branch-lab is wegwerpbaar en een ticket niet, dus een bord per lab
+  // zou verdwijnen met het lab dat je opruimt.
+  const [zoekParams, setZoekParams] = useSearchParams();
+  const branchFilter = zoekParams.get("branch") || "";
   const [tickets, setTickets] = useState<TicketDto[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
@@ -269,6 +275,27 @@ export function BoardPage() {
     return <div className="p-4 sm:p-6 text-sm text-muted-foreground">Laden…</div>;
   }
 
+  // Alle branches die op dit bord voorkomen: die met een lab, plus die waar
+  // alleen nog tickets voor zijn. Dat tweede is de normale beginsituatie --
+  // je schrijft het ticket voordat het lab bestaat.
+  const alleBranches = Array.from(new Set([
+    ...(board.branches || []).map((b) => b.branch),
+    ...tickets.map((t) => t.branch).filter((b): b is string => !!b),
+  ])).sort();
+
+  const zichtbareTickets = branchFilter
+    ? tickets.filter((t) => t.branch === branchFilter)
+    : tickets;
+
+  // Een clusterbord heeft met opzet geen lab: het lab volgt uit de branch van
+  // het ticket. Werken kan dus zodra er ÓF een lab ÓF een cluster aan hangt.
+  const kanWerken = !!(board.lab_id || board.cluster_id);
+  // En op een clusterbord is de branch het echte vereiste. Dat hier zeggen
+  // scheelt een 409 nadat je al op Inplannen hebt gedrukt.
+  const zonderBranch = board.cluster_id
+    ? tickets.filter((t) => selectie.includes(t.id) && !t.branch).map((t) => t.key)
+    : [];
+
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -277,12 +304,26 @@ export function BoardPage() {
             <ArrowLeft size={16} />
           </button>
           <h1 className="text-lg font-bold">{board.name}</h1>
-          {board.lab_id ? (
+          {board.cluster_id && (
+            <Link to={`/clusters/${board.cluster_id}`}>
+              <Badge tone="violet">cluster: {board.cluster_naam}</Badge>
+            </Link>
+          )}
+          {board.cluster_id ? (
+            /* Een clusterbord HEEFT geen lab, en hoort er ook geen te
+               hebben: elk ticket wijst naar een branch en de agent werkt in
+               het lab van díé branch. "Geen lab" zou hier dus een fout
+               melden die er niet is. */
+            <Badge tone={(board.branches || []).some((b) => b.status === "running") ? "green" : "yellow"}>
+              {(board.branches || []).filter((b) => b.status === "running").length}/
+              {(board.branches || []).length} branch-labs draaien
+            </Badge>
+          ) : board.lab_id ? (
             <Badge tone={board.lab_status === "running" ? "green" : "yellow"}>
               lab: {board.lab_name} ({board.lab_status})
             </Badge>
           ) : (
-            <Badge tone="red">geen lab</Badge>
+            <Badge tone="red">geen lab of cluster</Badge>
           )}
           {board.provider !== "local" && (
             <Badge tone="violet">
@@ -291,11 +332,23 @@ export function BoardPage() {
             </Badge>
           )}
 
+          {/* Een CLUSTERBORD heeft met opzet geen lab: elk ticket wijst naar
+              een branch en de agent werkt in het lab van díé branch. De
+              knoppen hieronder keken alleen naar `lab_id` en stonden daardoor
+              op een clusterbord permanent uit -- terwijl de backend dat geval
+              gewoon aankan. Wat er op een clusterbord wél moet: een branch op
+              het ticket. */}
           <div className="ml-auto flex items-center gap-2">
             {selectie.length > 0 ? (
               <>
                 <span className="text-xs text-muted-foreground">{selectie.length} geselecteerd</span>
-                <Button className="text-xs" onClick={() => setPlanOpen(true)} disabled={!board.lab_id}>
+                <Button className="text-xs" onClick={() => setPlanOpen(true)}
+                        disabled={!kanWerken || zonderBranch.length > 0}
+                        title={!kanWerken
+                          ? "Dit bord heeft geen lab en geen cluster — koppel er een in de instellingen."
+                          : zonderBranch.length > 0
+                            ? `Zonder branch weet de agent niet in welke werkkopie hij moet werken: ${zonderBranch.join(", ")}`
+                            : "De geselecteerde tickets op een rij zetten voor de agent"}>
                   <ListOrdered size={13} /> Inplannen
                 </Button>
                 <Button variant="secondary" className="text-xs" onClick={archiveerSelectie}
@@ -315,7 +368,10 @@ export function BoardPage() {
               </>
             ) : (
               <Button variant="secondary" className="text-xs" onClick={pakKolomOp}
-                      disabled={busy || !board.lab_id}>
+                      disabled={busy || !kanWerken}
+                      title={kanWerken
+                        ? "Alles in de agentkolom achter elkaar laten oppakken"
+                        : "Dit bord heeft geen lab en geen cluster — koppel er een in de instellingen."}>
                 <Bot size={13} /> Pak hele kolom op
               </Button>
             )}
@@ -369,13 +425,50 @@ export function BoardPage() {
           }}
         />
 
+        {board.cluster_id && (board.branches?.length || branchFilter) && (
+          /* De branchkiezer. "Alle branches" is het clusterbord; één branch
+             gekozen is het labbord. Branches zonder lab staan er ook bij:
+             een ticket mag naar een branch wijzen waarvan het lab nog
+             gemaakt moet worden, en dat is de normale beginsituatie. */
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2 sm:px-4">
+            <GitBranch size={14} className="text-muted-foreground" />
+            {["", ...alleBranches].map((br) => {
+              const actief = branchFilter === br;
+              const lab = board.branches?.find((b) => b.branch === br);
+              return (
+                <button
+                  key={br || "__alle__"}
+                  onClick={() => {
+                    const p = new URLSearchParams(zoekParams);
+                    if (br) p.set("branch", br); else p.delete("branch");
+                    setZoekParams(p, { replace: true });
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition ${
+                    actief ? "border-primary bg-primary/10 font-medium" : "border-border hover:bg-secondary"
+                  }`}
+                >
+                  {br ? <span className="font-mono">{br}</span> : "Alle branches"}
+                  {br && (
+                    <span
+                      className={`size-1.5 rounded-full ${
+                        lab?.status === "running" ? "bg-success" : "bg-muted-foreground/40"
+                      }`}
+                      title={lab ? `lab ${lab.status}` : "nog geen lab voor deze branch"}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Kanban op een telefoon: de kolommen blijven naast elkaar, maar
             eentje vult bijna het scherm en klikt netjes in bij het vegen.
             Een kolom van 288px op een scherm van 390px geeft anders die
             halve-kolom-rand waar je steeds overheen scrolt. */}
         <div className="schuif-x group/bord flex flex-1 gap-3 overflow-x-auto p-3 sm:p-4">
           {board.columns.map((col, kolomIndex) => {
-            const cards = tickets.filter((t) => t.status === col.key);
+            const cards = zichtbareTickets.filter((t) => t.status === col.key);
             const overLimit = col.wip_limit != null && cards.length > col.wip_limit;
             return (
               <div
@@ -651,6 +744,32 @@ function NewTicketModal({
           <SoortKiezer boardId={board.id} waarde={soort} onChange={setSoort}
                        hint="Bijvoorbeeld Bug. Leeg = de instelling van het bord." />
         </div>
+        {/* Grillen hoort HIER al te kunnen en niet pas als het ticket op het
+            bord staat: je bent het nu aan het bedenken, er hangt nog niets
+            aan vast, en een extra vraag is op dit moment het goedkoopst.
+            Dichtgeklapt, want hij kost een modelaanroep. */}
+        <details className="rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            🔥 Eerst laten grillen
+          </summary>
+          <div className="mt-3">
+            <GrillMeister
+              boardId={board.id}
+              doel={{
+                soort: "concept",
+                titel: title,
+                description,
+                acceptance_criteria: acceptance,
+                vul: (v) => {
+                  if (v.titel) setTitle(v.titel);
+                  if (v.description) setDescription(v.description);
+                  if (v.acceptance_criteria) setAcceptance(v.acceptance_criteria);
+                },
+              }}
+            />
+          </div>
+        </details>
+
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button className="w-full" onClick={submit} disabled={!title.trim()}>
           Aanmaken

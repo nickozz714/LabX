@@ -6,6 +6,8 @@
  */
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+
+import { haalBestemming } from "@/lib/concept";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button, Card, Input, Label } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
@@ -40,7 +42,10 @@ export function LoginPage() {
       } else {
         await login(username, password);
       }
-      navigate("/labs");
+      // Terug naar waar je was toen je eruit vloog. Zonder dit begin je na
+      // elke verlopen sessie weer bij het begin, terwijl je concept nog
+      // gewoon in het scherm staat te wachten.
+      navigate(haalBestemming() || "/labs");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : needsSetup ? "Account aanmaken mislukt" : "Inloggen mislukt");
     } finally {

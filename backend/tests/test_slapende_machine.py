@@ -32,7 +32,7 @@ def db():
     from sqlalchemy.orm import sessionmaker
 
     from db.database import Base
-    from models import lab, lab_host  # noqa: F401
+    from models import cluster, lab, lab_host  # noqa: F401
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)

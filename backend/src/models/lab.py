@@ -42,6 +42,46 @@ class Lab(Base):
     # Container ports published on localhost (for APIs/MCP servers isolated in
     # the lab): [8000, ...].
     ports: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    #: Bij welk development cluster dit lab hoort, en welke git-branch het
+    #: draait. NULL/NULL = een gewoon lab, en dat blijft verreweg het meeste.
+    #:
+    #: Een branch-lab is met opzet GEEN apart soort lab: alles wat labs al
+    #: kunnen -- werkers, data-guard, geheimen, verplaatsen naar een andere
+    #: machine -- geldt hier ook, en blijft op één plek geregeld.
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Waar deze branch over gaat, in jouw woorden.
+    #:
+    #: De TITEL wordt de naam van de feature-branch en reist dus mee naar
+    #: git -- daar kijkt straks iemand anders naar. De BESCHRIJVING is voor
+    #: intern: hij staat in LabX, bij het lab, en komt niet in een commit of
+    #: een branchnaam terecht. Dat onderscheid is de hele reden dat het twee
+    #: velden zijn en niet één.
+    #: Hoeveel beurten een agent-run in dit lab mag doen. Leeg = de
+    #: instelling van de installatie. Komt bij een branch-lab van het cluster.
+    max_turns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Start LabX de applicatie in dit lab, of alleen de container?
+    #:
+    #: Standaard NIET. Een lab aanzetten en een applicatie starten zijn twee
+    #: verschillende dingen, en het tweede is het dure: een devserver eet
+    #: geheugen, houdt poorten bezet, bouwt opnieuw bij elk bestand dat je
+    #: aanraakt, en begint met een installatie van minuten. Dat hoort te
+    #: gebeuren omdat JIJ het vraagt, niet omdat er een container aanging.
+    #:
+    #: Gemeten waarom dit omging: drie branch-labs die tegelijk `yarn install`
+    #: begonnen pasten niet in het geheugen van deze machine, en twee werden
+    #: door de OOM-killer afgeschoten terwijl niemand om die installatie had
+    #: gevraagd -- er werd code gelezen.
+    #:
+    #: Dit zet alleen het STARTSCRIPT uit. Inrichten gebeurt gewoon, want
+    #: zonder git en basisgereedschap kun je ook niets lezen.
+    applicatie_starten: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    feature_titel: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    feature_beschrijving: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: {containerpoort: machinepoort} voor een branch-lab. Vast, zodat het
+    #: adres waarop jij die branch opent niet bij elke herstart verandert.
+    poort_map: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     # Data-egress-guard: container output heading to the LLM is screened
     # (services/lab/data_guard.py). Default ON.
     data_guard: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
