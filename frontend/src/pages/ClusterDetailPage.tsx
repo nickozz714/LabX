@@ -1569,7 +1569,12 @@ function TunnelVenster(
   const [bezig, setBezig] = useState<TunnelOs | null>(null);
 
   const poorten = Object.keys(lab.poort_map || {}).map(Number);
-  const [poort, setPoort] = useState<number | undefined>(poorten[0]);
+  // Standaard ALLE poorten. Eén poort kiezen is de uitzondering, niet de
+  // regel: een applicatie die vanuit de browser zijn eigen API aanspreekt
+  // heeft er twee nodig, en met alleen de eerste laadt de pagina wel maar
+  // blijft hij wit. Kiezen kan nog steeds -- twee branches tegelijk op 5173
+  // kan immers niet.
+  const [poort, setPoort] = useState<number | undefined>(undefined);
 
   async function haal(os: TunnelOs) {
     setBezig(os);
@@ -1605,10 +1610,12 @@ function TunnelVenster(
         {poorten.length > 1 && (
           <div className="mt-4">
             <Label>Welke poort van dit lab?</Label>
-            <Select value={poort} onChange={(e) => setPoort(Number(e.target.value))}>
+            <Select value={poort ?? ""}
+                    onChange={(e) => setPoort(e.target.value ? Number(e.target.value) : undefined)}>
+              <option value="">alle poorten ({poorten.join(", ")})</option>
               {poorten.map((q) => (
                 <option key={q} value={q}>
-                  {q} → wordt localhost:{q} op jouw machine
+                  alleen {q} → wordt localhost:{q} op jouw machine
                 </option>
               ))}
             </Select>
