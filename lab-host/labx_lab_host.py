@@ -24,18 +24,30 @@ WAT DIT PROGRAMMA WÉL DOET
    Docker-versie. Zodat LabX weet waar nog iets bij kan, en jij ziet waarom
    ergens niets bij kan.
 
+4. **Een labpoort bereikbaar maken, als LabX erom vraagt.** Labs publiceren
+   hun poorten op de loopback van deze machine, met opzet. Draait je browser
+   op een ándere computer dan het lab, dan is "openen" daarmee onmogelijk
+   geworden: de knop wijst naar localhost en daar staat niets. Op verzoek van
+   een gekoppelde LabX zet deze agent zo'n poort door naar je netwerk. Zie de
+   vier grendels bij `Doorgangen` verderop.
+
 WAT DIT PROGRAMMA NIET DOET, EN WAAROM
 --------------------------------------
 Commando's uitvoeren. Niet één.
 
 Het aansturen van containers gaat volledig buiten deze agent om, via
 `DOCKER_HOST=ssh://jij@dezepc` — de docker-CLI op de LabX-server praat dan
-rechtstreeks met de Docker hier, over SSH. Geen open poort, geen eigen
-protocol, en de authenticatie is je SSH-sleutel.
+rechtstreeks met de Docker hier, over SSH. Geen eigen protocol, en de
+authenticatie is je SSH-sleutel.
 
 Dat is met opzet zo gesplitst: wie deze agent overneemt, kan niets starten.
-De gevaarlijke kant zit achter een sleutel die jij beheert, niet achter een
-dienstje dat op je netwerk staat te luisteren.
+De gevaarlijke kant zit achter een sleutel die jij beheert.
+
+Wat hij sinds het doorzetten van labpoorten wél heeft, is een ingang: een
+HTTP-poort die pas opengaat zodra LabX een token heeft gegeven, en dat geeft
+LabX pas nadat jij de koppelcode hebt bevestigd. Wie die ingang overneemt kan
+precies één ding: een poort uit LabX' eigen bereik (18000-18999) van deze
+machine op je netwerk zetten. Geen commando's, geen shell, geen Docker.
 
 STARTEN
 -------
@@ -55,11 +67,13 @@ import shutil
 import signal
 import socket
 import subprocess
+import threading
 import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -374,6 +388,231 @@ class WakkerHouder:
             self._proc = None
 
 
+
+# ── een labpoort bereikbaar maken ───────────────────────────────────────────
+#
+# Waarom dit erbij hoort, terwijl hierboven staat dat deze agent geen open
+# poort heeft: labs publiceren hun poorten op de LOOPBACK van deze machine.
+# Dat is opzet -- een labpoort hoort niet ongevraagd op je netwerk. Maar zodra
+# LabX op een andere computer draait dan je browser, is "openen" daarmee
+# onmogelijk geworden: de knop wijst naar localhost en daar staat niets.
+#
+# Dit is de kleinst mogelijke uitweg. Geen commando's, geen shell, geen
+# Docker: één TCP-doorgeefluik van een poort op dit netwerk naar een
+# loopbackpoort hier. En wel met vier grendels:
+#
+#   1. Alleen na een verzoek met het token dat LabX pas uitdeelt nadat JIJ de
+#      koppelcode hebt bevestigd. Zonder koppeling bestaat de ingang niet.
+#   2. Alleen naar poorten in het bereik dat LabX voor labs uitdeelt. Een
+#      doorgeefluik naar je ssh of je printer komt er niet doorheen.
+#   3. Alleen zolang hij gebruikt wordt. Blijft het stil, dan gaat hij dicht;
+#      een doorgang die blijft bestaan wijst op een dag naar een lab dat er
+#      niet meer is.
+#   4. Weg bij het afsluiten van de agent, want dan is er ook geen lab meer
+#      om naartoe te wijzen.
+
+#: Het bereik waarin LabX machinepoorten voor labs en vaste diensten uitdeelt.
+#: Alles daarbuiten weigeren we: wat hier binnenkomt is een poortnummer, en een
+#: poortnummer zonder grens is een doorgang naar alles wat op deze machine
+#: luistert.
+LABPOORT_MIN, LABPOORT_MAX = 18000, 18999
+
+#: Waar het doorgeefluik zelf op komt te staan. Hetzelfde nummer plus tienduizend,
+#: zodat je aan het adres ziet welk lab je voor je hebt en twee doorgangen elkaar
+#: niet verdringen.
+POORT_VERSCHUIVING = 10_000
+
+#: Hoe lang een doorgang zonder verkeer open blijft.
+STIL_MAX_SECONDEN = 4 * 60 * 60
+
+
+class Doorgeefluik:
+    """Eén poort op dit netwerk, doorgezet naar een loopbackpoort hier."""
+
+    def __init__(self, doel: int) -> None:
+        self.doel = int(doel)
+        self.poort = self.doel + POORT_VERSCHUIVING
+        self.laatst_gebruikt = time.time()
+        self._stop = threading.Event()
+        self._sok = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sok.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sok.bind(("0.0.0.0", self.poort))
+        self._sok.listen(64)
+        self._sok.settimeout(1.0)
+        threading.Thread(target=self._luister, daemon=True).start()
+
+    def _luister(self) -> None:
+        while not self._stop.is_set():
+            try:
+                klant, _ = self._sok.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            self.laatst_gebruikt = time.time()
+            threading.Thread(target=self._verbind, args=(klant,), daemon=True).start()
+        try:
+            self._sok.close()
+        except OSError:
+            pass
+
+    def _verbind(self, klant: socket.socket) -> None:
+        try:
+            lab = socket.create_connection(("127.0.0.1", self.doel), timeout=10)
+        except OSError:
+            klant.close()
+            return
+        for van, naar in ((klant, lab), (lab, klant)):
+            threading.Thread(target=self._giet, args=(van, naar), daemon=True).start()
+
+    def _giet(self, van: socket.socket, naar: socket.socket) -> None:
+        try:
+            while True:
+                brok = van.recv(65536)
+                if not brok:
+                    break
+                naar.sendall(brok)
+                self.laatst_gebruikt = time.time()
+        except OSError:
+            pass
+        finally:
+            # Eén kant dicht is de hele verbinding dicht. Een half open socket
+            # laat een browser eindeloos wachten op iets dat niet meer komt.
+            for s in (van, naar):
+                try:
+                    s.close()
+                except OSError:
+                    pass
+
+    def sluit(self) -> None:
+        self._stop.set()
+        try:
+            self._sok.close()
+        except OSError:
+            pass
+
+
+class Doorgangen:
+    """Welke poorten er open staan, en hoe ze weer dichtgaan."""
+
+    def __init__(self) -> None:
+        self._open: Dict[int, Doorgeefluik] = {}
+        self._slot = threading.Lock()
+
+    def open(self, doel: int) -> Doorgeefluik:
+        if not LABPOORT_MIN <= doel <= LABPOORT_MAX:
+            raise ValueError(
+                f"Poort {doel} valt buiten het bereik dat LabX voor labs uitdeelt "
+                f"({LABPOORT_MIN}-{LABPOORT_MAX}).")
+        with self._slot:
+            bestaand = self._open.get(doel)
+            if bestaand is not None:
+                bestaand.laatst_gebruikt = time.time()
+                return bestaand
+            luik = Doorgeefluik(doel)
+            self._open[doel] = luik
+            print(f"[labx] poort {luik.poort} staat nu door naar het lab op {doel}")
+            return luik
+
+    def sluit(self, doel: int) -> bool:
+        with self._slot:
+            luik = self._open.pop(int(doel), None)
+        if luik is None:
+            return False
+        luik.sluit()
+        print(f"[labx] poort {luik.poort} weer dicht")
+        return True
+
+    def lijst(self) -> list:
+        with self._slot:
+            return [{"lab_poort": q.doel, "poort": q.poort,
+                     "stil_seconden": int(time.time() - q.laatst_gebruikt)}
+                    for q in self._open.values()]
+
+    def ruim_op(self) -> None:
+        """Wat lang stil is gaat dicht. Zie grendel 3 hierboven."""
+        nu = time.time()
+        for doel, luik in list(self._open.items()):
+            if nu - luik.laatst_gebruikt > STIL_MAX_SECONDEN:
+                self.sluit(doel)
+
+    def alles_dicht(self) -> None:
+        for doel in list(self._open):
+            self.sluit(doel)
+
+
+DOORGANGEN = Doorgangen()
+
+
+class _AgentHandler(BaseHTTPRequestHandler):
+    server_version = "LabXLabHost/1.0"
+    #: Gevuld door main(); zonder token neemt hij niets aan.
+    token = ""
+
+    def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
+        sys.stderr.write(f"[labx] {self.address_string()} {fmt % args}\n")
+
+    def _antwoord(self, code: int, body: Dict[str, Any]) -> None:
+        rauw = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(rauw)))
+        self.end_headers()
+        self.wfile.write(rauw)
+
+    def _mag(self) -> bool:
+        kop = self.headers.get("Authorization", "")
+        return bool(_AgentHandler.token) and kop == f"Bearer {_AgentHandler.token}"
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/health":
+            # Zonder token: alleen "ik leef". Zo kan LabX zien of deze agent
+            # draait zonder het geheim te hoeven tonen.
+            return self._antwoord(200, {"ok": True, "agent": "labx-lab-host"})
+        if self.path == "/poorten":
+            if not self._mag():
+                return self._antwoord(401, {"detail": "Ongeldig of ontbrekend token"})
+            return self._antwoord(200, {"open": DOORGANGEN.lijst()})
+        self._antwoord(404, {"detail": "Onbekend pad"})
+
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._mag():
+            return self._antwoord(401, {"detail": "Ongeldig of ontbrekend token"})
+        lengte = int(self.headers.get("Content-Length") or 0)
+        try:
+            body = json.loads(self.rfile.read(lengte) or b"{}")
+        except json.JSONDecodeError:
+            return self._antwoord(400, {"detail": "Geen geldige JSON"})
+        try:
+            doel = int(body.get("poort") or 0)
+        except (TypeError, ValueError):
+            return self._antwoord(400, {"detail": "poort moet een getal zijn"})
+
+        if self.path == "/poort/dicht":
+            return self._antwoord(200, {"gesloten": DOORGANGEN.sluit(doel)})
+        if self.path != "/poort":
+            return self._antwoord(404, {"detail": "Onbekend pad"})
+        try:
+            luik = DOORGANGEN.open(doel)
+        except ValueError as exc:
+            return self._antwoord(400, {"detail": str(exc)})
+        except OSError as exc:
+            return self._antwoord(409, {"detail": f"Poort openen lukte niet: {exc}"})
+        self._antwoord(200, {"poort": luik.poort, "lab_poort": luik.doel})
+
+
+def start_agentserver() -> Optional[ThreadingHTTPServer]:
+    """De ingang voor LabX. Faalt stil als de poort al bezet is: dan draait er
+    al een agent, en dat is geen reden om de hartslag te laten stoppen."""
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", AGENT_POORT), _AgentHandler)
+    except OSError as exc:
+        print(f"[labx] kan niet op poort {AGENT_POORT} luisteren: {exc}", file=sys.stderr)
+        return None
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 # ── aanmelden ───────────────────────────────────────────────────────────────
 
 def aanmelden(labx: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -444,6 +683,8 @@ def main() -> int:
                   f"SSH-sessie. Zonder dat kan LabX hier geen containers starten.")
 
     laatste_status = None
+    #: Pas starten als LabX een token heeft gegeven; zie start_agentserver().
+    agentserver: Optional[ThreadingHTTPServer] = None
     #: Hoeveel keer de melding achter elkaar misging. Bestaat omdat een agent
     #: die blijft proberen en niets meer zegt, er voor jou uitziet als een
     #: agent die het doet -- precies hoe de eerste macOS-host een half uur
@@ -481,6 +722,19 @@ def main() -> int:
             print(f"[labx] Weer verbinding met LabX na {mislukt} mislukte poging(en).")
             mislukt = 0
 
+        # Het token van een gekoppelde machine. Zodra we dat hebben kan de
+        # ingang open: eerder heeft hij geen zin, want zonder token neemt hij
+        # toch niets aan.
+        if antwoord and antwoord.get("agent_token"):
+            if _AgentHandler.token != antwoord["agent_token"]:
+                _AgentHandler.token = antwoord["agent_token"]
+            if agentserver is None:
+                agentserver = start_agentserver()
+                if agentserver is not None:
+                    print(f"[labx] Ingang open op poort {AGENT_POORT}: LabX kan nu een "
+                          f"labpoort van deze machine bereikbaar laten maken.")
+        DOORGANGEN.ruim_op()
+
         if antwoord and antwoord.get("status") != laatste_status:
             laatste_status = antwoord.get("status")
             if laatste_status == "nieuw" and antwoord.get("koppelcode"):
@@ -502,6 +756,12 @@ def main() -> int:
             time.sleep(1)
 
     wakker.uit()
+    # Doorgangen gaan dicht bij het afsluiten: ze wijzen naar labs op deze
+    # machine, en wie hier straks niet meer draait hoort ook niet meer
+    # bereikbaar te zijn.
+    DOORGANGEN.alles_dicht()
+    if agentserver is not None:
+        agentserver.shutdown()
     print("\n[labx] Gestopt. Draaiende labs blijven staan; LabX ziet deze machine "
           "straks als offline.")
     return 0

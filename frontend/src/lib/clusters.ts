@@ -567,6 +567,13 @@ export const clusterApi = {
   envBestandVerwijderen: (id: number, bestandId: number) =>
     api.delete<{ ok: boolean }>(`/clusters/${id}/env-bestanden/${bestandId}`),
 
+  /** Waar JIJ dit lab opent. Niet altijd localhost: draait het cluster op een
+   *  machine in je netwerk, dan staat de poort op de loopback van DIE computer
+   *  en vraagt de server de agent daar om hem door te zetten. */
+  branchAdres: (labId: string, poort?: number) =>
+    api.get<{ url: string; via: string }>(
+      `/clusters/branches/${labId}/adres${poort ? `?poort=${poort}` : ""}`),
+
   /** Een scriptje dat een VASTE poort op jouw machine naar dit lab stuurt.
    *
    *  LabX deelt oplopende machinepoorten uit zodat branches naast elkaar

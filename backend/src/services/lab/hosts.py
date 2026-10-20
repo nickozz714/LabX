@@ -88,11 +88,22 @@ class LabHostService:
                       naam=rij.naam, host_id=rij.id)
             _reconcile_in_achtergrond(rij.id)
 
+        # Een gekoppelde machine krijgt een token mee. Daarmee herkent de
+        # agent daar een verzoek van DEZE LabX -- nodig zodra hij iets voor
+        # ons moet openzetten. Hij komt pas ná het koppelen, dus hij is geen
+        # tweede sleutel naast de koppelcode maar het gevolg ervan: wat zich
+        # meldt mag zichzelf nog steeds niet toelaten.
+        if rij.status == "gekoppeld" and not rij.agent_token:
+            rij.agent_token = secrets.token_urlsafe(32)
+            self.db.commit()
+            self.db.refresh(rij)
+
         # De code gaat alleen terug naar een host die nog NIET gekoppeld is --
         # anders zou een aanmelding van buiten hem kunnen uitlezen.
         return {
             "status": rij.status,
             "koppelcode": rij.koppelcode if rij.status == "nieuw" else None,
+            "agent_token": rij.agent_token if rij.status == "gekoppeld" else None,
             # Wat de agent moet doen: wakker blijven zodra hier labs draaien.
             "wakker_houden": rij.status == "gekoppeld",
             "hartslag_seconden": 30,

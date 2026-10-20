@@ -684,6 +684,31 @@ function BranchRegel({ lab, bordId, onActie }: {
   // altijd de front-end; de rest haal je uit het labscherm.
   const poort = Object.values(lab.poort_map || {})[0];
 
+  // Het adres komt van de server, want alleen die weet op welke machine dit
+  // lab draait. Een vast `http://localhost:<poort>` klopte zolang alles op
+  // één computer stond en wees daarna naar een poort waar niets luistert --
+  // "applicatie gestart" naast een knop die stuk leek.
+  const [opent, setOpent] = useState(false);
+
+  async function openen() {
+    // Eerst het tabblad, dan pas het adres: een browser blokkeert een popup
+    // die na een await opengaat, en dan lijkt de knop opnieuw kapot.
+    const tab = window.open("", "_blank");
+    setOpent(true);
+    try {
+      const { url, via } = await clusterApi.branchAdres(lab.id);
+      if (tab) tab.location.href = url;
+      else melding.ok("Open dit adres zelf", url);
+      if (via !== "deze machine") melding.ok(`Doorgezet via ${via}`, url);
+    } catch (e) {
+      tab?.close();
+      melding.fout("Openen lukte niet",
+                   e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setOpent(false);
+    }
+  }
+
   async function doe(wat: "start" | "stop" | "herstart-app" | "stop-app") {
     try {
       if (wat === "start") {
@@ -764,11 +789,11 @@ function BranchRegel({ lab, bordId, onActie }: {
             hebt was nergens aan te zien. */}
         <div className="flex shrink-0 flex-wrap items-center gap-1">
           {draait && poort && (
-            <a href={`http://localhost:${poort}`} target="_blank" rel="noreferrer"
-               className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5
-                          text-sm hover:bg-muted">
-              <ExternalLink className="h-3.5 w-3.5" /> Openen
-            </a>
+            <Button variant="secondary" disabled={opent} onClick={() => void openen()}>
+              {opent
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <ExternalLink className="h-3.5 w-3.5" />} Openen
+            </Button>
           )}
           <Button variant={gitOpen ? "primary" : "secondary"} onClick={() => setGitOpen((x) => !x)}>
             <GitBranch className="h-3.5 w-3.5" /> Git

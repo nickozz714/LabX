@@ -87,6 +87,10 @@ _ADDITIVE_COLUMNS = {
         # een bestaande machine doet alleen labs tot jij er iets anders van
         # vindt.
         ("ollama_runners", "INTEGER NOT NULL DEFAULT 0"),
+        # Het geheim waarmee de agent op die machine inkomende verzoeken van
+        # LabX herkent. Leeg voor wat er al staat: hij krijgt er bij de
+        # eerstvolgende hartslag een, en zonder dat token neemt hij niets aan.
+        ("agent_token", "TEXT"),
     ],
     "ticket_comments": [
         # Interne opmerkingen gaan nooit naar de bron; bestaande rijen waren

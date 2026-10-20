@@ -162,6 +162,20 @@ def env_bestand_verwijderen(cluster_id: int, bestand_id: int,
     return ClusterEnvBestanden(db).verwijder(cluster_id, bestand_id)
 
 
+@router.get("/branches/{lab_id}/adres")
+def branch_adres(lab_id: str, poort: int | None = None,
+                 db: Session = Depends(get_db)):
+    """Waar je dit lab opent -- en dat is niet altijd localhost.
+
+    Staat het cluster op een machine in je netwerk, dan publiceert het lab
+    daar op de loopback van DIE computer. Dit vraagt de agent daar om hem
+    door te zetten, en geeft het adres dat dan werkt.
+    """
+    from services.lab.lab_adres import adres_voor_lab
+
+    return adres_voor_lab(db, lab_id, poort)
+
+
 @router.get("/branches/{lab_id}/tunnel")
 def branch_tunnel(lab_id: str, os: str = "mac", poort: int | None = None,
                   container_poort: int | None = None,

@@ -89,6 +89,11 @@ class LabHost(Base):
     #: zodra er gekoppeld is -- een code die blijft staan is een wachtwoord
     #: dat niemand meer vervangt.
     koppelcode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: Waarmee de agent op die machine een verzoek van DEZE LabX herkent.
+    #: Hij krijgt hem pas als een mens de koppelcode heeft bevestigd, en
+    #: daarom is dit geen tweede sleutel naast de koppelcode maar het gevolg
+    #: ervan: wat zich meldt mag zichzelf nog steeds niet toelaten.
+    agent_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     laatst_gezien: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notitie: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
