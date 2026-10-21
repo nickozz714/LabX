@@ -453,7 +453,7 @@ from routers import (
     time_router,
     voice_router,
     lab_host_router,
-    cluster_router,
+    cluster_router, tunnel_router,
 )
 
 app.include_router(auth_router.router, prefix="/api")
@@ -466,6 +466,10 @@ app.include_router(lab_router.browser_router, prefix="/api")
 app.include_router(chat_router.router, prefix="/api")
 app.include_router(internal_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
+# De tunnel-helper: één open ingang voor de sleutel op jouw machine, en één
+# achter je aanmelding om die sleutel uit te delen. Zie tunnel_router.py.
+app.include_router(tunnel_router.open_router, prefix="/api")
+app.include_router(tunnel_router.router, prefix="/api")
 app.include_router(skill_router.router, prefix="/api")
 app.include_router(tool_router.router, prefix="/api")
 app.include_router(mcp_router.router, prefix="/api")

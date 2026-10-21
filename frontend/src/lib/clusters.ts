@@ -583,6 +583,13 @@ export const clusterApi = {
    *  — zie backend services/lab/tunnel.py voor waarom dat opzet is.
    *
    *  Geeft het adres terug dat je daarna moet openen. */
+  /** De tunnel-helper: één bestand voor al je branch-labs, één keer ophalen.
+   *  Er staat geen poortnummer in — hij vraagt LabX bij elke keuze opnieuw
+   *  welke labs er zijn en welke doorgang erbij hoort. */
+  tunnelHelper: async () => {
+    await api.download("/tunnel/helper", "labx-tunnel-helper.command");
+  },
+
   branchTunnel: async (labId: string, os: TunnelOs, containerPoort?: number) => {
     const q = new URLSearchParams({ os });
     if (containerPoort) q.set("container_poort", String(containerPoort));

@@ -38,6 +38,13 @@ class AppSettings(Base):
     # Na hoeveel dagen zonder activiteit een chat vanzelf het archief in gaat.
     # 0 (of leeg) zet het uit. Standaard 3 — zie services/chat/archief.py.
     chat_archive_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: De sleutel waarmee de tunnel-helper op JOUW machine bij LabX mag.
+    #:
+    #: Een eigen sleutel en niet je gewone aanmelding, want die verloopt en
+    #: een helper die maanden op je laptop staat zou dan je wachtwoord moeten
+    #: bewaren. Deze mag precies twee dingen: de branch-labs opsommen en een
+    #: doorgang laten openen. Zie routers/tunnel_router.py.
+    tunnel_sleutel: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Onder welke namen JIJ in de bron staat (Jira, Azure DevOps). De
     # urenregistratie schat je eigen tijd uit de opmerkingen die je schreef, en
     # moet daarvoor weten welke dat zijn. Zonder deze lijst telde elke

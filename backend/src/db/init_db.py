@@ -111,6 +111,9 @@ _ADDITIVE_COLUMNS = {
     ],
     "app_settings": [
         ("chat_archive_days", "INTEGER"),
+        # De sleutel van de tunnel-helper; leeg tot je hem voor het eerst
+        # ophaalt. Zie het model voor waarom het een eigen sleutel is.
+        ("tunnel_sleutel", "TEXT"),
         # Onder welke namen je in Jira/DevOps staat, voor de urenschatting.
         ("eigen_auteurs", "JSON"),
         # Spraakassistent. Alles standaard uit/leeg: een bestaande installatie

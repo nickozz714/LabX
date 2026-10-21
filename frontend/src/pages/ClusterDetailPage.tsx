@@ -1576,6 +1576,21 @@ function TunnelVenster(
   // kan immers niet.
   const [poort, setPoort] = useState<number | undefined>(undefined);
 
+  async function haalHelper() {
+    setBezig("mac");
+    try {
+      await clusterApi.tunnelHelper();
+      melding.ok("Tunnel-helper gedownload",
+                 "Maak hem eenmalig uitvoerbaar met chmod +x, daarna is het dubbelklikken.");
+      onClose();
+    } catch (e) {
+      melding.fout("Helper ophalen lukte niet",
+                   e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBezig(null);
+    }
+  }
+
   async function haal(os: TunnelOs) {
     setBezig(os);
     try {
@@ -1606,6 +1621,23 @@ function TunnelVenster(
           een tunnel die blijft bestaan wijst op een dag naar een lab dat er
           niet meer is. Eén poort kan maar naar één branch tegelijk.
         </p>
+
+        {/* De helper is de weg die je dagelijks wilt; het script hieronder is
+            voor een eenmalige of een machine zonder helper. */}
+        <div className="mt-4 rounded-md border border-border bg-muted/40 p-3">
+          <p className="text-sm font-medium">Liever één keer en klaar?</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            De tunnel-helper is één bestand voor ál je branch-labs. Je haalt hem
+            één keer op, en kiest daarna in een menu welk lab je op localhost
+            wilt — zonder nieuwe download, en zonder poortnummer dat morgen niet
+            meer klopt. Eenmalig uitvoerbaar maken:{" "}
+            <code className="font-mono">chmod +x ~/Downloads/labx-tunnel-helper.command</code>
+          </p>
+          <Button variant="secondary" className="mt-2" disabled={bezig !== null}
+                  onClick={() => void haalHelper()}>
+            <Download className="h-3.5 w-3.5" /> Tunnel-helper ophalen
+          </Button>
+        </div>
 
         {poorten.length > 1 && (
           <div className="mt-4">
