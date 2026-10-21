@@ -11,6 +11,8 @@ Twee routers, en het verschil is het hele beveiligingsmodel:
 """
 from __future__ import annotations
 
+import re
+
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -20,6 +22,11 @@ from sqlalchemy.orm import Session
 from authentication import require_user
 from db.database import get_db
 from services.lab import tunnel_helper
+
+#: Wat als adres van LabX in het script mag belanden. Streng, want deze
+#: tekst komt in een shell-variabele terecht op JOUW machine: alles met een
+#: aanhalingsteken, een backtick of een dollar hoort daar niet te komen.
+_BASIS = re.compile(r"^https?://[A-Za-z0-9._-]+(:\d{1,5})?$")
 
 open_router = APIRouter(prefix="/tunnel", tags=["tunnel"])
 router = APIRouter(prefix="/tunnel", tags=["tunnel"],
@@ -77,7 +84,8 @@ def adres(body: Dict[str, Any],
 
 
 @router.get("/helper")
-def helper(request: Request, db: Session = Depends(get_db)):
+def helper(request: Request, basis: str | None = None,
+           db: Session = Depends(get_db)):
     """De helper zelf, met jouw server en sleutel erin.
 
     Eén keer ophalen is genoeg: hij vraagt LabX bij elke start opnieuw welke
@@ -88,18 +96,26 @@ def helper(request: Request, db: Session = Depends(get_db)):
     from services.lab.tunnel_helper_script import script
 
     # Het adres waarop JIJ dit ophaalt, is het adres waarop de helper LabX
-    # moet vinden. Zelf iets verzinnen gaat mis: de backend ziet alleen zijn
-    # eigen containernaam, en een instelling die je moet invullen is een
-    # instelling die niet klopt zodra je server verhuist.
-    gastheer = (request.headers.get("x-forwarded-host")
-                or request.headers.get("host") or "").strip()
-    schema = (request.headers.get("x-forwarded-proto") or request.url.scheme
-              or "https").strip()
-    if not gastheer:
+    # moet vinden -- en dat weet alleen je browser. Afleiden uit de headers
+    # ging mis: tussen jou en de backend zitten twee proxies, en die lieten
+    # de poort uit `Host` vallen. De helper kreeg `http://192.168.2.15`, en
+    # daar staat niets: LabX luistert op 8443 en 8080.
+    #
+    # Daarom stuurt het scherm zijn eigen origin mee. De headers blijven de
+    # terugval, voor wie dit buiten de UI om ophaalt.
+    adres = (basis or "").strip().rstrip("/")
+    if not _BASIS.match(adres):
+        gastheer = (request.headers.get("x-forwarded-host")
+                    or request.headers.get("host") or "").strip()
+        schema = (request.headers.get("x-forwarded-proto") or request.url.scheme
+                  or "https").strip()
+        adres = f"{schema}://{gastheer}" if gastheer else ""
+    if not _BASIS.match(adres):
         raise HTTPException(
             status_code=400,
-            detail="LabX kan zijn eigen adres niet afleiden uit dit verzoek.")
-    inhoud = script(labx_url=f"{schema}://{gastheer}",
+            detail=("LabX kan zijn eigen adres niet bepalen. Haal de helper op "
+                    "via het scherm, dan stuurt je browser het adres mee."))
+    inhoud = script(labx_url=adres,
                     sleutel=tunnel_helper.sleutel(db, maak_aan=True),
                     image=IMAGE)
     return PlainTextResponse(
