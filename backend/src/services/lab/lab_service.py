@@ -168,6 +168,21 @@ def _profielsleutel(waarde: Optional[str]) -> str:
     return sleutel if sleutel in PROFIELEN else STANDAARD
 
 
+#: Is de opstartreconciliatie ooit bij een daemon langs geweest?
+#:
+#: Hij draaide één keer, bij het opstarten -- en dat is net het moment waarop
+#: de machine het drukst is. Na een stroomstoring haalde `docker ps -a` zijn
+#: time-out niet, werd alles overgeslagen, en bleef een lab de hele nacht op
+#: "running" staan terwijl zijn container al uit was. Zolang dit False is
+#: blijft de scheduler het opnieuw proberen.
+_RECONCILE_GELUKT = False
+
+
+def reconcile_nodig() -> bool:
+    """Of er nog een herkansing moet komen voor de opstartreconciliatie."""
+    return not _RECONCILE_GELUKT
+
+
 class LabService:
     def __init__(self, db: Session, runtime: Optional[DockerRuntime] = None) -> None:
         self.db = db
@@ -452,6 +467,8 @@ class LabService:
     # ── reconcile (sibling daemon outlives the backend process) ─────────────
 
     async def reconcile_on_start(self) -> int:
+        # Of dit ooit gelukt is, staat in _RECONCILE_GELUKT. Zie daar waarom
+        # dat nodig is.
         """Called once at backend startup: match DB rows against the daemon's
         actual state (labels survive a LabX restart because the daemon isn't
         restarted with it). Fixes drift both ways: a lab the DB thinks is
@@ -486,8 +503,18 @@ class LabService:
                 herkomst[m["id"]] = rt
             managed.extend(rijen)
         if not bereikbaar:
-            log.warningx("Reconcile overgeslagen (geen enkele docker bereikbaar)")
+            # NIET als "gedaan" markeren. Dit is precies het moment waarop het
+            # misgaat: na een stroomstoring start de machine 25 containers
+            # tegelijk op en haalt `docker ps -a` zijn time-out niet. Gemeten
+            # op 21-10-2026 om 00:50 -- allebei de daemons overgeslagen, en
+            # omdat reconcile alleen bij het opstarten draaide keek niemand er
+            # daarna ooit nog naar. Een lab stond daardoor een nacht lang op
+            # "running" terwijl zijn container al uit was.
+            log.warningx("Reconcile overgeslagen (geen enkele docker bereikbaar); "
+                         "er volgt een herkansing")
             return 0
+        global _RECONCILE_GELUKT
+        _RECONCILE_GELUKT = True
         by_container = {m["id"]: m for m in managed}
         known_container_ids = set()
         fixed = 0

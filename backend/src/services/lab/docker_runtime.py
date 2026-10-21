@@ -682,9 +682,13 @@ class DockerRuntime:
         `Lab.container_id` mismatches — reconcile marks every live lab
         "error" AND the orphan-cleanup below deletes its still-running
         container, mistaking it for an orphan."""
+        # Ruim in de tijd. Dit wordt vooral gevraagd vlak na het opstarten van
+        # de machine, en dan is de daemon bezig met tientallen containers
+        # tegelijk: op 21-10-2026 haalde hij de 15 seconden niet en werd de
+        # hele reconciliatie overgeslagen. Een trage lijst is geen fout.
         code, out, _ = await self._run_cli(
             "ps", "-a", "--no-trunc", "--filter", f"label={_LABEL}",
-            "--format", "{{.Names}}\t{{.ID}}\t{{.State}}", timeout=15)
+            "--format", "{{.Names}}\t{{.ID}}\t{{.State}}", timeout=60)
         if code != 0:
             return []
         rows = []

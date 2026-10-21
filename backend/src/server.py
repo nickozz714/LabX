@@ -64,6 +64,28 @@ async def _lab_reaper_tick() -> None:
         db.close()
 
 
+async def _reconcile_herkansing_tick() -> None:
+    """De opstartreconciliatie nog eens proberen, tot hij één keer lukt.
+
+    Hij draait bij het opstarten, en dat is net het moment waarop de machine
+    het drukst is: na een stroomstoring kwamen 25 containers tegelijk op en
+    haalde `docker ps -a` zijn time-out niet. Alles werd overgeslagen, en
+    omdat het bij die ene poging bleef, bleef een lab de hele nacht op
+    "running" staan terwijl zijn container al uit was.
+    """
+    from services.lab.lab_service import reconcile_nodig
+
+    if not reconcile_nodig():
+        return
+    db = SessionLocal()
+    try:
+        fixed = await LabService(db).reconcile_on_start()
+        if not reconcile_nodig():
+            log.infox("Reconciliatie alsnog gelukt na herkansing", fixed=fixed)
+    finally:
+        db.close()
+
+
 async def _modelpool_tick() -> None:
     """De modelcontainers op je netwerkmachines op orde houden.
 
@@ -313,6 +335,13 @@ async def lifespan(_app: FastAPI):
     )
     scheduler.register(
         name="dode_runs", interval_seconds=120, fn=_dode_runs_tick, run_immediately=False,
+    )
+    # Elke minuut, en zodra het één keer lukt doet hij niets meer. Zie
+    # _reconcile_herkansing_tick: zonder dit bleef een lab na een
+    # stroomstoring eeuwig op "running" staan.
+    scheduler.register(
+        name="reconcile_herkansing", interval_seconds=60,
+        fn=_reconcile_herkansing_tick, run_immediately=False,
     )
     # Elke twee minuten: vaak genoeg om een machine die terugkomt snel weer
     # mee te laten doen, zeldzaam genoeg om geen SSH-verkeer te veroorzaken
