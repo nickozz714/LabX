@@ -527,7 +527,8 @@ class Doorgangen:
             luik = Doorgeefluik(doel)
             self._open[doel] = luik
             print(f"[labx] poort {luik.poort} staat nu door naar het lab op {doel}")
-            return luik
+        self.onthoud()
+        return luik
 
     def sluit(self, doel: int) -> bool:
         with self._slot:
@@ -536,6 +537,7 @@ class Doorgangen:
             return False
         luik.sluit()
         print(f"[labx] poort {luik.poort} weer dicht")
+        self.onthoud()
         return True
 
     def lijst(self) -> list:
@@ -552,9 +554,64 @@ class Doorgangen:
                 self.sluit(doel)
 
     def alles_dicht(self) -> None:
-        for doel in list(self._open):
-            self.sluit(doel)
+        """Afsluiten, maar NIET vergeten wat er open stond.
 
+        Dit is het afsluiten van de agent, niet jouw keuze om een doorgang
+        dicht te doen. Wie hier het bestand zou bijwerken, wist precies de
+        lijst die de herstart nodig heeft -- en dan heeft onthouden geen zin.
+        """
+        with self._slot:
+            luiken = list(self._open.values())
+            self._open.clear()
+        for luik in luiken:
+            luik.sluit()
+
+    def onthoud(self) -> None:
+        """Opschrijven wat er open staat, zodat een herstart het terugzet."""
+        try:
+            DOORGANG_BESTAND.write_text(json.dumps({
+                "bijgewerkt": time.time(),
+                "poorten": sorted(self._open),
+            }), encoding="utf-8")
+        except OSError as exc:
+            print(f"[labx] kan doorgangen niet onthouden: {exc}", file=sys.stderr)
+
+    def zet_terug(self) -> None:
+        """Wat er voor de herstart open stond weer openzetten.
+
+        Alleen als het kort geleden is: LabX hergebruikt vrijgekomen
+        poortnummers, dus een doorgang van vorige week kan intussen naar een
+        ander lab wijzen. Liever niets dan het verkeerde.
+        """
+        try:
+            opgeslagen = json.loads(DOORGANG_BESTAND.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        oud = time.time() - float(opgeslagen.get("bijgewerkt") or 0)
+        if oud > ONTHOUDEN_UREN * 3600:
+            return
+        for doel in opgeslagen.get("poorten") or []:
+            try:
+                self.open(int(doel))
+            except (ValueError, OSError) as exc:
+                print(f"[labx] doorgang {doel} niet teruggezet: {exc}", file=sys.stderr)
+
+
+#: Waar we onthouden welke doorgangen er open stonden.
+#:
+#: Een doorgang gaat dicht als de agent afsluit -- terecht, want hij wijst
+#: naar een lab op DEZE machine. Maar het tunnelscript dat jij gedownload
+#: hebt, is een bestand dat blijft bestaan en naar een vast nummer wijst. Na
+#: een herstart van de agent wees dat nergens meer naar, en dan "dropt de
+#: tunnel de connectie" zonder dat iemand kan zien waarom. Gemeten op
+#: 21-10-2026, nadat ik deze agent had bijgewerkt.
+DOORGANG_BESTAND = Path.home() / ".labx-doorgangen.json"
+
+#: Hoe oud een onthouden doorgang mag zijn om opnieuw open te gaan. LabX
+#: hergebruikt vrijgekomen poortnummers, dus een doorgang van vorige week kan
+#: intussen naar een ander lab wijzen. Een halve dag is ruim genoeg voor "de
+#: agent is net herstart" en kort genoeg om dat te voorkomen.
+ONTHOUDEN_UREN = 12
 
 DOORGANGEN = Doorgangen()
 
@@ -748,6 +805,10 @@ def main() -> int:
                 if agentserver is not None:
                     print(f"[labx] Ingang open op poort {AGENT_POORT}: LabX kan nu een "
                           f"labpoort van deze machine bereikbaar laten maken.")
+                    # Wat er voor de herstart open stond weer openzetten. Een
+                    # tunnelscript op je eigen machine wijst naar een vast
+                    # nummer en weet niet dat deze agent even weg was.
+                    DOORGANGEN.zet_terug()
         DOORGANGEN.ruim_op()
 
         if antwoord and antwoord.get("status") != laatste_status:

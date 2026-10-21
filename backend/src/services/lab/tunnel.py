@@ -50,6 +50,7 @@ def _naam(lokaal: int) -> str:
 def _sh(*, paren: list, linux: bool, lab: str, branch: str) -> str:
     extra = LINUX_EXTRA if linux else ""
     regels = "\n".join(f"#   http://localhost:{a}  ->  {h}:{d}" for a, h, d in paren)
+    doelen = " ".join(f"{h}:{d}" for _a, h, d in paren)
     namen = " ".join(_naam(a) for a, _h, _d in paren)
     starts = "\n".join(
         f'docker run -d --rm --name {_naam(a)} \\\n'
@@ -75,6 +76,23 @@ if ! docker info >/dev/null 2>&1; then
   echo "Docker draait niet. Start Docker en probeer het opnieuw." >&2
   exit 1
 fi
+
+# Staat de doorgang er nog?
+#
+# Dit script is een bestand dat blijft bestaan en naar een vast nummer wijst;
+# de doorgang aan de andere kant niet. Herstart die agent, dan wijst dit
+# nergens meer naar -- en dan lijkt het alsof de tunnel de verbinding laat
+# vallen, terwijl er gewoon niets meer achter zit. Dat moet je kunnen zien.
+for doel in {doelen}; do
+  h=$(echo "$doel" | cut -d: -f1)
+  p=$(echo "$doel" | cut -d: -f2)
+  if ! docker run --rm --entrypoint nc {extra}{IMAGE} -z -w 3 "$h" "$p" 2>/dev/null; then
+    echo "De doorgang op $doel antwoordt niet." >&2
+    echo "Haal dit script opnieuw op bij LabX (cluster -> het lab -> Tunnel)." >&2
+    echo "Dat opent de doorgang opnieuw en schrijft het juiste nummer erin." >&2
+    exit 1
+  fi
+done
 
 # Een oudere tunnel op deze poort wijst naar een ander lab. Die hoort weg,
 # anders krijg je stilletjes de verkeerde branch te zien.

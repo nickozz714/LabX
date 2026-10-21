@@ -241,3 +241,34 @@ def test_de_bestandsnaam_overleeft_een_branch_met_schuine_strepen(db):
 
     assert "/" not in naam
     assert naam == "labx-tunnel-feature-inloggen.sh"
+
+
+def test_het_script_klopt_eerst_of_de_doorgang_er_nog_is(db, monkeypatch):
+    """Dit script is een bestand dat blijft bestaan en naar een vast nummer
+    wijst; de doorgang aan de andere kant niet. Herstart die agent, dan wijst
+    het nergens meer naar -- en dan lijkt het alsof de tunnel de verbinding
+    laat vallen, terwijl er gewoon niets meer achter zit.
+    """
+    from models.lab_host import LabHost
+    from services.lab import lab_adres
+    from services.lab.tunnel import Tunnel
+
+    nu = "2026-10-21T18:00:00+00:00"
+    h = LabHost(naam="Pro", machine_id="m9", status="gekoppeld",
+                agent_url="http://192.168.2.65:8098", agent_token="geheim",
+                created_at=nu, updated_at=nu)
+    db.add(h)
+    db.flush()
+    p = _lab(db, host_id=h.id)
+
+    def nep(_url, _token, _pad, body):
+        return {"poort": body["poort"] + 10_000}
+
+    monkeypatch.setattr(lab_adres, "_vraag_agent", nep)
+
+    inhoud = Tunnel(db).script(p.id, os_naam="mac")["inhoud"]
+
+    assert "nc" in inhoud and "-z -w 3" in inhoud, "er moet eerst geklopt worden"
+    assert "192.168.2.65:28004" in inhoud
+    assert "Haal dit script opnieuw op bij LabX" in inhoud, (
+        "en als er niemand opendoet, moet er staan wat je eraan doet")

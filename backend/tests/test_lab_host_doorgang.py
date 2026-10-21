@@ -179,3 +179,63 @@ def _praat(k):
         pass
     finally:
         k.close()
+
+
+def test_wat_open_stond_komt_terug_na_een_herstart(agent, tmp_path, monkeypatch):
+    """Het tunnelscript op jouw machine wijst naar een vast nummer en weet
+    niet dat deze agent even weg was. Zonder dit "dropt de tunnel de
+    connectie" zonder dat iemand kan zien waarom."""
+    monkeypatch.setattr(agent, "DOORGANG_BESTAND", tmp_path / "doorgangen.json")
+
+    eerste = agent.Doorgangen()
+    try:
+        eerste.open(18096)
+        assert (tmp_path / "doorgangen.json").exists()
+    finally:
+        eerste.alles_dicht()
+
+    # Een echte herstart is een nieuw proces; hier zit de oude luisterlus nog
+    # in dezelfde, en die laat zijn socket pas na een tel los.
+    time.sleep(1.5)
+
+    tweede = agent.Doorgangen()
+    try:
+        tweede.zet_terug()
+        assert [q["lab_poort"] for q in tweede.lijst()] == [18096]
+    finally:
+        tweede.alles_dicht()
+
+
+def test_een_oude_lijst_wordt_niet_teruggezet(agent, tmp_path, monkeypatch):
+    """LabX hergebruikt vrijgekomen poortnummers, dus een doorgang van vorige
+    week kan intussen naar een ander lab wijzen. Liever niets dan het
+    verkeerde."""
+    import json as _json
+
+    bestand = tmp_path / "doorgangen.json"
+    bestand.write_text(_json.dumps({
+        "bijgewerkt": time.time() - (agent.ONTHOUDEN_UREN + 1) * 3600,
+        "poorten": [18097],
+    }))
+    monkeypatch.setattr(agent, "DOORGANG_BESTAND", bestand)
+
+    d = agent.Doorgangen()
+    try:
+        d.zet_terug()
+        assert d.lijst() == []
+    finally:
+        d.alles_dicht()
+
+
+def test_sluiten_wordt_ook_onthouden(agent, tmp_path, monkeypatch):
+    """Anders komt een doorgang die jij dichtzette na een herstart terug."""
+    import json as _json
+
+    bestand = tmp_path / "doorgangen.json"
+    monkeypatch.setattr(agent, "DOORGANG_BESTAND", bestand)
+
+    d = agent.Doorgangen()
+    d.open(18098)
+    d.sluit(18098)
+
+    assert _json.loads(bestand.read_text())["poorten"] == []
