@@ -292,7 +292,10 @@ class LabService:
                 status_code=409,
                 detail=(f"Lab-host '{host.naam}' is niet gekoppeld. Bevestig hem eerst "
                         f"bij Labs → Machines."))
-        return DockerRuntime(docker_host=host.docker_host)
+        # De omweg wint zolang hij staat. Hij wordt alleen gezet als het
+        # ingestelde adres NIET werkte en dit wel, en hij verdwijnt vanzelf
+        # zodra het ingestelde adres weer antwoordt -- zie host_omweg.py.
+        return DockerRuntime(docker_host=host.docker_host_omweg or host.docker_host)
 
     def _controleer_ruimte_op_host(self, host_id: int) -> None:
         """Het plafond dat je per machine instelt, ook werkelijk handhaven.

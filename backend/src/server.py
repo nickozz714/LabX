@@ -64,6 +64,24 @@ async def _lab_reaper_tick() -> None:
         db.close()
 
 
+async def _host_omweg_tick() -> None:
+    """Machines die van adres veranderd zijn zonder van identiteit te wisselen.
+
+    Een laptop die van huis gaat en via de VPN terugkomt, zit op een ander
+    nummer. Zonder dit staat hij in LabX als onbereikbaar terwijl hij gewoon
+    te bereiken is -- en draait er dus geen enkel lab meer op.
+    """
+    from services.lab.host_omweg import bepaal
+
+    db = SessionLocal()
+    try:
+        await bepaal(db)
+    except Exception as exc:  # noqa: BLE001 — een omweg zoeken mag niets breken
+        log.warningx("Omweg bepalen mislukte", error=str(exc)[:200])
+    finally:
+        db.close()
+
+
 async def _reconcile_herkansing_tick() -> None:
     """De opstartreconciliatie nog eens proberen, tot hij één keer lukt.
 
@@ -342,6 +360,13 @@ async def lifespan(_app: FastAPI):
     scheduler.register(
         name="reconcile_herkansing", interval_seconds=60,
         fn=_reconcile_herkansing_tick, run_immediately=False,
+    )
+    # Elke twee minuten, hetzelfde ritme als de andere machinecontroles: vaak
+    # genoeg om een laptop die via de VPN terugkomt snel weer mee te laten
+    # doen, zeldzaam genoeg om geen SSH-verkeer te veroorzaken.
+    scheduler.register(
+        name="host_omweg", interval_seconds=120, fn=_host_omweg_tick,
+        run_immediately=False,
     )
     # Elke twee minuten: vaak genoeg om een machine die terugkomt snel weer
     # mee te laten doen, zeldzaam genoeg om geen SSH-verkeer te veroorzaken

@@ -834,6 +834,12 @@ export interface LabHost {
    *  staat is offline, niet weg. */
   online: boolean;
   docker_host: string | null;
+  /** Een TIJDELIJK ander adres voor diezelfde machine. Een laptop die van
+   *  huis gaat en via de VPN terugkomt zit op een ander nummer; `agent_url`
+   *  volgt dat vanzelf, het ingestelde `docker_host` niet. Staat dit gevuld,
+   *  dan loopt het werk daar nu langs — en verdwijnt het zodra het ingestelde
+   *  adres weer antwoordt. */
+  docker_host_omweg: string | null;
   agent_url: string | null;
   cpus: number | null;
   geheugen_mb: number | null;

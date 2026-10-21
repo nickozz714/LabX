@@ -251,6 +251,11 @@ class LabHostService:
             "id": rij.id, "naam": rij.naam, "machine_id": rij.machine_id,
             "status": rij.status, "online": self.is_online(rij),
             "docker_host": rij.docker_host, "agent_url": rij.agent_url,
+            # De omweg hoort in beeld. Een machine die via een ander adres
+            # bereikt wordt dan jij hebt ingesteld, is iets wat je wilt WETEN
+            # -- anders lijkt alles gewoon te werken tot de dag dat die omweg
+            # er niet meer is en niemand begrijpt waarom het ooit lukte.
+            "docker_host_omweg": rij.docker_host_omweg,
             "cpus": rij.cpus, "geheugen_mb": rij.geheugen_mb, "vrij_mb": rij.vrij_mb,
             "schijf_vrij_gb": rij.schijf_vrij_gb, "load": rij.load,
             "docker_versie": rij.docker_versie,

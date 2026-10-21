@@ -91,6 +91,8 @@ _ADDITIVE_COLUMNS = {
         # LabX herkent. Leeg voor wat er al staat: hij krijgt er bij de
         # eerstvolgende hartslag een, en zonder dat token neemt hij niets aan.
         ("agent_token", "TEXT"),
+        # Een tijdelijk ander adres voor dezelfde machine; zie het model.
+        ("docker_host_omweg", "TEXT"),
     ],
     "ticket_comments": [
         # Interne opmerkingen gaan nooit naar de bron; bestaande rijen waren

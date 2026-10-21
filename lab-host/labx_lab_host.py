@@ -425,6 +425,10 @@ POORT_VERSCHUIVING = 10_000
 #: Hoe lang een doorgang zonder verkeer open blijft.
 STIL_MAX_SECONDEN = 4 * 60 * 60
 
+#: Hoe lang we wachten tot het lab de verbinding aanneemt. ALLEEN daarvoor:
+#: zie _verbind() waarom die time-out daarna weer af moet.
+VERBIND_TIJD = 10
+
 
 class Doorgeefluik:
     """Eén poort op dit netwerk, doorgezet naar een loopbackpoort hier."""
@@ -458,10 +462,21 @@ class Doorgeefluik:
 
     def _verbind(self, klant: socket.socket) -> None:
         try:
-            lab = socket.create_connection(("127.0.0.1", self.doel), timeout=10)
+            lab = socket.create_connection(("127.0.0.1", self.doel),
+                                           timeout=VERBIND_TIJD)
         except OSError:
             klant.close()
             return
+        # De time-out hoort bij het VERBINDEN en niet bij het gesprek daarna.
+        # In Python blijft hij anders op de socket staan, erft elke recv hem,
+        # en gaat een verbinding die tien seconden stil is eruit. Een
+        # HMR-websocket is precies zo'n stille verbinding: die werd elke tien
+        # seconden afgekapt, waarna de dev-server-client opnieuw verbond en de
+        # pagina herlaadde. Dat zag eruit als een front-end die blijft
+        # herstarten -- en alleen via de doorgang, want rechtstreeks op die
+        # machine zit dit ertussenuit.
+        lab.settimeout(None)
+        klant.settimeout(None)
         for van, naar in ((klant, lab), (lab, klant)):
             threading.Thread(target=self._giet, args=(van, naar), daemon=True).start()
 

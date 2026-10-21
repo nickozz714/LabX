@@ -121,3 +121,61 @@ def test_zonder_token_neemt_de_ingang_niets_aan(agent):
     assert agent._AgentHandler._mag(_Nep()) is False
     _Nep.headers = {"Authorization": "Bearer geheim"}
     assert agent._AgentHandler._mag(_Nep()) is True
+
+
+def test_een_stille_verbinding_wordt_niet_afgekapt(agent, monkeypatch):
+    """Dit is de bug die eruitzag als een front-end die blijft herstarten.
+
+    `create_connection(timeout=...)` laat die time-out op de socket staan, dus
+    erfde elke recv hem en ging een verbinding die even stil was eruit. Een
+    HMR-websocket is precies zo'n stille verbinding: die werd afgekapt, de
+    dev-server-client verbond opnieuw en herlaadde de pagina. Rechtstreeks op
+    de machine gebeurde het niet, want daar zit de doorgang er niet tussen.
+    """
+    monkeypatch.setattr(agent, "VERBIND_TIJD", 1)
+    poort = 18095
+    dienst = _echo(poort)
+    doorgangen = agent.Doorgangen()
+    try:
+        luik = doorgangen.open(poort)
+        with socket.create_connection(("127.0.0.1", luik.poort), timeout=10) as k:
+            k.sendall(b"hoi")
+            assert k.recv(100) == b"hoi"
+            time.sleep(2.5)          # langer stil dan VERBIND_TIJD
+            k.sendall(b"nog steeds hier")
+            assert k.recv(100) == b"nog steeds hier", "de verbinding is afgekapt"
+    finally:
+        doorgangen.alles_dicht()
+        dienst.close()
+
+
+def _echo(poort):
+    """Een dienst die teruggeeft wat je stuurt, en blijft luisteren."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", poort))
+    s.listen(4)
+
+    def bedien():
+        while True:
+            try:
+                k, _ = s.accept()
+            except OSError:
+                return
+            threading.Thread(target=_praat, args=(k,), daemon=True).start()
+
+    threading.Thread(target=bedien, daemon=True).start()
+    return s
+
+
+def _praat(k):
+    try:
+        while True:
+            brok = k.recv(1024)
+            if not brok:
+                return
+            k.sendall(brok)
+    except OSError:
+        pass
+    finally:
+        k.close()

@@ -94,6 +94,17 @@ class LabHost(Base):
     #: daarom is dit geen tweede sleutel naast de koppelcode maar het gevolg
     #: ervan: wat zich meldt mag zichzelf nog steeds niet toelaten.
     agent_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Een TIJDELIJK ander adres voor diezelfde machine.
+    #:
+    #: `docker_host` vul je bij het koppelen in en die blijft staan -- terecht,
+    #: want dat is het adres dat je bedoelt. Maar een laptop die van huis gaat
+    #: en via de VPN terugkomt, zit opeens op een ander nummer: thuis
+    #: 192.168.2.65, door de tunnel 10.13.13.x. Dan klopt het ingestelde adres
+    #: niet meer en kan er geen enkel lab meer draaien op een machine die
+    #: gewoon bereikbaar is. Dit veld is de omweg: gevonden via het adres dat
+    #: de agent zelf meldt, in gebruik zolang het nodig is, en weg zodra het
+    #: ingestelde adres het weer doet.
+    docker_host_omweg: Mapped[str | None] = mapped_column(String(255), nullable=True)
     laatst_gezien: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notitie: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)

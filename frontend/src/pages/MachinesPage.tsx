@@ -379,6 +379,18 @@ function HostKaart({ host, onKoppel, onWijzig }: {
                   Opslaan
                 </Button>
               </div>
+              {/* Loopt het werk nu ergens anders langs? Dat moet je weten,
+                  anders lijkt alles gewoon te werken tot de dag dat die omweg
+                  er niet meer is en niemand begrijpt waarom het ooit lukte. */}
+              {host.docker_host_omweg && (
+                <p className="mt-1 text-xs text-warning">
+                  Omweg actief: het ingestelde adres antwoordt niet, dus het werk
+                  loopt nu via <code className="font-mono">{host.docker_host_omweg}</code> —
+                  het adres waar deze machine zich vandaan meldt. Hij gaat er vanzelf
+                  weer af zodra <code className="font-mono">{host.docker_host}</code> het
+                  weer doet.
+                </p>
+              )}
               {/* Een docker-bridge-adres wijst naar een container op de
                   server zelf; dat is nooit een machine in je netwerk. */}
               {/^ssh:\/\/[^@]*@?(172\.(1[6-9]|2\d|3[01])\.|10\.88\.)/.test(adres) && (
