@@ -146,3 +146,48 @@ def test_de_helper_ruimt_op_als_je_hem_sluit():
 
     assert "trap afsluiten INT TERM" in inhoud
     assert "docker rm -f" in inhoud
+
+
+def test_de_python_in_de_helper_draait_echt():
+    """Niet alleen "de shell is geldig": in de helper zitten drie stukjes
+    Python, en die worden pas uitgevoerd als jij hem dubbelklikt.
+
+    Gemeten: een f-string met geescapete aanhalingstekens erin is een
+    SyntaxError, en dan valt het script om op de eerste regel die het moet
+    tonen. Dat zie je niet aan `sh -n`.
+    """
+    import re
+    import subprocess
+
+    from services.lab.tunnel_helper_script import script
+
+    inhoud = script(labx_url="https://x", sleutel="g", image="i")
+    stukken = re.findall(r"python3 -c '([^']*)'", inhoud)
+
+    assert len(stukken) >= 3, "alle ingebedde Python moet nagekeken worden"
+    for stuk in stukken:
+        uit = subprocess.run([sys.executable, "-c", "import ast,sys; ast.parse(sys.stdin.read())"],
+                             input=stuk, capture_output=True, text=True)
+        assert uit.returncode == 0, f"deze Python is stuk:\n{stuk}\n{uit.stderr}"
+
+
+def test_de_lijst_parser_maakt_regels_van_echte_labs():
+    """Met de vorm die de API echt teruggeeft, zodat een hernoemd veld hier
+    opvalt en niet pas op jouw scherm."""
+    import json
+    import re
+    import subprocess
+
+    from services.lab.tunnel_helper_script import script
+
+    inhoud = script(labx_url="https://x", sleutel="g", image="i")
+    parser = re.findall(r"python3 -c '([^']*)'", inhoud)[0]
+    labs = [{"id": "lab-1", "naam": "Hive · feature", "branch": "feature/x",
+             "cluster": "Hive", "draait": True, "poorten": [5173, 7071]}]
+
+    uit = subprocess.run([sys.executable, "-c", parser],
+                         input=json.dumps(labs), capture_output=True, text=True)
+
+    assert uit.returncode == 0, uit.stderr
+    assert uit.stdout.startswith("1\tlab-1\tHive · feature (feature/x) - draait")
+    assert "poorten 5173, 7071" in uit.stdout

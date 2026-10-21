@@ -81,13 +81,20 @@ while true; do
   fi
 
   # De lijst uitschrijven en tegelijk bewaren, zodat de keuze een id oplevert.
+  # Let op de vorm van deze f-strings: geen aanhalingstekens IN de
+  # accolades. Dat is geen stijl maar een eis -- een backslash-escape binnen
+  # een f-string-expressie is een SyntaxError, en dan valt dit script om op
+  # de eerste regel die het moet tonen.
   REGELS=$(printf '%s' "$LIJST" | python3 -c '
 import json, sys
 labs = json.load(sys.stdin)
 for i, p in enumerate(labs, 1):
     merk = "draait" if p["draait"] else "staat uit"
     poorten = ", ".join(str(q) for q in p["poorten"]) or "geen"
-    print(f"{i}\t{p[\"id\"]}\t{p[\"naam\"]} ({p[\"branch\"] or \"geen branch\"}) — {merk}, poorten {poorten}")
+    lid = p["id"]
+    naam = p["naam"]
+    tak = p["branch"] or "geen branch"
+    print(f"{i}\t{lid}\t{naam} ({tak}) - {merk}, poorten {poorten}")
 ')
   if [ -z "$REGELS" ]; then
     kleur "LabX kent geen branch-labs."
@@ -143,7 +150,10 @@ print(d.get("detail", "") if isinstance(d, dict) and "detail" in d else "")
   printf '%s' "$ADRESSEN" | python3 -c '
 import json, sys
 for p in json.load(sys.stdin)["poorten"]:
-    print(f"{p[\"lokaal\"]}\t{p[\"host\"]}\t{p[\"poort\"]}")
+    lokaal = p["lokaal"]
+    host = p["host"]
+    poort = p["poort"]
+    print(f"{lokaal}\t{host}\t{poort}")
 ' | while IFS="$(printf '\t')" read -r lokaal host poort; do
     docker run -d --rm --name "$NAAMVOORVOEGSEL$lokaal" \
       -p "127.0.0.1:$lokaal:$lokaal" "$IMAGE" \
