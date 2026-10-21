@@ -321,6 +321,24 @@ class DockerRuntime:
             await self.ensure_network_named(netwerk)
         else:
             await self.ensure_network()
+
+        # Staat er al een container met deze naam, dan is dat ONZE container:
+        # de naam is van het lab. Draait hij nog, dan is dat het lab zelf en
+        # nemen we hem weer in gebruik in plaats van een tweede te maken.
+        # Staat hij stil, dan mag hij weg.
+        #
+        # Zonder dit strandde elke start op "The container name is already in
+        # use" zodra LabX het spoor van een container kwijt was -- en dat kan,
+        # zie list_managed(). Een foutmelding over onze eigen administratie is
+        # niets waar jij iets aan kunt doen.
+        bestaand = await self._bestaande(name)
+        if bestaand:
+            if bestaand["state"] == "running":
+                log.infox("Bestaande labcontainer weer in gebruik genomen",
+                          naam=name, container=bestaand["id"][:12])
+                return bestaand["id"]
+            await self._run_cli("rm", "-f", name, timeout=120)
+
         args = [
             "run", "-d",
             "--name", name,
@@ -671,6 +689,23 @@ class DockerRuntime:
             "inspect", "--format", "{{.State.OOMKilled}}", container_id, timeout=15)
         return code == 0 and out.strip().lower() == "true"
 
+    async def _bestaande(self, naam: str) -> Optional[Dict[str, str]]:
+        """De container met deze naam, als hij er is. None als hij er niet is.
+
+        Een fout bij het vragen telt als "ik weet het niet" en dus als None:
+        dan loopt het op de normale weg verder en krijg je de echte
+        foutmelding van `docker run` in plaats van een gok.
+        """
+        code, out, _ = await self._run_cli(
+            "ps", "-a", "--no-trunc", "--filter", f"name=^{naam}$",
+            "--format", "{{.ID}}\t{{.State}}", timeout=30)
+        if code != 0 or not out.strip():
+            return None
+        deel = out.strip().splitlines()[0].split("\t")
+        if len(deel) != 2:
+            return None
+        return {"id": deel[0], "state": deel[1]}
+
     async def list_managed(self) -> List[Dict[str, str]]:
         """All containers LabX has ever started, running or not — used to
         reconcile DB state with the daemon after a backend restart (the daemon
@@ -686,11 +721,25 @@ class DockerRuntime:
         # de machine, en dan is de daemon bezig met tientallen containers
         # tegelijk: op 21-10-2026 haalde hij de 15 seconden niet en werd de
         # hele reconciliatie overgeslagen. Een trage lijst is geen fout.
-        code, out, _ = await self._run_cli(
+        code, out, err = await self._run_cli(
             "ps", "-a", "--no-trunc", "--filter", f"label={_LABEL}",
             "--format", "{{.Names}}\t{{.ID}}\t{{.State}}", timeout=60)
         if code != 0:
-            return []
+            # OPSTAAN, niet een lege lijst teruggeven.
+            #
+            # Dit was `return []`, en dat is het gevaarlijkste antwoord dat
+            # hier bestaat: de aanroeper is reconcile, en die leest "geen
+            # containers" als "alle containers zijn weg". Gemeten op
+            # 21-10-2026: een MacBook kwam uit slaap, ssh werkte al maar
+            # Docker Desktop nog niet, `docker ps -a` gaf een fout -- en LabX
+            # zette drie labs op gestopt en gooide hun container-id's weg
+            # terwijl die containers gewoon draaiden. Daarna strandde elke
+            # start op "The container name is already in use".
+            #
+            # "Ik kon het niet vragen" moet omhoog, zodat reconcile die
+            # machine overslaat in plaats van hem leeg te verklaren.
+            raise RuntimeError(
+                (err or out).strip()[:300] or f"docker ps -a faalde ({code})")
         rows = []
         for line in out.splitlines():
             parts = line.split("\t")
