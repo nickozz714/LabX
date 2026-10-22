@@ -19,7 +19,18 @@ RUN apt-get update -qq \
        openssh-client \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs \
-    && npm install -g @anthropic-ai/claude-code \
+    `# --allow-scripts is hier niet optioneel. npm voert postinstall-scripts` \
+    `# niet meer uit zonder toestemming, en juist dat script van deze CLI` \
+    `# haalt de native binary op. Zonder die vlag installeert npm netjes het` \
+    `# pakket, zegt niets, en faalt elke agent-run later met:` \
+    `#   Error: claude native binary not installed.` \
+    `# Gemeten op 22-10-2026: elk ticket op elk bord, in elk soort lab.` \
+    && npm install -g --allow-scripts=@anthropic-ai/claude-code \
+       @anthropic-ai/claude-code \
+    `# En meteen narekenen. Zonder deze regel bouwt een kapotte CLI gewoon` \
+    `# door tot in productie, en merk je het pas aan een foutmelding bij een` \
+    `# ticket -- een halve dag nadat de image klaar was.` \
+    && claude --version \
     && rm -rf /var/lib/apt/lists/*
 
 # docker-CLI as a static binary (NOT docker.io — that pulls in the daemon).
