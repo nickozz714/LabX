@@ -62,3 +62,22 @@ def test_er_komt_geen_tweede_uploadweg_bij():
     haak = BIJLAGEN[BIJLAGEN.index("export function usePlakbijlage"):]
     assert "labsApi.upload(" in haak
     assert "fetch(" not in haak
+
+
+def test_de_haak_staat_voor_de_vroege_return():
+    """Dit sloopte het ticketscherm, en typecontrole zag het niet.
+
+    In TicketDrawer staat `if (!ticket) return <Laden…>` terwijl het ticket
+    nog opgehaald wordt. Een haak die DAARNA wordt aangeroepen, draait de ene
+    render wel en de andere niet; React telt haken en gooit dan "Rendered more
+    hooks than during the previous render". Resultaat: de hele interface klapt
+    om zodra je een ticket opent.
+
+    De lint van dit project meldt het niet (64 waarschuwingen, geen fouten),
+    dus staat het hier.
+    """
+    haak = TICKET.index("usePlakbijlage({")
+    vroege_return = TICKET.index("if (!ticket) {")
+
+    assert haak < vroege_return, (
+        "usePlakbijlage hoort bij de andere haken te staan, vóór elke return")

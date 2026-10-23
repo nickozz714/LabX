@@ -137,6 +137,17 @@ function MarkdownField({
   );
 }
 
+/** Het lab waarin de agent voor DIT ticket gaat werken.
+ *
+ * Op een clusterbord is dat het lab van de branch van het ticket; anders het
+ * lab van het bord. Buiten de component, zodat hij ook te gebruiken is vóór
+ * het ticket geladen is -- de haken hierboven hebben hem dan al nodig.
+ */
+function ticketLabVan(board: BoardDto, ticket: TicketDto | null) {
+  if (!board.cluster_id || !ticket?.branch) return null;
+  return (board.branches || []).find((b) => b.branch === ticket.branch) || null;
+}
+
 export function TicketDrawer({
   board, ticketId, onClose, onChanged, onOpenTicket,
 }: {
@@ -165,6 +176,21 @@ export function TicketDrawer({
     ]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Plakken gaat dezelfde weg als de paperclip: het plaatje naar het lab, en
+   *  het pad in je tekst. Zowel bij de opdracht als bij een opmerking.
+   *
+   *  HIER en niet verderop: onder deze component staat een `if (!ticket)
+   *  return` voor het laden, en een haak die DAARNA wordt aangeroepen draait
+   *  de ene render wel en de andere niet. React telt haken en gooit dan
+   *  "Rendered more hooks than during the previous render" -- het hele scherm
+   *  klapt om bij het openen van een ticket. Daarom staat hij bij de rest van
+   *  de haken, met `?.` op alles wat dan nog leeg kan zijn. */
+  const { onPaste, plakt, plakfout } = usePlakbijlage({
+    labId: ticketLabVan(board, ticket)?.lab_id || board.lab_id,
+    dir: ticketBijlageMap(ticket?.key || ""),
+    disabled: busy || ticket?.agent_state === "running",
+    onToegevoegd: voegBijlagenToe,
+  });
   // Velden slaan op bij het verlaten van het veld. Zonder teken van leven is
   // dat niet te onderscheiden van niets doen; deze vlag zet er twee seconden
   // "opgeslagen" bij.
@@ -390,19 +416,8 @@ export function TicketDrawer({
   // is dat het lab van de branch van het ticket; anders het lab van het bord.
   // Het wordt hier opgezocht en niet opgeslagen, want het lab is wegwerpbaar
   // en de branch niet -- precies zoals de backend het ook doet.
-  const ticketLab = board.cluster_id && ticket.branch
-    ? (board.branches || []).find((b) => b.branch === ticket.branch) || null
-    : null;
+  const ticketLab = ticketLabVan(board, ticket);
   const agentKan = board.cluster_id ? !!ticketLab : !!board.lab_id;
-  /** Plakken gaat dezelfde weg als de paperclip hierboven: het plaatje naar
-   *  het lab, en het pad in je tekst. Zowel bij de opdracht als bij een
-   *  opmerking, want een screenshot hoort bij allebei. */
-  const { onPaste, plakt, plakfout } = usePlakbijlage({
-    labId: ticketLab?.lab_id || board.lab_id,
-    dir: ticketBijlageMap(ticket.key),
-    disabled: busy || ticket.agent_state === "running",
-    onToegevoegd: voegBijlagenToe,
-  });
 
   return (
     <aside className="fixed inset-0 z-40 flex flex-col overflow-y-auto border-l border-border bg-card lg:static lg:z-auto lg:w-[30rem] lg:shrink-0">
