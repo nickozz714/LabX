@@ -17,6 +17,7 @@ import { GitBranch, Loader2, Scissors, TriangleAlert } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { clusterApi } from "@/lib/clusters";
 import { Button } from "@/components/ui";
+import { BasisKiezer } from "@/components/BasisKiezer";
 import { useMelding } from "@/components/Meldingen";
 
 type Voorstel = Awaited<ReturnType<typeof clusterApi.splitsVoorstel>>;
@@ -28,13 +29,15 @@ export const BranchOpsplitsen = ({ labId }: { labId: string }) => {
   const [uit, setUit] = useState<Uitslag | null>(null);
   const [aan, setAan] = useState<Set<string>>(new Set());
   const [bezig, setBezig] = useState(false);
+  const [basis, setBasis] = useState("");
 
-  async function haal() {
+  async function haal(welke?: string) {
     setBezig(true);
     setUit(null);
     try {
-      const v = await clusterApi.splitsVoorstel(labId);
+      const v = await clusterApi.splitsVoorstel(labId, welke ?? basis);
       setVoorstel(v);
+      setBasis(v.basis);
       setAan(new Set(v.groepen.map((g) => g.branch)));
     } catch (e) {
       melding.fout("Verdeling opstellen lukte niet",
@@ -49,7 +52,7 @@ export const BranchOpsplitsen = ({ labId }: { labId: string }) => {
     setBezig(true);
     try {
       const gekozen = voorstel.groepen.filter((g) => aan.has(g.branch));
-      setUit(await clusterApi.splitsMaken(labId, gekozen));
+      setUit(await clusterApi.splitsMaken(labId, gekozen, basis));
       melding.ok(`${gekozen.length} branch(es) aangemaakt`);
     } catch (e) {
       melding.fout("Branches maken lukte niet",
@@ -73,6 +76,11 @@ export const BranchOpsplitsen = ({ labId }: { labId: string }) => {
 
       {voorstel && (
         <div className="rounded-md border border-border p-2 text-xs">
+          <div className="mb-2">
+            <BasisKiezer labId={labId} basis={voorstel.basis}
+                         bron={voorstel.basis_bron} zeker={voorstel.basis_zeker}
+                         onKies={(b) => { setBasis(b); void haal(b); }} />
+          </div>
           <p className="mb-2 text-muted-foreground">
             {voorstel.bestanden.length} gewijzigde bestanden tussen{" "}
             <code className="font-mono">{voorstel.basis}</code> en{" "}

@@ -107,15 +107,20 @@ class Opsplitsen:
 
     # ── het voorstel ─────────────────────────────────────────────────────────
 
-    async def voorstel(self, lab_id: str) -> Dict[str, Any]:
+    async def voorstel(self, lab_id: str, basis: str = "") -> Dict[str, Any]:
         """Wat er te verdelen valt, en hoe het model het zou doen."""
+        from services.lab.basisbranch import bepaal
         from services.lab.pull_requests import PullRequests
 
         prs = PullRequests(self.db)
         lab, c = prs._lab(lab_id)
         gh = prs._github(c)
         branch = (lab.branch or "").strip()
-        basis = gh.standaardbranch()
+        # De branch waarvan JIJ bent afgetakt, niet de standaardbranch: met
+        # de verkeerde basis verdeelt hij honderden bestanden die niet van
+        # jou zijn. Zie basisbranch.py.
+        gekozen = bepaal(gh, branch, basis)
+        basis = gekozen["basis"]
 
         vgl = gh.vergelijk(basis, branch)
         bestanden = [
@@ -145,6 +150,8 @@ class Opsplitsen:
         return {
             "branch": branch,
             "basis": basis,
+            "basis_bron": gekozen["bron"],
+            "basis_zeker": gekozen["zeker"],
             "bestanden": bestanden,
             "groepen": groepen,
             # Expliciet, want dit is de plek waar een verdeling stil kan
@@ -189,7 +196,7 @@ class Opsplitsen:
     # ── uitvoeren ────────────────────────────────────────────────────────────
 
     async def maak(self, lab_id: str, *, groepen: List[Dict[str, Any]],
-                   pr: bool = False) -> Dict[str, Any]:
+                   basis: str = "", pr: bool = False) -> Dict[str, Any]:
         """De goedgekeurde verdeling omzetten in branches.
 
         Eén voor één, en een groep die misgaat stopt de rest niet: je hebt
@@ -204,7 +211,11 @@ class Opsplitsen:
         prs = PullRequests(self.db)
         lab, c = prs._lab(lab_id)
         git = BranchGit(self.db)
-        basis = prs._github(c).standaardbranch()
+        from services.lab.basisbranch import bepaal
+
+        # Dezelfde basis als in het voorstel: anders bouw je iets anders dan
+        # wat je hebt goedgekeurd.
+        basis = bepaal(prs._github(c), lab.branch or "", basis)["basis"]
 
         uitslag: List[Dict[str, Any]] = []
         for g in groepen:

@@ -15,6 +15,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { clusterApi } from "@/lib/clusters";
 import { Button, Input, Label, TextArea } from "@/components/ui";
+import { BasisKiezer } from "@/components/BasisKiezer";
 import { useMelding } from "@/components/Meldingen";
 
 type Voorstel = Awaited<ReturnType<typeof clusterApi.prVoorstel>>;
@@ -26,6 +27,7 @@ export const PullRequest = ({ labId }: { labId: string }) => {
   const [titel, setTitel] = useState("");
   const [tekst, setTekst] = useState("");
   const [bezig, setBezig] = useState(false);
+  const [basis, setBasis] = useState("");
   const [laadt, setLaadt] = useState(false);
   const [fout, setFout] = useState("");
 
@@ -34,12 +36,13 @@ export const PullRequest = ({ labId }: { labId: string }) => {
   const [reacties, setReacties] = useState<Comments | null>(null);
   const [gekozen, setGekozen] = useState<Set<string>>(new Set());
 
-  async function laad() {
+  async function laad(welke?: string) {
     setLaadt(true);
     setFout("");
     try {
-      const v = await clusterApi.prVoorstel(labId);
+      const v = await clusterApi.prVoorstel(labId, welke ?? basis);
       setVoorstel(v);
+      setBasis(v.naar);
       setTitel(v.titel);
       setTekst(v.beschrijving);
       if (v.pr_nummer) await laadReacties();
@@ -80,7 +83,8 @@ export const PullRequest = ({ labId }: { labId: string }) => {
   async function maak(concept: boolean) {
     setBezig(true);
     try {
-      const uit = await clusterApi.prMaken(labId, { titel, beschrijving: tekst, concept });
+      const uit = await clusterApi.prMaken(labId, {
+        titel, beschrijving: tekst, concept, naar: basis || voorstel?.naar });
       melding.ok(uit.melding, uit.url);
       await laad();
     } catch (e) {
@@ -133,6 +137,10 @@ export const PullRequest = ({ labId }: { labId: string }) => {
 
   return (
     <div className="space-y-3 p-1">
+      <BasisKiezer labId={labId} basis={voorstel.naar}
+                   bron={voorstel.basis_bron} zeker={voorstel.basis_zeker}
+                   onKies={(b) => { setBasis(b); void laad(b); }} />
+
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <GitPullRequest className="h-4 w-4 text-muted-foreground" />
         <span className="font-mono text-xs">{voorstel.branch}</span>

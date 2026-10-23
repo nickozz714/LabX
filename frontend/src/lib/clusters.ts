@@ -588,20 +588,21 @@ export const clusterApi = {
 
   /** Hoe de wijzigingen over kleinere pull requests verdeeld zouden worden.
    *  Een voorstel: er wordt nog niets gemaakt. */
-  splitsVoorstel: (labId: string) =>
+  splitsVoorstel: (labId: string, basis = "") =>
     api.get<{
-      branch: string; basis: string;
+      branch: string; basis: string; basis_bron: string; basis_zeker: boolean;
       bestanden: { pad: string; erbij: number; eraf: number; status: string }[];
       groepen: { branch: string; titel: string; reden: string; bestanden: string[] }[];
       niet_toegewezen: string[];
-    }>(`/opsplitsen/${labId}/voorstel`),
+    }>(`/opsplitsen/${labId}/voorstel${basis ? `?basis=${encodeURIComponent(basis)}` : ""}`),
 
   splitsMaken: (labId: string,
-                groepen: { branch: string; titel: string; bestanden: string[] }[]) =>
+                groepen: { branch: string; titel: string; bestanden: string[] }[],
+                basis = "") =>
     api.post<{
       ok: boolean; basis: string;
       resultaat: { branch: string; ok: boolean; bestanden?: number; melding: string }[];
-    }>(`/opsplitsen/${labId}`, { groepen }),
+    }>(`/opsplitsen/${labId}`, { groepen, basis }),
 
   /** Wat het token bij deze repo mag. Een 403 kan drie dingen betekenen die
    *  elk ergens anders opgelost worden; dit zegt welke. */
@@ -611,13 +612,14 @@ export const clusterApi = {
       pr_lezen: boolean; reden: string; advies: string;
     }>(`/pr/${labId}/rechten`),
 
-  prVoorstel: (labId: string) =>
+  prVoorstel: (labId: string, basis = "") =>
     api.get<{
-      branch: string; naar: string; bestaat_al: boolean;
+      branch: string; naar: string; basis_bron: string; basis_zeker: boolean;
+      bestaat_al: boolean;
       pr_nummer: number | null; pr_url: string;
       titel: string; beschrijving: string; ticket: string;
       commits: { sha: string; titel: string }[];
-    }>(`/pr/${labId}/voorstel`),
+    }>(`/pr/${labId}/voorstel${basis ? `?basis=${encodeURIComponent(basis)}` : ""}`),
 
   prMaken: (labId: string, body: { titel?: string; beschrijving?: string;
                                    naar?: string; concept?: boolean }) =>

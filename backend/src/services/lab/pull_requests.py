@@ -94,7 +94,7 @@ class PullRequests:
 
     # ── de beschrijving ──────────────────────────────────────────────────────
 
-    def voorstel(self, lab_id: str) -> Dict[str, Any]:
+    def voorstel(self, lab_id: str, basis: str = "") -> Dict[str, Any]:
         """Wat er in de PR zou komen, zonder hem te maken.
 
         Eerst laten zien en dan pas versturen: een titel en een beschrijving
@@ -108,9 +108,13 @@ class PullRequests:
             raise HTTPException(status_code=400, detail="Dit lab heeft geen branch.")
 
         bestaand = gh.pr_voor_branch(branch)
-        # De standaardbranch van de repo, want een cluster legt geen basis
-        # vast -- en GitHub weet het zelf het beste.
-        naar = gh.standaardbranch()
+        # NIET zomaar de standaardbranch: een branch die van een release is
+        # afgetakt, krijgt dan alles wat sinds die release op main kwam in
+        # zijn diff. Zie basisbranch.py.
+        from services.lab.basisbranch import bepaal
+
+        gekozen = bepaal(gh, branch, basis)
+        naar = gekozen["basis"]
         ticket = self.ticket_van(lab)
 
         commits: List[Dict[str, str]] = []
@@ -131,6 +135,8 @@ class PullRequests:
             "bestaat_al": bool(bestaand),
             "pr_nummer": (bestaand or {}).get("number") or lab.pr_nummer,
             "pr_url": (bestaand or {}).get("html_url") or "",
+            "basis_bron": gekozen["bron"],
+            "basis_zeker": gekozen["zeker"],
             "titel": _titel(ticket, branch, commits),
             "beschrijving": _beschrijving(ticket, commits),
             "ticket": (ticket.key if ticket else ""),
@@ -154,7 +160,7 @@ class PullRequests:
                     "url": bestaand.get("html_url"),
                     "melding": "Er stond al een open pull request voor deze branch."}
 
-        voorstel = self.voorstel(lab_id)
+        voorstel = self.voorstel(lab_id, basis=naar)
         pr = gh.maak_pr(
             branch=branch,
             naar=(naar or voorstel["naar"]),

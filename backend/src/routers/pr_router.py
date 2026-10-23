@@ -26,9 +26,13 @@ def rechten(lab_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{lab_id}/voorstel")
-def voorstel(lab_id: str, db: Session = Depends(get_db)):
-    """Wat er in de pull request zou komen, zonder hem te maken."""
-    return PullRequests(db).voorstel(lab_id)
+def voorstel(lab_id: str, basis: str = "", db: Session = Depends(get_db)):
+    """Wat er in de pull request zou komen, zonder hem te maken.
+
+    `basis` is de branch waarvan deze is afgetakt. Leeg = LabX leidt hem af
+    uit de open pull request, en valt anders terug op de standaardbranch --
+    zichtbaar als aanname, zie basisbranch.py."""
+    return PullRequests(db).voorstel(lab_id, basis=basis)
 
 
 @router.post("/{lab_id}")

@@ -20,12 +20,15 @@ router = APIRouter(prefix="/opsplitsen", tags=["opsplitsen"],
 
 
 @router.get("/{lab_id}/voorstel")
-async def voorstel(lab_id: str, db: Session = Depends(get_db)):
-    return await Opsplitsen(db).voorstel(lab_id)
+async def voorstel(lab_id: str, basis: str = "", db: Session = Depends(get_db)):
+    """`basis` is de branch waarvan deze is afgetakt; leeg laat LabX hem
+    afleiden uit de open pull request."""
+    return await Opsplitsen(db).voorstel(lab_id, basis=basis)
 
 
 @router.post("/{lab_id}")
 async def maak(lab_id: str, body: Dict[str, Any] | None = None,
                db: Session = Depends(get_db)):
     b = body or {}
-    return await Opsplitsen(db).maak(lab_id, groepen=list(b.get("groepen") or []))
+    return await Opsplitsen(db).maak(lab_id, groepen=list(b.get("groepen") or []),
+                                     basis=str(b.get("basis") or ""))
