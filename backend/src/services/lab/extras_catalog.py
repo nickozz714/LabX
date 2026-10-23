@@ -55,6 +55,43 @@ BUILTIN_EXTRAS: List[Dict[str, Any]] = [
         "sort_order": 10,
     },
     {
+        "key": "github-cli",
+        "label": "GitHub CLI (gh) + gh-stack",
+        "description": "De `gh`-opdracht in het lab, met de stack-extensie erbij. Nodig voor "
+                       "agents uit een repo die met pull requests werken — de "
+                       "pr-decomposer van IntelligentHive gebruikt `gh pr` en `gh stack` "
+                       "en kan zonder dit alleen plannen, niet bouwen. Aanmelden doe je "
+                       "met een geheim: zet GH_TOKEN={{secret:<naam>}} in je commando, "
+                       "dan staat de waarde nergens op een commandoregel.",
+        "check_cmd": "command -v gh >/dev/null 2>&1",
+        "install_script": (
+            "set -e\n"
+            f"{_NEED_CURL}\n"
+            # Via de officiële apt-bron en niet via een los binary: dan haalt
+            # `apt-get upgrade` hem mee en staat de sleutel op de nette plek.
+            "install -m 0755 -d /etc/apt/keyrings\n"
+            "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg "
+            "  -o /etc/apt/keyrings/githubcli-archive-keyring.gpg\n"
+            "chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg\n"
+            "echo \"deb [arch=$(dpkg --print-architecture) "
+            "signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] "
+            "https://cli.github.com/packages stable main\" "
+            "> /etc/apt/sources.list.d/github-cli.list\n"
+            "apt-get update -qq\n"
+            "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh\n"
+            # De extensie hoort bij de installatie: zonder hem faalt `gh stack`
+            # pas halverwege een decompositie, met de branches al gemaakt.
+            # Best-effort, want hij heeft een token nodig dat er bij het
+            # inrichten nog niet is -- dan haalt de agent hem zelf op.
+            "gh extension install github/gh-stack 2>&1 | tail -2 || "
+            "  echo 'gh-stack volgt bij het eerste gebruik (token nodig)'\n"
+            "gh --version | head -1"
+        ),
+        "requires": [],
+        "timeout_s": 600,
+        "sort_order": 15,
+    },
+    {
         "key": "playwright-python",
         "label": "Playwright (Python) + Chromium",
         "description": "De Python-binding van Playwright mét Chromium en alle systeembibliotheken "

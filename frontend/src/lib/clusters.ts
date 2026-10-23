@@ -567,6 +567,75 @@ export const clusterApi = {
   envBestandVerwijderen: (id: number, bestandId: number) =>
     api.delete<{ ok: boolean }>(`/clusters/${id}/env-bestanden/${bestandId}`),
 
+  // ── pull requests ────────────────────────────────────────────────────────
+
+  /** Wat er in de pull request zou komen, zonder hem te maken. Eerst zien,
+   *  dan pas versturen: titel en beschrijving zijn het enige wat een reviewer
+   *  krijgt voordat hij de diff opent. */
+  // ── agents uit de repo ───────────────────────────────────────────────────
+
+  /** De agents die deze repo zelf meebrengt (.claude/agents/*.md). De CLI op
+   *  de server vindt ze niet — die zoekt relatief aan zijn eigen werkmap — dus
+   *  leest LabX ze uit het lab. */
+  repoAgents: (labId: string) =>
+    api.get<{ naam: string; omschrijving: string }[]>(`/repo-agents/${labId}`),
+
+  repoAgentStarten: (labId: string, naam: string, opdracht: string) =>
+    api.post<{ ok: boolean; run_id: string; thread_id: string; agent: string }>(
+      `/repo-agents/${labId}/${naam}/start`, { opdracht }),
+
+  // ── opsplitsen ───────────────────────────────────────────────────────────
+
+  /** Hoe de wijzigingen over kleinere pull requests verdeeld zouden worden.
+   *  Een voorstel: er wordt nog niets gemaakt. */
+  splitsVoorstel: (labId: string) =>
+    api.get<{
+      branch: string; basis: string;
+      bestanden: { pad: string; erbij: number; eraf: number; status: string }[];
+      groepen: { branch: string; titel: string; reden: string; bestanden: string[] }[];
+      niet_toegewezen: string[];
+    }>(`/opsplitsen/${labId}/voorstel`),
+
+  splitsMaken: (labId: string,
+                groepen: { branch: string; titel: string; bestanden: string[] }[]) =>
+    api.post<{
+      ok: boolean; basis: string;
+      resultaat: { branch: string; ok: boolean; bestanden?: number; melding: string }[];
+    }>(`/opsplitsen/${labId}`, { groepen }),
+
+  /** Wat het token bij deze repo mag. Een 403 kan drie dingen betekenen die
+   *  elk ergens anders opgelost worden; dit zegt welke. */
+  prRechten: (labId: string) =>
+    api.get<{
+      repo: string; ziet_repo: boolean; mag_pushen: boolean;
+      pr_lezen: boolean; reden: string; advies: string;
+    }>(`/pr/${labId}/rechten`),
+
+  prVoorstel: (labId: string) =>
+    api.get<{
+      branch: string; naar: string; bestaat_al: boolean;
+      pr_nummer: number | null; pr_url: string;
+      titel: string; beschrijving: string; ticket: string;
+      commits: { sha: string; titel: string }[];
+    }>(`/pr/${labId}/voorstel`),
+
+  prMaken: (labId: string, body: { titel?: string; beschrijving?: string;
+                                   naar?: string; concept?: boolean }) =>
+    api.post<{ ok: boolean; nieuw: boolean; nummer: number; url: string; melding: string }>(
+      `/pr/${labId}`, body),
+
+  prComments: (labId: string) =>
+    api.get<{
+      pr_nummer: number | null; ticket: string; melding: string;
+      comments: { id: string; auteur: string; soort: string; plek: string;
+                  tekst: string; op: string; url: string }[];
+    }>(`/pr/${labId}/comments`),
+
+  /** Gekozen reacties als opmerking op het gekoppelde ticket zetten. */
+  prNaarTicket: (labId: string, ids: string[]) =>
+    api.post<{ ok: boolean; ticket: string; aantal: number }>(
+      `/pr/${labId}/naar-ticket`, { ids }),
+
   /** Waar JIJ dit lab opent. Niet altijd localhost: draait het cluster op een
    *  machine in je netwerk, dan staat de poort op de loopback van DIE computer
    *  en vraagt de server de agent daar om hem door te zetten. */

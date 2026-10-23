@@ -48,6 +48,9 @@ import { MODEL_OPTIONS } from "@/lib/modellen";
 import { DienstActies } from "@/components/DienstActies";
 import { ClusterBundels } from "@/components/ClusterBundels";
 import { BranchGit } from "@/components/BranchGit";
+import { PullRequest } from "@/components/PullRequest";
+import { BranchOpsplitsen } from "@/components/BranchOpsplitsen";
+import { RepoAgents } from "@/components/RepoAgents";
 import { uitTitel } from "@/lib/branchNaam";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
@@ -886,6 +889,22 @@ function BranchRegel({ lab, bordId, onActie }: {
       {gitOpen && (
         <div className="mt-3 space-y-3 border-t border-border pt-3">
           <BranchGit labId={lab.id} titel={lab.titel} onGewisseld={onActie} />
+          {/* De pull request hoort hier en niet op een eigen tabblad: je maakt
+              hem op het moment dat je klaar bent met pushen, en de reacties
+              erop lees je terwijl je in dezelfde branch werkt. */}
+          <div className="border-t border-border pt-3">
+            <PullRequest labId={lab.id} />
+          </div>
+          {/* Onder de PR, want dit is de stap die je zet als je vindt dat die
+              PR te groot wordt. */}
+          <div className="border-t border-border pt-3">
+            <BranchOpsplitsen labId={lab.id} />
+          </div>
+          {/* Alleen zichtbaar als de repo zelf agents meebrengt. Hun regels
+              gaan voor de onze; dit staat er dus ónder, niet ervoor. */}
+          <div className="border-t border-border pt-3">
+            <RepoAgents labId={lab.id} />
+          </div>
           <EigenStartscript lab={lab} onBewaard={onActie} />
         </div>
       )}

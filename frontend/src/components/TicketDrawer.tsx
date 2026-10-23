@@ -30,7 +30,7 @@ import { GrillMeister } from "@/components/GrillMeister";
 import { useBevestiging } from "@/components/Bevestiging";
 import { ApiError } from "@/lib/api";
 import { Bot, ExternalLink, MessageSquare, Pencil, Trash2, X } from "lucide-react";
-import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
+import { BijlageKnop, BijlageLijst, usePlakbijlage } from "@/components/Bijlagen";
 import { ticketBijlageMap } from "@/lib/boards";
 import type { Bijlage } from "@/lib/labs";
 
@@ -158,6 +158,11 @@ export function TicketDrawer({
   const [instruction, setInstruction] = useState("");
   // Bijlagen bij DEZE run. Ze staan al in het lab; wat meegaat is het pad.
   const [bijlagen, setBijlagen] = useState<Bijlage[]>([]);
+  const voegBijlagenToe = (nieuwe: Bijlage[]) =>
+    setBijlagen((prev) => [
+      ...prev,
+      ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
+    ]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Velden slaan op bij het verlaten van het veld. Zonder teken van leven is
@@ -389,6 +394,15 @@ export function TicketDrawer({
     ? (board.branches || []).find((b) => b.branch === ticket.branch) || null
     : null;
   const agentKan = board.cluster_id ? !!ticketLab : !!board.lab_id;
+  /** Plakken gaat dezelfde weg als de paperclip hierboven: het plaatje naar
+   *  het lab, en het pad in je tekst. Zowel bij de opdracht als bij een
+   *  opmerking, want een screenshot hoort bij allebei. */
+  const { onPaste, plakt, plakfout } = usePlakbijlage({
+    labId: ticketLab?.lab_id || board.lab_id,
+    dir: ticketBijlageMap(ticket.key),
+    disabled: busy || ticket.agent_state === "running",
+    onToegevoegd: voegBijlagenToe,
+  });
 
   return (
     <aside className="fixed inset-0 z-40 flex flex-col overflow-y-auto border-l border-border bg-card lg:static lg:z-auto lg:w-[30rem] lg:shrink-0">
@@ -666,10 +680,16 @@ export function TicketDrawer({
           <TextArea
             rows={2}
             className="text-xs"
-            placeholder="Extra instructie voor deze run (optioneel)"
+            placeholder={plakt
+              ? "Screenshot uploaden…"
+              : "Extra instructie voor deze run (optioneel, screenshot plakken mag)"}
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
+            onPaste={onPaste}
           />
+          {plakfout && (
+            <p className="mt-1 text-[11px] text-destructive">{plakfout}</p>
+          )}
           <div className="mt-2">
             <BijlageLijst bijlagen={bijlagen}
                           onVerwijder={(path) =>
@@ -719,11 +739,7 @@ export function TicketDrawer({
               dir={ticketBijlageMap(ticket.key)}
               disabled={busy || ticket.agent_state === "running"}
               compact
-              onToegevoegd={(nieuwe) =>
-                setBijlagen((prev) => [
-                  ...prev,
-                  ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
-                ])}
+              onToegevoegd={voegBijlagenToe}
             />
             {ticket.agent_thread_id && (
               <Button
@@ -785,9 +801,12 @@ export function TicketDrawer({
             <TextArea
               rows={2}
               className="text-xs"
-              placeholder="Opmerking toevoegen… (Markdown)"
+              placeholder={plakt
+                ? "Screenshot uploaden…"
+                : "Opmerking toevoegen… (Markdown, screenshot plakken mag)"}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={onPaste}
             />
             <div className="flex flex-col items-end gap-1">
               <label className="flex items-center gap-1 text-[11px] text-muted-foreground">

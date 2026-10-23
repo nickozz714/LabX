@@ -181,6 +181,9 @@ _ADDITIVE_COLUMNS = {
         ("wait_reason", "TEXT"),
     ],
     "labs": [
+        # Het nummer van de pull request van deze branch; leeg tot je er een
+        # maakt. Zie het model.
+        ("pr_nummer", "INTEGER"),
         # Bij welk cluster en welke branch dit lab hoort. NULL voor alles
         # wat er al staat: een bestaand lab is een gewoon lab.
         ("cluster_id", "INTEGER"),

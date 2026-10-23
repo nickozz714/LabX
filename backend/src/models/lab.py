@@ -51,6 +51,13 @@ class Lab(Base):
     #: machine -- geldt hier ook, en blijft op één plek geregeld.
     cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Het nummer van de pull request van deze branch, als er een is.
+    #:
+    #: Hier en niet alleen bij GitHub opvragen: de comments van een PR moeten
+    #: ook te halen zijn als de branch intussen verder gelopen is, en een
+    #: zoekvraag per keer is een ronde langs de API voor iets wat vastligt
+    #: zodra de PR bestaat.
+    pr_nummer: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: Waar deze branch over gaat, in jouw woorden.
     #:
     #: De TITEL wordt de naam van de feature-branch en reist dus mee naar

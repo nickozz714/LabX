@@ -33,7 +33,7 @@ import { useMelding } from "@/components/Meldingen";
 import { LabAllowlist } from "@/components/LabAllowlist";
 import { LabTerminal } from "@/components/LabTerminal";
 import { RunDetailModal, runDuration } from "@/components/BackgroundRunDetail";
-import { BijlageKnop, BijlageLijst } from "@/components/Bijlagen";
+import { BijlageKnop, BijlageLijst, usePlakbijlage } from "@/components/Bijlagen";
 import { getToken, ApiError } from "@/lib/api";
 import { MODEL_OPTIONS } from "@/lib/modellen";
 import { useBevestiging } from "@/components/Bevestiging";
@@ -99,6 +99,13 @@ export function ChatPage() {
   // Bijlagen van het bericht dat je nu typt. Ze staan al in het lab (zie
   // components/Bijlagen.tsx); dit is alleen de lijst die meegaat.
   const [bijlagen, setBijlagen] = useState<Bijlage[]>([]);
+  /** Een screenshot plakken gaat dezelfde weg als de paperclip: naar het lab,
+   *  en in je bericht komt het pad. Zie usePlakbijlage. */
+  const voegBijlagenToe = (nieuwe: Bijlage[]) =>
+    setBijlagen((prev) => [
+      ...prev,
+      ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
+    ]);
   const [streaming, setStreaming] = useState(false);
   const [liveSteps, setLiveSteps] = useState<ChatEvent[]>([]);
   const [liveAnswer, setLiveAnswer] = useState("");
@@ -567,6 +574,15 @@ export function ChatPage() {
   // zoekfilter. Een chat hoort bij precies één lab, dus dubbel tellen kan niet.
   const zichtbareChats = threadGroups.reduce((n, g) => n + g.threads.length, 0);
   const inputDisabled = !activeThread || !lab || lab.status !== "running" || streaming;
+  // Na inputDisabled, want de haak leest hem: plakken hoort net zo goed uit
+  // te staan als het veld zelf uit staat.
+  const { onPaste, plakfout } = usePlakbijlage({
+    labId: activeThread ? lab?.id : null,
+    dir: chatBijlageMap(activeThread?.id || ""),
+    disabled: inputDisabled,
+    onToegevoegd: voegBijlagenToe,
+  });
+
 
   // Cumulative token/cost counter for this conversation, summed from the
   // per-turn usage events persisted in each assistant message's steps.
@@ -971,17 +987,16 @@ export function ChatPage() {
               <BijlageLijst bijlagen={bijlagen}
                             onVerwijder={(path) =>
                               setBijlagen((prev) => prev.filter((b) => b.path !== path))} />
+              {plakfout && (
+                <p className="mb-1 text-[11px] text-destructive">{plakfout}</p>
+              )}
               <div className="flex items-end gap-2">
                 <BijlageKnop
                   labId={activeThread ? lab?.id : null}
                   dir={chatBijlageMap(activeThread?.id || "")}
                   disabled={inputDisabled}
                   alleenIcoon
-                  onToegevoegd={(nieuwe) =>
-                    setBijlagen((prev) => [
-                      ...prev,
-                      ...nieuwe.filter((n) => !prev.some((p) => p.path === n.path)),
-                    ])}
+                  onToegevoegd={voegBijlagenToe}
                 />
 
                 <div className="flex min-w-0 flex-1 items-end rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
@@ -990,6 +1005,7 @@ export function ChatPage() {
                     rows={1}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    onPaste={onPaste}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
