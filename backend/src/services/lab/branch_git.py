@@ -390,7 +390,12 @@ _STATUS_SCRIPT = (
     'git fetch --quiet origin 2>/dev/null || true; '
     'git rev-parse --abbrev-ref HEAD; printf "\\036"; '
     'git log -1 --pretty=format:"%h %s (%ar)" 2>/dev/null; printf "\\036"; '
-    'git rev-list --left-right --count "@{upstream}...HEAD" 2>/dev/null '
+    # Tegen origin/<branch> en niet tegen @{upstream}: dat laatste hangt af
+    # van de tracking-instelling, en die kon kapot staan (zie _PUSH_SCRIPT).
+    # Een bestaand lab heeft hem nog steeds verkeerd; dit telt daar gewoon
+    # doorheen.
+    'B=$(git rev-parse --abbrev-ref HEAD); '
+    'git rev-list --left-right --count "refs/remotes/origin/$B...HEAD" 2>/dev/null '
     '  | awk \'{print $2, $1}\'; printf "\\036"; '
     'if git ls-remote --exit-code --heads origin '
     '     "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1; '
@@ -417,7 +422,20 @@ _PUSH_SCRIPT = (
     '  else git commit -q -m "$COMMIT_BERICHT" && echo "gecommit"; fi; '
     'fi; '
     'echo "-- push naar $TAK"; '
-    'git push --set-upstream "${REPO_URL:-origin}" "HEAD:refs/heads/$TAK" 2>&1; '
+    'git push "${REPO_URL:-origin}" "HEAD:refs/heads/$TAK" 2>&1; '
+    # GEEN --set-upstream op $REPO_URL.
+    #
+    # Dat zette de URL neer waar de naam `origin` hoort, en dan kan git niets
+    # meer vergelijken: `@{upstream}` geeft "not stored as a remote-tracking
+    # branch" en elke telling valt stil terug op nul. Gemeten op 23-10-2026 --
+    # het scherm zei 0 vooruit en 0 achter terwijl er 65 commits klaarstonden
+    # en drie van jou nog niet gepusht waren. Een stand die altijd nul is,
+    # lijkt op "alles is bij".
+    #
+    # Dus: de remote-tracking ref zelf bijwerken (de push is net geslaagd, dus
+    # daar staat nu hetzelfde) en de upstream op de NAAM zetten.
+    'git update-ref "refs/remotes/origin/$TAK" HEAD; '
+    'git branch --set-upstream-to="origin/$TAK" >/dev/null 2>&1 || true; '
     'git log -1 --pretty=format:"nu op %h %s"'
 )
 

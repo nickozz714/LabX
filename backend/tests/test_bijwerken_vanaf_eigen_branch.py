@@ -35,7 +35,36 @@ def test_de_stand_wordt_eerst_opgehaald():
         "ophalen moet vóór het tellen")
 
 
-def test_het_tellen_vergelijkt_met_de_eigen_upstream():
-    """@{upstream} is origin/<deze branch>; dat is de vergelijking die ertoe
-    doet voor een push."""
-    assert "@{upstream}...HEAD" in git._STATUS_SCRIPT
+def test_het_tellen_vergelijkt_met_de_eigen_branch_op_de_server():
+    """Dat is de vergelijking die ertoe doet voor een push."""
+    assert "refs/remotes/origin/$B...HEAD" in git._STATUS_SCRIPT
+
+
+def test_de_push_zet_geen_url_als_upstream():
+    """Dit was de stille oorzaak onder alles.
+
+    `git push --set-upstream "$REPO_URL"` zet de URL neer waar de naam
+    `origin` hoort. Daarna geeft `@{upstream}` "not stored as a
+    remote-tracking branch" en valt elke telling terug op nul -- het scherm
+    zegt 0 vooruit en 0 achter terwijl er 65 commits klaarstaan en drie van
+    jou nog niet gepusht zijn. Een stand die altijd nul is, lijkt op "bij".
+    """
+    # Let op de vorm: `--set-upstream-to=origin/...` mag juist wel, en dat
+    # bevat dezelfde letters. Het gaat om de variant op de push zelf.
+    assert "push --set-upstream" not in git._PUSH_SCRIPT
+
+
+def test_de_push_herstelt_de_tracking_wel():
+    """Zonder upstream werkt `git status` in het lab zelf ook niet meer;
+    daarom zetten we hem op de NAAM, en werken we de remote-tracking ref bij
+    die na een geslaagde push per definitie gelijk is aan HEAD."""
+    assert 'git update-ref "refs/remotes/origin/$TAK" HEAD' in git._PUSH_SCRIPT
+    assert 'git branch --set-upstream-to="origin/$TAK"' in git._PUSH_SCRIPT
+
+
+def test_het_tellen_hangt_niet_van_de_tracking_af():
+    """Een lab dat al bestaat heeft die kapotte upstream nog. De telling moet
+    daar doorheen werken, anders blijft het scherm liegen tot iemand opnieuw
+    pusht."""
+    assert "@{upstream}" not in git._STATUS_SCRIPT
+    assert "refs/remotes/origin/$B...HEAD" in git._STATUS_SCRIPT
