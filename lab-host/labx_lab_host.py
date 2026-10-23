@@ -422,12 +422,36 @@ LABPOORT_MIN, LABPOORT_MAX = 18000, 18999
 #: niet verdringen.
 POORT_VERSCHUIVING = 10_000
 
-#: Hoe lang een doorgang zonder verkeer open blijft.
-STIL_MAX_SECONDEN = 4 * 60 * 60
+#: Hoe lang een doorgang stil mag zijn voordat we gaan KIJKEN of hij nog
+#: ergens naartoe wijst. Niet hoe lang hij open blijft -- dat was het eerst,
+#: en dat is de verkeerde maat.
+#:
+#: Gemeten op 23-10-2026: een tunnelscript stond 46 uur open naar de API van
+#: een lab. Die API werd een halve dag niet gebruikt, de doorgang ging na vier
+#: uur dicht, en toen hij nodig was kwam er "localhost didn't send any data".
+#: De API draaide gewoon; alleen de weg ernaartoe was opgeruimd.
+#:
+#: Wat ertoe doet is niet of er verkeer was, maar of er aan de andere kant nog
+#: iets luistert. Draait het lab, dan hoort de doorgang te blijven; is de
+#: poort dood, dan wijst hij nergens meer heen en mag hij weg -- en dat is ook
+#: meteen het geval waarvoor het opruimen bedoeld was: LabX hergebruikt
+#: poortnummers, en een doorgang naar een verdwenen lab mag geen nieuw lab
+#: gaan aanwijzen.
+STIL_VOOR_CONTROLE = 15 * 60
 
 #: Hoe lang we wachten tot het lab de verbinding aanneemt. ALLEEN daarvoor:
 #: zie _verbind() waarom die time-out daarna weer af moet.
 VERBIND_TIJD = 10
+
+
+def _luistert(poort: int) -> bool:
+    """Is er aan de andere kant nog iets? Eén tel is genoeg: het is localhost,
+    en een lab dat er is antwoordt meteen."""
+    try:
+        with socket.create_connection(("127.0.0.1", int(poort)), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 class Doorgeefluik:
@@ -547,11 +571,20 @@ class Doorgangen:
                     for q in self._open.values()]
 
     def ruim_op(self) -> None:
-        """Wat lang stil is gaat dicht. Zie grendel 3 hierboven."""
+        """Een doorgang die nergens meer heen wijst, gaat dicht.
+
+        Stilte alleen is geen reden: zie STIL_VOOR_CONTROLE. We wachten tot
+        hij een tijdje ongebruikt is -- dat scheelt bij elke tik een rondje
+        sockets openen -- en kijken dan of het lab er nog is.
+        """
         nu = time.time()
         for doel, luik in list(self._open.items()):
-            if nu - luik.laatst_gebruikt > STIL_MAX_SECONDEN:
-                self.sluit(doel)
+            if nu - luik.laatst_gebruikt <= STIL_VOOR_CONTROLE:
+                continue
+            if _luistert(doel):
+                continue          # het lab draait; de weg blijft
+            print(f"[labx] poort {doel} luistert niet meer")
+            self.sluit(doel)
 
     def alles_dicht(self) -> None:
         """Afsluiten, maar NIET vergeten wat er open stond.

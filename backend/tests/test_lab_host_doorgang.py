@@ -93,16 +93,50 @@ def test_sluiten_maakt_de_poort_echt_dicht(agent):
         socket.create_connection(("127.0.0.1", luik.poort), timeout=2)
 
 
-def test_een_doorgang_die_lang_stil_is_gaat_vanzelf_dicht(agent, monkeypatch):
-    """Een doorgang die blijft bestaan wijst op een dag naar een lab dat er
-    niet meer is. Dat is de reden dat dit vanzelf opruimt."""
-    monkeypatch.setattr(agent, "STIL_MAX_SECONDEN", 0)
+def test_een_stille_doorgang_naar_een_DRAAIEND_lab_blijft(agent, monkeypatch):
+    """Stilte is geen reden om op te ruimen.
+
+    Gemeten op 23-10-2026: een tunnelscript stond 46 uur open naar de API van
+    een lab. Die API werd een halve dag niet gebruikt, de doorgang ging na
+    vier uur dicht, en toen hij nodig was kwam er "localhost didn't send any
+    data". De API draaide gewoon; alleen de weg ernaartoe was opgeruimd.
+    """
+    monkeypatch.setattr(agent, "STIL_VOOR_CONTROLE", 0)
+    poort = 18093
+    dienst = _luisteraar(poort)
     doorgangen = agent.Doorgangen()
     try:
-        doorgangen.open(18093)
+        doorgangen.open(poort)
+        time.sleep(0.05)
+        doorgangen.ruim_op()
+        assert [q["lab_poort"] for q in doorgangen.lijst()] == [poort]
+    finally:
+        doorgangen.alles_dicht()
+        dienst.close()
+
+
+def test_een_doorgang_naar_een_DODE_poort_gaat_dicht(agent, monkeypatch):
+    """Dat is waar het opruimen voor bedoeld was: LabX hergebruikt
+    poortnummers, en een doorgang naar een verdwenen lab mag geen nieuw lab
+    gaan aanwijzen."""
+    monkeypatch.setattr(agent, "STIL_VOOR_CONTROLE", 0)
+    doorgangen = agent.Doorgangen()
+    try:
+        doorgangen.open(18094)      # hier luistert niets
         time.sleep(0.05)
         doorgangen.ruim_op()
         assert doorgangen.lijst() == []
+    finally:
+        doorgangen.alles_dicht()
+
+
+def test_kort_stil_wordt_niet_eens_nagekeken(agent):
+    """Anders opent elke tik een socket per doorgang, voor niets."""
+    doorgangen = agent.Doorgangen()
+    try:
+        doorgangen.open(18099)      # niets luistert, maar hij is net geopend
+        doorgangen.ruim_op()
+        assert [q["lab_poort"] for q in doorgangen.lijst()] == [18099]
     finally:
         doorgangen.alles_dicht()
 
