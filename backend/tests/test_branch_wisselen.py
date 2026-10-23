@@ -271,8 +271,36 @@ def test_bijwerken_haalt_de_basis_op(db):
     assert "git merge" in gezien["script"]
 
 
-def test_bijwerken_zonder_basis_neemt_main(db):
+def test_bijwerken_zonder_basis_neemt_je_eigen_branch(db):
+    """Dit stond op `main`, en dat was de verkeerde kant op.
+
+    Aan een feature-branch werkt meestal meer dan één mens. Gemeten op
+    23-10-2026: een lab van drie dagen oud stond 2 commits vooruit en 65
+    achter op zijn EIGEN branch, de push werd geweigerd, en bijwerken vanaf
+    main gaf 41 conflicten plus een halve merge. Met de eigen branch waren
+    het er nul -- dezelfde lijn, dezelfde geschiedenis.
+    """
     _, lab = _opzet(db)
+    svc, gezien = _git(db)
+
+    asyncio.run(svc.bijwerken(lab.id))
+    assert gezien["env"]["BASIS"] == lab.branch
+
+
+def test_bijwerken_vanaf_main_kan_nog_steeds(db):
+    """Soms wil je main er juist in. Dat moet een keuze zijn, niet wat er
+    gebeurt als je niets kiest."""
+    _, lab = _opzet(db)
+    svc, gezien = _git(db)
+
+    asyncio.run(svc.bijwerken(lab.id, basis="main"))
+    assert gezien["env"]["BASIS"] == "main"
+
+
+def test_een_lab_zonder_branch_valt_terug_op_main(db):
+    """Dan is er geen eigen branch om vanaf bij te werken."""
+    _, lab = _opzet(db)
+    lab.branch = None
     svc, gezien = _git(db)
 
     asyncio.run(svc.bijwerken(lab.id))

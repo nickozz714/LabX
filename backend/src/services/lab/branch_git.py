@@ -299,14 +299,24 @@ class BranchGit:
                 "uitvoer": uit.get("output") or ""}
 
     async def bijwerken(self, lab_id: str, *, basis: str = "") -> Dict[str, Any]:
-        """De remote ophalen en de basis in deze branch halen.
+        """De remote ophalen en een basis in deze branch halen.
 
         Een branch-lab kloont één keer en daarna nooit meer. Werk je er drie
-        dagen aan, dan zit er de `main` van drie dagen geleden onder -- en dat
+        dagen aan, dan zit er de stand van drie dagen geleden onder -- en dat
         merk je pas bij de merge.
+
+        De standaard is JE EIGEN BRANCH op de server, niet main. Dat was eerst
+        andersom, en dat is de verkeerde kant op: aan een feature-branch werkt
+        meestal meer dan één mens. Gemeten op 23-10-2026 -- een lab stond twee
+        commits vooruit en vijfenzestig achter op zijn eigen branch, de push
+        werd geweigerd, en bijwerken vanaf main leverde eenenveertig
+        conflicten op. Met de eigen branch waren het er nul: dezelfde lijn,
+        dezelfde geschiedenis.
+
+        Main blijft een keuze, want soms wil je dat juist.
         """
         lab, c = self._lab(lab_id)
-        env = {"BASIS": (basis or "main").strip()}
+        env = {"BASIS": (basis or lab.branch or "main").strip()}
         uit = await self._git(lab, c, _BIJWERK_SCRIPT, env=env)
         return {"ok": int(uit.get("exit_code") or 0) == 0,
                 "uitvoer": uit.get("output") or ""}
@@ -372,6 +382,12 @@ def _soort(code: str) -> str:
 #: regel, die in een bestandsnaam wél mag.
 _STATUS_SCRIPT = (
     'cd "/workspace/$DEST" 2>/dev/null || { echo "geen werkkopie"; exit 1; }; '
+    # Eerst ophalen, anders is "achter" een getal van de laatste keer dat
+    # iemand toevallig fetchte. Gemeten op 23-10-2026: het scherm zei dat je
+    # bij was terwijl er vijfenzestig commits op je branch stonden, en dat
+    # bleek pas toen de push geweigerd werd. Een stand die niet klopt is
+    # erger dan geen stand.
+    'git fetch --quiet origin 2>/dev/null || true; '
     'git rev-parse --abbrev-ref HEAD; printf "\\036"; '
     'git log -1 --pretty=format:"%h %s (%ar)" 2>/dev/null; printf "\\036"; '
     'git rev-list --left-right --count "@{upstream}...HEAD" 2>/dev/null '

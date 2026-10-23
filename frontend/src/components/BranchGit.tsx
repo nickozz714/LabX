@@ -142,9 +142,18 @@ export function BranchGit({ labId, titel, onGewisseld }: {
     }
   }
 
-  async function werkBij() {
+  /**
+   * Bijwerken vanaf JE EIGEN branch, niet vanaf main.
+   *
+   * Dat was eerst andersom en dat is de verkeerde kant op: aan een
+   * feature-branch werkt meestal meer dan één mens. Gemeten geval: een lab
+   * stond 2 commits vooruit en 65 achter op zijn eigen branch, de push werd
+   * geweigerd, en bijwerken vanaf main gaf 41 conflicten. Met de eigen
+   * branch waren het er nul.
+   */
+  async function werkBij(basis?: string) {
     try {
-      const uit = await clusterApi.branchBijwerken(labId);
+      const uit = await clusterApi.branchBijwerken(labId, basis);
       setUitslag({ ok: uit.ok, exit_code: uit.ok ? 0 : 1,
                    branch: status?.branch || "", uitvoer: uit.uitvoer });
       await laad();
@@ -222,9 +231,18 @@ export function BranchGit({ labId, titel, onGewisseld }: {
             <ArrowDown className="h-3 w-3" />{status.achter} achter
           </span>
         )}
-        <Button variant="ghost" onClick={werkBij} className="ml-auto"
-                title="De remote ophalen en de basis in deze branch mergen">
-          <ArrowDown className="h-3.5 w-3.5" /> Bijwerken
+        <Button variant="ghost" onClick={() => void werkBij()} className="ml-auto"
+                title={status.achter > 0
+                  ? `${status.achter} commit(s) van origin/${status.branch} ophalen en mergen`
+                  : `Ophalen en mergen vanaf origin/${status.branch}`}>
+          <ArrowDown className="h-3.5 w-3.5" />
+          {status.achter > 0 ? `Bijwerken (${status.achter})` : "Bijwerken"}
+        </Button>
+        {/* Main blijft bereikbaar, want soms wil je dat juist — maar als
+            losse keuze, niet als wat er gebeurt als je niets kiest. */}
+        <Button variant="ghost" onClick={() => void werkBij("main")}
+                title="De basis main in deze branch mergen">
+          vanaf main
         </Button>
         <Button variant="ghost" onClick={laad} aria-label="Verversen">
           <RefreshCw className={`h-3.5 w-3.5 ${laadt ? "animate-spin" : ""}`} />
