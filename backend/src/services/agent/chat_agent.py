@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from component_logging import get_logger
 from services.agent.claude_cli_provider import ClaudeCliProvider, claude_code_model
+from services.agent.schrijfstijl import SCHRIJFSTIJL
 from services.lab.execution_context import reset_active_lab, set_active_lab
 
 log = get_logger(__name__)
@@ -106,7 +107,8 @@ AGENT_PREAMBLE = (
     "- An unknown name is an error, not a silent blank: the call stops rather "
     "than sending `{{secret:typo}}` to an external service.\n\n"
     "When you have done the work, give the user a clear, direct answer in "
-    "natural language — that final message is what LabX shows in the chat."
+    "natural language — that final message is what LabX shows in the chat.\n\n"
+    + SCHRIJFSTIJL
 )
 
 _SKILL_GUIDE_BUDGET = 16_000
