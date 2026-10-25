@@ -1,6 +1,6 @@
 # Platen
 
-Acht diagrammen die LabX uitleggen, in de volgorde waarin je het aan een zaal vertelt.
+Negen diagrammen die LabX uitleggen, in de volgorde waarin je het aan een zaal vertelt.
 Allemaal **1600 × 900** (16:9 — precies een slide) en **SVG**, dus scherp op elk formaat.
 
 | # | Bestand | Waarvoor |
@@ -13,6 +13,12 @@ Allemaal **1600 × 900** (16:9 — precies een slide) en **SVG**, dus scherp op 
 | 6 | `6-labx-en-nectar.svg` | De combinatie: LabX doet het werk, Nectar onthoudt het |
 | 7 | `7-waar-het-draait.svg` | Welke containers, welke poorten, welke volumes — en waar de CLI draait |
 | 8 | `8-meer-dan-een-machine.svg` | Labs en modellen op computers uit je eigen netwerk, aangestuurd over SSH |
+| 9 | `9-architectuur.svg` | Alles op één plaat, voor wie er niet bij was: onderdelen, grenzen en wat er naar buiten gaat |
+
+Plaat 9 is de losse plaat om door te sturen — hij vertelt in zijn eentje het hele verhaal en staat
+daarom bewust niet in de verteldvolgorde van 1 tot 8. Hij is geschreven voor iemand die niet in het
+ontwikkelproces heeft gezeten: geen woord dat alleen binnen dit project betekenis heeft, en geen
+klant-, server- of projectnamen, zodat hij zonder nalezen de deur uit kan.
 
 Plaat 8 hoort bij plaat 7 en niet in plaats daarvan: 7 laat zien wat er op één machine
 draait, 8 wat er gebeurt zodra je er computers uit je netwerk bij zet. Hij is afgelezen uit

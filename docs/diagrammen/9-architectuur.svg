@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-label="Architectuurplaat van LabX: jij, de server met de besturing, de assistent, de afgeschermde werkruimtes, de grens, de systemen daarbuiten en de andere machines in je netwerk.">
+  <defs>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#58626F"/>
+    </marker>
+    <marker id="pb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2563EB"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1600" height="900" fill="#FFFFFF"/>
+  <g font-family="Archivo, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif">
+
+    <text x="40" y="58" font-size="26" font-weight="700" fill="#111827">LabX — architectuur</text>
+    <text x="40" y="84" font-size="14" fill="#58626F">Wat er draait, waar het draait, en wat er wel en niet naar buiten gaat</text>
+
+    <rect x="760" y="48" width="15" height="15" rx="3" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <text x="783" y="60" font-size="12" fill="#58626F">afgeschermde werkruimte</text>
+    <rect x="940" y="48" width="15" height="15" rx="3" fill="#0B1220"/>
+    <text x="963" y="60" font-size="12" fill="#58626F">de grens</text>
+    <circle cx="1047" cy="55" r="6" fill="#0E9F6E"/>
+    <text x="1060" y="60" font-size="12" fill="#58626F">doorgelaten</text>
+    <circle cx="1162" cy="55" r="6" fill="#C2740A"/>
+    <text x="1175" y="60" font-size="12" fill="#58626F">gemaskeerd</text>
+    <circle cx="1278" cy="55" r="6" fill="#DC2626"/>
+    <text x="1291" y="60" font-size="12" fill="#58626F">tegengehouden</text>
+
+    <!-- ── links: jij ─────────────────────────────────────────────────── -->
+    <rect x="40" y="110" width="240" height="108" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="62" y="146" font-size="17" font-weight="600" fill="#111827">Jij</text>
+    <text x="62" y="172" font-size="12" fill="#58626F">in de browser of in de</text>
+    <text x="62" y="190" font-size="12" fill="#58626F">desktop-app</text>
+    <text x="62" y="210" font-size="12" fill="#58626F">je ziet elke stap live</text>
+
+    <rect x="40" y="250" width="240" height="132" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="62" y="280" font-size="14" font-weight="600" fill="#111827">Wat jij instelt</text>
+    <text x="62" y="306" font-size="12" fill="#58626F">· de regels van de grens</text>
+    <text x="62" y="326" font-size="12" fill="#58626F">· welke koppelingen aan</text>
+    <text x="62" y="346" font-size="12" fill="#58626F">· met welke identiteit</text>
+    <text x="62" y="366" font-size="12" fill="#58626F">· hoeveel er tegelijk draait</text>
+
+    <rect x="40" y="414" width="240" height="166" rx="12" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="62" y="444" font-size="14" font-weight="600" fill="#111827">Zo loopt een opdracht</text>
+    <text x="62" y="470" font-size="12" fill="#58626F">1  jij geeft de opdracht</text>
+    <text x="62" y="492" font-size="12" fill="#58626F">2  er gaat een verse</text>
+    <text x="78" y="510" font-size="12" fill="#58626F">werkruimte open</text>
+    <text x="62" y="532" font-size="12" fill="#58626F">3  hij werkt, jij kijkt mee</text>
+    <text x="62" y="554" font-size="12" fill="#58626F">4  resultaat op de taak,</text>
+    <text x="78" y="572" font-size="12" fill="#58626F">met verslag erbij</text>
+
+    <text x="40" y="624" font-size="12" fill="#58626F">Van buiten kan niets uit zichzelf</text>
+    <text x="40" y="642" font-size="12" fill="#58626F">naar binnen. LabX zet zichzelf</text>
+    <text x="40" y="660" font-size="12" fill="#58626F">nergens op internet.</text>
+
+    <line x1="282" y1="164" x2="326" y2="164" stroke="#58626F" stroke-width="1.6" marker-start="url(#p)" marker-end="url(#p)"/>
+
+    <!-- ── midden: de server ──────────────────────────────────────────── -->
+    <rect x="330" y="110" width="830" height="640" rx="18" fill="#E8F0FE" stroke="#B9CFFA" stroke-width="1.6"/>
+    <text x="350" y="136" font-size="12" font-weight="600" letter-spacing="1.6" fill="#2563EB">JOUW SERVER — OF JE EIGEN COMPUTER</text>
+    <text x="1146" y="136" font-size="12" fill="#58626F" text-anchor="end">alles hierbinnen is van jou</text>
+
+    <rect x="344" y="150" width="792" height="160" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="362" y="176" font-size="12" font-weight="600" letter-spacing="1.4" fill="#2563EB">LABX — ÉÉN PROGRAMMA</text>
+    <rect x="353" y="186" width="186" height="86" rx="9" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="369" y="212" font-size="13.5" font-weight="600" fill="#111827">Scherm en bediening</text>
+    <text x="369" y="234" font-size="11.5" fill="#58626F">alles wat je ziet en</text>
+    <text x="369" y="252" font-size="11.5" fill="#58626F">aanstuurt</text>
+    <rect x="549" y="186" width="186" height="86" rx="9" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="565" y="212" font-size="13.5" font-weight="600" fill="#111827">Administratie</text>
+    <text x="565" y="234" font-size="11.5" fill="#58626F">werkruimtes, taken,</text>
+    <text x="565" y="252" font-size="11.5" fill="#58626F">borden, instellingen</text>
+    <rect x="745" y="186" width="186" height="86" rx="9" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="761" y="212" font-size="13.5" font-weight="600" fill="#111827">Kluis</text>
+    <text x="761" y="234" font-size="11.5" fill="#58626F">wachtwoorden en</text>
+    <text x="761" y="252" font-size="11.5" fill="#58626F">identiteiten, versleuteld</text>
+    <rect x="941" y="186" width="186" height="86" rx="9" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="957" y="212" font-size="13.5" font-weight="600" fill="#111827">Logboek</text>
+    <text x="957" y="234" font-size="11.5" fill="#58626F">wie deed wat, en wat</text>
+    <text x="957" y="252" font-size="11.5" fill="#58626F">ging naar buiten</text>
+    <text x="353" y="296" font-size="12" fill="#58626F">Daarnaast: roosters en terugkerend werk · synchronisatie met jullie eigen takenlijst · meldingen per mail of chat</text>
+
+    <line x1="430" y1="310" x2="430" y2="330" stroke="#58626F" stroke-width="1.6" marker-end="url(#p)"/>
+    <line x1="930" y1="310" x2="930" y2="330" stroke="#58626F" stroke-width="1.6" marker-end="url(#p)"/>
+
+    <rect x="344" y="330" width="360" height="96" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="364" y="360" font-size="15" font-weight="600" fill="#111827">De assistent</text>
+    <text x="364" y="384" font-size="12" fill="#58626F">Claude, met een eigen sessie per opdracht.</text>
+    <text x="364" y="404" font-size="12" fill="#58626F">Krijgt alleen wat jij hebt aangezet.</text>
+
+    <rect x="724" y="330" width="412" height="96" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="744" y="360" font-size="15" font-weight="600" fill="#111827">Koppelingen naar systemen</text>
+    <text x="744" y="384" font-size="12" fill="#58626F">Sommige draaien hier, andere in de werkruimte zelf.</text>
+    <text x="744" y="404" font-size="12" fill="#58626F">Niets staat standaard aan.</text>
+
+    <line x1="430" y1="426" x2="430" y2="450" stroke="#58626F" stroke-width="1.6" marker-end="url(#p)"/>
+    <text x="440" y="444" font-size="11" fill="#58626F">commando's</text>
+    <line x1="930" y1="426" x2="930" y2="450" stroke="#58626F" stroke-width="1.6" marker-end="url(#p)"/>
+    <text x="940" y="444" font-size="11" fill="#58626F">hulpmiddelen</text>
+
+    <rect x="344" y="450" width="792" height="180" rx="12" fill="#FFFFFF" stroke="#2563EB" stroke-width="1.8" stroke-dasharray="7 6"/>
+    <text x="362" y="476" font-size="12" font-weight="600" letter-spacing="1.4" fill="#2563EB">DE WERKRUIMTES — AFGESCHERMD</text>
+    <rect x="353" y="488" width="186" height="98" rx="9" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="369" y="514" font-size="13.5" font-weight="600" fill="#111827">Werkruimte</text>
+    <text x="369" y="536" font-size="11.5" fill="#58626F">eigen schijf, eigen</text>
+    <text x="369" y="554" font-size="11.5" fill="#58626F">programma's, eigen</text>
+    <text x="369" y="572" font-size="11.5" fill="#58626F">netwerk — versie A</text>
+    <rect x="549" y="488" width="186" height="98" rx="9" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="565" y="514" font-size="13.5" font-weight="600" fill="#111827">Werkruimte</text>
+    <text x="565" y="536" font-size="11.5" fill="#58626F">draait tegelijk, zonder</text>
+    <text x="565" y="554" font-size="11.5" fill="#58626F">de ander in de weg te</text>
+    <text x="565" y="572" font-size="11.5" fill="#58626F">zitten — versie B</text>
+    <rect x="745" y="488" width="186" height="98" rx="9" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="761" y="514" font-size="13.5" font-weight="600" fill="#111827">Werkruimte</text>
+    <text x="761" y="536" font-size="11.5" fill="#58626F">voor een los klusje;</text>
+    <text x="761" y="554" font-size="11.5" fill="#58626F">sluiten is weg, er blijft</text>
+    <text x="761" y="572" font-size="11.5" fill="#58626F">niets achter</text>
+    <rect x="941" y="488" width="186" height="98" rx="9" fill="#E8F0FE" stroke="#B9CFFA" stroke-width="1.2"/>
+    <text x="957" y="514" font-size="13.5" font-weight="600" fill="#111827">Gedeelde diensten</text>
+    <text x="957" y="536" font-size="11.5" fill="#58626F">een testdatabase en</text>
+    <text x="957" y="554" font-size="11.5" fill="#58626F">wat erbij hoort; blijft</text>
+    <text x="957" y="572" font-size="11.5" fill="#58626F">staan voor allemaal</text>
+    <text x="353" y="612" font-size="12" fill="#58626F">Hier gebeurt het werk: bouwen, draaien, testen, gegevens bevragen. Wat hierin binnenkomt, blijft hierin.</text>
+
+    <line x1="740" y1="630" x2="740" y2="650" stroke="#58626F" stroke-width="1.6" marker-end="url(#p)"/>
+    <text x="750" y="645" font-size="11" fill="#58626F">uitvoer</text>
+
+    <rect x="344" y="650" width="792" height="76" rx="12" fill="#0B1220"/>
+    <text x="364" y="678" font-size="12" font-weight="600" letter-spacing="1.5" fill="#8FB6FF">DE GRENS</text>
+    <text x="364" y="700" font-size="13" fill="#E6ECF5">Beoordeelt alles wat een werkruimte verlaat — óók wat de assistent zelf te zien krijgt.</text>
+    <text x="364" y="718" font-size="11.5" fill="#93A3BA">wachtwoorden worden hier pas ingevuld · elke beslissing wordt versleuteld vastgelegd</text>
+
+    <!-- ── rechts: buiten ─────────────────────────────────────────────── -->
+    <text x="1200" y="136" font-size="12" font-weight="600" letter-spacing="1.6" fill="#2563EB">BUITEN JE NETWERK</text>
+    <path d="M1136 688 H1168 V196" fill="none" stroke="#2563EB" stroke-width="1.8"/>
+    <line x1="1168" y1="196" x2="1200" y2="196" stroke="#2563EB" stroke-width="1.8" marker-end="url(#pb)"/>
+    <line x1="1168" y1="300" x2="1200" y2="300" stroke="#2563EB" stroke-width="1.8" marker-end="url(#pb)"/>
+    <line x1="1168" y1="404" x2="1200" y2="404" stroke="#2563EB" stroke-width="1.8" marker-end="url(#pb)"/>
+    <line x1="1168" y1="508" x2="1200" y2="508" stroke="#2563EB" stroke-width="1.8" marker-end="url(#pb)"/>
+    <line x1="1168" y1="612" x2="1200" y2="612" stroke="#2563EB" stroke-width="1.8" marker-end="url(#pb)"/>
+
+    <rect x="1200" y="150" width="360" height="92" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="1220" y="178" font-size="14.5" font-weight="600" fill="#111827">Het model</text>
+    <text x="1220" y="200" font-size="11.5" fill="#58626F">denkt mee en schrijft — en ziet alleen</text>
+    <text x="1220" y="218" font-size="11.5" fill="#58626F">wat de grens doorlaat</text>
+    <rect x="1200" y="254" width="360" height="92" rx="12" fill="#E8F0FE" stroke="#B9CFFA" stroke-width="1.5"/>
+    <text x="1220" y="282" font-size="14.5" font-weight="600" fill="#111827">De data-omgeving</text>
+    <text x="1220" y="304" font-size="11.5" fill="#58626F">wordt bevraagd met jouw identiteit;</text>
+    <text x="1220" y="322" font-size="11.5" fill="#58626F">de gegevens zelf blijven in de werkruimte</text>
+    <rect x="1200" y="358" width="360" height="92" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="1220" y="386" font-size="14.5" font-weight="600" fill="#111827">Code en opslag</text>
+    <text x="1220" y="408" font-size="11.5" fill="#58626F">het werk wordt opgeleverd waar het</text>
+    <text x="1220" y="426" font-size="11.5" fill="#58626F">thuishoort, met een toelichting erbij</text>
+    <rect x="1200" y="462" width="360" height="92" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="1220" y="490" font-size="14.5" font-weight="600" fill="#111827">Jullie takenlijst</text>
+    <text x="1220" y="512" font-size="11.5" fill="#58626F">de tickets die je al gebruikt, twee</text>
+    <text x="1220" y="530" font-size="11.5" fill="#58626F">kanten op bijgewerkt</text>
+    <rect x="1200" y="566" width="360" height="92" rx="12" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="1220" y="594" font-size="14.5" font-weight="600" fill="#111827">Bericht aan jou</text>
+    <text x="1220" y="616" font-size="11.5" fill="#58626F">klaar, vastgelopen of twijfel — per mail</text>
+    <text x="1220" y="634" font-size="11.5" fill="#58626F">of chat, en antwoorden kan</text>
+
+    <text x="1200" y="690" font-size="12" fill="#58626F">Alleen wat jij aanzet. Een koppeling die</text>
+    <text x="1200" y="708" font-size="12" fill="#58626F">uit staat, bestaat voor de assistent niet.</text>
+
+    <!-- ── onder: andere machines ─────────────────────────────────────── -->
+    <line x1="795" y1="750" x2="795" y2="772" stroke="#58626F" stroke-width="1.6" stroke-dasharray="5 4" marker-start="url(#p)" marker-end="url(#p)"/>
+    <text x="807" y="766" font-size="11" fill="#58626F">beveiligde verbinding</text>
+
+    <rect x="40" y="772" width="1520" height="100" rx="14" fill="#F5F7FA" stroke="#D7DDE6" stroke-width="1.5"/>
+    <text x="62" y="796" font-size="11.5" font-weight="600" letter-spacing="1.5" fill="#58626F">ANDERE MACHINES IN JE NETWERK — OPTIONEEL</text>
+    <rect x="80" y="806" width="470" height="52" rx="9" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="98" y="828" font-size="13.5" font-weight="600" fill="#111827">Nog een computer</text>
+    <text x="98" y="848" font-size="11.5" fill="#58626F">extra werkruimtes, voor werk dat zwaar is of lang duurt</text>
+    <rect x="565" y="806" width="470" height="52" rx="9" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="583" y="828" font-size="13.5" font-weight="600" fill="#111827">Een beheerd apparaat</text>
+    <text x="583" y="848" font-size="11.5" fill="#58626F">werkruimte op de machine zelf, voor systemen die dat eisen</text>
+    <rect x="1050" y="806" width="470" height="52" rx="9" fill="#FFFFFF" stroke="#D7DDE6" stroke-width="1.2"/>
+    <text x="1068" y="828" font-size="13.5" font-weight="600" fill="#111827">Een taalmodel dat je zelf draait</text>
+    <text x="1068" y="848" font-size="11.5" fill="#58626F">tweede mening voor de grens; die vraag verlaat je netwerk niet</text>
+
+    <text x="1560" y="890" font-size="11" fill="#58626F" text-anchor="end">LabX · oktober 2026</text>
+  </g>
+</svg>
